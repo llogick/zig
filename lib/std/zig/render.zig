@@ -1143,6 +1143,8 @@ fn renderVarDeclWithoutFixups(
     space: Space,
 ) Error!void {
     const tree = r.tree;
+    const node_tags = tree.nodes.items(.tag);
+    const datas = tree.nodes.items(.data);
     const ais = r.ais;
 
     if (var_decl.visib_token) |visib_token| {
@@ -1169,11 +1171,20 @@ fn renderVarDeclWithoutFixups(
 
     try renderToken(r, var_decl.ast.mut_token, .space); // var
 
+    const is_type_coerced_with_as = // `const/var some = @as(T, v);`
+        var_decl.ast.type_node == 0 and
+        var_decl.ast.init_node != 0 and
+        node_tags[var_decl.ast.init_node] == .builtin_call_two and
+        std.mem.eql(u8, tree.tokenSlice(tree.firstToken(var_decl.ast.init_node)), "@as") and
+        datas[var_decl.ast.init_node].lhs != 0 and
+        datas[var_decl.ast.init_node].rhs != 0;
+
     if (var_decl.ast.type_node != 0 or var_decl.ast.align_node != 0 or
         var_decl.ast.addrspace_node != 0 or var_decl.ast.section_node != 0 or
         var_decl.ast.init_node != 0)
     {
         const name_space = if (var_decl.ast.type_node == 0 and
+            !is_type_coerced_with_as and
             (var_decl.ast.align_node != 0 or
             var_decl.ast.addrspace_node != 0 or
             var_decl.ast.section_node != 0 or
@@ -1196,6 +1207,13 @@ fn renderVarDeclWithoutFixups(
         } else {
             return renderExpression(r, var_decl.ast.type_node, space);
         }
+    } else if (is_type_coerced_with_as) {
+        try r.ais.writer().writeAll(": ");
+        const init_node_data = datas[var_decl.ast.init_node];
+        // Render the first argument in place of the type_node
+        try renderExpression(r, init_node_data.lhs, .space);
+        // On next call to renderExpression replace the current init_node with the second argument
+        try r.fixups.replace_nodes_with_node.put(r.gpa, var_decl.ast.init_node, init_node_data.rhs);
     }
 
     if (var_decl.ast.align_node != 0) {
@@ -1253,7 +1271,13 @@ fn renderVarDeclWithoutFixups(
         ais.popIndent();
     }
     ais.pushIndentOneShot();
-    return renderExpression(r, var_decl.ast.init_node, space); // ;
+
+    if (is_type_coerced_with_as) {
+        try renderExpression(r, var_decl.ast.init_node, .none); // in effect, this is init_node_data.rhs
+        try renderToken(r, tree.lastToken(var_decl.ast.init_node) + 1, .semicolon);
+    } else {
+        try renderExpression(r, var_decl.ast.init_node, space); // ;
+    }
 }
 
 fn renderIf(r: *Render, if_node: Ast.full.If, space: Space) Error!void {
