@@ -221,6 +221,11 @@ null_stack_trace: InternPool.Index = .none,
 
 generation: u32 = 0,
 
+project_root_path: ?[]const u8 = null,
+lsp_ds: ?*LspDocumentStore = null,
+
+const LspDocumentStore = @import("lsp-server/DocumentStore.zig");
+
 pub const PerThread = @import("Zcu/PerThread.zig");
 
 pub const PanicId = enum {
@@ -453,6 +458,8 @@ pub const File = struct {
     /// successful, this field is unloaded.
     prev_zir: ?*Zir = null,
 
+    owned_by_comp: bool = true,
+
     pub const Status = enum {
         never_loaded,
         retryable_failure,
@@ -481,14 +488,14 @@ pub const File = struct {
     pub fn unloadTree(file: *File, gpa: Allocator) void {
         if (file.tree_loaded) {
             file.tree_loaded = false;
-            file.tree.deinit(gpa);
+            if (file.owned_by_comp) file.tree.deinit(gpa);
         }
     }
 
     pub fn unloadSource(file: *File, gpa: Allocator) void {
         if (file.source_loaded) {
             file.source_loaded = false;
-            gpa.free(file.source);
+            if (file.owned_by_comp) gpa.free(file.source);
         }
     }
 
