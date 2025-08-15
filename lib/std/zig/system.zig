@@ -211,6 +211,8 @@ pub const DetectError = error{
     DeviceBusy,
     OSVersionDetectionFail,
     Unexpected,
+    /// Android-only. Querying API level through `getprop` failed.
+    ApiLevelQueryFailed,
 } || Io.Cancelable;
 
 /// Given a `Target.Query`, which specifies in detail which parts of the
@@ -498,6 +500,28 @@ pub fn resolveTargetQuery(io: Io, query: Target.Query) DetectError!Target {
                 result_ver_range.windows.min = abi_ver_range.windows.min;
             },
         }
+    }
+
+    if (builtin.os.tag == .linux and result.isBionicLibC() and query.os_tag == null and query.android_api_level == null) {
+        result.os.version_range.linux.android = detectAndroidApiLevel(io) catch |err| return switch (err) {
+            error.InvalidWtf8,
+            error.CurrentWorkingDirectoryUnlinked,
+            error.InvalidBatchScriptArg,
+            => unreachable, // Windows-only
+            error.ApiLevelQueryFailed => |e| e,
+            else => blk: {
+                std.log.err("spawning or reading from getprop failed ({s})", .{@errorName(err)});
+                switch (err) {
+                    error.SystemResources,
+                    error.FileSystem,
+                    error.ProcessFdQuotaExceeded,
+                    error.SystemFdQuotaExceeded,
+                    error.SymLinkLoop,
+                    => |e| break :blk e,
+                    else => break :blk error.ApiLevelQueryFailed,
+                }
+            },
+        };
     }
 
     return result;
@@ -1046,8 +1070,11 @@ fn detectAbiAndDynamicLinker(io: Io, cpu: Target.Cpu, os: Target.Os, query: Targ
                 error.NetworkNotFound,
                 error.FileTooBig,
                 error.Unexpected,
-                => return error.UnableToOpenElfFile,
-
+                => |e| if (e == error.FileNotFound and os.tag == .linux and mem.eql(u8, file_name, "/usr/bin/env")) {
+                    // Android does not have a /usr directory, so try again
+                    file_name = "/system/bin/env";
+                    continue;
+                } else return error.UnableToOpenElfFile,
                 else => |e| return e,
             };
             var is_elf_file = false;
@@ -1130,6 +1157,41 @@ const LdInfo = struct {
     ld: Target.DynamicLinker,
     abi: Target.Abi,
 };
+
+fn detectAndroidApiLevel(io: Io) !u32 {
+    comptime if (builtin.os.tag != .linux) unreachable;
+
+    var child = try std.process.spawn(io, .{
+        .argv = &.{
+            "/system/bin/getprop",
+            "ro.build.version.sdk",
+        },
+        .stdin = .ignore,
+        .stdout = .pipe,
+        .stderr = .ignore,
+    });
+    errdefer child.kill(io);
+
+    // PROP_VALUE_MAX is 92, output is value + newline.
+    // Currently API levels are two-digit numbers, but we want to make sure we never read a partial value.
+    var stdout_buf: [92 + 1]u8 = undefined;
+    var reader = child.stdout.?.readerStreaming(io, &.{});
+    const n = try reader.interface.readSliceShort(&stdout_buf);
+    const api_level = std.fmt.parseInt(u32, stdout_buf[0 .. n - 1], 10) catch |e| {
+        std.log.err(
+            "Could not parse API level, unexpected getprop output '{s}' ({s})",
+            .{ stdout_buf[0 .. n - 1], @errorName(e) },
+        );
+        return error.ApiLevelQueryFailed;
+    };
+
+    const term = try child.wait(io);
+    if (term != .exited or term.exited != 0) {
+        std.log.err("getprop terminated abnormally: {}", .{term});
+        return error.ApiLevelQueryFailed;
+    }
+    return api_level;
+}
 
 test {
     _ = NativePaths;
