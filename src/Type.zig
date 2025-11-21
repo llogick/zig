@@ -4158,8 +4158,8 @@ fn shouldDedupeType(ty: Type, ctx: *Comparison, pt: Zcu.PerThread) error{OutOfMe
 
         const type_len: i32 = @intCast(discarding.count);
 
-        const placeholder_len: i32 = 3;
-        const min_saved_bytes: i32 = 10;
+        const placeholder_len: i32 = 1;
+        const min_saved_bytes: i32 = 20;
 
         const saved_bytes = (type_len - placeholder_len) * (occ - 1);
         const max_placeholders = 7; // T to Z
@@ -4192,7 +4192,7 @@ pub const Comparison = struct {
         index: u8,
 
         pub fn format(p: Placeholder, writer: *std.Io.Writer) error{WriteFailed}!void {
-            return writer.print("<{c}>", .{p.index + 'T'});
+            return writer.print("{c}", .{p.index + 'T'});
         }
     };
 
