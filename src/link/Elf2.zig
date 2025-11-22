@@ -1126,8 +1126,10 @@ fn initHeaders(
             defer phnum = 0;
             break :expected_nodes_len 5 + phnum;
         },
-        .EXEC, .DYN => break :expected_nodes_len 9 + phnum * 2 +
-            @as(usize, 4) * @intFromBool(have_dynamic_section),
+        .EXEC, .DYN => break :expected_nodes_len 8 + phnum * 2 +
+            @intFromBool(maybe_interp != null) +
+            @as(usize, 4) * @intFromBool(have_dynamic_section) +
+            @intFromBool(comp.config.any_non_single_threaded),
     };
     try elf.nodes.ensureTotalCapacity(gpa, expected_nodes_len);
     try elf.shdrs.ensureTotalCapacity(gpa, shnum);
