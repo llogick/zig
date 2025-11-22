@@ -3755,7 +3755,7 @@ pub fn saveState(comp: *Compilation) !void {
             },
         });
 
-        try bufs.ensureTotalCapacityPrecise(14 + 8 * pt_headers.items.len);
+        try bufs.ensureTotalCapacityPrecise(22 + 9 * pt_headers.items.len);
         addBuf(&bufs, mem.asBytes(&header));
         addBuf(&bufs, @ptrCast(pt_headers.items));
 
