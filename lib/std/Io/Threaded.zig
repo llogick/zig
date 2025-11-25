@@ -1650,9 +1650,8 @@ fn dirMakeOpenPathWasi(
 
 fn dirStat(userdata: ?*anyopaque, dir: Io.Dir) Io.Dir.StatError!Io.Dir.Stat {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    _ = t;
-    _ = dir;
-    @panic("TODO implement dirStat");
+    const file: Io.File = .{ .handle = dir.handle };
+    return fileStat(t, file);
 }
 
 const dirStatPath = switch (native_os) {

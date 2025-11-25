@@ -2008,8 +2008,9 @@ pub const StatError = File.StatError;
 
 /// Deprecated in favor of `Io.Dir.stat`.
 pub fn stat(self: Dir) StatError!Stat {
-    const file: File = .{ .handle = self.fd };
-    return file.stat();
+    var threaded: Io.Threaded = .init_single_threaded;
+    const io = threaded.ioBasic();
+    return Io.Dir.stat(.{ .handle = self.fd }, io);
 }
 
 pub const StatFileError = File.OpenError || File.StatError || posix.FStatAtError;
