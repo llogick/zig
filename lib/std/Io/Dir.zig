@@ -206,7 +206,7 @@ pub fn updateFile(
     }
 
     if (std.fs.path.dirname(dest_path)) |dirname| {
-        try dest_dir.makePath(io, dirname);
+        try dest_dir.makePathMode(io, dirname, default_mode);
     }
 
     var buffer: [1000]u8 = undefined; // Used only when direct fd-to-fd is not available.
@@ -287,13 +287,17 @@ pub fn makeDir(dir: Dir, io: Io, sub_path: []const u8) MakeError!void {
 
 pub const MakePathError = MakeError || StatPathError;
 
-/// Calls makeDir iteratively to make an entire path, creating any parent
-/// directories that do not exist.
+/// Same as `makePathMode` but passes `default_mode`.
+pub fn makePath(dir: Dir, io: Io, sub_path: []const u8) MakePathError!void {
+    _ = try io.vtable.dirMakePath(io.userdata, dir, sub_path, default_mode);
+}
+
+/// Creates parent directories as necessary to ensure `sub_path` exists as a directory.
 ///
 /// Returns success if the path already exists and is a directory.
 ///
-/// This function is not atomic, and if it returns an error, the file system
-/// may have been modified regardless.
+/// This function may not be atomic. If it returns an error, the file system
+/// may have been modified.
 ///
 /// Fails on an empty path with `error.BadPathName` as that is not a path that
 /// can be created.
@@ -309,8 +313,8 @@ pub const MakePathError = MakeError || StatPathError;
 /// - On other platforms, `..` are not resolved before the path is passed to `mkdirat`,
 ///   meaning a `sub_path` like "first/../second" will create both a `./first`
 ///   and a `./second` directory.
-pub fn makePath(dir: Dir, io: Io, sub_path: []const u8) MakePathError!void {
-    _ = try makePathStatus(dir, io, sub_path);
+pub fn makePathMode(dir: Dir, io: Io, sub_path: []const u8, mode: Mode) MakePathError!void {
+    _ = try io.vtable.dirMakePath(io.userdata, dir, sub_path, mode);
 }
 
 pub const MakePathStatus = enum { existed, created };
@@ -318,34 +322,7 @@ pub const MakePathStatus = enum { existed, created };
 /// Same as `makePath` except returns whether the path already existed or was
 /// successfully created.
 pub fn makePathStatus(dir: Dir, io: Io, sub_path: []const u8) MakePathError!MakePathStatus {
-    var it = std.fs.path.componentIterator(sub_path);
-    var status: MakePathStatus = .existed;
-    var component = it.last() orelse return error.BadPathName;
-    while (true) {
-        if (makeDir(dir, io, component.path)) {
-            status = .created;
-        } else |err| switch (err) {
-            error.PathAlreadyExists => {
-                // stat the file and return an error if it's not a directory
-                // this is important because otherwise a dangling symlink
-                // could cause an infinite loop
-                check_dir: {
-                    // workaround for windows, see https://github.com/ziglang/zig/issues/16738
-                    const fstat = statPath(dir, io, component.path, .{}) catch |stat_err| switch (stat_err) {
-                        error.IsDir => break :check_dir,
-                        else => |e| return e,
-                    };
-                    if (fstat.kind != .directory) return error.NotDir;
-                }
-            },
-            error.FileNotFound => |e| {
-                component = it.previous() orelse return e;
-                continue;
-            },
-            else => |e| return e,
-        }
-        component = it.next() orelse return status;
-    }
+    return io.vtable.dirMakePath(io.userdata, dir, sub_path, default_mode);
 }
 
 pub const MakeOpenPathError = MakeError || OpenError || StatPathError;

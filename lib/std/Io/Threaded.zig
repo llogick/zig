@@ -1455,27 +1455,42 @@ fn dirMakeWindows(userdata: ?*anyopaque, dir: Io.Dir, sub_path: []const u8, mode
     windows.CloseHandle(sub_dir_handle);
 }
 
-const dirMakePath = switch (native_os) {
-    .windows => dirMakePathWindows,
-    else => dirMakePathPosix,
-};
-
-fn dirMakePathPosix(userdata: ?*anyopaque, dir: Io.Dir, sub_path: []const u8, mode: Io.Dir.Mode) Io.Dir.MakeError!void {
+fn dirMakePath(
+    userdata: ?*anyopaque,
+    dir: Io.Dir,
+    sub_path: []const u8,
+    mode: Io.Dir.Mode,
+) Io.Dir.MakePathError!Io.Dir.MakePathStatus {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    _ = t;
-    _ = dir;
-    _ = sub_path;
-    _ = mode;
-    @panic("TODO implement dirMakePathPosix");
-}
 
-fn dirMakePathWindows(userdata: ?*anyopaque, dir: Io.Dir, sub_path: []const u8, mode: Io.Dir.Mode) Io.Dir.MakeError!void {
-    const t: *Threaded = @ptrCast(@alignCast(userdata));
-    _ = t;
-    _ = dir;
-    _ = sub_path;
-    _ = mode;
-    @panic("TODO implement dirMakePathWindows");
+    var it = std.fs.path.componentIterator(sub_path);
+    var status: Io.Dir.MakePathStatus = .existed;
+    var component = it.last() orelse return error.BadPathName;
+    while (true) {
+        if (dirMake(t, dir, component.path, mode)) |_| {
+            status = .created;
+        } else |err| switch (err) {
+            error.PathAlreadyExists => {
+                // stat the file and return an error if it's not a directory
+                // this is important because otherwise a dangling symlink
+                // could cause an infinite loop
+                check_dir: {
+                    // workaround for windows, see https://github.com/ziglang/zig/issues/16738
+                    const fstat = dirStatPath(t, dir, component.path, .{}) catch |stat_err| switch (stat_err) {
+                        error.IsDir => break :check_dir,
+                        else => |e| return e,
+                    };
+                    if (fstat.kind != .directory) return error.NotDir;
+                }
+            },
+            error.FileNotFound => |e| {
+                component = it.previous() orelse return e;
+                continue;
+            },
+            else => |e| return e,
+        }
+        component = it.next() orelse return status;
+    }
 }
 
 const dirMakeOpenPath = switch (native_os) {

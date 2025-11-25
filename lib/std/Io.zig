@@ -663,7 +663,7 @@ pub const VTable = struct {
     futexWake: *const fn (?*anyopaque, ptr: *const u32, max_waiters: u32) void,
 
     dirMake: *const fn (?*anyopaque, Dir, sub_path: []const u8, Dir.Mode) Dir.MakeError!void,
-    dirMakePath: *const fn (?*anyopaque, Dir, sub_path: []const u8, Dir.Mode) Dir.MakeError!void,
+    dirMakePath: *const fn (?*anyopaque, Dir, sub_path: []const u8, Dir.Mode) Dir.MakePathError!Dir.MakePathStatus,
     dirMakeOpenPath: *const fn (?*anyopaque, Dir, sub_path: []const u8, Dir.OpenOptions) Dir.MakeOpenPathError!Dir,
     dirStat: *const fn (?*anyopaque, Dir) Dir.StatError!Dir.Stat,
     dirStatPath: *const fn (?*anyopaque, Dir, sub_path: []const u8, Dir.StatPathOptions) Dir.StatPathError!File.Stat,
