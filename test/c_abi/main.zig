@@ -278,54 +278,63 @@ export fn zig_ret_struct_u64_u64() Struct_u64_u64 {
     return .{ .a = 1, .b = 2 };
 }
 
-export fn zig_struct_u64_u64_0(s: Struct_u64_u64) void {
+export fn zig_struct_u64_u64_0(s: Struct_u64_u64, i: usize) void {
     expect(s.a == 3) catch @panic("test failure");
     expect(s.b == 4) catch @panic("test failure");
+    expect(i == 1) catch @panic("test failure");
 }
-export fn zig_struct_u64_u64_1(_: usize, s: Struct_u64_u64) void {
+export fn zig_struct_u64_u64_1(_: usize, s: Struct_u64_u64, i: usize) void {
     expect(s.a == 5) catch @panic("test failure");
     expect(s.b == 6) catch @panic("test failure");
+    expect(i == 2) catch @panic("test failure");
 }
-export fn zig_struct_u64_u64_2(_: usize, _: usize, s: Struct_u64_u64) void {
+export fn zig_struct_u64_u64_2(_: usize, _: usize, s: Struct_u64_u64, i: usize) void {
     expect(s.a == 7) catch @panic("test failure");
     expect(s.b == 8) catch @panic("test failure");
+    expect(i == 3) catch @panic("test failure");
 }
-export fn zig_struct_u64_u64_3(_: usize, _: usize, _: usize, s: Struct_u64_u64) void {
+export fn zig_struct_u64_u64_3(_: usize, _: usize, _: usize, s: Struct_u64_u64, i: usize) void {
     expect(s.a == 9) catch @panic("test failure");
     expect(s.b == 10) catch @panic("test failure");
+    expect(i == 4) catch @panic("test failure");
 }
-export fn zig_struct_u64_u64_4(_: usize, _: usize, _: usize, _: usize, s: Struct_u64_u64) void {
+export fn zig_struct_u64_u64_4(_: usize, _: usize, _: usize, _: usize, s: Struct_u64_u64, i: usize) void {
     expect(s.a == 11) catch @panic("test failure");
     expect(s.b == 12) catch @panic("test failure");
+    expect(i == 5) catch @panic("test failure");
 }
-export fn zig_struct_u64_u64_5(_: usize, _: usize, _: usize, _: usize, _: usize, s: Struct_u64_u64) void {
+export fn zig_struct_u64_u64_5(_: usize, _: usize, _: usize, _: usize, _: usize, s: Struct_u64_u64, i: usize) void {
     expect(s.a == 13) catch @panic("test failure");
     expect(s.b == 14) catch @panic("test failure");
+    expect(i == 6) catch @panic("test failure");
 }
-export fn zig_struct_u64_u64_6(_: usize, _: usize, _: usize, _: usize, _: usize, _: usize, s: Struct_u64_u64) void {
+export fn zig_struct_u64_u64_6(_: usize, _: usize, _: usize, _: usize, _: usize, _: usize, s: Struct_u64_u64, i: usize) void {
     expect(s.a == 15) catch @panic("test failure");
     expect(s.b == 16) catch @panic("test failure");
+    expect(i == 7) catch @panic("test failure");
 }
-export fn zig_struct_u64_u64_7(_: usize, _: usize, _: usize, _: usize, _: usize, _: usize, _: usize, s: Struct_u64_u64) void {
+export fn zig_struct_u64_u64_7(_: usize, _: usize, _: usize, _: usize, _: usize, _: usize, _: usize, s: Struct_u64_u64, i: usize) void {
     expect(s.a == 17) catch @panic("test failure");
     expect(s.b == 18) catch @panic("test failure");
+    expect(i == 8) catch @panic("test failure");
 }
-export fn zig_struct_u64_u64_8(_: usize, _: usize, _: usize, _: usize, _: usize, _: usize, _: usize, _: usize, s: Struct_u64_u64) void {
+export fn zig_struct_u64_u64_8(_: usize, _: usize, _: usize, _: usize, _: usize, _: usize, _: usize, _: usize, s: Struct_u64_u64, i: usize) void {
     expect(s.a == 19) catch @panic("test failure");
     expect(s.b == 20) catch @panic("test failure");
+    expect(i == 9) catch @panic("test failure");
 }
 
 extern fn c_ret_struct_u64_u64() Struct_u64_u64;
 
-extern fn c_struct_u64_u64_0(Struct_u64_u64) void;
-extern fn c_struct_u64_u64_1(usize, Struct_u64_u64) void;
-extern fn c_struct_u64_u64_2(usize, usize, Struct_u64_u64) void;
-extern fn c_struct_u64_u64_3(usize, usize, usize, Struct_u64_u64) void;
-extern fn c_struct_u64_u64_4(usize, usize, usize, usize, Struct_u64_u64) void;
-extern fn c_struct_u64_u64_5(usize, usize, usize, usize, usize, Struct_u64_u64) void;
-extern fn c_struct_u64_u64_6(usize, usize, usize, usize, usize, usize, Struct_u64_u64) void;
-extern fn c_struct_u64_u64_7(usize, usize, usize, usize, usize, usize, usize, Struct_u64_u64) void;
-extern fn c_struct_u64_u64_8(usize, usize, usize, usize, usize, usize, usize, usize, Struct_u64_u64) void;
+extern fn c_struct_u64_u64_0(Struct_u64_u64, usize) void;
+extern fn c_struct_u64_u64_1(usize, Struct_u64_u64, usize) void;
+extern fn c_struct_u64_u64_2(usize, usize, Struct_u64_u64, usize) void;
+extern fn c_struct_u64_u64_3(usize, usize, usize, Struct_u64_u64, usize) void;
+extern fn c_struct_u64_u64_4(usize, usize, usize, usize, Struct_u64_u64, usize) void;
+extern fn c_struct_u64_u64_5(usize, usize, usize, usize, usize, Struct_u64_u64, usize) void;
+extern fn c_struct_u64_u64_6(usize, usize, usize, usize, usize, usize, Struct_u64_u64, usize) void;
+extern fn c_struct_u64_u64_7(usize, usize, usize, usize, usize, usize, usize, Struct_u64_u64, usize) void;
+extern fn c_struct_u64_u64_8(usize, usize, usize, usize, usize, usize, usize, usize, Struct_u64_u64, usize) void;
 
 test "C ABI struct u64 u64" {
     if (builtin.cpu.arch.isMIPS64()) return error.SkipZigTest;
@@ -336,15 +345,15 @@ test "C ABI struct u64 u64" {
     const s = c_ret_struct_u64_u64();
     try expect(s.a == 21);
     try expect(s.b == 22);
-    c_struct_u64_u64_0(.{ .a = 23, .b = 24 });
-    c_struct_u64_u64_1(0, .{ .a = 25, .b = 26 });
-    c_struct_u64_u64_2(0, 1, .{ .a = 27, .b = 28 });
-    c_struct_u64_u64_3(0, 1, 2, .{ .a = 29, .b = 30 });
-    c_struct_u64_u64_4(0, 1, 2, 3, .{ .a = 31, .b = 32 });
-    c_struct_u64_u64_5(0, 1, 2, 3, 4, .{ .a = 33, .b = 34 });
-    c_struct_u64_u64_6(0, 1, 2, 3, 4, 5, .{ .a = 35, .b = 36 });
-    c_struct_u64_u64_7(0, 1, 2, 3, 4, 5, 6, .{ .a = 37, .b = 38 });
-    c_struct_u64_u64_8(0, 1, 2, 3, 4, 5, 6, 7, .{ .a = 39, .b = 40 });
+    c_struct_u64_u64_0(.{ .a = 23, .b = 24 }, 1);
+    c_struct_u64_u64_1(0, .{ .a = 25, .b = 26 }, 2);
+    c_struct_u64_u64_2(0, 1, .{ .a = 27, .b = 28 }, 3);
+    c_struct_u64_u64_3(0, 1, 2, .{ .a = 29, .b = 30 }, 4);
+    c_struct_u64_u64_4(0, 1, 2, 3, .{ .a = 31, .b = 32 }, 5);
+    c_struct_u64_u64_5(0, 1, 2, 3, 4, .{ .a = 33, .b = 34 }, 6);
+    c_struct_u64_u64_6(0, 1, 2, 3, 4, 5, .{ .a = 35, .b = 36 }, 7);
+    c_struct_u64_u64_7(0, 1, 2, 3, 4, 5, 6, .{ .a = 37, .b = 38 }, 8);
+    c_struct_u64_u64_8(0, 1, 2, 3, 4, 5, 6, 7, .{ .a = 39, .b = 40 }, 9);
 }
 
 const Struct_f32 = extern struct {
