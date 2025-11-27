@@ -116,6 +116,7 @@ pub const dh = struct {
 
 /// Key Encapsulation Mechanisms.
 pub const kem = struct {
+    pub const hybrid = @import("crypto/hybrid_kem.zig");
     pub const kyber_d00 = @import("crypto/ml_kem.zig").d00;
     pub const ml_kem = @import("crypto/ml_kem.zig").nist;
 };
