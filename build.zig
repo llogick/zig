@@ -91,6 +91,8 @@ pub fn build(b: *std.Build) !void {
     const skip_libc = b.option(bool, "skip-libc", "Main test suite skips tests that link libc") orelse false;
     const skip_single_threaded = b.option(bool, "skip-single-threaded", "Main test suite skips tests that are single-threaded") orelse false;
     const skip_compile_errors = b.option(bool, "skip-compile-errors", "Main test suite skips compile error tests") orelse false;
+    const skip_spirv = b.option(bool, "skip-spirv", "Main test suite skips targets with spirv32/spirv64 architecture") orelse false;
+    const skip_wasm = b.option(bool, "skip-wasm", "Main test suite skips targets with wasm32/wasm64 architecture") orelse false;
     const skip_freebsd = b.option(bool, "skip-freebsd", "Main test suite skips targets with freebsd OS") orelse false;
     const skip_netbsd = b.option(bool, "skip-netbsd", "Main test suite skips targets with netbsd OS") orelse false;
     const skip_windows = b.option(bool, "skip-windows", "Main test suite skips targets with windows OS") orelse false;
@@ -421,6 +423,8 @@ pub fn build(b: *std.Build) !void {
         .test_target_filters = test_target_filters,
         .skip_compile_errors = skip_compile_errors,
         .skip_non_native = skip_non_native,
+        .skip_spirv = skip_spirv,
+        .skip_wasm = skip_wasm,
         .skip_freebsd = skip_freebsd,
         .skip_netbsd = skip_netbsd,
         .skip_windows = skip_windows,
@@ -452,6 +456,8 @@ pub fn build(b: *std.Build) !void {
         .skip_single_threaded = skip_single_threaded,
         .skip_non_native = skip_non_native,
         .test_default_only = no_matrix,
+        .skip_spirv = skip_spirv,
+        .skip_wasm = skip_wasm,
         .skip_freebsd = skip_freebsd,
         .skip_netbsd = skip_netbsd,
         .skip_windows = skip_windows,
@@ -475,6 +481,8 @@ pub fn build(b: *std.Build) !void {
         .skip_single_threaded = true,
         .skip_non_native = skip_non_native,
         .test_default_only = no_matrix,
+        .skip_spirv = skip_spirv,
+        .skip_wasm = skip_wasm,
         .skip_freebsd = skip_freebsd,
         .skip_netbsd = skip_netbsd,
         .skip_windows = skip_windows,
@@ -497,6 +505,8 @@ pub fn build(b: *std.Build) !void {
         .skip_single_threaded = true,
         .skip_non_native = skip_non_native,
         .test_default_only = no_matrix,
+        .skip_spirv = skip_spirv,
+        .skip_wasm = skip_wasm,
         .skip_freebsd = skip_freebsd,
         .skip_netbsd = skip_netbsd,
         .skip_windows = skip_windows,
@@ -519,6 +529,8 @@ pub fn build(b: *std.Build) !void {
         .skip_single_threaded = skip_single_threaded,
         .skip_non_native = skip_non_native,
         .test_default_only = no_matrix,
+        .skip_spirv = skip_spirv,
+        .skip_wasm = skip_wasm,
         .skip_freebsd = skip_freebsd,
         .skip_netbsd = skip_netbsd,
         .skip_windows = skip_windows,
@@ -560,6 +572,7 @@ pub fn build(b: *std.Build) !void {
     test_step.dependOn(tests.addCAbiTests(b, .{
         .test_target_filters = test_target_filters,
         .skip_non_native = skip_non_native,
+        .skip_wasm = skip_wasm,
         .skip_freebsd = skip_freebsd,
         .skip_netbsd = skip_netbsd,
         .skip_windows = skip_windows,
@@ -616,6 +629,7 @@ pub fn build(b: *std.Build) !void {
         .optimize_modes = optimization_modes,
         .test_filters = test_filters,
         .test_target_filters = test_target_filters,
+        .skip_wasm = skip_wasm,
         // Highest RSS observed in any test case was exactly 1802878976 on x86_64-linux.
         .max_rss = 2253598720,
     })) |test_libc_step| test_step.dependOn(test_libc_step);

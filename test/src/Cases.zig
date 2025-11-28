@@ -444,6 +444,8 @@ pub const CaseTestOptions = struct {
     test_target_filters: []const []const u8,
     skip_compile_errors: bool,
     skip_non_native: bool,
+    skip_spirv: bool,
+    skip_wasm: bool,
     skip_freebsd: bool,
     skip_netbsd: bool,
     skip_windows: bool,
@@ -471,6 +473,9 @@ pub fn lowerToBuildSteps(
 
         if (options.skip_non_native and !case.target.query.isNative())
             continue;
+
+        if (options.skip_spirv and case.target.query.cpu_arch != null and case.target.query.cpu_arch.?.isSpirV()) continue;
+        if (options.skip_wasm and case.target.query.cpu_arch != null and case.target.query.cpu_arch.?.isWasm()) continue;
 
         if (options.skip_freebsd and case.target.query.os_tag == .freebsd) continue;
         if (options.skip_netbsd and case.target.query.os_tag == .netbsd) continue;

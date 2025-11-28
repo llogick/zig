@@ -2246,6 +2246,8 @@ const ModuleTestOptions = struct {
     test_default_only: bool,
     skip_single_threaded: bool,
     skip_non_native: bool,
+    skip_spirv: bool,
+    skip_wasm: bool,
     skip_freebsd: bool,
     skip_netbsd: bool,
     skip_windows: bool,
@@ -2280,6 +2282,9 @@ pub fn addModuleTests(b: *std.Build, options: ModuleTestOptions) *Step {
 
         if (options.skip_non_native and !test_target.target.isNative())
             continue;
+
+        if (options.skip_spirv and test_target.target.cpu_arch != null and test_target.target.cpu_arch.?.isSpirV()) continue;
+        if (options.skip_wasm and test_target.target.cpu_arch != null and test_target.target.cpu_arch.?.isWasm()) continue;
 
         if (options.skip_freebsd and test_target.target.os_tag == .freebsd) continue;
         if (options.skip_netbsd and test_target.target.os_tag == .netbsd) continue;
@@ -2519,6 +2524,7 @@ pub fn wouldUseLlvm(use_llvm: ?bool, query: std.Target.Query, optimize_mode: Opt
 const CAbiTestOptions = struct {
     test_target_filters: []const []const u8,
     skip_non_native: bool,
+    skip_wasm: bool,
     skip_freebsd: bool,
     skip_netbsd: bool,
     skip_windows: bool,
@@ -2538,6 +2544,9 @@ pub fn addCAbiTests(b: *std.Build, options: CAbiTestOptions) *Step {
 
         for (c_abi_targets) |c_abi_target| {
             if (options.skip_non_native and !c_abi_target.target.isNative()) continue;
+
+            if (options.skip_wasm and c_abi_target.target.cpu_arch != null and c_abi_target.target.cpu_arch.?.isWasm()) continue;
+
             if (options.skip_freebsd and c_abi_target.target.os_tag == .freebsd) continue;
             if (options.skip_netbsd and c_abi_target.target.os_tag == .netbsd) continue;
             if (options.skip_windows and c_abi_target.target.os_tag == .windows) continue;
