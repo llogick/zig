@@ -39,7 +39,10 @@ cmake .. \
   -DZIG_TARGET_MCPU="$MCPU" \
   -DZIG_STATIC=ON \
   -DZIG_NO_LIB=ON \
-  -GNinja
+  -GNinja \
+  -DCMAKE_C_LINKER_DEPFILE_SUPPORTED=FALSE \
+  -DCMAKE_CXX_LINKER_DEPFILE_SUPPORTED=FALSE
+# https://github.com/ziglang/zig/issues/22213
 
 # Now cmake will use zig as the C/C++ compiler. We reset the environment variables
 # so that installation and testing do not get affected by them.
@@ -97,7 +100,10 @@ cmake .. \
   -DZIG_TARGET_MCPU="$MCPU" \
   -DZIG_STATIC=ON \
   -DZIG_NO_LIB=ON \
-  -GNinja
+  -GNinja \
+  -DCMAKE_C_LINKER_DEPFILE_SUPPORTED=FALSE \
+  -DCMAKE_CXX_LINKER_DEPFILE_SUPPORTED=FALSE
+# https://github.com/ziglang/zig/issues/22213
 
 unset CC
 unset CXX
