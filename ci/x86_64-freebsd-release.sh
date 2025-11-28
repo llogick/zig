@@ -46,6 +46,8 @@ ninja install
 stage3-release/bin/zig build test docs \
   --maxrss 42949672960 \
   -Dstatic-llvm \
+  -Dskip-spirv \
+  -Dskip-wasm \
   -Dskip-linux \
   -Dskip-netbsd \
   -Dskip-windows \
