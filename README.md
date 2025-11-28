@@ -128,7 +128,7 @@ while your Zig build has the option to be a Debug build. It also works
 completely independently from MSVC so you don't need it to be installed.
 
 Determine the URL by
-[looking at the CI script](https://github.com/ziglang/zig/blob/master/ci/x86_64-windows-debug.ps1#L1-L4).
+[looking at the CI script](https://codeberg.org/ziglang/zig/src/branch/master/ci/x86_64-windows-debug.ps1#L1-L4).
 It will look something like this (replace `$VERSION` with the one you see by
 following the above link):
 
@@ -665,11 +665,11 @@ based on Clang, but is now based on Aro:
 
 Test coverage as well as bug reports have been moved to this repository:
 
-[ziglang/translate-c](https://github.com/ziglang/translate-c/)
+[ziglang/translate-c](https://codeberg.org/ziglang/translate-c/)
 
 In the future, [@cImport will move to the build system](https://github.com/ziglang/zig/issues/20630),
 but for now, the translate-c logic is copy-pasted from that project into
-[ziglang/zig](https://github.com/ziglang/zig/), powering both `zig translate-c`
+[ziglang/zig](https://codeberg.org/ziglang/zig/), powering both `zig translate-c`
 and `@cImport`.
 
 Please see the readme of the translate-c project for how to contribute. Once an
