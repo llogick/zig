@@ -251,7 +251,11 @@ const Closure = struct {
                 .sec = 0,
                 .nsec = @as(isize, 1) << @intCast(attempt_index),
             };
-            _ = posix.system.nanosleep(&timespec, &timespec);
+            if (native_os == .linux) {
+                _ = std.os.linux.clock_nanosleep(posix.CLOCK.MONOTONIC, .{ .ABSTIME = false }, &timespec, &timespec);
+            } else {
+                _ = posix.system.nanosleep(&timespec, &timespec);
+            }
 
             switch (@atomicRmw(CancelStatus, &closure.cancel_status, .Xchg, .requested, .monotonic).unpack()) {
                 .requested => continue, // Retry needed in case other thread hasn't yet entered the syscall.
