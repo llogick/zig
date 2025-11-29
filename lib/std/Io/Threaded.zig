@@ -201,8 +201,22 @@ const Closure = struct {
         // We can send a signal to interrupt the syscall, but if it arrives before
         // the syscall instruction, it will be missed. Therefore, this code tries
         // again until the cancellation request is acknowledged.
-        const max_attempts = 3;
-        for (0..max_attempts) |_| {
+
+        // 1 << 10 ns is about 1 microsecond, approximately syscall overhead.
+        // 1 << 20 ns is about 1 millisecond.
+        // 1 << 30 ns is about 1 second.
+        //
+        // On a heavily loaded Linux 6.17.5, I observed a maximum of 20
+        // attempts not acknowledged before the timeout (including exponential
+        // backoff) was sufficient, despite the heavy load.
+        //
+        // The time wasted here sleeping is mitigated by the fact that, later
+        // on, the system will likely wait for the canceled task, causing it
+        // to indefinitely yield until the canceled task finishes, and the
+        // task must acknowledge the cancel before it proceeds to that point.
+        const max_attempts = 22;
+
+        for (0..max_attempts) |attempt_index| {
             if (std.Thread.use_pthreads) {
                 const rc = std.c.pthread_kill(signal_id, .IO);
                 if (is_debug) assert(rc == 0);
@@ -219,11 +233,14 @@ const Closure = struct {
                 return;
             }
 
-            // TODO make this a nanosleep with 1 << attempt duration
-            std.Thread.yield() catch {};
+            var timespec: posix.timespec = .{
+                .sec = 0,
+                .nsec = @as(isize, 1) << @intCast(attempt_index),
+            };
+            _ = posix.system.nanosleep(&timespec, &timespec);
 
             switch (@atomicRmw(CancelStatus, &closure.cancel_status, .Xchg, .requested, .monotonic).unpack()) {
-                .requested => continue,
+                .requested => continue, // Retry needed in case other thread hasn't yet entered the syscall.
                 .none, .acknowledged => return,
                 .signal_id => |new_signal_id| signal_id = new_signal_id,
             }
