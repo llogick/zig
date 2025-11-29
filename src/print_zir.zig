@@ -595,7 +595,7 @@ const Writer = struct {
             },
 
             .reify_slice_arg_ty => {
-                const reify_slice_arg_info: Zir.Inst.ReifySliceArgInfo = @enumFromInt(extended.operand);
+                const reify_slice_arg_info: Zir.Inst.ReifySliceArgInfo = @enumFromInt(extended.small);
                 const extra = self.code.extraData(Zir.Inst.UnNode, extended.operand).data;
                 try stream.print("{t}, ", .{reify_slice_arg_info});
                 try self.writeInstRef(stream, extra.operand);
