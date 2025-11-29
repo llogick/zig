@@ -427,3 +427,12 @@ test "undefined type value" {
     };
     comptime assert(@TypeOf(S.undef_type) == type);
 }
+
+test "reify struct with zero fields through const arrays" {
+    const names: [0][]const u8 = .{};
+    const types: [0]type = .{};
+    const attrs: [0]std.builtin.Type.StructField.Attributes = .{};
+    const S = @Struct(.auto, null, &names, &types, &attrs);
+    comptime assert(@typeInfo(S) == .@"struct");
+    comptime assert(@typeInfo(S).@"struct".fields.len == 0);
+}

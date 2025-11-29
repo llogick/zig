@@ -175,9 +175,11 @@ const ComptimeAlloc = struct {
 
 /// `src` may be `null` if `is_const` will be set.
 fn newComptimeAlloc(sema: *Sema, block: *Block, src: LazySrcLoc, ty: Type, alignment: Alignment) !ComptimeAllocIndex {
+    const pt = sema.pt;
+    const init_val = try sema.typeHasOnePossibleValue(ty) orelse try pt.undefValue(ty);
     const idx = sema.comptime_allocs.items.len;
     try sema.comptime_allocs.append(sema.gpa, .{
-        .val = .{ .interned = try sema.pt.intern(.{ .undef = ty.toIntern() }) },
+        .val = .{ .interned = init_val.toIntern() },
         .is_const = false,
         .src = src,
         .alignment = alignment,
