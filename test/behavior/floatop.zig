@@ -1298,6 +1298,24 @@ test "@ceil f80/f128/c_longdouble" {
     try comptime testCeil(c_longdouble);
 }
 
+test "@ceil f80 maxInt(u64)" {
+    if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
+    if (builtin.zig_backend == .stage2_c and builtin.cpu.arch.isArm()) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
+
+    if (builtin.zig_backend == .stage2_llvm and builtin.os.tag == .windows) {
+        // https://github.com/ziglang/zig/issues/12602
+        return error.SkipZigTest;
+    }
+
+    var x: u64 = std.math.maxInt(u64);
+    x = x;
+    const float: f80 = @floatFromInt(x);
+    try std.testing.expect(float == @ceil(float));
+}
+
 fn testCeil(comptime T: type) !void {
     var two_point_one: T = 2.1;
     try expect(@ceil(two_point_one) == 3.0);

@@ -221,7 +221,6 @@ set(ZIG_STAGE2_SOURCES
     lib/compiler_rt/aulldiv.zig
     lib/compiler_rt/aullrem.zig
     lib/compiler_rt/bswap.zig
-    lib/compiler_rt/ceil.zig
     lib/compiler_rt/clear_cache.zig
     lib/compiler_rt/cmp.zig
     lib/compiler_rt/cmpdf2.zig
@@ -312,7 +311,7 @@ set(ZIG_STAGE2_SOURCES
     lib/compiler_rt/floatuntisf.zig
     lib/compiler_rt/floatuntitf.zig
     lib/compiler_rt/floatuntixf.zig
-    lib/compiler_rt/floor.zig
+    lib/compiler_rt/floor_ceil.zig
     lib/compiler_rt/fma.zig
     lib/compiler_rt/fmax.zig
     lib/compiler_rt/fmin.zig

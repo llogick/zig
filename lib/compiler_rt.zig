@@ -231,12 +231,11 @@ comptime {
     _ = @import("compiler_rt/divtc3.zig");
 
     // Math routines. Alphabetically sorted.
-    _ = @import("compiler_rt/ceil.zig");
     _ = @import("compiler_rt/cos.zig");
     _ = @import("compiler_rt/exp.zig");
     _ = @import("compiler_rt/exp2.zig");
     _ = @import("compiler_rt/fabs.zig");
-    _ = @import("compiler_rt/floor.zig");
+    _ = @import("compiler_rt/floor_ceil.zig");
     _ = @import("compiler_rt/fma.zig");
     _ = @import("compiler_rt/fmax.zig");
     _ = @import("compiler_rt/fmin.zig");
