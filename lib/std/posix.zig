@@ -1360,6 +1360,7 @@ pub fn writev(fd: fd_t, iov: []const iovec_const) WriteError!usize {
             .PIPE => return error.BrokenPipe,
             .CONNRESET => return error.ConnectionResetByPeer,
             .BUSY => return error.DeviceBusy,
+            .CANCELED => return error.Canceled,
             else => |err| return unexpectedErrno(err),
         }
     }

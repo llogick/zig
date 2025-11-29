@@ -3,6 +3,7 @@ const Threaded = @This();
 const builtin = @import("builtin");
 const native_os = builtin.os.tag;
 const is_windows = native_os == .windows;
+const is_musl = builtin.link_libc and builtin.abi.isMusl();
 const windows = std.os.windows;
 const ws2_32 = std.os.windows.ws2_32;
 const is_debug = builtin.mode == .Debug;
@@ -111,7 +112,7 @@ const Thread = struct {
                 @atomicStore(CancelStatus, &closure.cancel_status, .acknowledged, .release);
                 return error.Canceled;
             },
-            .acknowledged => unreachable,
+            .acknowledged => return,
             _ => unreachable,
         }
     }
@@ -126,6 +127,13 @@ const Thread = struct {
             .acq_rel,
             .acquire,
         );
+    }
+
+    fn endSyscallCanceled(thread: *Thread) Io.Cancelable {
+        if (thread.current_closure) |closure| {
+            @atomicStore(CancelStatus, &closure.cancel_status, .acknowledged, .release);
+        }
+        return error.Canceled;
     }
 
     fn currentSignalId() SignalId {
@@ -197,6 +205,13 @@ const Closure = struct {
             .none, .acknowledged, .requested => return,
             .signal_id => |signal_id| signal_id,
         };
+        // Musl has an undocumented extension that makes pthread_cancel have the useful, desired
+        // behavior of causing the next syscall to return ECANCELED.
+        if (is_musl) {
+            _ = std.c.pthread_cancel(signal_id);
+            return;
+        }
+
         // The task will enter a blocking syscall before checking for cancellation again.
         // We can send a signal to interrupt the syscall, but if it arrives before
         // the syscall instruction, it will be missed. Therefore, this code tries
@@ -218,8 +233,7 @@ const Closure = struct {
 
         for (0..max_attempts) |attempt_index| {
             if (std.Thread.use_pthreads) {
-                const rc = std.c.pthread_kill(signal_id, .IO);
-                if (is_debug) assert(rc == 0);
+                if (std.c.pthread_kill(signal_id, .IO) != 0) return;
             } else if (native_os == .linux) {
                 const pid: posix.pid_t = p: {
                     const cached_pid = @atomicLoad(Pid, &t.pid, .monotonic);
@@ -228,7 +242,7 @@ const Closure = struct {
                     @atomicStore(Pid, &t.pid, @enumFromInt(pid), .monotonic);
                     break :p pid;
                 };
-                _ = std.os.linux.tgkill(pid, @bitCast(signal_id), .IO);
+                if (std.os.linux.tgkill(pid, @bitCast(signal_id), .IO) != 0) return;
             } else {
                 return;
             }
@@ -354,6 +368,11 @@ fn worker(t: *Threaded) void {
     while (true) {
         while (t.run_queue.popFirst()) |closure_node| {
             t.mutex.unlock();
+
+            // Musl has an undocumented extension that makes pthread_cancel have the useful, desired
+            // behavior of causing the next syscall to return ECANCELED.
+            if (is_musl) assert(std.c.pthread_setcancelstate(.MASKED, null) == .SUCCESS);
+
             const closure: *Closure = @fieldParentPtr("node", closure_node);
             closure.start(closure, t);
             t.mutex.lock();
@@ -1198,10 +1217,10 @@ fn dirMakePosix(userdata: ?*anyopaque, dir: Io.Dir, sub_path: []const u8, mode: 
                 try current_thread.checkCancel();
                 continue;
             },
+            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
-                    .CANCELED => return error.Canceled,
                     .ACCES => return error.AccessDenied,
                     .BADF => |err| return errnoBug(err), // File descriptor used after closed.
                     .PERM => return error.PermissionDenied,
@@ -1241,25 +1260,29 @@ fn dirMakeWasi(userdata: ?*anyopaque, dir: Io.Dir, sub_path: []const u8, mode: I
                 try current_thread.checkCancel();
                 continue;
             },
-            .CANCELED => return error.Canceled,
-
-            .ACCES => return error.AccessDenied,
-            .BADF => |err| return errnoBug(err), // File descriptor used after closed.
-            .PERM => return error.PermissionDenied,
-            .DQUOT => return error.DiskQuota,
-            .EXIST => return error.PathAlreadyExists,
-            .FAULT => |err| return errnoBug(err),
-            .LOOP => return error.SymLinkLoop,
-            .MLINK => return error.LinkQuotaExceeded,
-            .NAMETOOLONG => return error.NameTooLong,
-            .NOENT => return error.FileNotFound,
-            .NOMEM => return error.SystemResources,
-            .NOSPC => return error.NoSpaceLeft,
-            .NOTDIR => return error.NotDir,
-            .ROFS => return error.ReadOnlyFileSystem,
-            .NOTCAPABLE => return error.AccessDenied,
-            .ILSEQ => return error.BadPathName,
-            else => |err| return posix.unexpectedErrno(err),
+            .CANCELED => return current_thread.endSyscallCanceled(),
+            else => |e| {
+                current_thread.endSyscall();
+                switch (e) {
+                    .ACCES => return error.AccessDenied,
+                    .BADF => |err| return errnoBug(err), // File descriptor used after closed.
+                    .PERM => return error.PermissionDenied,
+                    .DQUOT => return error.DiskQuota,
+                    .EXIST => return error.PathAlreadyExists,
+                    .FAULT => |err| return errnoBug(err),
+                    .LOOP => return error.SymLinkLoop,
+                    .MLINK => return error.LinkQuotaExceeded,
+                    .NAMETOOLONG => return error.NameTooLong,
+                    .NOENT => return error.FileNotFound,
+                    .NOMEM => return error.SystemResources,
+                    .NOSPC => return error.NoSpaceLeft,
+                    .NOTDIR => return error.NotDir,
+                    .ROFS => return error.ReadOnlyFileSystem,
+                    .NOTCAPABLE => return error.AccessDenied,
+                    .ILSEQ => return error.BadPathName,
+                    else => |err| return posix.unexpectedErrno(err),
+                }
+            },
         }
     }
 }
@@ -1503,10 +1526,10 @@ fn dirStatPathLinux(
                 try current_thread.checkCancel();
                 continue;
             },
+            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
-                    .CANCELED => return error.Canceled,
                     .ACCES => return error.AccessDenied,
                     .BADF => |err| return errnoBug(err), // File descriptor used after closed.
                     .FAULT => |err| return errnoBug(err),
@@ -1549,10 +1572,10 @@ fn dirStatPathPosix(
                 try current_thread.checkCancel();
                 continue;
             },
+            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
-                    .CANCELED => return error.Canceled,
                     .INVAL => |err| return errnoBug(err),
                     .BADF => |err| return errnoBug(err), // File descriptor used after closed.
                     .NOMEM => return error.SystemResources,
@@ -1610,10 +1633,10 @@ fn dirStatPathWasi(
                 try current_thread.checkCancel();
                 continue;
             },
+            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
-                    .CANCELED => return error.Canceled,
                     .INVAL => |err| return errnoBug(err),
                     .BADF => |err| return errnoBug(err), // File descriptor used after closed.
                     .NOMEM => return error.SystemResources,
@@ -1656,10 +1679,10 @@ fn fileStatPosix(userdata: ?*anyopaque, file: Io.File) Io.File.StatError!Io.File
                 try current_thread.checkCancel();
                 continue;
             },
+            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
-                    .CANCELED => return error.Canceled,
                     .INVAL => |err| return errnoBug(err),
                     .BADF => |err| return errnoBug(err), // File descriptor used after closed.
                     .NOMEM => return error.SystemResources,
@@ -1695,10 +1718,10 @@ fn fileStatLinux(userdata: ?*anyopaque, file: Io.File) Io.File.StatError!Io.File
                 try current_thread.checkCancel();
                 continue;
             },
+            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
-                    .CANCELED => return error.Canceled,
                     .ACCES => |err| return errnoBug(err),
                     .BADF => |err| return errnoBug(err), // File descriptor used after closed.
                     .FAULT => |err| return errnoBug(err),
@@ -1781,10 +1804,10 @@ fn fileStatWasi(userdata: ?*anyopaque, file: Io.File) Io.File.StatError!Io.File.
                 try current_thread.checkCancel();
                 continue;
             },
+            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
-                    .CANCELED => return error.Canceled,
                     .INVAL => |err| return errnoBug(err),
                     .BADF => |err| return errnoBug(err), // File descriptor used after closed.
                     .NOMEM => return error.SystemResources,
@@ -1833,10 +1856,10 @@ fn dirAccessPosix(
                 try current_thread.checkCancel();
                 continue;
             },
+            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
-                    .CANCELED => return error.Canceled,
                     .ACCES => return error.AccessDenied,
                     .PERM => return error.PermissionDenied,
                     .ROFS => return error.ReadOnlyFileSystem,
@@ -1883,10 +1906,10 @@ fn dirAccessWasi(
                 try current_thread.checkCancel();
                 continue;
             },
+            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
-                    .CANCELED => return error.Canceled,
                     .INVAL => |err| return errnoBug(err),
                     .BADF => |err| return errnoBug(err), // File descriptor used after closed.
                     .NOMEM => return error.SystemResources,
@@ -2030,10 +2053,10 @@ fn dirCreateFilePosix(
                 try current_thread.checkCancel();
                 continue;
             },
+            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
-                    .CANCELED => return error.Canceled,
                     .FAULT => |err| return errnoBug(err),
                     .INVAL => return error.BadPathName,
                     .BADF => |err| return errnoBug(err), // File descriptor used after closed.
@@ -2085,10 +2108,10 @@ fn dirCreateFilePosix(
                     try current_thread.checkCancel();
                     continue;
                 },
+                .CANCELED => return current_thread.endSyscallCanceled(),
                 else => |e| {
                     current_thread.endSyscall();
                     switch (e) {
-                        .CANCELED => return error.Canceled,
                         .BADF => |err| return errnoBug(err), // File descriptor used after closed.
                         .INVAL => |err| return errnoBug(err), // invalid parameters
                         .NOLCK => return error.SystemResources,
@@ -2240,10 +2263,10 @@ fn dirCreateFileWasi(
                 try current_thread.checkCancel();
                 continue;
             },
+            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
-                    .CANCELED => return error.Canceled,
                     .FAULT => |err| return errnoBug(err),
                     .INVAL => return error.BadPathName,
                     .BADF => |err| return errnoBug(err), // File descriptor used after closed.
@@ -2334,10 +2357,10 @@ fn dirOpenFilePosix(
                 try current_thread.checkCancel();
                 continue;
             },
+            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
-                    .CANCELED => return error.Canceled,
                     .FAULT => |err| return errnoBug(err),
                     .INVAL => return error.BadPathName,
                     .BADF => |err| return errnoBug(err), // File descriptor used after closed.
@@ -2388,10 +2411,10 @@ fn dirOpenFilePosix(
                     try current_thread.checkCancel();
                     continue;
                 },
+                .CANCELED => return current_thread.endSyscallCanceled(),
                 else => |e| {
                     current_thread.endSyscall();
                     switch (e) {
-                        .CANCELED => return error.Canceled,
                         .BADF => |err| return errnoBug(err), // File descriptor used after closed.
                         .INVAL => |err| return errnoBug(err), // invalid parameters
                         .NOLCK => return error.SystemResources,
@@ -2417,6 +2440,7 @@ fn dirOpenFilePosix(
                     try current_thread.checkCancel();
                     continue;
                 },
+                .CANCELED => return current_thread.endSyscallCanceled(),
                 else => |err| {
                     current_thread.endSyscall();
                     return posix.unexpectedErrno(err);
@@ -2437,6 +2461,7 @@ fn dirOpenFilePosix(
                     try current_thread.checkCancel();
                     continue;
                 },
+                .CANCELED => return current_thread.endSyscallCanceled(),
                 else => |err| {
                     current_thread.endSyscall();
                     return posix.unexpectedErrno(err);
@@ -2635,10 +2660,10 @@ fn dirOpenFileWasi(
                 try current_thread.checkCancel();
                 continue;
             },
+            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
-                    .CANCELED => return error.Canceled,
                     .FAULT => |err| return errnoBug(err),
                     .BADF => |err| return errnoBug(err), // File descriptor used after closed.
                     .ACCES => return error.AccessDenied,
@@ -2719,10 +2744,10 @@ fn dirOpenDirPosix(
                 try current_thread.checkCancel();
                 continue;
             },
+            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
-                    .CANCELED => return error.Canceled,
                     .FAULT => |err| return errnoBug(err),
                     .INVAL => return error.BadPathName,
                     .BADF => |err| return errnoBug(err), // File descriptor used after closed.
@@ -2772,10 +2797,10 @@ fn dirOpenDirHaiku(
                 try current_thread.checkCancel();
                 continue;
             },
+            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
-                    .CANCELED => return error.Canceled,
                     .FAULT => |err| return errnoBug(err),
                     .INVAL => |err| return errnoBug(err),
                     .BADF => |err| return errnoBug(err), // File descriptor used after closed.
@@ -2917,10 +2942,10 @@ fn dirOpenDirWasi(
                 try current_thread.checkCancel();
                 continue;
             },
+            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
-                    .CANCELED => return error.Canceled,
                     .FAULT => |err| return errnoBug(err),
                     .INVAL => return error.BadPathName,
                     .BADF => |err| return errnoBug(err), // File descriptor used after closed.
@@ -2984,10 +3009,10 @@ fn fileReadStreamingPosix(userdata: ?*anyopaque, file: Io.File, data: [][]u8) Io
                     try current_thread.checkCancel();
                     continue;
                 },
+                .CANCELED => return current_thread.endSyscallCanceled(),
                 else => |e| {
                     current_thread.endSyscall();
                     switch (e) {
-                        .CANCELED => return error.Canceled,
                         .INVAL => |err| return errnoBug(err),
                         .FAULT => |err| return errnoBug(err),
                         .BADF => return error.NotOpenForReading, // File operation on directory.
@@ -3018,10 +3043,10 @@ fn fileReadStreamingPosix(userdata: ?*anyopaque, file: Io.File, data: [][]u8) Io
                 try current_thread.checkCancel();
                 continue;
             },
+            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
-                    .CANCELED => return error.Canceled,
                     .INVAL => |err| return errnoBug(err),
                     .FAULT => |err| return errnoBug(err),
                     .SRCH => return error.ProcessNotFound,
@@ -3104,10 +3129,10 @@ fn fileReadPositionalPosix(userdata: ?*anyopaque, file: Io.File, data: [][]u8, o
                     try current_thread.checkCancel();
                     continue;
                 },
+                .CANCELED => return current_thread.endSyscallCanceled(),
                 else => |e| {
                     current_thread.endSyscall();
                     switch (e) {
-                        .CANCELED => return error.Canceled,
                         .INVAL => |err| return errnoBug(err),
                         .FAULT => |err| return errnoBug(err),
                         .AGAIN => |err| return errnoBug(err),
@@ -3142,10 +3167,10 @@ fn fileReadPositionalPosix(userdata: ?*anyopaque, file: Io.File, data: [][]u8, o
                 try current_thread.checkCancel();
                 continue;
             },
+            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
-                    .CANCELED => return error.Canceled,
                     .INVAL => |err| return errnoBug(err),
                     .FAULT => |err| return errnoBug(err),
                     .SRCH => return error.ProcessNotFound,
@@ -3244,10 +3269,10 @@ fn fileSeekTo(userdata: ?*anyopaque, file: Io.File, offset: u64) Io.File.SeekErr
                     try current_thread.checkCancel();
                     continue;
                 },
+                .CANCELED => return current_thread.endSyscallCanceled(),
                 else => |e| {
                     current_thread.endSyscall();
                     switch (e) {
-                        .CANCELED => return error.Canceled,
                         .BADF => |err| return errnoBug(err), // File descriptor used after closed.
                         .INVAL => return error.Unseekable,
                         .OVERFLOW => return error.Unseekable,
@@ -3277,10 +3302,10 @@ fn fileSeekTo(userdata: ?*anyopaque, file: Io.File, offset: u64) Io.File.SeekErr
                 try current_thread.checkCancel();
                 continue;
             },
+            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
-                    .CANCELED => return error.Canceled,
                     .BADF => |err| return errnoBug(err), // File descriptor used after closed.
                     .INVAL => return error.Unseekable,
                     .OVERFLOW => return error.Unseekable,
@@ -3306,10 +3331,10 @@ fn fileSeekTo(userdata: ?*anyopaque, file: Io.File, offset: u64) Io.File.SeekErr
                 try current_thread.checkCancel();
                 continue;
             },
+            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
-                    .CANCELED => return error.Canceled,
                     .BADF => |err| return errnoBug(err), // File descriptor used after closed.
                     .INVAL => return error.Unseekable,
                     .OVERFLOW => return error.Unseekable,
@@ -3430,7 +3455,8 @@ fn nowWasi(userdata: ?*anyopaque, clock: Io.Clock) Io.Clock.Error!Io.Timestamp {
 const sleep = switch (native_os) {
     .windows => sleepWindows,
     .wasi => sleepWasi,
-    .linux => sleepLinux,
+    // Since we use musl's pthread_cancel, it's important that all the syscalls go through libc.
+    .linux => if (is_musl) sleepPosix else sleepLinux,
     else => sleepPosix,
 };
 
@@ -3462,10 +3488,10 @@ fn sleepLinux(userdata: ?*anyopaque, timeout: Io.Timeout) Io.SleepError!void {
                 try current_thread.checkCancel();
                 continue;
             },
+            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
-                    .CANCELED => return error.Canceled,
                     .INVAL => return error.UnsupportedClock,
                     else => |err| return posix.unexpectedErrno(err),
                 }
@@ -3540,11 +3566,9 @@ fn sleepPosix(userdata: ?*anyopaque, timeout: Io.Timeout) Io.SleepError!void {
                 try current_thread.checkCancel();
                 continue;
             },
-            else => {
-                // This prong handles success as well as unexpected errors.
-                current_thread.endSyscall();
-                return;
-            },
+            .CANCELED => return current_thread.endSyscallCanceled(),
+            // This prong handles success as well as unexpected errors.
+            else => return current_thread.endSyscall(),
         }
     }
 }
@@ -3616,10 +3640,10 @@ fn netListenIpPosix(
                 try current_thread.checkCancel();
                 continue;
             },
+            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
-                    .CANCELED => return error.Canceled,
                     .ADDRINUSE => return error.AddressInUse,
                     .BADF => |err| return errnoBug(err), // File descriptor used after closed.
                     else => |err| return posix.unexpectedErrno(err),
@@ -3777,10 +3801,10 @@ fn netListenUnixPosix(
                 try current_thread.checkCancel();
                 continue;
             },
+            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
-                    .CANCELED => return error.Canceled,
                     .ADDRINUSE => return error.AddressInUse,
                     .BADF => |err| return errnoBug(err), // File descriptor used after closed.
                     else => |err| return posix.unexpectedErrno(err),
@@ -3901,10 +3925,10 @@ fn posixBindUnix(
                 try current_thread.checkCancel();
                 continue;
             },
+            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
-                    .CANCELED => return error.Canceled,
                     .ACCES => return error.AccessDenied,
                     .ADDRINUSE => return error.AddressInUse,
                     .AFNOSUPPORT => return error.AddressFamilyUnsupported,
@@ -3946,10 +3970,10 @@ fn posixBind(
                 try current_thread.checkCancel();
                 continue;
             },
+            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
-                    .CANCELED => return error.Canceled,
                     .ADDRINUSE => return error.AddressInUse,
                     .BADF => |err| return errnoBug(err), // File descriptor used after closed.
                     .INVAL => |err| return errnoBug(err), // invalid parameters
@@ -3982,10 +4006,10 @@ fn posixConnect(
                 try current_thread.checkCancel();
                 continue;
             },
+            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
-                    .CANCELED => return error.Canceled,
                     .ADDRNOTAVAIL => return error.AddressUnavailable,
                     .AFNOSUPPORT => return error.AddressFamilyUnsupported,
                     .AGAIN, .INPROGRESS => return error.WouldBlock,
@@ -4029,10 +4053,10 @@ fn posixConnectUnix(
                 try current_thread.checkCancel();
                 continue;
             },
+            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
-                    .CANCELED => return error.Canceled,
                     .AFNOSUPPORT => return error.AddressFamilyUnsupported,
                     .AGAIN => return error.WouldBlock,
                     .INPROGRESS => return error.WouldBlock,
@@ -4074,10 +4098,10 @@ fn posixGetSockName(
                 try current_thread.checkCancel();
                 continue;
             },
+            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
-                    .CANCELED => return error.Canceled,
                     .BADF => |err| return errnoBug(err), // File descriptor used after closed.
                     .FAULT => |err| return errnoBug(err),
                     .INVAL => |err| return errnoBug(err), // invalid parameters
@@ -4142,10 +4166,10 @@ fn setSocketOption(current_thread: *Thread, fd: posix.fd_t, level: i32, opt_name
                 try current_thread.checkCancel();
                 continue;
             },
+            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
-                    .CANCELED => return error.Canceled,
                     .BADF => |err| return errnoBug(err), // File descriptor used after closed.
                     .NOTSOCK => |err| return errnoBug(err),
                     .INVAL => |err| return errnoBug(err),
@@ -4472,12 +4496,10 @@ fn openSocketPosix(
                     switch (posix.errno(posix.system.fcntl(fd, posix.F.SETFD, @as(usize, posix.FD_CLOEXEC)))) {
                         .SUCCESS => break,
                         .INTR => continue,
-                        else => |e| {
+                        .CANCELED => return current_thread.endSyscallCanceled(),
+                        else => |err| {
                             current_thread.endSyscall();
-                            switch (e) {
-                                .CANCELED => return error.Canceled,
-                                else => |err| return posix.unexpectedErrno(err),
-                            }
+                            return posix.unexpectedErrno(err);
                         },
                     }
                 };
@@ -4488,10 +4510,10 @@ fn openSocketPosix(
                 try current_thread.checkCancel();
                 continue;
             },
+            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
-                    .CANCELED => return error.Canceled,
                     .AFNOSUPPORT => return error.AddressFamilyUnsupported,
                     .INVAL => return error.ProtocolUnsupportedBySystem,
                     .MFILE => return error.ProcessFdQuotaExceeded,
@@ -4590,10 +4612,10 @@ fn netAcceptPosix(userdata: ?*anyopaque, listen_fd: net.Socket.Handle) net.Serve
                 try current_thread.checkCancel();
                 continue;
             },
+            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
-                    .CANCELED => return error.Canceled,
                     .AGAIN => |err| return errnoBug(err),
                     .BADF => |err| return errnoBug(err), // File descriptor used after closed.
                     .CONNABORTED => return error.ConnectionAborted,
@@ -4699,10 +4721,10 @@ fn netReadPosix(userdata: ?*anyopaque, fd: net.Socket.Handle, data: [][]u8) net.
                     try current_thread.checkCancel();
                     continue;
                 },
+                .CANCELED => return current_thread.endSyscallCanceled(),
                 else => |e| {
                     current_thread.endSyscall();
                     switch (e) {
-                        .CANCELED => return error.Canceled,
                         .INVAL => |err| return errnoBug(err),
                         .FAULT => |err| return errnoBug(err),
                         .AGAIN => |err| return errnoBug(err),
@@ -4732,10 +4754,10 @@ fn netReadPosix(userdata: ?*anyopaque, fd: net.Socket.Handle, data: [][]u8) net.
                 try current_thread.checkCancel();
                 continue;
             },
+            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
-                    .CANCELED => return error.Canceled,
                     .INVAL => |err| return errnoBug(err),
                     .FAULT => |err| return errnoBug(err),
                     .AGAIN => |err| return errnoBug(err),
@@ -4968,10 +4990,10 @@ fn netSendOne(
                 try current_thread.checkCancel();
                 continue;
             },
+            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
-                    .CANCELED => return error.Canceled,
                     .ACCES => return error.AccessDenied,
                     .ALREADY => return error.FastOpenAlreadyInProgress,
                     .BADF => |err| return errnoBug(err), // File descriptor used after closed.
@@ -5045,10 +5067,10 @@ fn netSendMany(
                 try current_thread.checkCancel();
                 continue;
             },
+            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
-                    .CANCELED => return error.Canceled,
                     .AGAIN => |err| return errnoBug(err),
                     .ALREADY => return error.FastOpenAlreadyInProgress,
                     .BADF => |err| return errnoBug(err), // File descriptor used after closed.
@@ -5178,7 +5200,7 @@ fn netReceivePosix(
                         continue :recv;
                     },
                     .INTR => continue,
-                    .CANCELED => return .{ error.Canceled, message_i },
+                    .CANCELED => return .{ current_thread.endSyscallCanceled(), message_i },
 
                     .FAULT => |err| return .{ errnoBug(err), message_i },
                     .INVAL => |err| return .{ errnoBug(err), message_i },
@@ -5187,7 +5209,7 @@ fn netReceivePosix(
                 }
             },
             .INTR => continue,
-            .CANCELED => return .{ error.Canceled, message_i },
+            .CANCELED => return .{ current_thread.endSyscallCanceled(), message_i },
 
             .BADF => |err| return .{ errnoBug(err), message_i },
             .NFILE => return .{ error.SystemFdQuotaExceeded, message_i },
@@ -5306,10 +5328,10 @@ fn netWritePosix(
                 try current_thread.checkCancel();
                 continue;
             },
+            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
-                    .CANCELED => return error.Canceled,
                     .ACCES => |err| return errnoBug(err),
                     .AGAIN => |err| return errnoBug(err),
                     .ALREADY => return error.FastOpenAlreadyInProgress,
@@ -5405,7 +5427,7 @@ fn netWriteWindows(
         };
         switch (wsa_error) {
             .EINTR => continue,
-            .ECANCELLED, .E_CANCELLED, .OPERATION_ABORTED => return error.Canceled,
+            .ECANCELLED, .E_CANCELLED, .OPERATION_ABORTED => return current_thread.endSyscallCanceled(),
             .NOTINITIALISED => {
                 try initializeWsa(t);
                 continue;
@@ -5517,10 +5539,10 @@ fn netInterfaceNameResolve(
                     try current_thread.checkCancel();
                     continue;
                 },
+                .CANCELED => return current_thread.endSyscallCanceled(),
                 else => |e| {
                     current_thread.endSyscall();
                     switch (e) {
-                        .CANCELED => return error.Canceled,
                         .INVAL => |err| return errnoBug(err), // Bad parameters.
                         .NOTTY => |err| return errnoBug(err),
                         .NXIO => |err| return errnoBug(err),
@@ -5818,12 +5840,10 @@ fn netLookupFallible(
                         try current_thread.checkCancel();
                         continue;
                     },
+                    .CANCELED => return current_thread.endSyscallCanceled(),
                     else => |e| {
                         current_thread.endSyscall();
-                        switch (e) {
-                            .CANCELED => return error.Canceled,
-                            else => |inner| return posix.unexpectedErrno(inner),
-                        }
+                        return posix.unexpectedErrno(e);
                     },
                 },
                 else => |e| {
