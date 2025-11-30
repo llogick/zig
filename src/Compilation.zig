@@ -6978,6 +6978,21 @@ fn addCommonCCArgs(
                         // would be inconsistent with header declarations.
                         (min_ver.major * 100_000_000) + (min_ver.minor * 1_000_000),
                     }));
+                } else if (target.isOpenBSDLibC()) {
+                    const min_ver = target.os.version_range.semver.min;
+                    // The macro in sys/param.h doesn't have the leading underscores, but we don't want to pollute the
+                    // global namespace in all compilation units. So we use leading underscores and modify sys/param.h
+                    // to just alias this one.
+                    try argv.append(try std.fmt.allocPrint(arena, "-D___OpenBSD={d}", .{
+                        // Brilliantly, OpenBSD defines this macro to the year and month of the release, so we need to
+                        // maintain a manual mapping here whenever we update the headers.
+                        202510,
+                    }));
+                    // We can't avoid pollution for this one...
+                    try argv.append(try std.fmt.allocPrint(arena, "-DOpenBSD{d}_{d}", .{
+                        min_ver.major,
+                        min_ver.minor,
+                    }));
                 }
             }
 
