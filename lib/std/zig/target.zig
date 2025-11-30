@@ -111,12 +111,6 @@ pub const available_libcs = [_]ArchOsAbi{
     .{ .arch = .x86_64, .os = .windows, .abi = .gnu },
 };
 
-/// The version of Zig's bundled FreeBSD libc used when linking libc statically.
-pub const freebsd_libc_version: std.SemanticVersion = .{ .major = 14, .minor = 0, .patch = 0 };
-
-/// The version of Zig's bundled NetBSD libc used when linking libc statically.
-pub const netbsd_libc_version: std.SemanticVersion = .{ .major = 10, .minor = 1, .patch = 0 };
-
 pub fn canBuildLibC(target: *const std.Target) bool {
     for (available_libcs) |libc| {
         if (target.cpu.arch == libc.arch and target.os.tag == libc.os and target.abi == libc.abi) {
