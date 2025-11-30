@@ -534,7 +534,7 @@ pub const Os = struct {
                 .openbsd => .{
                     .semver = .{
                         .min = blk: {
-                            const default_min: std.SemanticVersion = .{ .major = 7, .minor = 7, .patch = 0 };
+                            const default_min: std.SemanticVersion = .{ .major = 7, .minor = 8, .patch = 0 };
 
                             for (std.zig.target.available_libcs) |libc| {
                                 if (libc.arch != arch or libc.os != tag or libc.abi != abi) continue;
