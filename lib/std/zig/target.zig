@@ -271,6 +271,12 @@ pub fn netbsdAbiNameHeaders(abi: std.Target.Abi) [:0]const u8 {
     };
 }
 
+pub fn openbsdArchNameHeaders(arch: std.Target.Cpu.Arch) [:0]const u8 {
+    return switch (arch) {
+        else => @tagName(arch),
+    };
+}
+
 pub fn isLibCLibName(target: *const std.Target, name: []const u8) bool {
     const ignore_case = target.os.tag.isDarwin() or target.os.tag == .windows;
 

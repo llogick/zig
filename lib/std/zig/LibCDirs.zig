@@ -193,6 +193,8 @@ pub fn detectFromBuilding(
         std.zig.target.freebsdArchNameHeaders(target.cpu.arch)
     else if (target.isNetBSDLibC())
         std.zig.target.netbsdArchNameHeaders(target.cpu.arch)
+    else if (target.isOpenBSDLibC())
+        std.zig.target.openbsdArchNameHeaders(target.cpu.arch)
     else
         @tagName(target.cpu.arch);
     const os_name = @tagName(target.os.tag);
@@ -247,6 +249,7 @@ fn libCGenericName(target: *const std.Target) [:0]const u8 {
         .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => return "darwin",
         .freebsd => return "freebsd",
         .netbsd => return "netbsd",
+        .openbsd => return "openbsd",
         else => {},
     }
     switch (target.abi) {
