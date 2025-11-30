@@ -2140,6 +2140,13 @@ pub inline fn isNetBSDLibC(target: *const Target) bool {
     };
 }
 
+pub inline fn isOpenBSDLibC(target: *const Target) bool {
+    return switch (target.abi) {
+        .none, .eabi, .eabihf => target.os.tag == .openbsd,
+        else => false,
+    };
+}
+
 pub inline fn isWasiLibC(target: *const Target) bool {
     return target.os.tag == .wasi and target.abi.isMusl();
 }
