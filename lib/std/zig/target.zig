@@ -435,6 +435,17 @@ pub fn isLibCLibName(target: *const std.Target, name: []const u8) bool {
             return true;
     }
 
+    if (target.isOpenBSDLibC()) {
+        if (eqlIgnoreCase(ignore_case, name, "execinfo"))
+            return true;
+        if (eqlIgnoreCase(ignore_case, name, "m"))
+            return true;
+        if (eqlIgnoreCase(ignore_case, name, "pthread"))
+            return true;
+        if (eqlIgnoreCase(ignore_case, name, "util"))
+            return true;
+    }
+
     if (target.os.tag == .haiku) {
         if (eqlIgnoreCase(ignore_case, name, "root"))
             return true;
