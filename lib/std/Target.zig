@@ -2723,7 +2723,6 @@ pub const DynamicLinker = struct {
                 .powerpc64,
                 .riscv64,
                 .sh,
-                .sheb,
                 .sparc64,
                 .x86,
                 .x86_64,
