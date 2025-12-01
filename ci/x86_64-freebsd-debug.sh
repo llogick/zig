@@ -50,6 +50,7 @@ stage3-debug/bin/zig build test docs \
   -Dskip-wasm \
   -Dskip-linux \
   -Dskip-netbsd \
+  -Dskip-openbsd \
   -Dskip-windows \
   -Dskip-darwin \
   --search-prefix "$PREFIX" \

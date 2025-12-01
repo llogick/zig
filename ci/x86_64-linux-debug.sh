@@ -58,6 +58,7 @@ stage3-debug/bin/zig build test docs \
   -Dstatic-llvm \
   -Dskip-freebsd \
   -Dskip-netbsd \
+  -Dskip-openbsd \
   -Dskip-windows \
   -Dskip-darwin \
   -Dskip-llvm \
