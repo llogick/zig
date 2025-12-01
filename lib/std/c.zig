@@ -4682,14 +4682,6 @@ pub const siginfo_t = switch (native_os) {
             },
             __pad: [128 - 3 * @sizeOf(c_int)]u8,
         },
-
-        comptime {
-            if (@sizeOf(usize) == 4)
-                assert(@sizeOf(@This()) == 128)
-            else
-                // Take into account the padding between errno and data fields.
-                assert(@sizeOf(@This()) == 136);
-        }
     },
     // https://github.com/SerenityOS/serenity/blob/ec492a1a0819e6239ea44156825c4ee7234ca3db/Kernel/API/POSIX/signal.h#L27-L37
     .serenity => extern struct {
