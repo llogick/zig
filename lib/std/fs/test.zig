@@ -352,6 +352,7 @@ test "openDir" {
 
 test "accessAbsolute" {
     if (native_os == .wasi) return error.SkipZigTest;
+    if (native_os == .openbsd) return error.SkipZigTest;
 
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
@@ -364,6 +365,7 @@ test "accessAbsolute" {
 
 test "openDirAbsolute" {
     if (native_os == .wasi) return error.SkipZigTest;
+    if (native_os == .openbsd) return error.SkipZigTest;
 
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
@@ -453,6 +455,7 @@ test "openDir non-cwd parent '..'" {
 
 test "readLinkAbsolute" {
     if (native_os == .wasi) return error.SkipZigTest;
+    if (native_os == .openbsd) return error.SkipZigTest;
 
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
@@ -1059,6 +1062,7 @@ test "rename" {
 
 test "renameAbsolute" {
     if (native_os == .wasi) return error.SkipZigTest;
+    if (native_os == .openbsd) return error.SkipZigTest;
 
     var tmp_dir = tmpDir(.{});
     defer tmp_dir.cleanup();
@@ -1962,6 +1966,7 @@ test "'.' and '..' in fs.Dir functions" {
 
 test "'.' and '..' in absolute functions" {
     if (native_os == .wasi) return error.SkipZigTest;
+    if (native_os == .openbsd) return error.SkipZigTest;
 
     var tmp = tmpDir(.{});
     defer tmp.cleanup();

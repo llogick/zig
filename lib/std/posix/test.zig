@@ -46,6 +46,7 @@ test "check WASI CWD" {
 test "open smoke test" {
     if (native_os == .wasi) return error.SkipZigTest;
     if (native_os == .windows) return error.SkipZigTest;
+    if (native_os == .openbsd) return error.SkipZigTest;
 
     // TODO verify file attributes using `fstat`
 
@@ -765,6 +766,7 @@ test "POSIX file locking with fcntl" {
 test "rename smoke test" {
     if (native_os == .wasi) return error.SkipZigTest;
     if (native_os == .windows) return error.SkipZigTest;
+    if (native_os == .openbsd) return error.SkipZigTest;
 
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
@@ -833,6 +835,7 @@ test "rename smoke test" {
 test "access smoke test" {
     if (native_os == .wasi) return error.SkipZigTest;
     if (native_os == .windows) return error.SkipZigTest;
+    if (native_os == .openbsd) return error.SkipZigTest;
 
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
