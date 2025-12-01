@@ -490,8 +490,7 @@ pub fn selfExePath(out_buffer: []u8) SelfExePathError![]u8 {
                     const resolved_path = std.fmt.bufPrintSentinel(&resolved_path_buf, "{s}/{s}", .{
                         a_path,
                         std.os.argv[0],
-                        0,
-                    }) catch continue;
+                    }, 0) catch continue;
 
                     var real_path_buf: [max_path_bytes]u8 = undefined;
                     if (posix.realpathZ(resolved_path, &real_path_buf)) |real_path| {
