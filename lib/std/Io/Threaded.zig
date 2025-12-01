@@ -5052,7 +5052,7 @@ fn netSendMany(
     messages: []net.OutgoingMessage,
     flags: u32,
 ) net.Socket.SendError!usize {
-    var msg_buffer: [64]std.os.linux.mmsghdr = undefined;
+    var msg_buffer: [64]posix.system.mmsghdr = undefined;
     var addr_buffer: [msg_buffer.len]PosixAddress = undefined;
     var iovecs_buffer: [msg_buffer.len]posix.iovec = undefined;
     const min_len: usize = @min(messages.len, msg_buffer.len);
