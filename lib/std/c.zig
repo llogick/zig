@@ -10468,24 +10468,36 @@ pub const sigaction = switch (native_os) {
 };
 
 /// Zig's version of SIGRTMIN.  Actually a function.
-pub fn sigrtmin() u8 {
-    return switch (native_os) {
-        .freebsd => 65,
-        .netbsd => 33,
-        .illumos => @truncate(sysconf(@intFromEnum(_SC.SIGRT_MIN))),
-        else => @truncate(@as(c_uint, @bitCast(private.__libc_current_sigrtmin()))),
-    };
-}
+pub const sigrtmin = switch (native_os) {
+    .openbsd => {},
+    else => sigrt_private.sigrtmin,
+};
 
 /// Zig's version of SIGRTMAX.  Actually a function.
-pub fn sigrtmax() u8 {
-    return switch (native_os) {
-        .freebsd => 126,
-        .netbsd => 63,
-        .illumos => @truncate(sysconf(@intFromEnum(_SC.SIGRT_MAX))),
-        else => @truncate(@as(c_uint, @bitCast(private.__libc_current_sigrtmax()))),
-    };
-}
+pub const sigrtmax = switch (native_os) {
+    .openbsd => {},
+    else => sigrt_private.sigrtmax,
+};
+
+const sigrt_private = struct {
+    pub fn sigrtmin() u8 {
+        return switch (native_os) {
+            .freebsd => 65,
+            .netbsd => 33,
+            .illumos => @truncate(sysconf(@intFromEnum(_SC.SIGRT_MIN))),
+            else => @truncate(@as(c_uint, @bitCast(private.__libc_current_sigrtmin()))),
+        };
+    }
+
+    pub fn sigrtmax() u8 {
+        return switch (native_os) {
+            .freebsd => 126,
+            .netbsd => 63,
+            .illumos => @truncate(sysconf(@intFromEnum(_SC.SIGRT_MAX))),
+            else => @truncate(@as(c_uint, @bitCast(private.__libc_current_sigrtmax()))),
+        };
+    }
+};
 
 pub const sigfillset = switch (native_os) {
     .netbsd => private.__sigfillset14,
