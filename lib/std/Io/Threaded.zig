@@ -3,7 +3,7 @@ const Threaded = @This();
 const builtin = @import("builtin");
 const native_os = builtin.os.tag;
 const is_windows = native_os == .windows;
-const is_musl = builtin.link_libc and builtin.abi.isMusl();
+const is_musl = native_os == .linux and builtin.link_libc and builtin.abi.isMusl();
 const windows = std.os.windows;
 const ws2_32 = std.os.windows.ws2_32;
 const is_debug = builtin.mode == .Debug;
