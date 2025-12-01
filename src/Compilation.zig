@@ -27,6 +27,7 @@ const glibc = @import("libs/glibc.zig");
 const musl = @import("libs/musl.zig");
 const freebsd = @import("libs/freebsd.zig");
 const netbsd = @import("libs/netbsd.zig");
+const openbsd = @import("libs/openbsd.zig");
 const mingw = @import("libs/mingw.zig");
 const libunwind = @import("libs/libunwind.zig");
 const libcxx = @import("libs/libcxx.zig");
@@ -243,6 +244,7 @@ fuzzer_lib: ?CrtFile = null,
 glibc_so_files: ?glibc.BuiltSharedObjects = null,
 freebsd_so_files: ?freebsd.BuiltSharedObjects = null,
 netbsd_so_files: ?netbsd.BuiltSharedObjects = null,
+openbsd_so_files: ?openbsd.BuiltSharedObjects = null,
 
 /// For example `Scrt1.o` and `libc_nonshared.a`. These are populated after building libc from source,
 /// The set of needed CRT (C runtime) files differs depending on the target and compilation settings.
@@ -307,6 +309,7 @@ const QueuedJobs = struct {
     glibc_crt_file: [@typeInfo(glibc.CrtFile).@"enum".fields.len]bool = @splat(false),
     freebsd_crt_file: [@typeInfo(freebsd.CrtFile).@"enum".fields.len]bool = @splat(false),
     netbsd_crt_file: [@typeInfo(netbsd.CrtFile).@"enum".fields.len]bool = @splat(false),
+    openbsd_crt_file: [@typeInfo(openbsd.CrtFile).@"enum".fields.len]bool = @splat(false),
     /// one of WASI libc static objects
     wasi_libc_crt_file: [@typeInfo(wasi_libc.CrtFile).@"enum".fields.len]bool = @splat(false),
     /// one of the mingw-w64 static objects
@@ -315,6 +318,7 @@ const QueuedJobs = struct {
     glibc_shared_objects: bool = false,
     freebsd_shared_objects: bool = false,
     netbsd_shared_objects: bool = false,
+    openbsd_shared_objects: bool = false,
     /// libunwind.a, usually needed when linking libc
     libunwind: bool = false,
     libcxx: bool = false,
@@ -1400,6 +1404,8 @@ pub const MiscTask = enum {
     freebsd_shared_objects,
     netbsd_crt_file,
     netbsd_shared_objects,
+    openbsd_crt_file,
+    openbsd_shared_objects,
     mingw_crt_file,
     windows_import_lib,
     libunwind,
@@ -1435,6 +1441,9 @@ pub const MiscTask = enum {
 
     @"netbsd libc Scrt0.o",
     @"netbsd libc shared object",
+
+    @"openbsd libc Scrt0.o",
+    @"openbsd libc shared object",
 
     @"mingw-w64 crt2.o",
     @"mingw-w64 dllcrt2.o",
@@ -2620,6 +2629,14 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
                     }
 
                     comp.queued_jobs.netbsd_shared_objects = true;
+                } else if (target.isOpenBSDLibC()) {
+                    if (!std.zig.target.canBuildLibC(target)) return diag.fail(.cross_libc_unavailable);
+
+                    if (openbsd.needsCrt0(comp.config.output_mode)) |f| {
+                        comp.queued_jobs.openbsd_crt_file[@intFromEnum(f)] = true;
+                    }
+
+                    comp.queued_jobs.openbsd_shared_objects = true;
                 } else if (target.isWasiLibC()) {
                     if (!std.zig.target.canBuildLibC(target)) return diag.fail(.cross_libc_unavailable);
 
@@ -2768,6 +2785,10 @@ pub fn destroy(comp: *Compilation) void {
 
     if (comp.netbsd_so_files) |*netbsd_file| {
         netbsd_file.deinit(gpa, io);
+    }
+
+    if (comp.openbsd_so_files) |*openbsd_file| {
+        openbsd_file.deinit(gpa, io);
     }
 
     for (comp.c_object_table.keys()) |key| {
@@ -4992,6 +5013,10 @@ fn dispatchPrelinkWork(comp: *Compilation, main_progress_node: std.Progress.Node
         prelink_group.async(io, buildNetBSDSharedObjects, .{ comp, main_progress_node });
     }
 
+    if (comp.queued_jobs.openbsd_shared_objects) {
+        prelink_group.async(io, buildOpenBSDSharedObjects, .{ comp, main_progress_node });
+    }
+
     if (comp.queued_jobs.libunwind) {
         prelink_group.async(io, buildLibUnwind, .{ comp, main_progress_node });
     }
@@ -5037,6 +5062,13 @@ fn dispatchPrelinkWork(comp: *Compilation, main_progress_node: std.Progress.Node
         if (comp.queued_jobs.netbsd_crt_file[i]) {
             const tag: netbsd.CrtFile = @enumFromInt(i);
             prelink_group.async(io, buildNetBSDCrtFile, .{ comp, tag, main_progress_node });
+        }
+    }
+
+    for (0..@typeInfo(openbsd.CrtFile).@"enum".fields.len) |i| {
+        if (comp.queued_jobs.openbsd_crt_file[i]) {
+            const tag: openbsd.CrtFile = @enumFromInt(i);
+            prelink_group.async(io, buildOpenBSDCrtFile, .{ comp, tag, main_progress_node });
         }
     }
 
@@ -6036,6 +6068,29 @@ fn buildNetBSDSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) vo
     } else |err| switch (err) {
         error.AlreadyReported => return,
         else => comp.lockAndSetMiscFailure(.netbsd_shared_objects, "unable to build NetBSD libc shared objects: {s}", .{
+            @errorName(err),
+        }),
+    }
+}
+
+fn buildOpenBSDCrtFile(comp: *Compilation, crt_file: openbsd.CrtFile, prog_node: std.Progress.Node) void {
+    if (openbsd.buildCrtFile(comp, crt_file, prog_node)) |_| {
+        comp.queued_jobs.openbsd_crt_file[@intFromEnum(crt_file)] = false;
+    } else |err| switch (err) {
+        error.AlreadyReported => return,
+        else => comp.lockAndSetMiscFailure(.openbsd_crt_file, "unable to build OpenBSD {s}: {s}", .{
+            @tagName(crt_file), @errorName(err),
+        }),
+    }
+}
+
+fn buildOpenBSDSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) void {
+    if (openbsd.buildSharedObjects(comp, prog_node)) |_| {
+        // The job should no longer be queued up since it succeeded.
+        comp.queued_jobs.openbsd_shared_objects = false;
+    } else |err| switch (err) {
+        error.AlreadyReported => return,
+        else => comp.lockAndSetMiscFailure(.openbsd_shared_objects, "unable to build OpenBSD libc shared objects: {s}", .{
             @errorName(err),
         }),
     }
