@@ -97,6 +97,7 @@ pub fn build(b: *std.Build) !void {
     const skip_wasm = b.option(bool, "skip-wasm", "Main test suite skips targets with wasm32/wasm64 architecture") orelse false;
     const skip_freebsd = b.option(bool, "skip-freebsd", "Main test suite skips targets with freebsd OS") orelse false;
     const skip_netbsd = b.option(bool, "skip-netbsd", "Main test suite skips targets with netbsd OS") orelse false;
+    const skip_openbsd = b.option(bool, "skip-openbsd", "Main test suite skips targets with openbsd OS") orelse false;
     const skip_windows = b.option(bool, "skip-windows", "Main test suite skips targets with windows OS") orelse false;
     const skip_darwin = b.option(bool, "skip-darwin", "Main test suite skips targets with darwin OSs") orelse false;
     const skip_linux = b.option(bool, "skip-linux", "Main test suite skips targets with linux OS") orelse false;
@@ -431,6 +432,7 @@ pub fn build(b: *std.Build) !void {
         .skip_wasm = skip_wasm,
         .skip_freebsd = skip_freebsd,
         .skip_netbsd = skip_netbsd,
+        .skip_openbsd = skip_openbsd,
         .skip_windows = skip_windows,
         .skip_darwin = skip_darwin,
         .skip_linux = skip_linux,
@@ -464,6 +466,7 @@ pub fn build(b: *std.Build) !void {
         .skip_wasm = skip_wasm,
         .skip_freebsd = skip_freebsd,
         .skip_netbsd = skip_netbsd,
+        .skip_openbsd = skip_openbsd,
         .skip_windows = skip_windows,
         .skip_darwin = skip_darwin,
         .skip_linux = skip_linux,
@@ -508,6 +511,7 @@ pub fn build(b: *std.Build) !void {
         .skip_wasm = skip_wasm,
         .skip_freebsd = skip_freebsd,
         .skip_netbsd = skip_netbsd,
+        .skip_openbsd = skip_openbsd,
         .skip_windows = skip_windows,
         .skip_darwin = skip_darwin,
         .skip_linux = skip_linux,
@@ -552,6 +556,7 @@ pub fn build(b: *std.Build) !void {
         .skip_wasm = skip_wasm,
         .skip_freebsd = skip_freebsd,
         .skip_netbsd = skip_netbsd,
+        .skip_openbsd = skip_openbsd,
         .skip_windows = skip_windows,
         .skip_darwin = skip_darwin,
         .skip_linux = skip_linux,
@@ -577,6 +582,7 @@ pub fn build(b: *std.Build) !void {
         .skip_wasm = skip_wasm,
         .skip_freebsd = skip_freebsd,
         .skip_netbsd = skip_netbsd,
+        .skip_openbsd = skip_openbsd,
         .skip_windows = skip_windows,
         .skip_darwin = skip_darwin,
         .skip_linux = skip_linux,
@@ -642,6 +648,7 @@ pub fn build(b: *std.Build) !void {
         .skip_wasm = skip_wasm,
         .skip_freebsd = skip_freebsd,
         .skip_netbsd = skip_netbsd,
+        .skip_openbsd = skip_openbsd,
         .skip_windows = skip_windows,
         .skip_darwin = skip_darwin,
         .skip_linux = skip_linux,

@@ -455,6 +455,7 @@ pub const CaseTestOptions = struct {
     skip_wasm: bool,
     skip_freebsd: bool,
     skip_netbsd: bool,
+    skip_openbsd: bool,
     skip_windows: bool,
     skip_darwin: bool,
     skip_linux: bool,
@@ -487,6 +488,7 @@ pub fn lowerToBuildSteps(
 
         if (options.skip_freebsd and case.target.query.os_tag == .freebsd) continue;
         if (options.skip_netbsd and case.target.query.os_tag == .netbsd) continue;
+        if (options.skip_openbsd and case.target.query.os_tag == .openbsd) continue;
         if (options.skip_windows and case.target.query.os_tag == .windows) continue;
         if (options.skip_darwin and case.target.query.os_tag != null and case.target.query.os_tag.?.isDarwin()) continue;
         if (options.skip_linux and case.target.query.os_tag == .linux) continue;
