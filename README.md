@@ -485,16 +485,14 @@ interpret your words.
 ### Find a Contributor Friendly Issue
 
 The issue label
-[Contributor Friendly](https://github.com/ziglang/zig/issues?q=is%3Aissue+is%3Aopen+label%3A%22contributor+friendly%22)
+[Contributor Friendly](https://codeberg.org/ziglang/zig/issues?labels=741726&state=open)
 exists to help you find issues that are **limited in scope and/or
 knowledge of Zig internals.**
 
 Please note that issues labeled
-[Proposal](https://github.com/ziglang/zig/issues?q=is%3Aissue+is%3Aopen+label%3Aproposal)
-but do not also have the
-[Accepted](https://github.com/ziglang/zig/issues?q=is%3Aissue+is%3Aopen+label%3Aaccepted)
-label are still under consideration, and efforts to implement such a proposal
-have a high risk of being wasted. If you are interested in a proposal which is
+[Proposal: Proposed](https://codeberg.org/ziglang/zig/issues?labels=746937&state=open)
+are still under consideration, and efforts to implement such a proposal have
+a high risk of being wasted. If you are interested in a proposal which is
 still under consideration, please express your interest in the issue tracker,
 providing extra insights and considerations that others have not yet expressed.
 The most highly regarded argument in such a discussion is a real world use case.
@@ -777,7 +775,7 @@ If you will be debugging the Zig compiler itself, or if you will be debugging
 any project compiled with Zig's LLVM backend (not recommended with the LLDB
 fork, prefer vanilla LLDB with a version that matches the version of LLVM that
 Zig is using), you can get a better debugging experience by using
-[`lldb_pretty_printers.py`](https://github.com/ziglang/zig/blob/master/tools/lldb_pretty_printers.py).
+[`lldb_pretty_printers.py`](https://codeberg.org/ziglang/zig/src/branch/master/tools/lldb_pretty_printers.py).
 
 Put this line in `~/.lldbinit`:
 

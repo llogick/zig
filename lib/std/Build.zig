@@ -79,7 +79,7 @@ enable_rosetta: bool = false,
 enable_wasmtime: bool = false,
 /// Use system Wine installation to run cross compiled Windows build artifacts.
 enable_wine: bool = false,
-/// After following the steps in https://github.com/ziglang/zig/wiki/Updating-libc#glibc,
+/// After following the steps in https://codeberg.org/ziglang/infra/src/branch/master/libc-update/glibc.md,
 /// this will be the directory $glibc-build-dir/install/glibcs
 /// Given the example of the aarch64 target, this is the directory
 /// that contains the path `aarch64-linux-gnu/lib/ld-linux-aarch64.so.1`.
