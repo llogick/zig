@@ -54,6 +54,7 @@ CheckLastExitCode
 
 Write-Output "Main test suite..."
 & "stage3-debug\bin\zig.exe" build test docs `
+  --maxrss 32212254720 `
   --zig-lib-dir "$ZIG_LIB_DIR" `
   --search-prefix "$PREFIX_PATH" `
   -Dstatic-llvm `
