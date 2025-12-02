@@ -10881,6 +10881,23 @@ pub extern "c" fn pthread_create(
     start_routine: *const fn (?*anyopaque) callconv(.c) ?*anyopaque,
     noalias arg: ?*anyopaque,
 ) E;
+pub const pthread_cancelstate = switch (native_os) {
+    .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => enum(c_int) {
+        ENABLE = 1,
+        DISABLE = 0,
+    },
+    .linux => if (native_abi.isMusl()) enum(c_int) {
+        ENABLE = 0,
+        DISABLE = 1,
+        MASKED = 2,
+    } else if (native_abi.isGnu()) enum(c_int) {
+        ENABLE = 0,
+        DISABLE = 1,
+    },
+    else => void,
+};
+pub extern "c" fn pthread_setcancelstate(pthread_cancelstate, ?*pthread_cancelstate) E;
+pub extern "c" fn pthread_cancel(pthread_t) E;
 pub extern "c" fn pthread_attr_init(attr: *pthread_attr_t) E;
 pub extern "c" fn pthread_attr_setstack(attr: *pthread_attr_t, stackaddr: *anyopaque, stacksize: usize) E;
 pub extern "c" fn pthread_attr_setstacksize(attr: *pthread_attr_t, stacksize: usize) E;

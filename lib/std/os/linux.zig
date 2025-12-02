@@ -1748,9 +1748,7 @@ pub fn settimeofday(tv: *const timeval, tz: *const timezone) usize {
 }
 
 pub fn nanosleep(req: *const timespec, rem: ?*timespec) usize {
-    if (native_arch == .riscv32) {
-        @compileError("No nanosleep syscall on this architecture.");
-    } else return syscall2(.nanosleep, @intFromPtr(req), @intFromPtr(rem));
+    return syscall2(.nanosleep, @intFromPtr(req), @intFromPtr(rem));
 }
 
 pub fn pause() usize {
@@ -3773,6 +3771,7 @@ pub const SIG = if (is_mips) enum(u32) {
     PROF = 29,
     XCPU = 30,
     XFZ = 31,
+    _,
 } else if (is_sparc) enum(u32) {
     pub const BLOCK = 1;
     pub const UNBLOCK = 2;
@@ -3818,6 +3817,7 @@ pub const SIG = if (is_mips) enum(u32) {
     LOST = 29,
     USR1 = 30,
     USR2 = 31,
+    _,
 } else enum(u32) {
     pub const BLOCK = 0;
     pub const UNBLOCK = 1;
@@ -3861,6 +3861,7 @@ pub const SIG = if (is_mips) enum(u32) {
     IO = 29,
     PWR = 30,
     SYS = 31,
+    _,
 };
 
 pub const kernel_rwf = u32;
