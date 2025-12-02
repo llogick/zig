@@ -890,7 +890,7 @@ pub const Timestamp = struct {
     }
 
     pub fn withClock(t: Timestamp, clock: Clock) Clock.Timestamp {
-        return .{ .nanoseconds = t.nanoseconds, .clock = clock };
+        return .{ .raw = t, .clock = clock };
     }
 
     pub fn fromNanoseconds(x: i96) Timestamp {
