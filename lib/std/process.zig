@@ -690,6 +690,9 @@ pub const ArgIteratorWasi = struct {
 
     /// Call to free the internal buffer of the iterator.
     pub fn deinit(self: *ArgIteratorWasi) void {
+        // Nothing is allocated when there are no args
+        if (self.args.len == 0) return;
+
         const last_item = self.args[self.args.len - 1];
         const last_byte_addr = @intFromPtr(last_item.ptr) + last_item.len + 1; // null terminated
         const first_item_ptr = self.args[0].ptr;
