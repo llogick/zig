@@ -3,7 +3,6 @@ const Threaded = @This();
 const builtin = @import("builtin");
 const native_os = builtin.os.tag;
 const is_windows = native_os == .windows;
-const is_musl = native_os == .linux and builtin.link_libc and builtin.abi.isMusl();
 const windows = std.os.windows;
 const ws2_32 = std.os.windows.ws2_32;
 const is_debug = builtin.mode == .Debug;
@@ -63,12 +62,7 @@ pid: Pid = .unknown,
 /// Unfortunately, trying again until the cancellation request is acknowledged
 /// has been observed to be relatively slow, and usually strong cancellation
 /// guarantees are not needed, so this defaults to off.
-///
-/// Musl libc does not have this problem because of a clever, undocumented
-/// extension related to pthread_cancel, which this code integrates with.
-/// When compiling with no libc, `Threaded` does not yet implement the
-/// equivalent trick (tracked by https://codeberg.org/ziglang/zig/issues/30049).
-robust_cancel: RobustCancel = if (is_musl) .enabled else .disabled,
+robust_cancel: RobustCancel = .disabled,
 
 wsa: if (is_windows) Wsa else struct {} = .{},
 
@@ -76,9 +70,7 @@ have_signal_handler: bool,
 old_sig_io: if (have_sig_io) posix.Sigaction else void,
 old_sig_pipe: if (have_sig_pipe) posix.Sigaction else void,
 
-pub const RobustCancel = if (is_musl) enum {
-    enabled,
-} else if (std.Thread.use_pthreads or native_os == .linux) enum {
+pub const RobustCancel = if (std.Thread.use_pthreads or native_os == .linux) enum {
     enabled,
     disabled,
 } else enum {
@@ -113,15 +105,10 @@ const Thread = struct {
             .acknowledged,
             .acq_rel,
             .acquire,
-        ) orelse {
-            if (is_musl) assert(std.c.pthread_setcancelstate(.DISABLE, null) == .SUCCESS);
-            return error.Canceled;
-        }) {
+        ) orelse return error.Canceled) {
             .requested => unreachable,
             .acknowledged => unreachable,
-            .none, _ => {
-                if (is_musl) assert(std.c.pthread_setcancelstate(.MASKED, null) == .SUCCESS);
-            },
+            .none, _ => {},
         }
     }
 
@@ -139,7 +126,6 @@ const Thread = struct {
             .none => unreachable,
             .requested => {
                 @atomicStore(CancelStatus, &closure.cancel_status, .acknowledged, .release);
-                if (is_musl) assert(std.c.pthread_setcancelstate(.DISABLE, null) == .SUCCESS);
                 return error.Canceled;
             },
             .acknowledged => return,
@@ -149,7 +135,7 @@ const Thread = struct {
 
     fn endSyscall(thread: *Thread) void {
         const closure = thread.current_closure orelse return;
-        const prev = @cmpxchgStrong(
+        _ = @cmpxchgStrong(
             CancelStatus,
             &closure.cancel_status,
             .fromSignaleeId(thread.signal_id),
@@ -157,11 +143,6 @@ const Thread = struct {
             .acq_rel,
             .acquire,
         ) orelse return;
-        if (is_musl and prev == .requested) {
-            // They called pthread_cancel, but we want to disarm it since
-            // the next call to beginSyscall will notice requested status.
-            assert(std.c.pthread_setcancelstate(.DISABLE, null) == .SUCCESS);
-        }
     }
 
     fn currentSignalId() SignaleeId {
@@ -233,13 +214,6 @@ const Closure = struct {
             .none, .acknowledged, .requested => return,
             .signal_id => |signal_id| signal_id,
         };
-        // Musl has an undocumented extension that makes pthread_cancel have the useful, desired
-        // behavior of causing the next syscall to return ECANCELED.
-        if (is_musl) {
-            _ = std.c.pthread_cancel(signal_id);
-            return;
-        }
-
         // The task will enter a blocking syscall before checking for cancellation again.
         // We can send a signal to interrupt the syscall, but if it arrives before
         // the syscall instruction, it will be missed. Therefore, this code tries
@@ -328,7 +302,7 @@ pub fn init(
             .mask = posix.sigemptyset(),
             .flags = 0,
         };
-        if (!is_musl and have_sig_io) posix.sigaction(.IO, &act, &t.old_sig_io);
+        if (have_sig_io) posix.sigaction(.IO, &act, &t.old_sig_io);
         if (have_sig_pipe) posix.sigaction(.PIPE, &act, &t.old_sig_pipe);
         t.have_signal_handler = true;
     }
@@ -366,7 +340,7 @@ pub fn deinit(t: *Threaded) void {
         if (ws2_32.WSACleanup() != 0) recoverableOsBugDetected();
     }
     if (posix.Sigaction != void and t.have_signal_handler) {
-        if (!is_musl and have_sig_io) posix.sigaction(.IO, &t.old_sig_io, null);
+        if (have_sig_io) posix.sigaction(.IO, &t.old_sig_io, null);
         if (have_sig_pipe) posix.sigaction(.PIPE, &t.old_sig_pipe, null);
     }
     t.* = undefined;
@@ -397,15 +371,6 @@ fn worker(t: *Threaded) void {
     while (true) {
         while (t.run_queue.popFirst()) |closure_node| {
             t.mutex.unlock();
-
-            // Musl has an undocumented extension that makes pthread_cancel have the useful, desired
-            // behavior of causing the next syscall to return ECANCELED.
-            //
-            // The call to `requestCancel` and this can race, leading to
-            // ECANCELED being returned for a syscall in an unrelated task,
-            // which is why EINTR and ECANCELED are both handled with a check.
-            if (is_musl) assert(std.c.pthread_setcancelstate(.MASKED, null) == .SUCCESS);
-
             const closure: *Closure = @fieldParentPtr("node", closure_node);
             closure.start(closure, t);
             t.mutex.lock();
@@ -3460,8 +3425,7 @@ fn nowWasi(userdata: ?*anyopaque, clock: Io.Clock) Io.Clock.Error!Io.Timestamp {
 const sleep = switch (native_os) {
     .windows => sleepWindows,
     .wasi => sleepWasi,
-    // Since we use musl's pthread_cancel, it's important that all the syscalls go through libc.
-    .linux => if (is_musl) sleepPosix else sleepLinux,
+    .linux => sleepLinux,
     else => sleepPosix,
 };
 
