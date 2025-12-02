@@ -450,6 +450,7 @@ fn benchmarkPwhash(
     comptime ty: anytype,
     comptime params: *const anyopaque,
     comptime count: comptime_int,
+    io: std.Io,
 ) !f64 {
     const password = "testpass" ** 2;
     const opts = ty.HashOptions{
@@ -459,12 +460,20 @@ fn benchmarkPwhash(
     };
     var buf: [256]u8 = undefined;
 
+    const strHash = ty.strHash;
+    const strHashFnInfo = @typeInfo(@TypeOf(strHash)).@"fn";
+    const needs_io = strHashFnInfo.params.len == 4;
+
     var timer = try Timer.start();
     const start = timer.lap();
     {
         var i: usize = 0;
         while (i < count) : (i += 1) {
-            _ = try ty.strHash(password, opts, &buf);
+            if (needs_io) {
+                _ = try strHash(password, opts, &buf, io);
+            } else {
+                _ = try strHash(password, opts, &buf);
+            }
             mem.doNotOptimizeAway(&buf);
         }
     }
@@ -623,7 +632,7 @@ pub fn main() !void {
 
     inline for (pwhashes) |H| {
         if (filter == null or std.mem.indexOf(u8, H.name, filter.?) != null) {
-            const throughput = try benchmarkPwhash(arena_allocator, H.ty, H.params, mode(64));
+            const throughput = try benchmarkPwhash(arena_allocator, H.ty, H.params, mode(64), io);
             try stdout.print("{s:>17}: {d:10.3} s/ops\n", .{ H.name, throughput });
             try stdout.flush();
         }
