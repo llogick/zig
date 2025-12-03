@@ -59,7 +59,6 @@ Write-Output "Main test suite..."
   --search-prefix "$PREFIX_PATH" `
   -Dstatic-llvm `
   -Dskip-non-native `
-  -Dskip-release `
   -Dskip-test-incremental `
   -Denable-symlinks-windows `
   --test-timeout 30m
