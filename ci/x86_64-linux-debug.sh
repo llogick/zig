@@ -48,7 +48,7 @@ stage3-debug/bin/zig build \
   -Dno-lib
 
 stage3-debug/bin/zig build test docs \
-  --maxrss 21000000000 \
+  --maxrss ${ZSF_MAX_RSS:-0} \
   -Dlldb=$HOME/deps/lldb-zig/Debug-e0a42bb34/bin/lldb \
   -fqemu \
   -fwasmtime \

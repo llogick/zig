@@ -42,6 +42,7 @@ cmake .. \
 ninja install
 
 stage3-debug/bin/zig build test docs \
+  --maxrss ${ZSF_MAX_RSS:-0} \
   --zig-lib-dir "$PWD/../lib" \
   -Denable-macos-sdk \
   -Dstatic-llvm \

@@ -44,7 +44,7 @@ unset CXX
 ninja install
 
 stage3-release/bin/zig build test docs \
-  --maxrss 42949672960 \
+  --maxrss ${ZSF_MAX_RSS:-0} \
   -Dstatic-llvm \
   -Dskip-spirv \
   -Dskip-wasm \

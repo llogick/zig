@@ -51,6 +51,7 @@ stage3-release/bin/zig build test docs \
 
 # Ensure that stage3 and stage4 are byte-for-byte identical.
 stage3-release/bin/zig build \
+  --maxrss ${ZSF_MAX_RSS:-0} \
   --prefix stage4-release \
   -Denable-llvm \
   -Dno-lib \
