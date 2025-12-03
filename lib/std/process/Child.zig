@@ -122,7 +122,7 @@ pub const ResourceUsageStatistics = struct {
     /// if available.
     pub inline fn getMaxRss(rus: ResourceUsageStatistics) ?usize {
         switch (native_os) {
-            .freebsd, .illumos, .linux, .serenity => {
+            .dragonfly, .freebsd, .netbsd, .openbsd, .illumos, .linux, .serenity => {
                 if (rus.rusage) |ru| {
                     return @as(usize, @intCast(ru.maxrss)) * 1024;
                 } else {
@@ -149,7 +149,10 @@ pub const ResourceUsageStatistics = struct {
     }
 
     const rusage_init = switch (native_os) {
+        .dragonfly,
         .freebsd,
+        .netbsd,
+        .openbsd,
         .illumos,
         .linux,
         .serenity,
@@ -497,7 +500,10 @@ fn waitUnwrappedPosix(self: *ChildProcess) void {
     const res: posix.WaitPidResult = res: {
         if (self.request_resource_usage_statistics) {
             switch (native_os) {
+                .dragonfly,
                 .freebsd,
+                .netbsd,
+                .openbsd,
                 .illumos,
                 .linux,
                 .serenity,
