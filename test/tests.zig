@@ -2344,8 +2344,11 @@ fn addOneModuleTest(
     const libc_suffix = if (test_target.link_libc == true) "-libc" else "";
     const model_txt = target.cpu.model.name;
 
-    // wasm32-wasi builds need more RAM, idk why
-    const max_rss = if (target.os.tag == .wasi)
+    // These emulated targets need a lot more RAM for unknown reasons.
+    const max_rss = if (mem.eql(u8, options.name, "std") and
+        (target.cpu.arch == .hexagon or
+            (target.cpu.arch.isRISCV() and !resolved_target.query.isNative()) or
+            target.cpu.arch.isWasm()))
         options.max_rss * 2
     else
         options.max_rss;
@@ -2532,6 +2535,7 @@ const CAbiTestOptions = struct {
     skip_linux: bool,
     skip_llvm: bool,
     skip_release: bool,
+    max_rss: usize = 0,
 };
 
 pub fn addCAbiTests(b: *std.Build, options: CAbiTestOptions) *Step {
@@ -2604,6 +2608,7 @@ pub fn addCAbiTests(b: *std.Build, options: CAbiTestOptions) *Step {
                 .root_module = test_mod,
                 .use_llvm = c_abi_target.use_llvm,
                 .use_lld = c_abi_target.use_lld,
+                .max_rss = options.max_rss,
             });
 
             // This test is intentionally trying to check if the external ABI is

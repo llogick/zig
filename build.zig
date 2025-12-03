@@ -465,8 +465,29 @@ pub fn build(b: *std.Build) !void {
         .skip_linux = skip_linux,
         .skip_llvm = skip_llvm,
         .skip_libc = skip_libc,
-        // 3888779264 was observed on an x86_64-linux-gnu host.
-        .max_rss = 4000000000,
+        .max_rss = switch (b.graph.host.result.os.tag) {
+            .freebsd => switch (b.graph.host.result.cpu.arch) {
+                .x86_64 => 1_060_217_241,
+                else => 1_100_000_000,
+            },
+            .linux => switch (b.graph.host.result.cpu.arch) {
+                .aarch64 => 659_809_075,
+                .loongarch64 => 598_902_374,
+                .riscv64 => 731_258_880,
+                .s390x => 580_596_121,
+                .x86_64 => 3_290_894_745,
+                else => 3_300_000_000,
+            },
+            .macos => switch (b.graph.host.result.cpu.arch) {
+                .aarch64 => 767_736_217,
+                else => 800_000_000,
+            },
+            .windows => switch (b.graph.host.result.cpu.arch) {
+                .x86_64 => 603_070_054,
+                else => 700_000_000,
+            },
+            else => 3_300_000_000,
+        },
     }));
 
     test_modules_step.dependOn(tests.addModuleTests(b, .{
@@ -491,6 +512,29 @@ pub fn build(b: *std.Build) !void {
         .skip_llvm = skip_llvm,
         .skip_libc = true,
         .no_builtin = true,
+        .max_rss = switch (b.graph.host.result.os.tag) {
+            .freebsd => switch (b.graph.host.result.cpu.arch) {
+                .x86_64 => 743_802_470,
+                else => 800_000_000,
+            },
+            .linux => switch (b.graph.host.result.cpu.arch) {
+                .aarch64 => 639_565_414,
+                .loongarch64 => 598_884_352,
+                .riscv64 => 636_429_516,
+                .s390x => 574_166_630,
+                .x86_64 => 764_861_644,
+                else => 800_000_000,
+            },
+            .macos => switch (b.graph.host.result.cpu.arch) {
+                .aarch64 => 701_413_785,
+                else => 800_000_000,
+            },
+            .windows => switch (b.graph.host.result.cpu.arch) {
+                .x86_64 => 536_414_208,
+                else => 600_000_000,
+            },
+            else => 800_000_000,
+        },
     }));
 
     test_modules_step.dependOn(tests.addModuleTests(b, .{
@@ -515,6 +559,29 @@ pub fn build(b: *std.Build) !void {
         .skip_llvm = skip_llvm,
         .skip_libc = true,
         .no_builtin = true,
+        .max_rss = switch (b.graph.host.result.os.tag) {
+            .freebsd => switch (b.graph.host.result.cpu.arch) {
+                .x86_64 => 557_892_403,
+                else => 600_000_000,
+            },
+            .linux => switch (b.graph.host.result.cpu.arch) {
+                .aarch64 => 615_302_758,
+                .loongarch64 => 598_974_464,
+                .riscv64 => 382_786_764,
+                .s390x => 395_555_635,
+                .x86_64 => 692_348_518,
+                else => 700_000_000,
+            },
+            .macos => switch (b.graph.host.result.cpu.arch) {
+                .aarch64 => 451_389_030,
+                else => 500_000_000,
+            },
+            .windows => switch (b.graph.host.result.cpu.arch) {
+                .x86_64 => 367_747_072,
+                else => 400_000_000,
+            },
+            else => 700_000_000,
+        },
     }));
 
     test_modules_step.dependOn(tests.addModuleTests(b, .{
@@ -538,8 +605,29 @@ pub fn build(b: *std.Build) !void {
         .skip_linux = skip_linux,
         .skip_llvm = skip_llvm,
         .skip_libc = skip_libc,
-        // I observed a value of 5605064704 on the M2 CI.
-        .max_rss = 6165571174,
+        .max_rss = switch (b.graph.host.result.os.tag) {
+            .freebsd => switch (b.graph.host.result.cpu.arch) {
+                .x86_64 => 3_756_422_348,
+                else => 3_800_000_000,
+            },
+            .linux => switch (b.graph.host.result.cpu.arch) {
+                .aarch64 => 6_732_817_203,
+                .loongarch64 => 3_216_349_593,
+                .riscv64 => 3_570_899_763,
+                .s390x => 3_652_514_201,
+                .x86_64 => 3_249_546_854,
+                else => 6_800_000_000,
+            },
+            .macos => switch (b.graph.host.result.cpu.arch) {
+                .aarch64 => 8_273_795_481,
+                else => 8_300_000_000,
+            },
+            .windows => switch (b.graph.host.result.cpu.arch) {
+                .x86_64 => 3_750_236_160,
+                else => 3_800_000_000,
+            },
+            else => 8_300_000_000,
+        },
     }));
 
     const unit_tests_step = b.step("test-unit", "Run the compiler source unit tests");
@@ -555,6 +643,29 @@ pub fn build(b: *std.Build) !void {
         .use_llvm = use_llvm,
         .use_lld = use_llvm,
         .zig_lib_dir = b.path("lib"),
+        .max_rss = switch (b.graph.host.result.os.tag) {
+            .freebsd => switch (b.graph.host.result.cpu.arch) {
+                .x86_64 => 2_188_099_584,
+                else => 2_200_000_000,
+            },
+            .linux => switch (b.graph.host.result.cpu.arch) {
+                .aarch64 => 1_991_934_771,
+                .loongarch64 => 1_844_538_572,
+                .riscv64 => 2_459_003_289,
+                .s390x => 1_781_248_409,
+                .x86_64 => 977_192_550,
+                else => 2_500_000_000,
+            },
+            .macos => switch (b.graph.host.result.cpu.arch) {
+                .aarch64 => 2_062_393_344,
+                else => 2_100_000_000,
+            },
+            .windows => switch (b.graph.host.result.cpu.arch) {
+                .x86_64 => 1_953_087_488,
+                else => 2_000_000_000,
+            },
+            else => 2_500_000_000,
+        },
     });
     if (link_libc) {
         unit_tests.root_module.link_libc = true;
@@ -580,6 +691,29 @@ pub fn build(b: *std.Build) !void {
         .skip_linux = skip_linux,
         .skip_llvm = skip_llvm,
         .skip_release = skip_release,
+        .max_rss = switch (b.graph.host.result.os.tag) {
+            .freebsd => switch (b.graph.host.result.cpu.arch) {
+                .x86_64 => 727_221_862,
+                else => 800_000_000,
+            },
+            .linux => switch (b.graph.host.result.cpu.arch) {
+                .aarch64 => 1_318_185_369,
+                .loongarch64 => 1_422_904_524,
+                .riscv64 => 449_924_710,
+                .s390x => 1_946_743_603,
+                .x86_64 => 2_139_993_292,
+                else => 2_200_000_000,
+            },
+            .macos => switch (b.graph.host.result.cpu.arch) {
+                .aarch64 => 1_813_612_134,
+                else => 1_900_000_000,
+            },
+            .windows => switch (b.graph.host.result.cpu.arch) {
+                .x86_64 => 386_287_616,
+                else => 400_000_000,
+            },
+            else => 2_200_000_000,
+        },
     }));
     test_step.dependOn(tests.addLinkTests(b, enable_macos_sdk, enable_ios_sdk, enable_symlinks_windows));
     test_step.dependOn(tests.addStackTraceTests(b, test_filters, skip_non_native));
@@ -735,7 +869,29 @@ fn addCompilerMod(b: *std.Build, options: AddCompilerModOptions) *std.Build.Modu
 fn addCompilerStep(b: *std.Build, options: AddCompilerModOptions) *std.Build.Step.Compile {
     const exe = b.addExecutable(.{
         .name = "zig",
-        .max_rss = 7_800_000_000,
+        .max_rss = switch (b.graph.host.result.os.tag) {
+            .freebsd => switch (b.graph.host.result.cpu.arch) {
+                .x86_64 => 6_044_158_771,
+                else => 6_100_000_000,
+            },
+            .linux => switch (b.graph.host.result.cpu.arch) {
+                .aarch64 => 6_240_805_683,
+                .loongarch64 => 5_024_158_515,
+                .riscv64 => 6_996_309_196,
+                .s390x => 4_997_174_476,
+                .x86_64 => 5_486_090_649,
+                else => 7_000_000_000,
+            },
+            .macos => switch (b.graph.host.result.cpu.arch) {
+                .aarch64 => 6_639_145_779,
+                else => 6_700_000_000,
+            },
+            .windows => switch (b.graph.host.result.cpu.arch) {
+                .x86_64 => 5_770_394_009,
+                else => 5_800_000_000,
+            },
+            else => 7_000_000_000,
+        },
         .root_module = addCompilerMod(b, options),
     });
     exe.stack_size = stack_size;
