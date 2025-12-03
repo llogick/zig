@@ -4471,7 +4471,7 @@ pub const rusage = switch (native_os) {
         pub const SELF = 1;
         pub const CHILDREN = 2;
     },
-    .freebsd => extern struct {
+    .freebsd, .openbsd => extern struct {
         utime: timeval,
         stime: timeval,
         maxrss: c_long,
@@ -4492,6 +4492,27 @@ pub const rusage = switch (native_os) {
         pub const SELF = 0;
         pub const CHILDREN = -1;
         pub const THREAD = 1;
+    },
+    .dragonfly, .netbsd => extern struct {
+        utime: timeval,
+        stime: timeval,
+        maxrss: c_long,
+        ixrss: c_long,
+        idrss: c_long,
+        isrss: c_long,
+        minflt: c_long,
+        majflt: c_long,
+        nswap: c_long,
+        inblock: c_long,
+        oublock: c_long,
+        msgsnd: c_long,
+        msgrcv: c_long,
+        nsignals: c_long,
+        nvcsw: c_long,
+        nivcsw: c_long,
+
+        pub const SELF = 0;
+        pub const CHILDREN = -1;
     },
     else => void,
 };
