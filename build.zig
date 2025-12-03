@@ -798,7 +798,7 @@ fn addCmakeCfgOptionsToExe(
                 };
                 mod.linkSystemLibrary("unwind", .{});
             },
-            .ios, .macos, .watchos, .tvos, .visionos => {
+            .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => {
                 mod.link_libcpp = true;
             },
             .windows => {
