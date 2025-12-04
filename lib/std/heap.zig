@@ -141,7 +141,19 @@ test defaultQueryPageSize {
     assert(std.math.isPowerOfTwo(defaultQueryPageSize()));
 }
 
-const CAllocator = struct {
+/// A wrapper around the C memory allocation API which supports the full `Allocator`
+/// interface, including arbitrary alignment. Simple `malloc` calls are used when
+/// possible, but large requested alignments may require larger buffers in order to
+/// satisfy the request. As well as `malloc`, `realloc`, and `free`, the extension
+/// functions `malloc_usable_size` and `posix_memalign` are used when available.
+///
+/// For an allocator that directly calls `malloc`/`realloc`/`free`, with no padding
+/// or special handling, see `raw_c_allocator`.
+pub const c_allocator: Allocator = .{
+    .ptr = undefined,
+    .vtable = &c_allocator_impl.vtable,
+};
+const c_allocator_impl = struct {
     comptime {
         if (!builtin.link_libc) {
             @compileError("C allocator is only available when linking against libc");
@@ -155,67 +167,55 @@ const CAllocator = struct {
         .free = free,
     };
 
-    pub const supports_malloc_size = @TypeOf(malloc_size) != void;
-    pub const malloc_size = if (@TypeOf(c.malloc_size) != void)
-        c.malloc_size
-    else if (@TypeOf(c.malloc_usable_size) != void)
-        c.malloc_usable_size
-    else if (@TypeOf(c._msize) != void)
-        c._msize
-    else {};
-
-    pub const supports_posix_memalign = switch (builtin.os.tag) {
-        .dragonfly, .netbsd, .freebsd, .illumos, .openbsd, .linux, .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos, .serenity => true,
+    const have_posix_memalign = switch (builtin.os.tag) {
+        .dragonfly,
+        .netbsd,
+        .freebsd,
+        .illumos,
+        .openbsd,
+        .linux,
+        .driverkit,
+        .ios,
+        .maccatalyst,
+        .macos,
+        .tvos,
+        .visionos,
+        .watchos,
+        .serenity,
+        => true,
         else => false,
     };
 
-    fn getHeader(ptr: [*]u8) *[*]u8 {
-        return @ptrCast(@alignCast(ptr - @sizeOf(usize)));
+    fn allocStrat(need_align: Alignment) union(enum) {
+        raw,
+        posix_memalign: if (have_posix_memalign) void else noreturn,
+        manual_align: if (have_posix_memalign) noreturn else void,
+    } {
+        // If `malloc` guarantees `need_align`, always prefer a raw allocation.
+        if (Alignment.compare(need_align, .lte, .of(c.max_align_t))) {
+            return .raw;
+        }
+        // Use `posix_memalign` if available. Otherwise, we must manually align the allocation.
+        return if (have_posix_memalign) .posix_memalign else .manual_align;
     }
 
-    fn alignedAlloc(len: usize, alignment: Alignment) ?[*]u8 {
-        const alignment_bytes = alignment.toByteUnits();
-        if (supports_posix_memalign) {
-            // The posix_memalign only accepts alignment values that are a
-            // multiple of the pointer size
-            const effective_alignment = @max(alignment_bytes, @sizeOf(usize));
-
-            var aligned_ptr: ?*anyopaque = undefined;
-            if (c.posix_memalign(&aligned_ptr, effective_alignment, len) != 0)
-                return null;
-
-            return @ptrCast(aligned_ptr);
-        }
-
-        // Thin wrapper around regular malloc, overallocate to account for
-        // alignment padding and store the original malloc()'ed pointer before
-        // the aligned address.
-        const unaligned_ptr = @as([*]u8, @ptrCast(c.malloc(len + alignment_bytes - 1 + @sizeOf(usize)) orelse return null));
-        const unaligned_addr = @intFromPtr(unaligned_ptr);
-        const aligned_addr = mem.alignForward(usize, unaligned_addr + @sizeOf(usize), alignment_bytes);
-        const aligned_ptr = unaligned_ptr + (aligned_addr - unaligned_addr);
-        getHeader(aligned_ptr).* = unaligned_ptr;
-
-        return aligned_ptr;
-    }
-
-    fn alignedFree(ptr: [*]u8) void {
-        if (supports_posix_memalign) {
-            return c.free(ptr);
-        }
-
-        const unaligned_ptr = getHeader(ptr).*;
-        c.free(unaligned_ptr);
-    }
-
-    fn alignedAllocSize(ptr: [*]u8) usize {
-        if (supports_posix_memalign) {
-            return CAllocator.malloc_size(ptr);
-        }
-
-        const unaligned_ptr = getHeader(ptr).*;
-        const delta = @intFromPtr(ptr) - @intFromPtr(unaligned_ptr);
-        return CAllocator.malloc_size(unaligned_ptr) - delta;
+    /// If `allocStrat(a) == .manual_align`, an allocation looks like this:
+    ///
+    /// unaligned_ptr   hdr_ptr  aligned_ptr
+    /// v               v        v
+    /// +---------------+--------+--------------+
+    /// |    padding    | header | usable bytes |
+    /// +---------------+--------+--------------+
+    ///
+    /// * `unaligned_ptr` is the raw return value of `malloc`.
+    /// * `aligned_ptr` is computed by aligning `unaligned_ptr` forward; it is what `alloc` returns.
+    /// * `hdr_ptr` points to a pointer-sized header directly before the usable space. This header
+    ///   contains the value `unaligned_ptr`, so that we can pass it to `free` later. This is
+    ///   necessary because the width of the padding is unknown.
+    ///
+    /// This function accepts `aligned_ptr` and offsets it backwards to return `hdr_ptr`.
+    fn manualAlignHeader(aligned_ptr: [*]u8) *[*]u8 {
+        return @ptrCast(@alignCast(aligned_ptr - @sizeOf(usize)));
     }
 
     fn alloc(
@@ -226,67 +226,120 @@ const CAllocator = struct {
     ) ?[*]u8 {
         _ = return_address;
         assert(len > 0);
-        return alignedAlloc(len, alignment);
+        switch (allocStrat(alignment)) {
+            .raw => {
+                // C only needs to respect `max_align_t` up to the allocation size due to object
+                // alignment rules. If necessary, extend the allocation size.
+                const actual_len = @max(len, @alignOf(std.c.max_align_t));
+                const ptr = c.malloc(actual_len) orelse return null;
+                assert(alignment.check(@intFromPtr(ptr)));
+                return @ptrCast(ptr);
+            },
+            .posix_memalign => {
+                // The posix_memalign only accepts alignment values that are a
+                // multiple of the pointer size
+                const effective_alignment = @max(alignment.toByteUnits(), @sizeOf(usize));
+                var aligned_ptr: ?*anyopaque = undefined;
+                if (c.posix_memalign(&aligned_ptr, effective_alignment, len) != 0) {
+                    return null;
+                }
+                assert(alignment.check(@intFromPtr(aligned_ptr)));
+                return @ptrCast(aligned_ptr);
+            },
+            .manual_align => {
+                // Overallocate to account for alignment padding and store the original pointer
+                // returned by `malloc` before the aligned address.
+                const padded_len = len + @sizeOf(usize) + alignment.toByteUnits() - 1;
+                const unaligned_ptr: [*]u8 = @ptrCast(c.malloc(padded_len) orelse return null);
+                const unaligned_addr = @intFromPtr(unaligned_ptr);
+                const aligned_addr = alignment.forward(unaligned_addr + @sizeOf(usize));
+                const aligned_ptr = unaligned_ptr + (aligned_addr - unaligned_addr);
+                manualAlignHeader(aligned_ptr).* = unaligned_ptr;
+                return aligned_ptr;
+            },
+        }
     }
 
     fn resize(
         _: *anyopaque,
-        buf: []u8,
+        memory: []u8,
         alignment: Alignment,
         new_len: usize,
         return_address: usize,
     ) bool {
-        _ = alignment;
         _ = return_address;
-        if (new_len <= buf.len) {
-            return true;
+        assert(new_len > 0);
+        if (new_len <= memory.len) {
+            return true; // in-place shrink always works
         }
-        if (CAllocator.supports_malloc_size) {
-            const full_len = alignedAllocSize(buf.ptr);
-            if (new_len <= full_len) {
-                return true;
-            }
-        }
-        return false;
+        const mallocSize = func: {
+            if (@TypeOf(c.malloc_size) != void) break :func c.malloc_size;
+            if (@TypeOf(c.malloc_usable_size) != void) break :func c.malloc_usable_size;
+            if (@TypeOf(c._msize) != void) break :func c._msize;
+            return false; // we don't know how much space is actually available
+        };
+        const usable_len: usize = switch (allocStrat(alignment)) {
+            .raw, .posix_memalign => mallocSize(memory.ptr),
+            .manual_align => usable_len: {
+                const unaligned_ptr = manualAlignHeader(memory.ptr).*;
+                const full_len = mallocSize(unaligned_ptr);
+                const padding = @intFromPtr(memory.ptr) - @intFromPtr(unaligned_ptr);
+                break :usable_len full_len - padding;
+            },
+        };
+        return new_len <= usable_len;
     }
 
     fn remap(
-        context: *anyopaque,
+        ctx: *anyopaque,
         memory: []u8,
         alignment: Alignment,
         new_len: usize,
         return_address: usize,
     ) ?[*]u8 {
-        // realloc would potentially return a new allocation that does not
-        // respect the original alignment.
-        return if (resize(context, memory, alignment, new_len, return_address)) memory.ptr else null;
+        assert(new_len > 0);
+        // Prefer resizing in-place if possible, since `realloc` could be expensive even if legal.
+        if (resize(ctx, memory, alignment, new_len, return_address)) {
+            return memory.ptr;
+        }
+        switch (allocStrat(alignment)) {
+            .raw => {
+                // `malloc` and friends guarantee the required alignment, so we can try `realloc`.
+                // C only needs to respect `max_align_t` up to the allocation size due to object
+                // alignment rules. If necessary, extend the allocation size.
+                const actual_len = @max(new_len, @alignOf(std.c.max_align_t));
+                const new_ptr = c.realloc(memory.ptr, actual_len) orelse return null;
+                assert(alignment.check(@intFromPtr(new_ptr)));
+                return @ptrCast(new_ptr);
+            },
+            .posix_memalign, .manual_align => {
+                // `realloc` would potentially return a new allocation which does not respect
+                // the original alignment, so we can't do anything more.
+                return null;
+            },
+        }
     }
 
     fn free(
         _: *anyopaque,
-        buf: []u8,
+        memory: []u8,
         alignment: Alignment,
         return_address: usize,
     ) void {
-        _ = alignment;
         _ = return_address;
-        alignedFree(buf.ptr);
+        switch (allocStrat(alignment)) {
+            .raw, .posix_memalign => c.free(memory.ptr),
+            .manual_align => c.free(manualAlignHeader(memory.ptr).*),
+        }
     }
 };
 
-/// Supports the full Allocator interface, including alignment, and exploiting
-/// `malloc_usable_size` if available. For an allocator that directly calls
-/// `malloc`/`free`, see `raw_c_allocator`.
-pub const c_allocator: Allocator = .{
-    .ptr = undefined,
-    .vtable = &CAllocator.vtable,
-};
-
-/// Asserts allocations are within `@alignOf(std.c.max_align_t)` and directly
-/// calls `malloc`/`free`. Does not attempt to utilize `malloc_usable_size`.
-/// This allocator is safe to use as the backing allocator with
-/// `ArenaAllocator` for example and is more optimal in such a case than
-/// `c_allocator`.
+/// Asserts that allocations have alignments which `malloc` can satisfy. This means that
+/// the requested alignment is no greater than `@min(@alignOf(std.c.max_align_t), size)`.
+///
+/// This allocator is rarely appropriate to use. In general, prefer `c_allocator`, which
+/// does not have any special requirements of its input, but is still highly efficient for
+/// allocation requests which obey `malloc` alignment rules.
 pub const raw_c_allocator: Allocator = .{
     .ptr = undefined,
     .vtable = &raw_c_allocator_vtable,
@@ -306,13 +359,20 @@ fn rawCAlloc(
 ) ?[*]u8 {
     _ = context;
     _ = return_address;
-    assert(alignment.compare(.lte, .of(std.c.max_align_t)));
-    // Note that this pointer cannot be aligncasted to max_align_t because if
-    // len is < max_align_t then the alignment can be smaller. For example, if
-    // max_align_t is 16, but the user requests 8 bytes, there is no built-in
-    // type in C that is size 8 and has 16 byte alignment, so the alignment may
-    // be 8 bytes rather than 16. Similarly if only 1 byte is requested, malloc
-    // is allowed to return a 1-byte aligned pointer.
+    // `std.c.max_align_t` isn't the whole story, because if `len` is smaller than
+    // every C type with alignment `max_align_t`, the allocation can be less-aligned.
+    // The implementation need only guarantee that any type of length `len` would be
+    // suitably aligned.
+    //
+    // For instance, if `len == 8` and `alignment == .@"16"`, then `malloc` may not
+    // fulfil this request, because there is necessarily no C type with 8-byte size
+    // but 16-byte alignment.
+    //
+    // In theory, the resulting rule here would be target-specific, but in practice,
+    // the smallest type with an alignment of `max_align_t` has the same size (it's
+    // usually `c_longdouble`), so we can just check that `alignment <= len`.
+    assert(alignment.toByteUnits() <= len);
+    assert(Alignment.compare(alignment, .lte, .of(std.c.max_align_t)));
     return @ptrCast(c.malloc(len));
 }
 
@@ -339,8 +399,9 @@ fn rawCRemap(
     return_address: usize,
 ) ?[*]u8 {
     _ = context;
-    _ = alignment;
     _ = return_address;
+    // See `rawCMalloc` for an explanation of this `assert` call.
+    assert(alignment.toByteUnits() <= new_len);
     return @ptrCast(c.realloc(memory.ptr, new_len));
 }
 

@@ -167,14 +167,7 @@ pub fn main() anyerror!void {
     const gpa, const is_debug = gpa: {
         if (build_options.debug_gpa) break :gpa .{ debug_allocator.allocator(), true };
         if (native_os == .wasi) break :gpa .{ std.heap.wasm_allocator, false };
-        if (builtin.link_libc) {
-            // We would prefer to use raw libc allocator here, but cannot use
-            // it if it won't support the alignment we need.
-            if (@alignOf(std.c.max_align_t) < @max(@alignOf(i128), std.atomic.cache_line)) {
-                break :gpa .{ std.heap.c_allocator, false };
-            }
-            break :gpa .{ std.heap.raw_c_allocator, false };
-        }
+        if (builtin.link_libc) break :gpa .{ std.heap.c_allocator, false };
         break :gpa switch (builtin.mode) {
             .Debug, .ReleaseSafe => .{ debug_allocator.allocator(), true },
             .ReleaseFast, .ReleaseSmall => .{ std.heap.smp_allocator, false },
