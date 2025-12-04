@@ -3039,7 +3039,7 @@ pub const ar_hdr = extern struct {
     pub fn name(self: *const ar_hdr) ?[]const u8 {
         const value = &self.ar_name;
         if (value[0] == '/') return null;
-        const sentinel = mem.indexOfScalar(u8, value, '/') orelse value.len;
+        const sentinel = mem.findScalar(u8, value, '/') orelse value.len;
         return value[0..sentinel];
     }
 

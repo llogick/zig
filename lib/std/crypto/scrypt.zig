@@ -358,7 +358,7 @@ const crypt_format = struct {
             fn intDecode(comptime T: type, src: *const [(@bitSizeOf(T) + 5) / 6]u8) !T {
                 var v: T = 0;
                 for (src, 0..) |x, i| {
-                    const vi = mem.indexOfScalar(u8, &map64, x) orelse return EncodingError.InvalidEncoding;
+                    const vi = mem.findScalar(u8, &map64, x) orelse return EncodingError.InvalidEncoding;
                     v |= @as(T, @intCast(vi)) << @as(math.Log2Int(T), @intCast(i * 6));
                 }
                 return v;

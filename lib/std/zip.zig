@@ -539,7 +539,7 @@ pub const Iterator = struct {
             if (options.allow_backslashes) {
                 std.mem.replaceScalar(u8, filename, '\\', '/');
             } else {
-                if (std.mem.indexOfScalar(u8, filename, '\\')) |_|
+                if (std.mem.findScalar(u8, filename, '\\')) |_|
                     return error.ZipFilenameHasBackslash;
             }
 
@@ -626,7 +626,7 @@ pub const Diagnostics = struct {
         if (!self.saw_first_file) {
             self.saw_first_file = true;
             std.debug.assert(self.root_dir.len == 0);
-            const root_len = std.mem.indexOfScalar(u8, name, '/') orelse return;
+            const root_len = std.mem.findScalar(u8, name, '/') orelse return;
             std.debug.assert(root_len > 0);
             self.root_dir = try self.allocator.dupe(u8, name[0..root_len]);
         } else if (self.root_dir.len > 0) {

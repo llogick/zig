@@ -437,7 +437,7 @@ fn scanAllFunctions(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!void {
         };
 
         while (true) {
-            fr.seek = std.mem.indexOfNonePos(u8, fr.buffer, fr.seek, &.{
+            fr.seek = std.mem.findNonePos(u8, fr.buffer, fr.seek, &.{
                 zig_padding_abbrev_code, 0,
             }) orelse fr.buffer.len;
             if (fr.seek >= next_unit_pos) break;
@@ -1539,7 +1539,7 @@ fn getStringGeneric(opt_str: ?[]const u8, offset: u64) ![:0]const u8 {
     if (offset > str.len) return bad();
     const casted_offset = cast(usize, offset) orelse return bad();
     // Valid strings always have a terminating zero byte
-    const last = std.mem.indexOfScalarPos(u8, str, casted_offset, 0) orelse return bad();
+    const last = std.mem.findScalarPos(u8, str, casted_offset, 0) orelse return bad();
     return str[casted_offset..last :0];
 }
 

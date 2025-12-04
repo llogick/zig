@@ -84,7 +84,7 @@ pub fn order(lhs: Version, rhs: Version) std.math.Order {
 
 pub fn parse(text: []const u8) !Version {
     // Parse the required major, minor, and patch numbers.
-    const extra_index = std.mem.indexOfAny(u8, text, "-+");
+    const extra_index = std.mem.findAny(u8, text, "-+");
     const required = text[0..(extra_index orelse text.len)];
     var it = std.mem.splitScalar(u8, required, '.');
     var ver = Version{
@@ -98,7 +98,7 @@ pub fn parse(text: []const u8) !Version {
     // Slice optional pre-release or build metadata components.
     const extra: []const u8 = text[extra_index.?..text.len];
     if (extra[0] == '-') {
-        const build_index = std.mem.indexOfScalar(u8, extra, '+');
+        const build_index = std.mem.findScalar(u8, extra, '+');
         ver.pre = extra[1..(build_index orelse extra.len)];
         if (build_index) |idx| ver.build = extra[(idx + 1)..];
     } else {

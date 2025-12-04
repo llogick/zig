@@ -110,7 +110,7 @@ pub const StringIndexAdapter = struct {
     }
 
     pub fn hash(_: @This(), adapted_key: []const u8) u64 {
-        assert(mem.indexOfScalar(u8, adapted_key, 0) == null);
+        assert(mem.findScalar(u8, adapted_key, 0) == null);
         return hashString(adapted_key);
     }
 };

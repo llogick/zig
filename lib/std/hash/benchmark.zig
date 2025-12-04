@@ -443,7 +443,7 @@ pub fn main() !void {
     const allocator = gpa.allocator();
 
     inline for (hashes) |H| {
-        if (filter == null or std.mem.indexOf(u8, H.name, filter.?) != null) hash: {
+        if (filter == null or std.mem.find(u8, H.name, filter.?) != null) hash: {
             if (!test_iterative_only or H.has_iterative_api) {
                 try stdout.print("{s}\n", .{H.name});
                 try stdout.flush();

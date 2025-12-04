@@ -1509,7 +1509,7 @@ fn runCommand(
                 }
             },
             .expect_stderr_match => |match| {
-                if (mem.indexOf(u8, generic_result.stderr.?, match) == null) {
+                if (mem.find(u8, generic_result.stderr.?, match) == null) {
                     return step.fail(
                         \\========= expected to find in stderr: =========
                         \\{s}
@@ -1535,7 +1535,7 @@ fn runCommand(
                 }
             },
             .expect_stdout_match => |match| {
-                if (mem.indexOf(u8, generic_result.stdout.?, match) == null) {
+                if (mem.find(u8, generic_result.stdout.?, match) == null) {
                     return step.fail(
                         \\========= expected to find in stdout: =========
                         \\{s}

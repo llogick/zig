@@ -487,7 +487,7 @@ fn appendIdentStr(zg: *ZonGen, ident_token: Ast.TokenIndex) error{ OutOfMemory, 
     }
 
     const slice = zg.string_bytes.items[start..];
-    if (mem.indexOfScalar(u8, slice, 0) != null) {
+    if (mem.findScalar(u8, slice, 0) != null) {
         try zg.addErrorTok(ident_token, "identifier cannot contain null bytes", .{});
         return error.BadString;
     } else if (slice.len == 0) {
@@ -586,7 +586,7 @@ fn strLitAsString(zg: *ZonGen, str_node: Ast.Node.Index) error{ OutOfMemory, Bad
         },
     }
     const key: []const u8 = string_bytes.items[str_index..];
-    if (std.mem.indexOfScalar(u8, key, 0) != null) return .{ .slice = .{
+    if (std.mem.findScalar(u8, key, 0) != null) return .{ .slice = .{
         .start = str_index,
         .len = @intCast(key.len),
     } };
@@ -785,7 +785,7 @@ fn lowerStrLitError(
 }
 
 fn lowerNumberError(zg: *ZonGen, err: std.zig.number_literal.Error, token: Ast.TokenIndex, bytes: []const u8) Allocator.Error!void {
-    const is_float = std.mem.indexOfScalar(u8, bytes, '.') != null;
+    const is_float = std.mem.findScalar(u8, bytes, '.') != null;
     switch (err) {
         .leading_zero => if (is_float) {
             try zg.addErrorTok(token, "number '{s}' has leading zero", .{bytes});

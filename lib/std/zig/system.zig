@@ -1076,7 +1076,7 @@ fn detectAbiAndDynamicLinker(io: Io, cpu: Target.Cpu, os: Target.Os, query: Targ
                     const path_maybe_args = mem.trimEnd(u8, trimmed_line, "\n");
 
                     // Separate path and args.
-                    const path_end = mem.indexOfAny(u8, path_maybe_args, &.{ ' ', '\t', 0 }) orelse path_maybe_args.len;
+                    const path_end = mem.findAny(u8, path_maybe_args, &.{ ' ', '\t', 0 }) orelse path_maybe_args.len;
                     const unvalidated_path = path_maybe_args[0..path_end];
                     file_name = if (fs.path.isAbsolute(unvalidated_path)) unvalidated_path else return error.RelativeShebang;
                     continue;

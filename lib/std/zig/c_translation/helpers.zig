@@ -115,7 +115,7 @@ fn PromoteIntLiteralReturnType(comptime SuffixType: type, comptime number: compt
     else
         &signed_oct_hex;
 
-    var pos = std.mem.indexOfScalar(type, list, SuffixType).?;
+    var pos = std.mem.findScalar(type, list, SuffixType).?;
     while (pos < list.len) : (pos += 1) {
         if (number >= std.math.minInt(list[pos]) and number <= std.math.maxInt(list[pos])) {
             return list[pos];

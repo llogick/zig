@@ -109,7 +109,7 @@ fn iterateAndFilterByVersion(
             .build = "",
         };
         const suffix = entry.name[prefix.len..];
-        const underscore = std.mem.indexOfScalar(u8, entry.name, '_');
+        const underscore = std.mem.findScalar(u8, entry.name, '_');
         var num_it = std.mem.splitScalar(u8, suffix[0 .. underscore orelse suffix.len], '.');
         version.nums[0] = Version.parseNum(num_it.first()) orelse continue;
         for (version.nums[1..]) |*num|

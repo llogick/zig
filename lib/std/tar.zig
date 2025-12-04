@@ -71,7 +71,7 @@ pub const Diagnostics = struct {
         const start_index: usize = if (path[0] == '/') 1 else 0;
         const end_index: usize = if (path[path.len - 1] == '/') path.len - 1 else path.len;
         const buf = path[start_index..end_index];
-        if (std.mem.indexOfScalarPos(u8, buf, 0, '/')) |idx| {
+        if (std.mem.findScalarPos(u8, buf, 0, '/')) |idx| {
             return buf[0..idx];
         }
 
@@ -569,7 +569,7 @@ pub const PaxIterator = struct {
     }
 
     fn hasNull(str: []const u8) bool {
-        return (std.mem.indexOfScalar(u8, str, 0)) != null;
+        return (std.mem.findScalar(u8, str, 0)) != null;
     }
 
     // Checks that each record ends with new line.
@@ -667,7 +667,7 @@ fn stripComponents(path: []const u8, count: u32) []const u8 {
     var i: usize = 0;
     var c = count;
     while (c > 0) : (c -= 1) {
-        if (std.mem.indexOfScalarPos(u8, path, i, '/')) |pos| {
+        if (std.mem.findScalarPos(u8, path, i, '/')) |pos| {
             i = pos + 1;
         } else {
             i = path.len;

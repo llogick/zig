@@ -598,7 +598,7 @@ fn testFuzzedMatchLen(_: void, input: []const u8) !void {
     const bytes = w.buffered()[bytes_off..];
     old = @min(old, bytes.len - 1, token.max_length - 1);
 
-    const diff_index = mem.indexOfDiff(u8, prev, bytes).?; // unwrap since lengths are not same
+    const diff_index = mem.findDiff(u8, prev, bytes).?; // unwrap since lengths are not same
     const expected_len = @min(diff_index, 258);
     errdefer std.debug.print(
         \\prev : '{any}'

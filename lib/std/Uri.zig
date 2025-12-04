@@ -65,7 +65,7 @@ pub const Component = union(enum) {
     pub fn toRaw(component: Component, buffer: []u8) error{NoSpaceLeft}![]const u8 {
         return switch (component) {
             .raw => |raw| raw,
-            .percent_encoded => |percent_encoded| if (std.mem.indexOfScalar(u8, percent_encoded, '%')) |_|
+            .percent_encoded => |percent_encoded| if (std.mem.findScalar(u8, percent_encoded, '%')) |_|
                 try std.fmt.bufPrint(buffer, "{f}", .{std.fmt.alt(component, .formatRaw)})
             else
                 percent_encoded,
@@ -76,7 +76,7 @@ pub const Component = union(enum) {
     pub fn toRawMaybeAlloc(component: Component, arena: Allocator) Allocator.Error![]const u8 {
         return switch (component) {
             .raw => |raw| raw,
-            .percent_encoded => |percent_encoded| if (std.mem.indexOfScalar(u8, percent_encoded, '%')) |_|
+            .percent_encoded => |percent_encoded| if (std.mem.findScalar(u8, percent_encoded, '%')) |_|
                 try std.fmt.allocPrint(arena, "{f}", .{std.fmt.alt(component, .formatRaw)})
             else
                 percent_encoded,
@@ -89,7 +89,7 @@ pub const Component = union(enum) {
             .percent_encoded => |percent_encoded| {
                 var start: usize = 0;
                 var index: usize = 0;
-                while (std.mem.indexOfScalarPos(u8, percent_encoded, index, '%')) |percent| {
+                while (std.mem.findScalarPos(u8, percent_encoded, index, '%')) |percent| {
                     index = percent + 1;
                     if (percent_encoded.len - index < 2) continue;
                     const percent_encoded_char =
@@ -213,7 +213,7 @@ pub fn parseAfterScheme(scheme: []const u8, text: []const u8) ParseError!Uri {
     var i: usize = 0;
 
     if (std.mem.startsWith(u8, text, "//")) a: {
-        i = std.mem.indexOfAnyPos(u8, text, 2, &authority_sep) orelse text.len;
+        i = std.mem.findAnyPos(u8, text, 2, &authority_sep) orelse text.len;
         const authority = text[2..i];
         if (authority.len == 0) {
             if (!std.mem.startsWith(u8, text[2..], "/")) return error.InvalidFormat;
@@ -221,11 +221,11 @@ pub fn parseAfterScheme(scheme: []const u8, text: []const u8) ParseError!Uri {
         }
 
         var start_of_host: usize = 0;
-        if (std.mem.indexOf(u8, authority, "@")) |index| {
+        if (std.mem.find(u8, authority, "@")) |index| {
             start_of_host = index + 1;
             const user_info = authority[0..index];
 
-            if (std.mem.indexOf(u8, user_info, ":")) |idx| {
+            if (std.mem.find(u8, user_info, ":")) |idx| {
                 uri.user = .{ .percent_encoded = user_info[0..idx] };
                 if (idx < user_info.len - 1) { // empty password is also "no password"
                     uri.password = .{ .percent_encoded = user_info[idx + 1 ..] };
@@ -268,12 +268,12 @@ pub fn parseAfterScheme(scheme: []const u8, text: []const u8) ParseError!Uri {
     }
 
     const path_start = i;
-    i = std.mem.indexOfAnyPos(u8, text, path_start, &path_sep) orelse text.len;
+    i = std.mem.findAnyPos(u8, text, path_start, &path_sep) orelse text.len;
     uri.path = .{ .percent_encoded = text[path_start..i] };
 
     if (std.mem.startsWith(u8, text[i..], "?")) {
         const query_start = i + 1;
-        i = std.mem.indexOfScalarPos(u8, text, query_start, '#') orelse text.len;
+        i = std.mem.findScalarPos(u8, text, query_start, '#') orelse text.len;
         uri.query = .{ .percent_encoded = text[query_start..i] };
     }
 

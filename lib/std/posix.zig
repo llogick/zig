@@ -1773,7 +1773,7 @@ pub fn execvpeZ_expandArg0(
     envp: [*:null]const ?[*:0]const u8,
 ) ExecveError {
     const file_slice = mem.sliceTo(file, 0);
-    if (mem.indexOfScalar(u8, file_slice, '/') != null) return execveZ(file, child_argv, envp);
+    if (mem.findScalar(u8, file_slice, '/') != null) return execveZ(file, child_argv, envp);
 
     const PATH = getenvZ("PATH") orelse "/usr/local/bin:/bin/:/usr/bin";
     // Use of PATH_MAX here is valid as the path_buf will be passed
@@ -1829,7 +1829,7 @@ pub fn getenv(key: []const u8) ?[:0]const u8 {
     if (native_os == .windows) {
         @compileError("std.posix.getenv is unavailable for Windows because environment strings are in WTF-16 format. See std.process.getEnvVarOwned for a cross-platform API or std.process.getenvW for a Windows-specific API.");
     }
-    if (mem.indexOfScalar(u8, key, '=') != null) {
+    if (mem.findScalar(u8, key, '=') != null) {
         return null;
     }
     if (builtin.link_libc) {
@@ -6663,7 +6663,7 @@ pub fn unexpectedErrno(err: E) UnexpectedError {
 
 /// Used to convert a slice to a null terminated slice on the stack.
 pub fn toPosixPath(file_path: []const u8) error{NameTooLong}![PATH_MAX - 1:0]u8 {
-    if (std.debug.runtime_safety) assert(mem.indexOfScalar(u8, file_path, 0) == null);
+    if (std.debug.runtime_safety) assert(mem.findScalar(u8, file_path, 0) == null);
     var path_with_null: [PATH_MAX - 1:0]u8 = undefined;
     // >= rather than > to make room for the null byte
     if (file_path.len >= PATH_MAX) return error.NameTooLong;

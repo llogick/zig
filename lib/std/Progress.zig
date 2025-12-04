@@ -257,7 +257,7 @@ pub const Node = struct {
         const index = n.index.unwrap() orelse return;
         const storage = storageByIndex(index);
 
-        const name_len = @min(max_name_len, std.mem.indexOfScalar(u8, new_name, 0) orelse new_name.len);
+        const name_len = @min(max_name_len, std.mem.findScalar(u8, new_name, 0) orelse new_name.len);
 
         copyAtomicStore(storage.name[0..name_len], new_name[0..name_len]);
         if (name_len < storage.name.len)
@@ -1347,7 +1347,7 @@ fn computeNode(
     const storage = &serialized.storage[@intFromEnum(node_index)];
     const estimated_total = storage.estimated_total_count;
     const completed_items = storage.completed_count;
-    const name = if (std.mem.indexOfScalar(u8, &storage.name, 0)) |end| storage.name[0..end] else &storage.name;
+    const name = if (std.mem.findScalar(u8, &storage.name, 0)) |end| storage.name[0..end] else &storage.name;
     const parent = serialized.parents[@intFromEnum(node_index)];
 
     if (parent != .none) p: {

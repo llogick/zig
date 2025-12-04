@@ -88,7 +88,7 @@ const Action = struct {
         while (needle_it.next()) |needle_tok| {
             const hay_tok = hay_it.next() orelse break;
             if (mem.startsWith(u8, needle_tok, "{")) {
-                const closing_brace = mem.indexOf(u8, needle_tok, "}") orelse return error.MissingClosingBrace;
+                const closing_brace = mem.find(u8, needle_tok, "}") orelse return error.MissingClosingBrace;
                 if (closing_brace != needle_tok.len - 1) return error.ClosingBraceNotLast;
 
                 const name = needle_tok[1..closing_brace];
@@ -133,7 +133,7 @@ const Action = struct {
         assert(act.tag == .contains);
         const hay = mem.trim(u8, haystack, " ");
         const phrase = mem.trim(u8, act.phrase.resolve(b, step), " ");
-        return mem.indexOf(u8, hay, phrase) != null;
+        return mem.find(u8, hay, phrase) != null;
     }
 
     /// Returns true if the `phrase` does not exist within the haystack.
@@ -1662,7 +1662,7 @@ const MachODumper = struct {
 
             .dump_section => {
                 const name = mem.sliceTo(@as([*:0]const u8, @ptrCast(check.data.items.ptr + check.payload.dump_section)), 0);
-                const sep_index = mem.indexOfScalar(u8, name, ',') orelse
+                const sep_index = mem.findScalar(u8, name, ',') orelse
                     return step.fail("invalid section name: {s}", .{name});
                 const segname = name[0..sep_index];
                 const sectname = name[sep_index + 1 ..];

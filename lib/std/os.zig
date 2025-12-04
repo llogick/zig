@@ -113,7 +113,7 @@ pub fn getFdPath(fd: std.posix.fd_t, out_buffer: *[max_path_bytes]u8) std.posix.
                 // errno values to expect when command is F.GETPATH...
                 else => |err| return posix.unexpectedErrno(err),
             }
-            const len = mem.indexOfScalar(u8, out_buffer[0..], 0) orelse max_path_bytes;
+            const len = mem.findScalar(u8, out_buffer[0..], 0) orelse max_path_bytes;
             return out_buffer[0..len];
         },
         .linux, .serenity => {
@@ -150,7 +150,7 @@ pub fn getFdPath(fd: std.posix.fd_t, out_buffer: *[max_path_bytes]u8) std.posix.
                 .BADF => return error.FileNotFound,
                 else => |err| return posix.unexpectedErrno(err),
             }
-            const len = mem.indexOfScalar(u8, &kfile.path, 0) orelse max_path_bytes;
+            const len = mem.findScalar(u8, &kfile.path, 0) orelse max_path_bytes;
             if (len == 0) return error.NameTooLong;
             const result = out_buffer[0..len];
             @memcpy(result, kfile.path[0..len]);
@@ -164,7 +164,7 @@ pub fn getFdPath(fd: std.posix.fd_t, out_buffer: *[max_path_bytes]u8) std.posix.
                 .RANGE => return error.NameTooLong,
                 else => |err| return posix.unexpectedErrno(err),
             }
-            const len = mem.indexOfScalar(u8, out_buffer[0..], 0) orelse max_path_bytes;
+            const len = mem.findScalar(u8, out_buffer[0..], 0) orelse max_path_bytes;
             return out_buffer[0..len];
         },
         .netbsd => {
@@ -178,7 +178,7 @@ pub fn getFdPath(fd: std.posix.fd_t, out_buffer: *[max_path_bytes]u8) std.posix.
                 .RANGE => return error.NameTooLong,
                 else => |err| return posix.unexpectedErrno(err),
             }
-            const len = mem.indexOfScalar(u8, out_buffer[0..], 0) orelse max_path_bytes;
+            const len = mem.findScalar(u8, out_buffer[0..], 0) orelse max_path_bytes;
             return out_buffer[0..len];
         },
         else => unreachable, // made unreachable by isGetFdPathSupportedOnTarget above

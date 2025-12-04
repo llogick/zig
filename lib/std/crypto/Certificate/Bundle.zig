@@ -269,9 +269,9 @@ pub fn addCertsFromFile(cb: *Bundle, gpa: Allocator, file_reader: *Io.File.Reade
     const end_marker = "-----END CERTIFICATE-----";
 
     var start_index: usize = 0;
-    while (mem.indexOfPos(u8, encoded_bytes, start_index, begin_marker)) |begin_marker_start| {
+    while (mem.findPos(u8, encoded_bytes, start_index, begin_marker)) |begin_marker_start| {
         const cert_start = begin_marker_start + begin_marker.len;
-        const cert_end = mem.indexOfPos(u8, encoded_bytes, cert_start, end_marker) orelse
+        const cert_end = mem.findPos(u8, encoded_bytes, cert_start, end_marker) orelse
             return error.MissingEndCertificateMarker;
         start_index = cert_end + end_marker.len;
         const encoded_cert = mem.trim(u8, encoded_bytes[cert_start..cert_end], " \t\r\n");

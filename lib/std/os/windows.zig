@@ -1412,7 +1412,7 @@ pub fn GetFinalPathNameByHandle(
                 };
             }
 
-            const file_path_begin_index = mem.indexOfPos(u16, final_path, device_prefix.len, &[_]u16{'\\'}) orelse unreachable;
+            const file_path_begin_index = mem.findPos(u16, final_path, device_prefix.len, &[_]u16{'\\'}) orelse unreachable;
             const volume_name_u16 = final_path[0..file_path_begin_index];
             const device_name_u16 = volume_name_u16[device_prefix.len..];
             const file_name_u16 = final_path[file_path_begin_index..];
@@ -1494,7 +1494,7 @@ pub fn GetFinalPathNameByHandle(
                     const total_len = drive_letter.len + file_name_u16.len;
 
                     // Validate that DOS does not contain any spurious nul bytes.
-                    if (mem.indexOfScalar(u16, out_buffer[0..total_len], 0)) |_| {
+                    if (mem.findScalar(u16, out_buffer[0..total_len], 0)) |_| {
                         return error.BadPathName;
                     }
 
@@ -1544,7 +1544,7 @@ pub fn GetFinalPathNameByHandle(
                     const total_len = volume_path.len + file_name_u16.len;
 
                     // Validate that DOS does not contain any spurious nul bytes.
-                    if (mem.indexOfScalar(u16, out_buffer[0..total_len], 0)) |_| {
+                    if (mem.findScalar(u16, out_buffer[0..total_len], 0)) |_| {
                         return error.BadPathName;
                     }
 

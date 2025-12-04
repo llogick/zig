@@ -1758,7 +1758,7 @@ fn appendSlice(list: *std.array_list.Managed(u8), buf: []const u8, max_value_len
 /// This function will not give meaningful results on non-numeric input.
 pub fn isNumberFormattedLikeAnInteger(value: []const u8) bool {
     if (std.mem.eql(u8, value, "-0")) return false;
-    return std.mem.indexOfAny(u8, value, ".eE") == null;
+    return std.mem.findAny(u8, value, ".eE") == null;
 }
 
 test {

@@ -182,7 +182,7 @@ pub const Parser = struct {
 
     pub fn until(self: *@This(), delimiter: u8) []const u8 {
         const start = self.i;
-        self.i = std.mem.indexOfScalarPos(u8, self.bytes, self.i, delimiter) orelse self.bytes.len;
+        self.i = std.mem.findScalarPos(u8, self.bytes, self.i, delimiter) orelse self.bytes.len;
         return self.bytes[start..self.i];
     }
 

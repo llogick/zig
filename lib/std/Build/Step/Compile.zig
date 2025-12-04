@@ -372,7 +372,7 @@ pub const TestRunner = struct {
 
 pub fn create(owner: *std.Build, options: Options) *Compile {
     const name = owner.dupe(options.name);
-    if (mem.indexOf(u8, name, "/") != null or mem.indexOf(u8, name, "\\") != null) {
+    if (mem.find(u8, name, "/") != null or mem.find(u8, name, "\\") != null) {
         panic("invalid name: '{s}'. It looks like a file path, but it is supposed to be the library or application name.", .{name});
     }
 
@@ -731,7 +731,7 @@ fn runPkgConfig(compile: *Compile, lib_name: []const u8) !PkgConfigResult {
 
         // Prefixed "lib" or suffixed ".0".
         for (pkgs) |pkg| {
-            if (std.ascii.indexOfIgnoreCase(pkg.name, lib_name)) |pos| {
+            if (std.ascii.findIgnoreCase(pkg.name, lib_name)) |pos| {
                 const prefix = pkg.name[0..pos];
                 const suffix = pkg.name[pos + lib_name.len ..];
                 if (prefix.len > 0 and !mem.eql(u8, prefix, "lib")) continue;
@@ -2129,7 +2129,7 @@ fn matchCompileError(actual: []const u8, expected: []const u8) bool {
     // We scan for /?/ in expected line and if there is a match, we match everything
     // up to and after /?/.
     const expected_trim = mem.trim(u8, expected, " ");
-    if (mem.indexOf(u8, expected_trim, "/?/")) |index| {
+    if (mem.find(u8, expected_trim, "/?/")) |index| {
         const actual_trim = mem.trim(u8, actual, " ");
         const lhs = expected_trim[0..index];
         const rhs = expected_trim[index + "/?/".len ..];
