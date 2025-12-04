@@ -156,7 +156,7 @@ test whitespace {
 
     var i: u8 = 0;
     while (isAscii(i)) : (i += 1) {
-        if (isWhitespace(i)) try std.testing.expect(std.mem.indexOfScalar(u8, &whitespace, i) != null);
+        if (isWhitespace(i)) try std.testing.expect(std.mem.findScalar(u8, &whitespace, i) != null);
     }
 }
 
@@ -357,19 +357,25 @@ test endsWithIgnoreCase {
     try std.testing.expect(!endsWithIgnoreCase("BoB", "Bo"));
 }
 
+/// Deprecated in favor of `findIgnoreCase`.
+pub const indexOfIgnoreCase = findIgnoreCase;
+
 /// Finds `needle` in `haystack`, ignoring case, starting at index 0.
-pub fn indexOfIgnoreCase(haystack: []const u8, needle: []const u8) ?usize {
-    return indexOfIgnoreCasePos(haystack, 0, needle);
+pub fn findIgnoreCase(haystack: []const u8, needle: []const u8) ?usize {
+    return findIgnoreCasePos(haystack, 0, needle);
 }
 
+/// Deprecated in favor of `findIgnoreCasePos`.
+pub const indexOfIgnoreCasePos = findIgnoreCasePos;
+
 /// Finds `needle` in `haystack`, ignoring case, starting at `start_index`.
-/// Uses Boyer-Moore-Horspool algorithm on large inputs; `indexOfIgnoreCasePosLinear` on small inputs.
-pub fn indexOfIgnoreCasePos(haystack: []const u8, start_index: usize, needle: []const u8) ?usize {
+/// Uses Boyer-Moore-Horspool algorithm on large inputs; `findIgnoreCasePosLinear` on small inputs.
+pub fn findIgnoreCasePos(haystack: []const u8, start_index: usize, needle: []const u8) ?usize {
     if (needle.len > haystack.len) return null;
     if (needle.len == 0) return start_index;
 
     if (haystack.len < 52 or needle.len <= 4)
-        return indexOfIgnoreCasePosLinear(haystack, start_index, needle);
+        return findIgnoreCasePosLinear(haystack, start_index, needle);
 
     var skip_table: [256]usize = undefined;
     boyerMooreHorspoolPreprocessIgnoreCase(needle, skip_table[0..]);
@@ -383,9 +389,12 @@ pub fn indexOfIgnoreCasePos(haystack: []const u8, start_index: usize, needle: []
     return null;
 }
 
-/// Consider using `indexOfIgnoreCasePos` instead of this, which will automatically use a
+/// Deprecated in favor of `findIgnoreCaseLinear`.
+pub const indexOfIgnoreCasePosLinear = findIgnoreCasePosLinear;
+
+/// Consider using `findIgnoreCasePos` instead of this, which will automatically use a
 /// more sophisticated algorithm on larger inputs.
-pub fn indexOfIgnoreCasePosLinear(haystack: []const u8, start_index: usize, needle: []const u8) ?usize {
+pub fn findIgnoreCasePosLinear(haystack: []const u8, start_index: usize, needle: []const u8) ?usize {
     var i: usize = start_index;
     const end = haystack.len - needle.len;
     while (i <= end) : (i += 1) {
@@ -407,15 +416,15 @@ fn boyerMooreHorspoolPreprocessIgnoreCase(pattern: []const u8, table: *[256]usiz
     }
 }
 
-test indexOfIgnoreCase {
-    try std.testing.expect(indexOfIgnoreCase("one Two Three Four", "foUr").? == 14);
-    try std.testing.expect(indexOfIgnoreCase("one two three FouR", "gOur") == null);
-    try std.testing.expect(indexOfIgnoreCase("foO", "Foo").? == 0);
-    try std.testing.expect(indexOfIgnoreCase("foo", "fool") == null);
-    try std.testing.expect(indexOfIgnoreCase("FOO foo", "fOo").? == 0);
+test findIgnoreCase {
+    try std.testing.expect(findIgnoreCase("one Two Three Four", "foUr").? == 14);
+    try std.testing.expect(findIgnoreCase("one two three FouR", "gOur") == null);
+    try std.testing.expect(findIgnoreCase("foO", "Foo").? == 0);
+    try std.testing.expect(findIgnoreCase("foo", "fool") == null);
+    try std.testing.expect(findIgnoreCase("FOO foo", "fOo").? == 0);
 
-    try std.testing.expect(indexOfIgnoreCase("one two three four five six seven eight nine ten eleven", "ThReE fOUr").? == 8);
-    try std.testing.expect(indexOfIgnoreCase("one two three four five six seven eight nine ten eleven", "Two tWo") == null);
+    try std.testing.expect(findIgnoreCase("one two three four five six seven eight nine ten eleven", "ThReE fOUr").? == 8);
+    try std.testing.expect(findIgnoreCase("one two three four five six seven eight nine ten eleven", "Two tWo") == null);
 }
 
 /// Returns the lexicographical order of two slices. O(n).
