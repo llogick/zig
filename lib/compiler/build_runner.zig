@@ -53,24 +53,26 @@ pub fn main() !void {
     const cache_root = nextArg(args, &arg_idx) orelse fatal("missing cache root directory path", .{});
     const global_cache_root = nextArg(args, &arg_idx) orelse fatal("missing global cache root directory path", .{});
 
+    const cwd: Io.Dir = .cwd();
+
     const zig_lib_directory: std.Build.Cache.Directory = .{
         .path = zig_lib_dir,
-        .handle = try std.fs.cwd().openDir(zig_lib_dir, .{}),
+        .handle = try cwd.openDir(io, zig_lib_dir, .{}),
     };
 
     const build_root_directory: std.Build.Cache.Directory = .{
         .path = build_root,
-        .handle = try std.fs.cwd().openDir(build_root, .{}),
+        .handle = try cwd.openDir(io, build_root, .{}),
     };
 
     const local_cache_directory: std.Build.Cache.Directory = .{
         .path = cache_root,
-        .handle = try std.fs.cwd().makeOpenPath(cache_root, .{}),
+        .handle = try cwd.makeOpenPath(io, cache_root, .{}),
     };
 
     const global_cache_directory: std.Build.Cache.Directory = .{
         .path = global_cache_root,
-        .handle = try std.fs.cwd().makeOpenPath(global_cache_root, .{}),
+        .handle = try cwd.makeOpenPath(io, global_cache_root, .{}),
     };
 
     var graph: std.Build.Graph = .{
@@ -79,7 +81,7 @@ pub fn main() !void {
         .cache = .{
             .io = io,
             .gpa = arena,
-            .manifest_dir = try local_cache_directory.handle.makeOpenPath("h", .{}),
+            .manifest_dir = try local_cache_directory.handle.makeOpenPath(io, "h", .{}),
         },
         .zig_exe = zig_exe,
         .env_map = try process.getEnvMap(arena),
@@ -92,7 +94,7 @@ pub fn main() !void {
         .time_report = false,
     };
 
-    graph.cache.addPrefix(.{ .path = null, .handle = std.fs.cwd() });
+    graph.cache.addPrefix(.{ .path = null, .handle = cwd });
     graph.cache.addPrefix(build_root_directory);
     graph.cache.addPrefix(local_cache_directory);
     graph.cache.addPrefix(global_cache_directory);

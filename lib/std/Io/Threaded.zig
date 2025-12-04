@@ -657,12 +657,22 @@ pub fn io(t: *Threaded) Io {
             .dirMakeOpenPath = dirMakeOpenPath,
             .dirStat = dirStat,
             .dirStatPath = dirStatPath,
-            .fileStat = fileStat,
             .dirAccess = dirAccess,
             .dirCreateFile = dirCreateFile,
             .dirOpenFile = dirOpenFile,
             .dirOpenDir = dirOpenDir,
             .dirClose = dirClose,
+            .dirRealPath = dirRealPath,
+            .dirDeleteFile = dirDeleteFile,
+            .dirDeleteDir = dirDeleteDir,
+            .dirRename = dirRename,
+            .dirSymLink = dirSymLink,
+            .dirReadLink = dirReadLink,
+            .dirSetMode = dirSetMode,
+            .dirSetOwner = dirSetOwner,
+            .dirSetPermissions = dirSetPermissions,
+
+            .fileStat = fileStat,
             .fileClose = fileClose,
             .fileWriteStreaming = fileWriteStreaming,
             .fileWritePositional = fileWritePositional,
@@ -753,12 +763,22 @@ pub fn ioBasic(t: *Threaded) Io {
             .dirMakeOpenPath = dirMakeOpenPath,
             .dirStat = dirStat,
             .dirStatPath = dirStatPath,
-            .fileStat = fileStat,
             .dirAccess = dirAccess,
             .dirCreateFile = dirCreateFile,
             .dirOpenFile = dirOpenFile,
             .dirOpenDir = dirOpenDir,
             .dirClose = dirClose,
+            .dirRealPath = dirRealPath,
+            .dirDeleteFile = dirDeleteFile,
+            .dirDeleteDir = dirDeleteDir,
+            .dirRename = dirRename,
+            .dirSymLink = dirSymLink,
+            .dirReadLink = dirReadLink,
+            .dirSetMode = dirSetMode,
+            .dirSetOwner = dirSetOwner,
+            .dirSetPermissions = dirSetPermissions,
+
+            .fileStat = fileStat,
             .fileClose = fileClose,
             .fileWriteStreaming = fileWriteStreaming,
             .fileWritePositional = fileWritePositional,
@@ -3093,6 +3113,1335 @@ fn dirClose(userdata: ?*anyopaque, dir: Io.Dir) void {
     posix.close(dir.handle);
 }
 
+const dirRealPath = switch (native_os) {
+    .windows => dirRealPathWindows,
+    else => dirRealPathPosix,
+};
+
+fn dirRealPathWindows(userdata: ?*anyopaque, dir: Io.Dir, sub_path: []const u8, out_buffer: []u8) Io.Dir.RealPathError!usize {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const w = windows;
+    const current_thread = Thread.getCurrent(t);
+
+    try current_thread.checkCancel();
+
+    var path_name_w = try w.sliceToPrefixedFileW(dir.handle, sub_path);
+
+    const access_mask = w.GENERIC_READ | w.SYNCHRONIZE;
+    const share_access = w.FILE_SHARE_READ | w.FILE_SHARE_WRITE | w.FILE_SHARE_DELETE;
+    const creation = w.FILE_OPEN;
+    const h_file = blk: {
+        const res = w.OpenFile(path_name_w.span(), .{
+            .dir = dir.handle,
+            .access_mask = access_mask,
+            .share_access = share_access,
+            .creation = creation,
+            .filter = .any,
+        }) catch |err| switch (err) {
+            error.WouldBlock => unreachable,
+            else => |e| return e,
+        };
+        break :blk res;
+    };
+    defer w.CloseHandle(h_file);
+
+    const wide_slice = w.GetFinalPathNameByHandle(h_file, .{}, out_buffer);
+
+    const len = std.unicode.calcWtf8Len(wide_slice);
+    if (len > out_buffer.len)
+        return error.NameTooLong;
+
+    return std.unicode.wtf16LeToWtf8(out_buffer, wide_slice);
+}
+
+fn dirRealPathPosix(userdata: ?*anyopaque, dir: Io.Dir, sub_path: []const u8, out_buffer: []u8) Io.Dir.RealPathError!usize {
+    if (native_os == .wasi) @compileError("unsupported operating system");
+    const max_path_bytes = std.fs.max_path_bytes;
+
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+
+    var path_buffer: [posix.PATH_MAX]u8 = undefined;
+    const sub_path_posix = try pathToPosix(sub_path, &path_buffer);
+
+    var flags: posix.O = .{};
+    if (@hasField(posix.O, "NONBLOCK")) flags.NONBLOCK = true;
+    if (@hasField(posix.O, "CLOEXEC")) flags.CLOEXEC = true;
+    if (@hasField(posix.O, "PATH")) flags.PATH = true;
+
+    try current_thread.beginSyscall();
+    const fd: posix.fd_t = while (true) {
+        const rc = openat_sym(dir.handle, sub_path_posix, flags, 0);
+        switch (posix.errno(rc)) {
+            .SUCCESS => {
+                current_thread.endSyscall();
+                break @intCast(rc);
+            },
+            .INTR => {
+                try current_thread.checkCancel();
+                continue;
+            },
+            .CANCELED => return current_thread.endSyscallCanceled(),
+            else => |e| {
+                current_thread.endSyscall();
+                switch (e) {
+                    .FAULT => |err| return errnoBug(err),
+                    .INVAL => return error.BadPathName,
+                    .BADF => |err| return errnoBug(err), // File descriptor used after closed.
+                    .ACCES => return error.AccessDenied,
+                    .FBIG => return error.FileTooBig,
+                    .OVERFLOW => return error.FileTooBig,
+                    .ISDIR => return error.IsDir,
+                    .LOOP => return error.SymLinkLoop,
+                    .MFILE => return error.ProcessFdQuotaExceeded,
+                    .NAMETOOLONG => return error.NameTooLong,
+                    .NFILE => return error.SystemFdQuotaExceeded,
+                    .NODEV => return error.NoDevice,
+                    .NOENT => return error.FileNotFound,
+                    .SRCH => return error.ProcessNotFound,
+                    .NOMEM => return error.SystemResources,
+                    .NOSPC => return error.NoSpaceLeft,
+                    .NOTDIR => return error.NotDir,
+                    .PERM => return error.PermissionDenied,
+                    .EXIST => return error.PathAlreadyExists,
+                    .BUSY => return error.DeviceBusy,
+                    .NXIO => return error.NoDevice,
+                    .ILSEQ => return error.BadPathName,
+                    else => |err| return posix.unexpectedErrno(err),
+                }
+            },
+        }
+    };
+    errdefer posix.close(fd);
+
+    switch (native_os) {
+        .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => {
+            // On macOS, we can use F.GETPATH fcntl command to query the OS for
+            // the path to the file descriptor.
+            @memset(out_buffer, 0);
+            try current_thread.beginSyscall();
+            while (true) {
+                switch (posix.errno(posix.system.fcntl(fd, posix.F.GETPATH, out_buffer))) {
+                    .SUCCESS => {
+                        current_thread.endSyscall();
+                        break;
+                    },
+                    .INTR => {
+                        try current_thread.checkCancel();
+                        continue;
+                    },
+                    .CANCELED => return current_thread.endSyscallCanceled(),
+                    else => |e| {
+                        current_thread.endSyscall();
+                        switch (e) {
+                            .BADF => return error.FileNotFound,
+                            .NOSPC => return error.NameTooLong,
+                            .NOENT => return error.FileNotFound,
+                            // TODO man pages for fcntl on macOS don't really tell you what
+                            // errno values to expect when command is F.GETPATH...
+                            else => |err| return posix.unexpectedErrno(err),
+                        }
+                    },
+                }
+            }
+            return std.mem.indexOfScalar(u8, &out_buffer, 0) orelse out_buffer.len;
+        },
+        .linux, .serenity, .illumos => {
+            var procfs_buf: ["/proc/self/path/-2147483648\x00".len]u8 = undefined;
+            const template = if (native_os == .illumos) "/proc/self/path/{d}" else "/proc/self/fd/{d}";
+            const proc_path = std.fmt.bufPrintSentinel(&procfs_buf, template, .{fd}, 0) catch unreachable;
+            try current_thread.beginSyscall();
+            while (true) {
+                const rc = posix.system.readlink(proc_path, out_buffer.ptr, out_buffer.len);
+                switch (posix.errno(rc)) {
+                    .SUCCESS => {
+                        current_thread.endSyscall();
+                        const len: usize = @bitCast(rc);
+                        return len;
+                    },
+                    .INTR => {
+                        try current_thread.checkCancel();
+                        continue;
+                    },
+                    .CANCELED => return current_thread.endSyscallCanceled(),
+                    else => |e| {
+                        current_thread.endSyscall();
+                        switch (e) {
+                            .ACCES => return error.AccessDenied,
+                            .FAULT => |err| return errnoBug(err),
+                            .INVAL => return error.NotLink,
+                            .IO => return error.FileSystem,
+                            .LOOP => return error.SymLinkLoop,
+                            .NAMETOOLONG => return error.NameTooLong,
+                            .NOENT => return error.FileNotFound,
+                            .NOMEM => return error.SystemResources,
+                            .NOTDIR => return error.NotDir,
+                            .ILSEQ => |err| return errnoBug(err),
+                            else => |err| return posix.unexpectedErrno(err),
+                        }
+                    },
+                }
+            }
+        },
+        .freebsd => {
+            var kfile: std.c.kinfo_file = undefined;
+            kfile.structsize = std.c.KINFO_FILE_SIZE;
+            try current_thread.beginSyscall();
+            while (true) {
+                switch (posix.errno(std.c.fcntl(fd, std.c.F.KINFO, @intFromPtr(&kfile)))) {
+                    .SUCCESS => {
+                        current_thread.endSyscall();
+                        break;
+                    },
+                    .INTR => {
+                        try current_thread.checkCancel();
+                        continue;
+                    },
+                    .CANCELED => return current_thread.endSyscallCanceled(),
+                    else => |e| {
+                        current_thread.endSyscall();
+                        switch (e) {
+                            .BADF => return error.FileNotFound,
+                            else => |err| return posix.unexpectedErrno(err),
+                        }
+                    },
+                }
+            }
+            const len = std.mem.indexOfScalar(u8, &kfile.path, 0) orelse kfile.path.len;
+            if (len == 0) return error.NameTooLong;
+            return len;
+        },
+        .netbsd, .dragonfly => {
+            @memset(out_buffer[0..max_path_bytes], 0);
+            try current_thread.beginSyscall();
+            while (true) {
+                switch (posix.errno(std.c.fcntl(fd, posix.F.GETPATH, out_buffer))) {
+                    .SUCCESS => {
+                        current_thread.endSyscall();
+                        break;
+                    },
+                    .INTR => {
+                        try current_thread.checkCancel();
+                        continue;
+                    },
+                    .CANCELED => return current_thread.endSyscallCanceled(),
+                    else => |e| {
+                        current_thread.endSyscall();
+                        switch (e) {
+                            .ACCES => return error.AccessDenied,
+                            .BADF => return error.FileNotFound,
+                            .NOENT => return error.FileNotFound,
+                            .NOMEM => return error.SystemResources,
+                            .RANGE => return error.NameTooLong,
+                            else => |err| return posix.unexpectedErrno(err),
+                        }
+                    },
+                }
+            }
+            return std.mem.indexOfScalar(u8, &out_buffer, 0) orelse out_buffer.len;
+        },
+        else => @compileError("unsupported OS"),
+    }
+    comptime unreachable;
+}
+
+const dirDeleteFile = switch (native_os) {
+    .windows => dirDeleteFileWindows,
+    .wasi => dirDeleteFileWasi,
+    else => dirDeleteFilePosix,
+};
+
+fn dirDeleteFileWindows(userdata: ?*anyopaque, dir: Io.Dir, sub_path: []const u8) Io.Dir.DeleteFileError!void {
+    return dirDeleteWindows(userdata, dir, sub_path, false);
+}
+
+fn dirDeleteFileWasi(userdata: ?*anyopaque, dir: Io.Dir, sub_path: []const u8) Io.Dir.DeleteFileError!void {
+    if (builtin.link_libc) return dirDeleteFilePosix(userdata, dir, sub_path);
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+    try current_thread.beginSyscall();
+    while (true) {
+        const res = std.os.wasi.path_unlink_file(dir.handle, sub_path.ptr, sub_path.len);
+        switch (res) {
+            .SUCCESS => {
+                current_thread.endSyscall();
+                return;
+            },
+            .INTR => {
+                try current_thread.checkCancel();
+                continue;
+            },
+            .CANCELED => return current_thread.endSyscallCanceled(),
+            else => |e| {
+                current_thread.endSyscall();
+                switch (e) {
+                    .ACCES => return error.AccessDenied,
+                    .PERM => return error.PermissionDenied,
+                    .BUSY => return error.FileBusy,
+                    .FAULT => |err| return errnoBug(err),
+                    .IO => return error.FileSystem,
+                    .ISDIR => return error.IsDir,
+                    .LOOP => return error.SymLinkLoop,
+                    .NAMETOOLONG => return error.NameTooLong,
+                    .NOENT => return error.FileNotFound,
+                    .NOTDIR => return error.NotDir,
+                    .NOMEM => return error.SystemResources,
+                    .ROFS => return error.ReadOnlyFileSystem,
+                    .NOTEMPTY => return error.DirNotEmpty,
+                    .NOTCAPABLE => return error.AccessDenied,
+                    .ILSEQ => return error.BadPathName,
+                    .INVAL => |err| return errnoBug(err), // invalid flags, or pathname has . as last component
+                    .BADF => |err| return errnoBug(err), // File descriptor used after closed.
+                    else => |err| return posix.unexpectedErrno(err),
+                }
+            },
+        }
+    }
+}
+
+fn dirDeleteFilePosix(userdata: ?*anyopaque, dir: Io.Dir, sub_path: []const u8) Io.Dir.DeleteFileError!void {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+
+    var path_buffer: [posix.PATH_MAX]u8 = undefined;
+    const sub_path_posix = try pathToPosix(sub_path, &path_buffer);
+
+    try current_thread.beginSyscall();
+    while (true) {
+        switch (posix.errno(posix.system.unlinkat(dir.handle, sub_path_posix, 0))) {
+            .SUCCESS => {
+                current_thread.endSyscall();
+                return;
+            },
+            .INTR => {
+                try current_thread.checkCancel();
+                continue;
+            },
+            .CANCELED => return current_thread.endSyscallCanceled(),
+            // Some systems return permission errors when trying to delete a
+            // directory, so we need to handle that case specifically and
+            // translate the error.
+            .PERM => switch (native_os) {
+                .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos, .freebsd, .netbsd, .dragonfly, .openbsd, .illumos => {
+
+                    // Don't follow symlinks to match unlinkat (which acts on symlinks rather than follows them).
+                    var st = std.mem.zeroes(posix.Stat);
+                    while (true) {
+                        try current_thread.checkCancel();
+                        switch (posix.errno(fstatat_sym(dir.handle, sub_path_posix, &st, posix.AT.SYMLINK_NOFOLLOW))) {
+                            .SUCCESS => {
+                                current_thread.endSyscall();
+                                break;
+                            },
+                            .INTR => continue,
+                            .CANCELED => return current_thread.endSyscallCanceled(),
+                            else => {
+                                current_thread.endSyscall();
+                                return error.PermissionDenied;
+                            },
+                        }
+                    }
+                    const is_dir = st.mode & posix.S.IFMT == posix.S.IFDIR;
+                    if (is_dir)
+                        return error.IsDir
+                    else
+                        return error.PermissionDenied;
+                },
+                else => {
+                    current_thread.endSyscall();
+                    return error.PermissionDenied;
+                },
+            },
+            else => |e| {
+                current_thread.endSyscall();
+                switch (e) {
+                    .ACCES => return error.AccessDenied,
+                    .BUSY => return error.FileBusy,
+                    .FAULT => |err| return errnoBug(err),
+                    .IO => return error.FileSystem,
+                    .ISDIR => return error.IsDir,
+                    .LOOP => return error.SymLinkLoop,
+                    .NAMETOOLONG => return error.NameTooLong,
+                    .NOENT => return error.FileNotFound,
+                    .NOTDIR => return error.NotDir,
+                    .NOMEM => return error.SystemResources,
+                    .ROFS => return error.ReadOnlyFileSystem,
+                    .EXIST => |err| return errnoBug(err),
+                    .NOTEMPTY => |err| return errnoBug(err), // Not passing AT.REMOVEDIR
+                    .ILSEQ => return error.BadPathName,
+                    .INVAL => |err| return errnoBug(err), // invalid flags, or pathname has . as last component
+                    .BADF => |err| return errnoBug(err), // File descriptor used after closed.
+                    else => |err| return posix.unexpectedErrno(err),
+                }
+            },
+        }
+    }
+}
+
+const dirDeleteDir = switch (native_os) {
+    .windows => dirDeleteDirWindows,
+    .wasi => dirDeleteDirWasi,
+    else => dirDeleteDirPosix,
+};
+
+fn dirDeleteDirWindows(userdata: ?*anyopaque, dir: Io.Dir, sub_path: []const u8) Io.Dir.DeleteDirError!void {
+    return dirDeleteWindows(userdata, dir, sub_path, true);
+}
+
+fn dirDeleteWindows(userdata: ?*anyopaque, dir: Io.Dir, sub_path: []const u8, remove_dir: bool) Io.Dir.DeleteFileError!void {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+    const w = windows;
+
+    try current_thread.checkCancel();
+
+    const sub_path_w = try w.sliceToPrefixedFileW(dir.handle, sub_path);
+
+    const path_len_bytes = @as(u16, @intCast(sub_path_w.len * 2));
+    var nt_name: w.UNICODE_STRING = .{
+        .Length = path_len_bytes,
+        .MaximumLength = path_len_bytes,
+        // The Windows API makes this mutable, but it will not mutate here.
+        .Buffer = @constCast(sub_path_w.ptr),
+    };
+
+    if (sub_path_w[0] == '.' and sub_path_w[1] == 0) {
+        // Windows does not recognize this, but it does work with empty string.
+        nt_name.Length = 0;
+    }
+    if (sub_path_w[0] == '.' and sub_path_w[1] == '.' and sub_path_w[2] == 0) {
+        // Can't remove the parent directory with an open handle.
+        return error.FileBusy;
+    }
+
+    const create_options_flags: w.ULONG = if (remove_dir)
+        w.FILE_DIRECTORY_FILE | w.FILE_OPEN_REPARSE_POINT
+    else
+        w.FILE_NON_DIRECTORY_FILE | w.FILE_OPEN_REPARSE_POINT;
+
+    var attr: w.OBJECT_ATTRIBUTES = .{
+        .Length = @sizeOf(w.OBJECT_ATTRIBUTES),
+        .RootDirectory = if (std.fs.path.isAbsoluteWindowsWtf16(sub_path_w)) null else dir.handle,
+        .Attributes = w.OBJ_CASE_INSENSITIVE,
+        .ObjectName = &nt_name,
+        .SecurityDescriptor = null,
+        .SecurityQualityOfService = null,
+    };
+    var io_status_block: w.IO_STATUS_BLOCK = undefined;
+    var tmp_handle: w.HANDLE = undefined;
+    var rc = w.ntdll.NtCreateFile(
+        &tmp_handle,
+        w.SYNCHRONIZE | w.DELETE,
+        &attr,
+        &io_status_block,
+        null,
+        0,
+        w.FILE_SHARE_READ | w.FILE_SHARE_WRITE | w.FILE_SHARE_DELETE,
+        w.FILE_OPEN,
+        create_options_flags,
+        null,
+        0,
+    );
+    switch (rc) {
+        .SUCCESS => {},
+        .OBJECT_NAME_INVALID => unreachable,
+        .OBJECT_NAME_NOT_FOUND => return error.FileNotFound,
+        .OBJECT_PATH_NOT_FOUND => return error.FileNotFound,
+        .BAD_NETWORK_PATH => return error.NetworkNotFound, // \\server was not found
+        .BAD_NETWORK_NAME => return error.NetworkNotFound, // \\server was found but \\server\share wasn't
+        .INVALID_PARAMETER => unreachable,
+        .FILE_IS_A_DIRECTORY => return error.IsDir,
+        .NOT_A_DIRECTORY => return error.NotDir,
+        .SHARING_VIOLATION => return error.FileBusy,
+        .ACCESS_DENIED => return error.AccessDenied,
+        .DELETE_PENDING => return,
+        else => return w.unexpectedStatus(rc),
+    }
+    defer w.CloseHandle(tmp_handle);
+
+    // FileDispositionInformationEx has varying levels of support:
+    // - FILE_DISPOSITION_INFORMATION_EX requires >= win10_rs1
+    //   (INVALID_INFO_CLASS is returned if not supported)
+    // - Requires the NTFS filesystem
+    //   (on filesystems like FAT32, INVALID_PARAMETER is returned)
+    // - FILE_DISPOSITION_POSIX_SEMANTICS requires >= win10_rs1
+    // - FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE requires >= win10_rs5
+    //   (NOT_SUPPORTED is returned if a flag is unsupported)
+    //
+    // The strategy here is just to try using FileDispositionInformationEx and fall back to
+    // FileDispositionInformation if the return value lets us know that some aspect of it is not supported.
+    const need_fallback = need_fallback: {
+        try current_thread.checkCancel();
+
+        // Deletion with posix semantics if the filesystem supports it.
+        var info: w.FILE_DISPOSITION_INFORMATION_EX = .{
+            .Flags = w.FILE_DISPOSITION_DELETE |
+                w.FILE_DISPOSITION_POSIX_SEMANTICS |
+                w.FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE,
+        };
+
+        rc = w.ntdll.NtSetInformationFile(
+            tmp_handle,
+            &io_status_block,
+            &info,
+            @sizeOf(w.FILE_DISPOSITION_INFORMATION_EX),
+            .FileDispositionInformationEx,
+        );
+        switch (rc) {
+            .SUCCESS => return,
+            // The filesystem does not support FileDispositionInformationEx
+            .INVALID_PARAMETER,
+            // The operating system does not support FileDispositionInformationEx
+            .INVALID_INFO_CLASS,
+            // The operating system does not support one of the flags
+            .NOT_SUPPORTED,
+            => break :need_fallback true,
+            // For all other statuses, fall down to the switch below to handle them.
+            else => break :need_fallback false,
+        }
+    };
+
+    if (need_fallback) {
+        try current_thread.checkCancel();
+
+        // Deletion with file pending semantics, which requires waiting or moving
+        // files to get them removed (from here).
+        var file_dispo: w.FILE_DISPOSITION_INFORMATION = .{
+            .DeleteFile = w.TRUE,
+        };
+
+        rc = w.ntdll.NtSetInformationFile(
+            tmp_handle,
+            &io_status_block,
+            &file_dispo,
+            @sizeOf(w.FILE_DISPOSITION_INFORMATION),
+            .FileDispositionInformation,
+        );
+    }
+    switch (rc) {
+        .SUCCESS => {},
+        .DIRECTORY_NOT_EMPTY => return error.DirNotEmpty,
+        .INVALID_PARAMETER => unreachable,
+        .CANNOT_DELETE => return error.AccessDenied,
+        .MEDIA_WRITE_PROTECTED => return error.AccessDenied,
+        .ACCESS_DENIED => return error.AccessDenied,
+        else => return w.unexpectedStatus(rc),
+    }
+}
+
+fn dirDeleteDirWasi(userdata: ?*anyopaque, dir: Io.Dir, sub_path: []const u8) Io.Dir.DeleteDirError!void {
+    if (builtin.link_libc) return dirDeleteDirPosix(userdata, dir, sub_path);
+
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+
+    try current_thread.beginSyscall();
+    while (true) {
+        const res = std.os.wasi.path_remove_directory(dir.handle, sub_path.ptr, sub_path.len);
+        switch (res) {
+            .SUCCESS => {
+                current_thread.endSyscall();
+                return;
+            },
+            .INTR => {
+                try current_thread.checkCancel();
+                continue;
+            },
+            .CANCELED => return current_thread.endSyscallCanceled(),
+            else => |e| {
+                current_thread.endSyscall();
+                switch (e) {
+                    .ACCES => return error.AccessDenied,
+                    .PERM => return error.PermissionDenied,
+                    .BUSY => return error.FileBusy,
+                    .FAULT => |err| return errnoBug(err),
+                    .IO => return error.FileSystem,
+                    .ISDIR => return error.IsDir,
+                    .LOOP => return error.SymLinkLoop,
+                    .NAMETOOLONG => return error.NameTooLong,
+                    .NOENT => return error.FileNotFound,
+                    .NOTDIR => return error.NotDir,
+                    .NOMEM => return error.SystemResources,
+                    .ROFS => return error.ReadOnlyFileSystem,
+                    .NOTEMPTY => return error.DirNotEmpty,
+                    .NOTCAPABLE => return error.AccessDenied,
+                    .ILSEQ => return error.BadPathName,
+                    .INVAL => |err| return errnoBug(err), // invalid flags, or pathname has . as last component
+                    .BADF => |err| return errnoBug(err), // File descriptor used after closed.
+                    else => |err| return posix.unexpectedErrno(err),
+                }
+            },
+        }
+    }
+}
+
+fn dirDeleteDirPosix(userdata: ?*anyopaque, dir: Io.Dir, sub_path: []const u8) Io.Dir.DeleteDirError!void {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+
+    var path_buffer: [posix.PATH_MAX]u8 = undefined;
+    const sub_path_posix = try pathToPosix(sub_path, &path_buffer);
+
+    try current_thread.beginSyscall();
+    while (true) {
+        switch (posix.errno(posix.system.unlinkat(dir.handle, sub_path_posix, posix.AT.REMOVEDIR))) {
+            .SUCCESS => {
+                current_thread.endSyscall();
+                return;
+            },
+            .INTR => {
+                try current_thread.checkCancel();
+                continue;
+            },
+            .CANCELED => return current_thread.endSyscallCanceled(),
+            else => |e| {
+                current_thread.endSyscall();
+                switch (e) {
+                    .ACCES => return error.AccessDenied,
+                    .PERM => return error.PermissionDenied,
+                    .BUSY => return error.FileBusy,
+                    .FAULT => |err| return errnoBug(err),
+                    .IO => return error.FileSystem,
+                    .ISDIR => |err| return errnoBug(err),
+                    .LOOP => return error.SymLinkLoop,
+                    .NAMETOOLONG => return error.NameTooLong,
+                    .NOENT => return error.FileNotFound,
+                    .NOTDIR => return error.NotDir,
+                    .NOMEM => return error.SystemResources,
+                    .ROFS => return error.ReadOnlyFileSystem,
+                    .EXIST => |err| return errnoBug(err),
+                    .NOTEMPTY => |err| return errnoBug(err), // Not passing AT.REMOVEDIR
+                    .ILSEQ => return error.BadPathName,
+                    .INVAL => |err| return errnoBug(err), // invalid flags, or pathname has . as last component
+                    .BADF => |err| return errnoBug(err), // File descriptor used after closed.
+                    else => |err| return posix.unexpectedErrno(err),
+                }
+            },
+        }
+    }
+}
+
+const dirRename = switch (native_os) {
+    .windows => dirRenameWindows,
+    .wasi => dirRenameWasi,
+    else => dirRenamePosix,
+};
+
+fn dirRenameWindows(
+    userdata: ?*anyopaque,
+    old_dir: Io.Dir,
+    old_sub_path: []const u8,
+    new_dir: Io.Dir,
+    new_sub_path: []const u8,
+) Io.Dir.RenameError!void {
+    const w = windows;
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+
+    const old_path_w = try windows.sliceToPrefixedFileW(old_dir.handle, old_sub_path);
+    const new_path_w = try windows.sliceToPrefixedFileW(new_dir.handle, new_sub_path);
+    const replace_if_exists = true;
+
+    try current_thread.checkCancel();
+
+    const src_fd = w.OpenFile(old_path_w, .{
+        .dir = old_dir.handle,
+        .access_mask = w.SYNCHRONIZE | w.GENERIC_WRITE | w.DELETE,
+        .creation = w.FILE_OPEN,
+        .filter = .any, // This function is supposed to rename both files and directories.
+        .follow_symlinks = false,
+    }) catch |err| switch (err) {
+        error.WouldBlock => unreachable, // Not possible without `.share_access_nonblocking = true`.
+        else => |e| return e,
+    };
+    defer w.CloseHandle(src_fd);
+
+    var rc: w.NTSTATUS = undefined;
+    // FileRenameInformationEx has varying levels of support:
+    // - FILE_RENAME_INFORMATION_EX requires >= win10_rs1
+    //   (INVALID_INFO_CLASS is returned if not supported)
+    // - Requires the NTFS filesystem
+    //   (on filesystems like FAT32, INVALID_PARAMETER is returned)
+    // - FILE_RENAME_POSIX_SEMANTICS requires >= win10_rs1
+    // - FILE_RENAME_IGNORE_READONLY_ATTRIBUTE requires >= win10_rs5
+    //   (NOT_SUPPORTED is returned if a flag is unsupported)
+    //
+    // The strategy here is just to try using FileRenameInformationEx and fall back to
+    // FileRenameInformation if the return value lets us know that some aspect of it is not supported.
+    const need_fallback = need_fallback: {
+        const struct_buf_len = @sizeOf(w.FILE_RENAME_INFORMATION_EX) + (w.PATH_MAX_WIDE * 2);
+        var rename_info_buf: [struct_buf_len]u8 align(@alignOf(w.FILE_RENAME_INFORMATION_EX)) = undefined;
+        const struct_len = @sizeOf(w.FILE_RENAME_INFORMATION_EX) + new_path_w.len * 2;
+        if (struct_len > struct_buf_len) return error.NameTooLong;
+
+        const rename_info: *w.FILE_RENAME_INFORMATION_EX = @ptrCast(&rename_info_buf);
+        var io_status_block: w.IO_STATUS_BLOCK = undefined;
+
+        var flags: w.ULONG = w.FILE_RENAME_POSIX_SEMANTICS | w.FILE_RENAME_IGNORE_READONLY_ATTRIBUTE;
+        if (replace_if_exists) flags |= w.FILE_RENAME_REPLACE_IF_EXISTS;
+        rename_info.* = .{
+            .Flags = flags,
+            .RootDirectory = if (std.fs.path.isAbsoluteWindowsWtf16(new_path_w)) null else new_dir.handle,
+            .FileNameLength = @intCast(new_path_w.len * 2), // already checked error.NameTooLong
+            .FileName = undefined,
+        };
+        @memcpy((&rename_info.FileName).ptr, new_path_w);
+        rc = w.ntdll.NtSetInformationFile(
+            src_fd,
+            &io_status_block,
+            rename_info,
+            @intCast(struct_len), // already checked for error.NameTooLong
+            .FileRenameInformationEx,
+        );
+        switch (rc) {
+            .SUCCESS => return,
+            // The filesystem does not support FileDispositionInformationEx
+            .INVALID_PARAMETER,
+            // The operating system does not support FileDispositionInformationEx
+            .INVALID_INFO_CLASS,
+            // The operating system does not support one of the flags
+            .NOT_SUPPORTED,
+            => break :need_fallback true,
+            // For all other statuses, fall down to the switch below to handle them.
+            else => break :need_fallback false,
+        }
+    };
+
+    if (need_fallback) {
+        const struct_buf_len = @sizeOf(w.FILE_RENAME_INFORMATION) + (w.PATH_MAX_WIDE * 2);
+        var rename_info_buf: [struct_buf_len]u8 align(@alignOf(w.FILE_RENAME_INFORMATION)) = undefined;
+        const struct_len = @sizeOf(w.FILE_RENAME_INFORMATION) + new_path_w.len * 2;
+        if (struct_len > struct_buf_len) return error.NameTooLong;
+
+        const rename_info: *w.FILE_RENAME_INFORMATION = @ptrCast(&rename_info_buf);
+        var io_status_block: w.IO_STATUS_BLOCK = undefined;
+
+        rename_info.* = .{
+            .Flags = @intFromBool(replace_if_exists),
+            .RootDirectory = if (std.fs.path.isAbsoluteWindowsWtf16(new_path_w)) null else new_dir.handle,
+            .FileNameLength = @intCast(new_path_w.len * 2), // already checked error.NameTooLong
+            .FileName = undefined,
+        };
+        @memcpy((&rename_info.FileName).ptr, new_path_w);
+
+        rc = w.ntdll.NtSetInformationFile(
+            src_fd,
+            &io_status_block,
+            rename_info,
+            @intCast(struct_len), // already checked for error.NameTooLong
+            .FileRenameInformation,
+        );
+    }
+
+    switch (rc) {
+        .SUCCESS => {},
+        .INVALID_HANDLE => unreachable,
+        .INVALID_PARAMETER => unreachable,
+        .OBJECT_PATH_SYNTAX_BAD => unreachable,
+        .ACCESS_DENIED => return error.AccessDenied,
+        .OBJECT_NAME_NOT_FOUND => return error.FileNotFound,
+        .OBJECT_PATH_NOT_FOUND => return error.FileNotFound,
+        .NOT_SAME_DEVICE => return error.RenameAcrossMountPoints,
+        .OBJECT_NAME_COLLISION => return error.PathAlreadyExists,
+        .DIRECTORY_NOT_EMPTY => return error.PathAlreadyExists,
+        .FILE_IS_A_DIRECTORY => return error.IsDir,
+        .NOT_A_DIRECTORY => return error.NotDir,
+        else => return w.unexpectedStatus(rc),
+    }
+}
+
+fn dirRenameWasi(
+    userdata: ?*anyopaque,
+    old_dir: Io.Dir,
+    old_sub_path: []const u8,
+    new_dir: Io.Dir,
+    new_sub_path: []const u8,
+) Io.Dir.RenameError!void {
+    if (builtin.link_libc) return dirRenamePosix(userdata, old_dir, old_sub_path, new_dir, new_sub_path);
+
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+
+    try current_thread.beginSyscall();
+    while (true) {
+        switch (std.os.wasi.path_rename(old_dir.handle, old_sub_path.ptr, old_sub_path.len, new_dir.handle, new_sub_path.ptr, new_sub_path.len)) {
+            .SUCCESS => return current_thread.endSyscall(),
+            .CANCELED => return current_thread.endSyscallCanceled(),
+            .INTR => {
+                try current_thread.checkCancel();
+                continue;
+            },
+            else => |e| {
+                current_thread.endSyscall();
+                switch (e) {
+                    .ACCES => return error.AccessDenied,
+                    .PERM => return error.PermissionDenied,
+                    .BUSY => return error.FileBusy,
+                    .DQUOT => return error.DiskQuota,
+                    .FAULT => |err| return errnoBug(err),
+                    .INVAL => |err| return errnoBug(err),
+                    .ISDIR => return error.IsDir,
+                    .LOOP => return error.SymLinkLoop,
+                    .MLINK => return error.LinkQuotaExceeded,
+                    .NAMETOOLONG => return error.NameTooLong,
+                    .NOENT => return error.FileNotFound,
+                    .NOTDIR => return error.NotDir,
+                    .NOMEM => return error.SystemResources,
+                    .NOSPC => return error.NoSpaceLeft,
+                    .EXIST => return error.PathAlreadyExists,
+                    .NOTEMPTY => return error.PathAlreadyExists,
+                    .ROFS => return error.ReadOnlyFileSystem,
+                    .XDEV => return error.RenameAcrossMountPoints,
+                    .NOTCAPABLE => return error.AccessDenied,
+                    .ILSEQ => return error.BadPathName,
+                    else => |err| return posix.unexpectedErrno(err),
+                }
+            },
+        }
+    }
+}
+
+fn dirRenamePosix(
+    userdata: ?*anyopaque,
+    old_dir: Io.Dir,
+    old_sub_path: []const u8,
+    new_dir: Io.Dir,
+    new_sub_path: []const u8,
+) Io.Dir.RenameError!void {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+
+    var old_path_buffer: [posix.PATH_MAX]u8 = undefined;
+    var new_path_buffer: [posix.PATH_MAX]u8 = undefined;
+
+    const old_sub_path_posix = try pathToPosix(old_sub_path, &old_path_buffer);
+    const new_sub_path_posix = try pathToPosix(new_sub_path, &new_path_buffer);
+
+    try current_thread.beginSyscall();
+    while (true) {
+        switch (posix.errno(posix.system.renameat(old_dir.handle, old_sub_path_posix, new_dir.handle, new_sub_path_posix))) {
+            .SUCCESS => return current_thread.endSyscall(),
+            .CANCELED => return current_thread.endSyscallCanceled(),
+            .INTR => {
+                try current_thread.checkCancel();
+                continue;
+            },
+            else => |e| {
+                current_thread.endSyscall();
+                switch (e) {
+                    .ACCES => return error.AccessDenied,
+                    .PERM => return error.PermissionDenied,
+                    .BUSY => return error.FileBusy,
+                    .DQUOT => return error.DiskQuota,
+                    .FAULT => |err| return errnoBug(err),
+                    .INVAL => |err| return errnoBug(err),
+                    .ISDIR => return error.IsDir,
+                    .LOOP => return error.SymLinkLoop,
+                    .MLINK => return error.LinkQuotaExceeded,
+                    .NAMETOOLONG => return error.NameTooLong,
+                    .NOENT => return error.FileNotFound,
+                    .NOTDIR => return error.NotDir,
+                    .NOMEM => return error.SystemResources,
+                    .NOSPC => return error.NoSpaceLeft,
+                    .EXIST => return error.PathAlreadyExists,
+                    .NOTEMPTY => return error.PathAlreadyExists,
+                    .ROFS => return error.ReadOnlyFileSystem,
+                    .XDEV => return error.RenameAcrossMountPoints,
+                    .ILSEQ => return error.BadPathName,
+                    else => |err| return posix.unexpectedErrno(err),
+                }
+            },
+        }
+    }
+}
+
+const dirSymLink = switch (native_os) {
+    .windows => dirSymLinkWindows,
+    .wasi => dirSymLinkWasi,
+    else => dirSymLinkPosix,
+};
+
+fn dirSymLinkWindows(
+    userdata: ?*anyopaque,
+    dir: Io.Dir,
+    target_path: []const u8,
+    sym_link_path: []const u8,
+    flags: Io.Dir.SymLinkFlags,
+) Io.Dir.SymLinkError!void {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+    const w = windows;
+
+    try current_thread.checkCancel();
+
+    // Target path does not use sliceToPrefixedFileW because certain paths
+    // are handled differently when creating a symlink than they would be
+    // when converting to an NT namespaced path. CreateSymbolicLink in
+    // symLinkW will handle the necessary conversion.
+    var target_path_w: w.PathSpace = undefined;
+    target_path_w.len = try w.wtf8ToWtf16Le(&target_path_w.data, target_path);
+    target_path_w.data[target_path_w.len] = 0;
+    // However, we need to canonicalize any path separators to `\`, since if
+    // the target path is relative, then it must use `\` as the path separator.
+    std.mem.replaceScalar(
+        u16,
+        target_path_w.data[0..target_path_w.len],
+        std.mem.nativeToLittle(u16, '/'),
+        std.mem.nativeToLittle(u16, '\\'),
+    );
+
+    const sym_link_path_w = try w.sliceToPrefixedFileW(dir.handle, sym_link_path);
+
+    const SYMLINK_DATA = extern struct {
+        ReparseTag: w.ULONG,
+        ReparseDataLength: w.USHORT,
+        Reserved: w.USHORT,
+        SubstituteNameOffset: w.USHORT,
+        SubstituteNameLength: w.USHORT,
+        PrintNameOffset: w.USHORT,
+        PrintNameLength: w.USHORT,
+        Flags: w.ULONG,
+    };
+
+    const symlink_handle = w.OpenFile(sym_link_path_w.span(), .{
+        .access_mask = w.SYNCHRONIZE | w.GENERIC_READ | w.GENERIC_WRITE,
+        .dir = dir,
+        .creation = w.FILE_CREATE,
+        .filter = if (flags.is_directory) .dir_only else .file_only,
+    }) catch |err| switch (err) {
+        error.IsDir => return error.PathAlreadyExists,
+        error.NotDir => return error.Unexpected,
+        error.WouldBlock => return error.Unexpected,
+        error.PipeBusy => return error.Unexpected,
+        error.NoDevice => return error.Unexpected,
+        error.AntivirusInterference => return error.Unexpected,
+        else => |e| return e,
+    };
+    defer w.CloseHandle(symlink_handle);
+
+    // Relevant portions of the documentation:
+    // > Relative links are specified using the following conventions:
+    // > - Root relative—for example, "\Windows\System32" resolves to "current drive:\Windows\System32".
+    // > - Current working directory–relative—for example, if the current working directory is
+    // >   C:\Windows\System32, "C:File.txt" resolves to "C:\Windows\System32\File.txt".
+    // > Note: If you specify a current working directory–relative link, it is created as an absolute
+    // > link, due to the way the current working directory is processed based on the user and the thread.
+    // https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-createsymboliclinkw
+    var is_target_absolute = false;
+    const final_target_path = target_path: {
+        if (w.hasCommonNtPrefix(u16, target_path)) {
+            // Already an NT path, no need to do anything to it
+            break :target_path target_path;
+        } else {
+            switch (w.getWin32PathType(u16, target_path)) {
+                // Rooted paths need to avoid getting put through wToPrefixedFileW
+                // (and they are treated as relative in this context)
+                // Note: It seems that rooted paths in symbolic links are relative to
+                //       the drive that the symbolic exists on, not to the CWD's drive.
+                //       So, if the symlink is on C:\ and the CWD is on D:\,
+                //       it will still resolve the path relative to the root of
+                //       the C:\ drive.
+                .rooted => break :target_path target_path,
+                // Keep relative paths relative, but anything else needs to get NT-prefixed.
+                else => if (!std.fs.path.isAbsoluteWindowsWtf16(target_path))
+                    break :target_path target_path,
+            }
+        }
+        var prefixed_target_path = try w.wToPrefixedFileW(dir, target_path);
+        // We do this after prefixing to ensure that drive-relative paths are treated as absolute
+        is_target_absolute = std.fs.path.isAbsoluteWindowsWtf16(prefixed_target_path.span());
+        break :target_path prefixed_target_path.span();
+    };
+
+    // prepare reparse data buffer
+    var buffer: [w.MAXIMUM_REPARSE_DATA_BUFFER_SIZE]u8 = undefined;
+    const buf_len = @sizeOf(SYMLINK_DATA) + final_target_path.len * 4;
+    const header_len = @sizeOf(w.ULONG) + @sizeOf(w.USHORT) * 2;
+    const target_is_absolute = std.fs.path.isAbsoluteWindowsWtf16(final_target_path);
+    const symlink_data = SYMLINK_DATA{
+        .ReparseTag = w.IO_REPARSE_TAG_SYMLINK,
+        .ReparseDataLength = @intCast(buf_len - header_len),
+        .Reserved = 0,
+        .SubstituteNameOffset = @intCast(final_target_path.len * 2),
+        .SubstituteNameLength = @intCast(final_target_path.len * 2),
+        .PrintNameOffset = 0,
+        .PrintNameLength = @intCast(final_target_path.len * 2),
+        .Flags = if (!target_is_absolute) w.SYMLINK_FLAG_RELATIVE else 0,
+    };
+
+    @memcpy(buffer[0..@sizeOf(SYMLINK_DATA)], std.mem.asBytes(&symlink_data));
+    @memcpy(buffer[@sizeOf(SYMLINK_DATA)..][0 .. final_target_path.len * 2], @as([*]const u8, @ptrCast(final_target_path)));
+    const paths_start = @sizeOf(SYMLINK_DATA) + final_target_path.len * 2;
+    @memcpy(buffer[paths_start..][0 .. final_target_path.len * 2], @as([*]const u8, @ptrCast(final_target_path)));
+    _ = try w.DeviceIoControl(symlink_handle, w.FSCTL_SET_REPARSE_POINT, buffer[0..buf_len], null);
+}
+
+fn dirSymLinkWasi(
+    userdata: ?*anyopaque,
+    dir: Io.Dir,
+    target_path: []const u8,
+    sym_link_path: []const u8,
+    flags: Io.Dir.SymLinkFlags,
+) Io.Dir.SymLinkError!void {
+    if (builtin.link_libc) return dirSymLinkPosix(dir, target_path, sym_link_path, flags);
+
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+
+    try current_thread.beginSyscall();
+    while (true) {
+        switch (std.os.wasi.path_symlink(target_path.ptr, target_path.len, dir.handle, sym_link_path.ptr, sym_link_path.len)) {
+            .SUCCESS => return current_thread.endSyscall(),
+            .CANCELED => return current_thread.endSyscallCanceled(),
+            .INTR => {
+                try current_thread.checkCancel();
+                continue;
+            },
+            else => |e| {
+                current_thread.endSyscall();
+                switch (e) {
+                    .FAULT => |err| return errnoBug(err),
+                    .INVAL => |err| return errnoBug(err),
+                    .BADF => |err| return errnoBug(err),
+                    .ACCES => return error.AccessDenied,
+                    .PERM => return error.PermissionDenied,
+                    .DQUOT => return error.DiskQuota,
+                    .EXIST => return error.PathAlreadyExists,
+                    .IO => return error.FileSystem,
+                    .LOOP => return error.SymLinkLoop,
+                    .NAMETOOLONG => return error.NameTooLong,
+                    .NOENT => return error.FileNotFound,
+                    .NOTDIR => return error.NotDir,
+                    .NOMEM => return error.SystemResources,
+                    .NOSPC => return error.NoSpaceLeft,
+                    .ROFS => return error.ReadOnlyFileSystem,
+                    .NOTCAPABLE => return error.AccessDenied,
+                    .ILSEQ => return error.BadPathName,
+                    else => |err| return posix.unexpectedErrno(err),
+                }
+            },
+        }
+    }
+}
+
+fn dirSymLinkPosix(
+    userdata: ?*anyopaque,
+    dir: Io.Dir,
+    target_path: []const u8,
+    sym_link_path: []const u8,
+    flags: Io.Dir.SymLinkFlags,
+) Io.Dir.SymLinkError!void {
+    _ = flags;
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+
+    var target_path_buffer: [posix.PATH_MAX]u8 = undefined;
+    var sym_link_path_buffer: [posix.PATH_MAX]u8 = undefined;
+
+    const target_path_posix = try pathToPosix(target_path, &target_path_buffer);
+    const sym_link_path_posix = try pathToPosix(sym_link_path, &sym_link_path_buffer);
+
+    try current_thread.beginSyscall();
+    while (true) {
+        switch (posix.errno(posix.system.symlinkat(target_path_posix, dir.handle, sym_link_path_posix))) {
+            .SUCCESS => return current_thread.endSyscall(),
+            .CANCELED => return current_thread.endSyscallCanceled(),
+            .INTR => {
+                try current_thread.checkCancel();
+                continue;
+            },
+            else => |e| {
+                current_thread.endSyscall();
+                switch (e) {
+                    .FAULT => |err| return errnoBug(err),
+                    .INVAL => |err| return errnoBug(err),
+                    .ACCES => return error.AccessDenied,
+                    .PERM => return error.PermissionDenied,
+                    .DQUOT => return error.DiskQuota,
+                    .EXIST => return error.PathAlreadyExists,
+                    .IO => return error.FileSystem,
+                    .LOOP => return error.SymLinkLoop,
+                    .NAMETOOLONG => return error.NameTooLong,
+                    .NOENT => return error.FileNotFound,
+                    .NOTDIR => return error.NotDir,
+                    .NOMEM => return error.SystemResources,
+                    .NOSPC => return error.NoSpaceLeft,
+                    .ROFS => return error.ReadOnlyFileSystem,
+                    .ILSEQ => return error.BadPathName,
+                    else => |err| return posix.unexpectedErrno(err),
+                }
+            },
+        }
+    }
+}
+
+const dirReadLink = switch (native_os) {
+    .windows => dirReadLinkWindows,
+    .wasi => dirReadLinkWasi,
+    else => dirReadLinkPosix,
+};
+
+fn dirReadLinkWindows(userdata: ?*anyopaque, dir: Io.Dir, sub_path: []const u8, buffer: []u8) Io.Dir.ReadLinkError!usize {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+    const w = windows;
+
+    try current_thread.checkCancel();
+
+    var sub_path_w = try windows.sliceToPrefixedFileW(dir.handle, sub_path);
+
+    const result_handle = w.OpenFile(sub_path_w.span(), .{
+        .access_mask = w.FILE_READ_ATTRIBUTES | w.SYNCHRONIZE,
+        .dir = dir,
+        .creation = w.FILE_OPEN,
+        .follow_symlinks = false,
+        .filter = .any,
+    }) catch |err| switch (err) {
+        error.IsDir, error.NotDir => return error.Unexpected, // filter = .any
+        error.PathAlreadyExists => return error.Unexpected, // FILE_OPEN
+        error.WouldBlock => return error.Unexpected,
+        error.NoDevice => return error.FileNotFound,
+        error.PipeBusy => return error.AccessDenied,
+        else => |e| return e,
+    };
+    defer w.CloseHandle(result_handle);
+
+    var reparse_buf: [w.MAXIMUM_REPARSE_DATA_BUFFER_SIZE]u8 align(@alignOf(w.REPARSE_DATA_BUFFER)) = undefined;
+    _ = w.DeviceIoControl(result_handle, w.FSCTL_GET_REPARSE_POINT, null, reparse_buf[0..]) catch |err| switch (err) {
+        error.AccessDenied => return error.Unexpected,
+        error.UnrecognizedVolume => return error.Unexpected,
+        else => |e| return e,
+    };
+
+    const reparse_struct: *const w.REPARSE_DATA_BUFFER = @ptrCast(@alignCast(&reparse_buf[0]));
+    const wide_result = switch (reparse_struct.ReparseTag) {
+        w.IO_REPARSE_TAG_SYMLINK => r: {
+            const buf: *const w.SYMBOLIC_LINK_REPARSE_BUFFER = @ptrCast(@alignCast(&reparse_struct.DataBuffer[0]));
+            const offset = buf.SubstituteNameOffset >> 1;
+            const len = buf.SubstituteNameLength >> 1;
+            const path_buf: [*]const u16 = &buf.PathBuffer;
+            const is_relative = buf.Flags & w.SYMLINK_FLAG_RELATIVE != 0;
+            break :r try w.parseReadLinkPath(path_buf[offset..][0..len], is_relative, buffer);
+        },
+        w.IO_REPARSE_TAG_MOUNT_POINT => r: {
+            const buf: *const w.MOUNT_POINT_REPARSE_BUFFER = @ptrCast(@alignCast(&reparse_struct.DataBuffer[0]));
+            const offset = buf.SubstituteNameOffset >> 1;
+            const len = buf.SubstituteNameLength >> 1;
+            const path_buf: [*]const u16 = &buf.PathBuffer;
+            break :r try w.parseReadLinkPath(path_buf[offset..][0..len], false, buffer);
+        },
+        else => return error.UnsupportedReparsePointType,
+    };
+
+    const len = std.unicode.calcWtf8Len(wide_result);
+    if (len > buffer.len) return error.NameTooLong;
+
+    return std.unicode.wtf16LeToWtf8(buffer, wide_result);
+}
+
+fn dirReadLinkWasi(userdata: ?*anyopaque, dir: Io.Dir, sub_path: []const u8, buffer: []u8) Io.Dir.ReadLinkError!usize {
+    if (builtin.link_libc) return dirReadLinkPosix(userdata, dir, sub_path, buffer);
+
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+
+    var n: usize = undefined;
+    try current_thread.beginSyscall();
+    while (true) {
+        switch (std.os.wasi.path_readlink(dir.handle, sub_path.ptr, sub_path.len, buffer.ptr, buffer.len, &n)) {
+            .SUCCESS => {
+                current_thread.endSyscall();
+                return buffer[0..n];
+            },
+            .CANCELED => return current_thread.endSyscallCanceled(),
+            .INTR => {
+                try current_thread.checkCancel();
+                continue;
+            },
+            else => |e| {
+                current_thread.endSyscall();
+                switch (e) {
+                    .ACCES => return error.AccessDenied,
+                    .FAULT => |err| return errnoBug(err),
+                    .INVAL => return error.NotLink,
+                    .IO => return error.FileSystem,
+                    .LOOP => return error.SymLinkLoop,
+                    .NAMETOOLONG => return error.NameTooLong,
+                    .NOENT => return error.FileNotFound,
+                    .NOMEM => return error.SystemResources,
+                    .NOTDIR => return error.NotDir,
+                    .NOTCAPABLE => return error.AccessDenied,
+                    .ILSEQ => return error.BadPathName,
+                    else => |err| return posix.unexpectedErrno(err),
+                }
+            },
+        }
+    }
+}
+
+fn dirReadLinkPosix(userdata: ?*anyopaque, dir: Io.Dir, sub_path: []const u8, buffer: []u8) Io.Dir.ReadLinkError!usize {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+
+    var sub_path_buffer: [posix.PATH_MAX]u8 = undefined;
+    const sub_path_posix = try pathToPosix(sub_path, &sub_path_buffer);
+
+    try current_thread.beginSyscall();
+    while (true) {
+        const rc = posix.system.readlinkat(dir.handle, sub_path_posix, buffer.ptr, buffer.len);
+        switch (posix.errno(rc)) {
+            .SUCCESS => {
+                current_thread.endSyscall();
+                const len: usize = @bitCast(rc);
+                return len;
+            },
+            .CANCELED => return current_thread.endSyscallCanceled(),
+            .INTR => {
+                try current_thread.checkCancel();
+                continue;
+            },
+            else => |e| {
+                current_thread.endSyscall();
+                switch (e) {
+                    .ACCES => return error.AccessDenied,
+                    .FAULT => |err| return errnoBug(err),
+                    .INVAL => return error.NotLink,
+                    .IO => return error.FileSystem,
+                    .LOOP => return error.SymLinkLoop,
+                    .NAMETOOLONG => return error.NameTooLong,
+                    .NOENT => return error.FileNotFound,
+                    .NOMEM => return error.SystemResources,
+                    .NOTDIR => return error.NotDir,
+                    .ILSEQ => return error.BadPathName,
+                    else => |err| return posix.unexpectedErrno(err),
+                }
+            },
+        }
+    }
+}
+
+const dirSetMode = switch (native_os) {
+    .windows => dirSetModeUnsupported,
+    else => dirSetModePosix,
+};
+
+fn dirSetModeUnsupported(userdata: ?*anyopaque, dir: Io.Dir, new_mode: Io.Dir.Mode) Io.Dir.SetModeError!void {
+    _ = userdata;
+    _ = dir;
+    _ = new_mode;
+    return error.Unexpected;
+}
+
+fn dirSetModePosix(userdata: ?*anyopaque, dir: Io.Dir, new_mode: Io.Dir.Mode) Io.Dir.SetModeError!void {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+
+    try current_thread.beginSyscall();
+    while (true) {
+        switch (posix.errno(posix.system.fchmod(dir.handle, new_mode))) {
+            .SUCCESS => return current_thread.endSyscall(),
+            .CANCELED => return current_thread.endSyscallCanceled(),
+            .INTR => {
+                try current_thread.checkCancel();
+                continue;
+            },
+            else => |e| {
+                current_thread.endSyscall();
+                switch (e) {
+                    .BADF => |err| return errnoBug(err),
+                    .FAULT => |err| return errnoBug(err),
+                    .INVAL => |err| return errnoBug(err),
+                    .ACCES => return error.AccessDenied,
+                    .IO => return error.InputOutput,
+                    .LOOP => return error.SymLinkLoop,
+                    .NOENT => return error.FileNotFound,
+                    .NOMEM => return error.SystemResources,
+                    .NOTDIR => return error.FileNotFound,
+                    .PERM => return error.PermissionDenied,
+                    .ROFS => return error.ReadOnlyFileSystem,
+                    else => |err| return posix.unexpectedErrno(err),
+                }
+            },
+        }
+    }
+}
+
+const dirSetOwner = switch (native_os) {
+    .windows => dirSetOwnerUnsupported,
+    else => dirSetOwnerPosix,
+};
+
+fn dirSetOwnerUnsupported(userdata: ?*anyopaque, dir: Io.Dir, owner: ?Io.File.Uid, group: ?Io.File.Gid) Io.Dir.SetOwnerError!void {
+    _ = userdata;
+    _ = dir;
+    _ = owner;
+    _ = group;
+    return error.Unexpected;
+}
+
+fn dirSetOwnerPosix(userdata: ?*anyopaque, dir: Io.Dir, owner: ?Io.File.Uid, group: ?Io.File.Gid) Io.Dir.SetOwnerError!void {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+    const uid = owner orelse ~@as(posix.uid_t, 0);
+    const gid = group orelse ~@as(posix.gid_t, 0);
+
+    try current_thread.beginSyscall();
+    while (true) {
+        switch (posix.errno(posix.system.fchown(dir.handle, uid, gid))) {
+            .SUCCESS => return current_thread.endSyscall(),
+            .CANCELED => return current_thread.endSyscallCanceled(),
+            .INTR => {
+                try current_thread.checkCancel();
+                continue;
+            },
+            else => |e| {
+                current_thread.endSyscall();
+                switch (e) {
+                    .BADF => |err| return errnoBug(err), // likely fd refers to directory opened without `Io.Dir.OpenOptions.iterate`
+                    .FAULT => |err| return errnoBug(err),
+                    .INVAL => |err| return errnoBug(err),
+                    .ACCES => return error.AccessDenied,
+                    .IO => return error.InputOutput,
+                    .LOOP => return error.SymLinkLoop,
+                    .NOENT => return error.FileNotFound,
+                    .NOMEM => return error.SystemResources,
+                    .NOTDIR => return error.FileNotFound,
+                    .PERM => return error.PermissionDenied,
+                    .ROFS => return error.ReadOnlyFileSystem,
+                    else => |err| return posix.unexpectedErrno(err),
+                }
+            },
+        }
+    }
+}
+
+const dirSetPermissions = switch (native_os) {
+    .windows => dirSetPermissionsWindows,
+    else => dirSetPermissionsPosix,
+};
+
+fn dirSetPermissionsWindows(
+    userdata: ?*anyopaque,
+    dir: Io.Dir,
+    permissions: Io.Dir.Permissions,
+) Io.Dir.SetPermissionsError!void {
+    _ = userdata;
+    _ = dir;
+    _ = permissions;
+    @panic("TODO");
+}
+
+fn dirSetPermissionsPosix(
+    userdata: ?*anyopaque,
+    dir: Io.Dir,
+    permissions: Io.Dir.Permissions,
+) Io.Dir.SetPermissionsError!void {
+    _ = userdata;
+    _ = dir;
+    _ = permissions;
+    @panic("TODO");
+}
+
 fn dirOpenDirWasi(
     userdata: ?*anyopaque,
     dir: Io.Dir,
@@ -3445,10 +4794,100 @@ fn fileReadPositionalWindows(userdata: ?*anyopaque, file: Io.File, data: [][]u8,
 
 fn fileSeekBy(userdata: ?*anyopaque, file: Io.File, offset: i64) Io.File.SeekError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    _ = t;
-    _ = file;
-    _ = offset;
-    @panic("TODO implement fileSeekBy");
+    const current_thread = Thread.getCurrent(t);
+    const fd = file.handle;
+
+    if (native_os == .linux and !builtin.link_libc and @sizeOf(usize) == 4) {
+        var result: u64 = undefined;
+        try current_thread.beginSyscall();
+        while (true) {
+            switch (posix.errno(posix.system.llseek(fd, offset, &result, posix.SEEK.CUR))) {
+                .SUCCESS => {
+                    current_thread.endSyscall();
+                    return;
+                },
+                .INTR => {
+                    try current_thread.checkCancel();
+                    continue;
+                },
+                .CANCELED => return current_thread.endSyscallCanceled(),
+                else => |e| {
+                    current_thread.endSyscall();
+                    switch (e) {
+                        .BADF => |err| return errnoBug(err), // File descriptor used after closed.
+                        .INVAL => return error.Unseekable,
+                        .OVERFLOW => return error.Unseekable,
+                        .SPIPE => return error.Unseekable,
+                        .NXIO => return error.Unseekable,
+                        else => |err| return posix.unexpectedErrno(err),
+                    }
+                },
+            }
+        }
+    }
+
+    if (native_os == .windows) {
+        try current_thread.checkCancel();
+        return windows.SetFilePointerEx_CURRENT(fd, offset);
+    }
+
+    if (native_os == .wasi and !builtin.link_libc) {
+        var new_offset: std.os.wasi.filesize_t = undefined;
+        try current_thread.beginSyscall();
+        while (true) {
+            switch (std.os.wasi.fd_seek(fd, offset, .CUR, &new_offset)) {
+                .SUCCESS => {
+                    current_thread.endSyscall();
+                    return;
+                },
+                .INTR => {
+                    try current_thread.checkCancel();
+                    continue;
+                },
+                .CANCELED => return current_thread.endSyscallCanceled(),
+                else => |e| {
+                    current_thread.endSyscall();
+                    switch (e) {
+                        .BADF => |err| return errnoBug(err), // File descriptor used after closed.
+                        .INVAL => return error.Unseekable,
+                        .OVERFLOW => return error.Unseekable,
+                        .SPIPE => return error.Unseekable,
+                        .NXIO => return error.Unseekable,
+                        .NOTCAPABLE => return error.AccessDenied,
+                        else => |err| return posix.unexpectedErrno(err),
+                    }
+                },
+            }
+        }
+    }
+
+    if (posix.SEEK == void) return error.Unseekable;
+
+    try current_thread.beginSyscall();
+    while (true) {
+        switch (posix.errno(lseek_sym(fd, offset, posix.SEEK.CUR))) {
+            .SUCCESS => {
+                current_thread.endSyscall();
+                return;
+            },
+            .INTR => {
+                try current_thread.checkCancel();
+                continue;
+            },
+            .CANCELED => return current_thread.endSyscallCanceled(),
+            else => |e| {
+                current_thread.endSyscall();
+                switch (e) {
+                    .BADF => |err| return errnoBug(err), // File descriptor used after closed.
+                    .INVAL => return error.Unseekable,
+                    .OVERFLOW => return error.Unseekable,
+                    .SPIPE => return error.Unseekable,
+                    .NXIO => return error.Unseekable,
+                    else => |err| return posix.unexpectedErrno(err),
+                }
+            },
+        }
+    }
 }
 
 fn fileSeekTo(userdata: ?*anyopaque, file: Io.File, offset: u64) Io.File.SeekError!void {

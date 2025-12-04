@@ -1,12 +1,15 @@
+const Compile = @This();
 const builtin = @import("builtin");
+
 const std = @import("std");
+const Io = std.Io;
 const mem = std.mem;
 const fs = std.fs;
 const assert = std.debug.assert;
 const panic = std.debug.panic;
 const StringHashMap = std.StringHashMap;
 const Sha256 = std.crypto.hash.sha2.Sha256;
-const Allocator = mem.Allocator;
+const Allocator = std.mem.Allocator;
 const Step = std.Build.Step;
 const LazyPath = std.Build.LazyPath;
 const PkgConfigPkg = std.Build.PkgConfigPkg;
@@ -15,7 +18,6 @@ const RunError = std.Build.RunError;
 const Module = std.Build.Module;
 const InstallDir = std.Build.InstallDir;
 const GeneratedFile = std.Build.GeneratedFile;
-const Compile = @This();
 const Path = std.Build.Cache.Path;
 
 pub const base_id: Step.Id = .compile;
@@ -1561,19 +1563,22 @@ fn getZigArgs(compile: *Compile, fuzz: bool) ![][]const u8 {
     }
 
     // -I and -L arguments that appear after the last --mod argument apply to all modules.
+    const cwd: Io.Dir = .cwd();
+    const io = b.graph.io;
+
     for (b.search_prefixes.items) |search_prefix| {
-        var prefix_dir = fs.cwd().openDir(search_prefix, .{}) catch |err| {
+        var prefix_dir = cwd.openDir(io, search_prefix, .{}) catch |err| {
             return step.fail("unable to open prefix directory '{s}': {s}", .{
                 search_prefix, @errorName(err),
             });
         };
-        defer prefix_dir.close();
+        defer prefix_dir.close(io);
 
         // Avoid passing -L and -I flags for nonexistent directories.
         // This prevents a warning, that should probably be upgraded to an error in Zig's
         // CLI parsing code, when the linker sees an -L directory that does not exist.
 
-        if (prefix_dir.access("lib", .{})) |_| {
+        if (prefix_dir.access(io, "lib", .{})) |_| {
             try zig_args.appendSlice(&.{
                 "-L", b.pathJoin(&.{ search_prefix, "lib" }),
             });
@@ -1584,7 +1589,7 @@ fn getZigArgs(compile: *Compile, fuzz: bool) ![][]const u8 {
             }),
         }
 
-        if (prefix_dir.access("include", .{})) |_| {
+        if (prefix_dir.access(io, "include", .{})) |_| {
             try zig_args.appendSlice(&.{
                 "-I", b.pathJoin(&.{ search_prefix, "include" }),
             });
@@ -1660,7 +1665,7 @@ fn getZigArgs(compile: *Compile, fuzz: bool) ![][]const u8 {
         args_length += arg.len + 1; // +1 to account for null terminator
     }
     if (args_length >= 30 * 1024) {
-        try b.cache_root.handle.makePath("args");
+        try b.cache_root.handle.makePath(io, "args");
 
         const args_to_escape = zig_args.items[2..];
         var escaped_args = try std.array_list.Managed([]const u8).initCapacity(arena, args_to_escape.len);
@@ -1693,18 +1698,18 @@ fn getZigArgs(compile: *Compile, fuzz: bool) ![][]const u8 {
         _ = try std.fmt.bufPrint(&args_hex_hash, "{x}", .{&args_hash});
 
         const args_file = "args" ++ fs.path.sep_str ++ args_hex_hash;
-        if (b.cache_root.handle.access(args_file, .{})) |_| {
+        if (b.cache_root.handle.access(io, args_file, .{})) |_| {
             // The args file is already present from a previous run.
         } else |err| switch (err) {
             error.FileNotFound => {
-                try b.cache_root.handle.makePath("tmp");
+                try b.cache_root.handle.makePath(io, "tmp");
                 const rand_int = std.crypto.random.int(u64);
                 const tmp_path = "tmp" ++ fs.path.sep_str ++ std.fmt.hex(rand_int);
-                try b.cache_root.handle.writeFile(.{ .sub_path = tmp_path, .data = args });
-                defer b.cache_root.handle.deleteFile(tmp_path) catch {
+                try b.cache_root.handle.writeFile(io, .{ .sub_path = tmp_path, .data = args });
+                defer b.cache_root.handle.deleteFile(io, tmp_path) catch {
                     // It's fine if the temporary file can't be cleaned up.
                 };
-                b.cache_root.handle.rename(tmp_path, args_file) catch |rename_err| switch (rename_err) {
+                b.cache_root.handle.rename(io, tmp_path, args_file) catch |rename_err| switch (rename_err) {
                     error.PathAlreadyExists => {
                         // The args file was created by another concurrent build process.
                     },
@@ -1816,18 +1821,20 @@ pub fn doAtomicSymLinks(
     filename_name_only: []const u8,
 ) !void {
     const b = step.owner;
+    const io = b.graph.io;
     const out_dir = fs.path.dirname(output_path) orelse ".";
     const out_basename = fs.path.basename(output_path);
     // sym link for libfoo.so.1 to libfoo.so.1.2.3
     const major_only_path = b.pathJoin(&.{ out_dir, filename_major_only });
-    fs.cwd().atomicSymLink(out_basename, major_only_path, .{}) catch |err| {
+    const cwd: Io.Dir = .cwd();
+    cwd.atomicSymLink(io, out_basename, major_only_path, .{}) catch |err| {
         return step.fail("unable to symlink {s} -> {s}: {s}", .{
             major_only_path, out_basename, @errorName(err),
         });
     };
     // sym link for libfoo.so to libfoo.so.1
     const name_only_path = b.pathJoin(&.{ out_dir, filename_name_only });
-    fs.cwd().atomicSymLink(filename_major_only, name_only_path, .{}) catch |err| {
+    cwd.atomicSymLink(io, filename_major_only, name_only_path, .{}) catch |err| {
         return step.fail("Unable to symlink {s} -> {s}: {s}", .{
             name_only_path, filename_major_only, @errorName(err),
         });

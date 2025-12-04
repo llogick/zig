@@ -15,9 +15,13 @@ const windows = std.os.windows;
 
 const is_darwin = native_os.isDarwin();
 
-pub const AtomicFile = @import("fs/AtomicFile.zig");
-pub const Dir = @import("fs/Dir.zig");
-pub const File = @import("fs/File.zig");
+/// Deprecated.
+pub const AtomicFile = std.Io.File.Atomic;
+/// Deprecated.
+pub const Dir = std.Io.Dir;
+/// Deprecated.
+pub const File = std.Io.File;
+
 pub const path = @import("fs/path.zig");
 
 pub const has_executable_bit = switch (native_os) {
@@ -153,42 +157,9 @@ pub fn deleteDirAbsoluteZ(dir_path: [*:0]const u8) !void {
     return posix.rmdirZ(dir_path);
 }
 
-/// Same as `Dir.rename` except the paths are absolute.
-/// On Windows, both paths should be encoded as [WTF-8](https://wtf-8.codeberg.page/).
-/// On WASI, both paths should be encoded as valid UTF-8.
-/// On other platforms, both paths are an opaque sequence of bytes with no particular encoding.
-pub fn renameAbsolute(old_path: []const u8, new_path: []const u8) !void {
-    assert(path.isAbsolute(old_path));
-    assert(path.isAbsolute(new_path));
-    return posix.rename(old_path, new_path);
-}
-
-/// Same as `renameAbsolute` except the path parameters are null-terminated.
-pub fn renameAbsoluteZ(old_path: [*:0]const u8, new_path: [*:0]const u8) !void {
-    assert(path.isAbsoluteZ(old_path));
-    assert(path.isAbsoluteZ(new_path));
-    return posix.renameZ(old_path, new_path);
-}
-
-/// Same as `Dir.rename`, except `new_sub_path` is relative to `new_dir`
-pub fn rename(old_dir: Dir, old_sub_path: []const u8, new_dir: Dir, new_sub_path: []const u8) !void {
-    return posix.renameat(old_dir.fd, old_sub_path, new_dir.fd, new_sub_path);
-}
-
-/// Same as `rename` except the parameters are null-terminated.
-pub fn renameZ(old_dir: Dir, old_sub_path_z: [*:0]const u8, new_dir: Dir, new_sub_path_z: [*:0]const u8) !void {
-    return posix.renameatZ(old_dir.fd, old_sub_path_z, new_dir.fd, new_sub_path_z);
-}
-
 /// Deprecated in favor of `Io.Dir.cwd`.
-pub fn cwd() Dir {
-    if (native_os == .windows) {
-        return .{ .fd = windows.peb().ProcessParameters.CurrentDirectory.Handle };
-    } else if (native_os == .wasi) {
-        return .{ .fd = std.options.wasiCwd() };
-    } else {
-        return .{ .fd = posix.AT.FDCWD };
-    }
+pub fn cwd() Io.Dir {
+    return .cwd();
 }
 
 pub fn defaultWasiCwd() std.os.wasi.fd_t {
@@ -209,23 +180,11 @@ pub fn openDirAbsolute(absolute_path: []const u8, flags: Dir.OpenOptions) File.O
     return cwd().openDir(absolute_path, flags);
 }
 
-/// Same as `openDirAbsolute` but the path parameter is null-terminated.
-pub fn openDirAbsoluteZ(absolute_path_c: [*:0]const u8, flags: Dir.OpenOptions) File.OpenError!Dir {
-    assert(path.isAbsoluteZ(absolute_path_c));
-    return cwd().openDirZ(absolute_path_c, flags);
-}
-/// Opens a file for reading or writing, without attempting to create a new file, based on an absolute path.
-/// Call `File.close` to release the resource.
-/// Asserts that the path is absolute. See `Dir.openFile` for a function that
-/// operates on both absolute and relative paths.
-/// Asserts that the path parameter has no null bytes. See `openFileAbsoluteZ` for a function
-/// that accepts a null-terminated path.
-/// On Windows, `absolute_path` should be encoded as [WTF-8](https://wtf-8.codeberg.page/).
-/// On WASI, `absolute_path` should be encoded as valid UTF-8.
-/// On other platforms, `absolute_path` is an opaque sequence of bytes with no particular encoding.
-pub fn openFileAbsolute(absolute_path: []const u8, flags: File.OpenFlags) File.OpenError!File {
-    assert(path.isAbsolute(absolute_path));
-    return cwd().openFile(absolute_path, flags);
+/// Deprecated in favor of `Io.File.openAbsolute`.
+pub fn openFileAbsolute(absolute_path: []const u8, flags: File.OpenFlags) Io.File.OpenError!Io.File {
+    var threaded: Io.Threaded = .init_single_threaded;
+    const io = threaded.ioBasic();
+    return Io.File.openAbsolute(io, absolute_path, flags);
 }
 
 /// Test accessing `path`.

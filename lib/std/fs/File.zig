@@ -22,17 +22,9 @@ handle: Handle,
 pub const Handle = Io.File.Handle;
 pub const Mode = Io.File.Mode;
 pub const INode = Io.File.INode;
-pub const Uid = posix.uid_t;
-pub const Gid = posix.gid_t;
+pub const Uid = Io.File.Uid;
+pub const Gid = Io.File.Gid;
 pub const Kind = Io.File.Kind;
-
-/// This is the default mode given to POSIX operating systems for creating
-/// files. `0o666` is "-rw-rw-rw-" which is counter-intuitive at first,
-/// since most people would expect "-rw-r--r--", for example, when using
-/// the `touch` command, which would correspond to `0o644`. However, POSIX
-/// libc implementations use `0o666` inside `fopen` and then rely on the
-/// process-scoped "umask" setting to adjust this number for file creation.
-pub const default_mode: Mode = if (Mode == u0) 0 else 0o666;
 
 /// Deprecated in favor of `Io.File.OpenError`.
 pub const OpenError = Io.File.OpenError || error{WouldBlock};
@@ -43,53 +35,7 @@ pub const Lock = Io.File.Lock;
 /// Deprecated in favor of `Io.File.OpenFlags`.
 pub const OpenFlags = Io.File.OpenFlags;
 
-pub const CreateFlags = struct {
-    /// Whether the file will be created with read access.
-    read: bool = false,
-
-    /// If the file already exists, and is a regular file, and the access
-    /// mode allows writing, it will be truncated to length 0.
-    truncate: bool = true,
-
-    /// Ensures that this open call creates the file, otherwise causes
-    /// `error.PathAlreadyExists` to be returned.
-    exclusive: bool = false,
-
-    /// Open the file with an advisory lock to coordinate with other processes
-    /// accessing it at the same time. An exclusive lock will prevent other
-    /// processes from acquiring a lock. A shared lock will prevent other
-    /// processes from acquiring a exclusive lock, but does not prevent
-    /// other process from getting their own shared locks.
-    ///
-    /// The lock is advisory, except on Linux in very specific circumstances[1].
-    /// This means that a process that does not respect the locking API can still get access
-    /// to the file, despite the lock.
-    ///
-    /// On these operating systems, the lock is acquired atomically with
-    /// opening the file:
-    /// * Darwin
-    /// * DragonFlyBSD
-    /// * FreeBSD
-    /// * Haiku
-    /// * NetBSD
-    /// * OpenBSD
-    /// On these operating systems, the lock is acquired via a separate syscall
-    /// after opening the file:
-    /// * Linux
-    /// * Windows
-    ///
-    /// [1]: https://www.kernel.org/doc/Documentation/filesystems/mandatory-locking.txt
-    lock: Lock = .none,
-
-    /// Sets whether or not to wait until the file is locked to return. If set to true,
-    /// `error.WouldBlock` will be returned. Otherwise, the file will wait until the file
-    /// is available to proceed.
-    lock_nonblocking: bool = false,
-
-    /// For POSIX systems this is the file system mode the file will
-    /// be created with. On other systems this is always 0.
-    mode: Mode = default_mode,
-};
+pub const CreateFlags = std.Io.File.CreateFlags;
 
 pub fn stdout() File {
     return .{ .handle = if (is_windows) windows.peb().ProcessParameters.hStdOutput else posix.STDOUT_FILENO };
@@ -259,33 +205,6 @@ pub fn setEndPos(self: File, length: u64) SetEndPosError!void {
     try posix.ftruncate(self.handle, length);
 }
 
-pub const SeekError = posix.SeekError;
-
-/// Repositions read/write file offset relative to the current offset.
-/// TODO: integrate with async I/O
-pub fn seekBy(self: File, offset: i64) SeekError!void {
-    return posix.lseek_CUR(self.handle, offset);
-}
-
-/// Repositions read/write file offset relative to the end.
-/// TODO: integrate with async I/O
-pub fn seekFromEnd(self: File, offset: i64) SeekError!void {
-    return posix.lseek_END(self.handle, offset);
-}
-
-/// Repositions read/write file offset relative to the beginning.
-/// TODO: integrate with async I/O
-pub fn seekTo(self: File, offset: u64) SeekError!void {
-    return posix.lseek_SET(self.handle, offset);
-}
-
-pub const GetSeekPosError = posix.SeekError || StatError;
-
-/// TODO: integrate with async I/O
-pub fn getPos(self: File) GetSeekPosError!u64 {
-    return posix.lseek_CUR_get(self.handle);
-}
-
 pub const GetEndPosError = std.os.windows.GetFileSizeError || StatError;
 
 /// TODO: integrate with async I/O
@@ -306,11 +225,13 @@ pub fn mode(self: File) ModeError!Mode {
     return (try self.stat()).mode;
 }
 
+/// Deprecated in favor of `Io.File.Stat`.
 pub const Stat = Io.File.Stat;
 
+/// Deprecated in favor of `Io.File.StatError`.
 pub const StatError = posix.FStatError;
 
-/// Returns `Stat` containing basic information about the `File`.
+/// Deprecated in favor of `Io.File.stat`.
 pub fn stat(self: File) StatError!Stat {
     var threaded: Io.Threaded = .init_single_threaded;
     const io = threaded.ioBasic();
@@ -710,7 +631,7 @@ pub const Writer = struct {
         Unexpected,
     };
 
-    pub const SeekError = File.SeekError;
+    pub const SeekError = Io.File.SeekError;
 
     /// Number of slices to store on the stack, when trying to send as many byte
     /// vectors through the underlying write calls as possible.
@@ -1268,10 +1189,8 @@ pub fn writerStreaming(file: File, buffer: []u8) Writer {
 const range_off: windows.LARGE_INTEGER = 0;
 const range_len: windows.LARGE_INTEGER = 1;
 
-pub const LockError = error{
-    SystemResources,
-    FileLocksNotSupported,
-} || posix.UnexpectedError;
+/// Deprecated
+pub const LockError = Io.File.LockError;
 
 /// Blocks when an incompatible lock is held by another process.
 /// A process may hold only one type of lock (shared or exclusive) on

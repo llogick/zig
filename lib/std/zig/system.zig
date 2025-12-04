@@ -786,7 +786,9 @@ test glibcVerFromLinkName {
 }
 
 fn glibcVerFromRPath(io: Io, rpath: []const u8) !std.SemanticVersion {
-    var dir = fs.cwd().openDir(rpath, .{}) catch |err| switch (err) {
+    const cwd: Io.Dir = .cwd();
+
+    var dir = cwd.openDir(io, rpath, .{}) catch |err| switch (err) {
         error.NameTooLong => return error.Unexpected,
         error.BadPathName => return error.Unexpected,
         error.DeviceBusy => return error.Unexpected,
@@ -805,7 +807,7 @@ fn glibcVerFromRPath(io: Io, rpath: []const u8) !std.SemanticVersion {
         error.Unexpected => |e| return e,
         error.Canceled => |e| return e,
     };
-    defer dir.close();
+    defer dir.close(io);
 
     // Now we have a candidate for the path to libc shared object. In
     // the past, we used readlink() here because the link name would

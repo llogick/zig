@@ -510,20 +510,16 @@ pub fn installFile(s: *Step, src_lazy_path: Build.LazyPath, dest_path: []const u
     const io = b.graph.io;
     const src_path = src_lazy_path.getPath3(b, s);
     try handleVerbose(b, null, &.{ "install", "-C", b.fmt("{f}", .{src_path}), dest_path });
-    return Io.Dir.updateFile(src_path.root_dir.handle.adaptToNewApi(), io, src_path.sub_path, .cwd(), dest_path, .{}) catch |err| {
-        return s.fail("unable to update file from '{f}' to '{s}': {t}", .{
-            src_path, dest_path, err,
-        });
-    };
+    return Io.Dir.updateFile(src_path.root_dir.handle, io, src_path.sub_path, .cwd(), dest_path, .{}) catch |err|
+        return s.fail("unable to update file from '{f}' to '{s}': {t}", .{ src_path, dest_path, err });
 }
 
 /// Wrapper around `std.fs.Dir.makePathStatus` that handles verbose and error output.
 pub fn installDir(s: *Step, dest_path: []const u8) !std.fs.Dir.MakePathStatus {
     const b = s.owner;
     try handleVerbose(b, null, &.{ "install", "-d", dest_path });
-    return std.fs.cwd().makePathStatus(dest_path) catch |err| {
+    return std.fs.cwd().makePathStatus(dest_path) catch |err|
         return s.fail("unable to create dir '{s}': {t}", .{ dest_path, err });
-    };
 }
 
 fn zigProcessUpdate(s: *Step, zp: *ZigProcess, watch: bool, web_server: ?*Build.WebServer, gpa: Allocator) !?Path {

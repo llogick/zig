@@ -8,7 +8,6 @@ const builtin = @import("builtin");
 const std = @import("std");
 const Io = std.Io;
 const crypto = std.crypto;
-const fs = std.fs;
 const assert = std.debug.assert;
 const testing = std.testing;
 const mem = std.mem;
@@ -18,7 +17,7 @@ const log = std.log.scoped(.cache);
 
 gpa: Allocator,
 io: Io,
-manifest_dir: fs.Dir,
+manifest_dir: Io.Dir,
 hash: HashHelper = .{},
 /// This value is accessed from multiple threads, protected by mutex.
 recent_problematic_timestamp: Io.Timestamp = .zero,
@@ -71,7 +70,7 @@ const PrefixedPath = struct {
 
 fn findPrefix(cache: *const Cache, file_path: []const u8) !PrefixedPath {
     const gpa = cache.gpa;
-    const resolved_path = try fs.path.resolve(gpa, &.{file_path});
+    const resolved_path = try std.fs.path.resolve(gpa, &.{file_path});
     errdefer gpa.free(resolved_path);
     return findPrefixResolved(cache, resolved_path);
 }
@@ -102,9 +101,9 @@ fn findPrefixResolved(cache: *const Cache, resolved_path: []u8) !PrefixedPath {
 }
 
 fn getPrefixSubpath(allocator: Allocator, prefix: []const u8, path: []u8) ![]u8 {
-    const relative = try fs.path.relative(allocator, prefix, path);
+    const relative = try std.fs.path.relative(allocator, prefix, path);
     errdefer allocator.free(relative);
-    var component_iterator = fs.path.NativeComponentIterator.init(relative);
+    var component_iterator = std.fs.path.NativeComponentIterator.init(relative);
     if (component_iterator.root() != null) {
         return error.NotASubPath;
     }
@@ -145,17 +144,17 @@ pub const File = struct {
     max_file_size: ?usize,
     /// Populated if the user calls `addOpenedFile`.
     /// The handle is not owned here.
-    handle: ?fs.File,
+    handle: ?Io.File,
     stat: Stat,
     bin_digest: BinDigest,
     contents: ?[]const u8,
 
     pub const Stat = struct {
-        inode: fs.File.INode,
+        inode: Io.File.INode,
         size: u64,
         mtime: Io.Timestamp,
 
-        pub fn fromFs(fs_stat: fs.File.Stat) Stat {
+        pub fn fromFs(fs_stat: Io.File.Stat) Stat {
             return .{
                 .inode = fs_stat.inode,
                 .size = fs_stat.size,
@@ -178,7 +177,7 @@ pub const File = struct {
         file.max_file_size = if (file.max_file_size) |old| @max(old, new) else new;
     }
 
-    pub fn updateHandle(file: *File, new_handle: ?fs.File) void {
+    pub fn updateHandle(file: *File, new_handle: ?Io.File) void {
         const handle = new_handle orelse return;
         file.handle = handle;
     }
@@ -293,16 +292,16 @@ pub fn binToHex(bin_digest: BinDigest) HexDigest {
 }
 
 pub const Lock = struct {
-    manifest_file: fs.File,
+    manifest_file: Io.File,
 
-    pub fn release(lock: *Lock) void {
+    pub fn release(lock: *Lock, io: Io) void {
         if (builtin.os.tag == .windows) {
             // Windows does not guarantee that locks are immediately unlocked when
             // the file handle is closed. See LockFileEx documentation.
             lock.manifest_file.unlock();
         }
 
-        lock.manifest_file.close();
+        lock.manifest_file.close(io);
         lock.* = undefined;
     }
 };
@@ -311,7 +310,7 @@ pub const Manifest = struct {
     cache: *Cache,
     /// Current state for incremental hashing.
     hash: HashHelper,
-    manifest_file: ?fs.File,
+    manifest_file: ?Io.File,
     manifest_dirty: bool,
     /// Set this flag to true before calling hit() in order to indicate that
     /// upon a cache hit, the code using the cache will not modify the files
@@ -332,9 +331,9 @@ pub const Manifest = struct {
 
     pub const Diagnostic = union(enum) {
         none,
-        manifest_create: fs.File.OpenError,
-        manifest_read: fs.File.ReadError,
-        manifest_lock: fs.File.LockError,
+        manifest_create: Io.File.OpenError,
+        manifest_read: Io.File.Reader.Error,
+        manifest_lock: Io.File.LockError,
         file_open: FileOp,
         file_stat: FileOp,
         file_read: FileOp,
@@ -393,10 +392,10 @@ pub const Manifest = struct {
     }
 
     /// Same as `addFilePath` except the file has already been opened.
-    pub fn addOpenedFile(m: *Manifest, path: Path, handle: ?fs.File, max_file_size: ?usize) !usize {
+    pub fn addOpenedFile(m: *Manifest, path: Path, handle: ?Io.File, max_file_size: ?usize) !usize {
         const gpa = m.cache.gpa;
         try m.files.ensureUnusedCapacity(gpa, 1);
-        const resolved_path = try fs.path.resolve(gpa, &.{
+        const resolved_path = try std.fs.path.resolve(gpa, &.{
             path.root_dir.path orelse ".",
             path.subPathOrDot(),
         });
@@ -417,7 +416,7 @@ pub const Manifest = struct {
         return addFileInner(self, prefixed_path, null, max_file_size);
     }
 
-    fn addFileInner(self: *Manifest, prefixed_path: PrefixedPath, handle: ?fs.File, max_file_size: ?usize) usize {
+    fn addFileInner(self: *Manifest, prefixed_path: PrefixedPath, handle: ?Io.File, max_file_size: ?usize) usize {
         const gop = self.files.getOrPutAssumeCapacityAdapted(prefixed_path, FilesAdapter{});
         if (gop.found_existing) {
             self.cache.gpa.free(prefixed_path.sub_path);
@@ -460,7 +459,7 @@ pub const Manifest = struct {
         }
     }
 
-    pub fn addDepFile(self: *Manifest, dir: fs.Dir, dep_file_sub_path: []const u8) !void {
+    pub fn addDepFile(self: *Manifest, dir: Io.Dir, dep_file_sub_path: []const u8) !void {
         assert(self.manifest_file == null);
         return self.addDepFileMaybePost(dir, dep_file_sub_path);
     }
@@ -702,7 +701,7 @@ pub const Manifest = struct {
             const file_path = iter.rest();
 
             const stat_size = fmt.parseInt(u64, size, 10) catch return error.InvalidFormat;
-            const stat_inode = fmt.parseInt(fs.File.INode, inode, 10) catch return error.InvalidFormat;
+            const stat_inode = fmt.parseInt(Io.File.INode, inode, 10) catch return error.InvalidFormat;
             const stat_mtime = fmt.parseInt(i64, mtime_nsec_str, 10) catch return error.InvalidFormat;
             const file_bin_digest = b: {
                 if (digest_str.len != hex_digest_len) return error.InvalidFormat;
@@ -772,7 +771,7 @@ pub const Manifest = struct {
                     return error.CacheCheckFailed;
                 },
             };
-            defer this_file.close();
+            defer this_file.close(io);
 
             const actual_stat = this_file.stat() catch |err| {
                 self.diagnostic = .{ .file_stat = .{
@@ -879,7 +878,7 @@ pub const Manifest = struct {
                 error.Canceled => return error.Canceled,
                 else => return true,
             };
-            defer file.close();
+            defer file.close(io);
 
             // Save locally and also save globally (we still hold the global lock).
             const stat = file.stat() catch |err| switch (err) {
@@ -894,18 +893,20 @@ pub const Manifest = struct {
     }
 
     fn populateFileHash(self: *Manifest, ch_file: *File) !void {
+        const io = self.cache.io;
+
         if (ch_file.handle) |handle| {
             return populateFileHashHandle(self, ch_file, handle);
         } else {
             const pp = ch_file.prefixed_path;
             const dir = self.cache.prefixes()[pp.prefix].handle;
             const handle = try dir.openFile(pp.sub_path, .{});
-            defer handle.close();
+            defer handle.close(io);
             return populateFileHashHandle(self, ch_file, handle);
         }
     }
 
-    fn populateFileHashHandle(self: *Manifest, ch_file: *File, handle: fs.File) !void {
+    fn populateFileHashHandle(self: *Manifest, ch_file: *File, handle: Io.File) !void {
         const actual_stat = try handle.stat();
         ch_file.stat = .{
             .size = actual_stat.size,
@@ -1064,12 +1065,12 @@ pub const Manifest = struct {
         self.hash.hasher.update(&new_file.bin_digest);
     }
 
-    pub fn addDepFilePost(self: *Manifest, dir: fs.Dir, dep_file_sub_path: []const u8) !void {
+    pub fn addDepFilePost(self: *Manifest, dir: Io.Dir, dep_file_sub_path: []const u8) !void {
         assert(self.manifest_file != null);
         return self.addDepFileMaybePost(dir, dep_file_sub_path);
     }
 
-    fn addDepFileMaybePost(self: *Manifest, dir: fs.Dir, dep_file_sub_path: []const u8) !void {
+    fn addDepFileMaybePost(self: *Manifest, dir: Io.Dir, dep_file_sub_path: []const u8) !void {
         const gpa = self.cache.gpa;
         const dep_file_contents = try dir.readFileAlloc(dep_file_sub_path, gpa, .limited(manifest_file_size_max));
         defer gpa.free(dep_file_contents);
@@ -1148,7 +1149,7 @@ pub const Manifest = struct {
         }
     }
 
-    fn writeDirtyManifestToStream(self: *Manifest, fw: *fs.File.Writer) !void {
+    fn writeDirtyManifestToStream(self: *Manifest, fw: *Io.File.Writer) !void {
         try fw.interface.writeAll(manifest_header ++ "\n");
         for (self.files.keys()) |file| {
             try fw.interface.print("{d} {d} {d} {x} {d} {s}\n", .{
@@ -1214,13 +1215,15 @@ pub const Manifest = struct {
     /// `Manifest.hit` must be called first.
     /// Don't forget to call `writeManifest` before this!
     pub fn deinit(self: *Manifest) void {
+        const io = self.cache.io;
+
         if (self.manifest_file) |file| {
             if (builtin.os.tag == .windows) {
                 // See Lock.release for why this is required on Windows
                 file.unlock();
             }
 
-            file.close();
+            file.close(io);
         }
         for (self.files.keys()) |*file| {
             file.deinit(self.cache.gpa);
@@ -1281,7 +1284,7 @@ pub const Manifest = struct {
 /// On operating systems that support symlinks, does a readlink. On other operating systems,
 /// uses the file contents. Windows supports symlinks but only with elevated privileges, so
 /// it is treated as not supporting symlinks.
-pub fn readSmallFile(dir: fs.Dir, sub_path: []const u8, buffer: []u8) ![]u8 {
+pub fn readSmallFile(dir: Io.Dir, sub_path: []const u8, buffer: []u8) ![]u8 {
     if (builtin.os.tag == .windows) {
         return dir.readFile(sub_path, buffer);
     } else {
@@ -1293,7 +1296,7 @@ pub fn readSmallFile(dir: fs.Dir, sub_path: []const u8, buffer: []u8) ![]u8 {
 /// uses the file contents. Windows supports symlinks but only with elevated privileges, so
 /// it is treated as not supporting symlinks.
 /// `data` must be a valid UTF-8 encoded file path and 255 bytes or fewer.
-pub fn writeSmallFile(dir: fs.Dir, sub_path: []const u8, data: []const u8) !void {
+pub fn writeSmallFile(dir: Io.Dir, sub_path: []const u8, data: []const u8) !void {
     assert(data.len <= 255);
     if (builtin.os.tag == .windows) {
         return dir.writeFile(.{ .sub_path = sub_path, .data = data });
@@ -1302,7 +1305,7 @@ pub fn writeSmallFile(dir: fs.Dir, sub_path: []const u8, data: []const u8) !void
     }
 }
 
-fn hashFile(file: fs.File, bin_digest: *[Hasher.mac_length]u8) fs.File.PReadError!void {
+fn hashFile(file: Io.File, bin_digest: *[Hasher.mac_length]u8) Io.File.PReadError!void {
     var buf: [1024]u8 = undefined;
     var hasher = hasher_init;
     var off: u64 = 0;
@@ -1316,7 +1319,7 @@ fn hashFile(file: fs.File, bin_digest: *[Hasher.mac_length]u8) fs.File.PReadErro
 }
 
 // Create/Write a file, close it, then grab its stat.mtime timestamp.
-fn testGetCurrentFileTimestamp(dir: fs.Dir) !Io.Timestamp {
+fn testGetCurrentFileTimestamp(io: Io, dir: Io.Dir) !Io.Timestamp {
     const test_out_file = "test-filetimestamp.tmp";
 
     var file = try dir.createFile(test_out_file, .{
@@ -1324,7 +1327,7 @@ fn testGetCurrentFileTimestamp(dir: fs.Dir) !Io.Timestamp {
         .truncate = true,
     });
     defer {
-        file.close();
+        file.close(io);
         dir.deleteFile(test_out_file) catch {};
     }
 
@@ -1343,8 +1346,8 @@ test "cache file and then recall it" {
     try tmp.dir.writeFile(.{ .sub_path = temp_file, .data = "Hello, world!\n" });
 
     // Wait for file timestamps to tick
-    const initial_time = try testGetCurrentFileTimestamp(tmp.dir);
-    while ((try testGetCurrentFileTimestamp(tmp.dir)).nanoseconds == initial_time.nanoseconds) {
+    const initial_time = try testGetCurrentFileTimestamp(io, tmp.dir);
+    while ((try testGetCurrentFileTimestamp(io, tmp.dir)).nanoseconds == initial_time.nanoseconds) {
         try std.Io.Clock.Duration.sleep(.{ .clock = .boot, .raw = .fromNanoseconds(1) }, io);
     }
 
@@ -1358,7 +1361,7 @@ test "cache file and then recall it" {
             .manifest_dir = try tmp.dir.makeOpenPath(temp_manifest_dir, .{}),
         };
         cache.addPrefix(.{ .path = null, .handle = tmp.dir });
-        defer cache.manifest_dir.close();
+        defer cache.manifest_dir.close(io);
 
         {
             var ch = cache.obtain();
@@ -1424,7 +1427,7 @@ test "check that changing a file makes cache fail" {
             .manifest_dir = try tmp.dir.makeOpenPath(temp_manifest_dir, .{}),
         };
         cache.addPrefix(.{ .path = null, .handle = tmp.dir });
-        defer cache.manifest_dir.close();
+        defer cache.manifest_dir.close(io);
 
         {
             var ch = cache.obtain();
@@ -1484,7 +1487,7 @@ test "no file inputs" {
         .manifest_dir = try tmp.dir.makeOpenPath(temp_manifest_dir, .{}),
     };
     cache.addPrefix(.{ .path = null, .handle = tmp.dir });
-    defer cache.manifest_dir.close();
+    defer cache.manifest_dir.close(io);
 
     {
         var man = cache.obtain();
@@ -1543,7 +1546,7 @@ test "Manifest with files added after initial hash work" {
             .manifest_dir = try tmp.dir.makeOpenPath(temp_manifest_dir, .{}),
         };
         cache.addPrefix(.{ .path = null, .handle = tmp.dir });
-        defer cache.manifest_dir.close();
+        defer cache.manifest_dir.close(io);
 
         {
             var ch = cache.obtain();

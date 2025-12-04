@@ -1700,9 +1700,8 @@ pub fn addCheckFile(
 }
 
 pub fn truncateFile(b: *Build, dest_path: []const u8) (fs.Dir.MakeError || fs.Dir.StatFileError)!void {
-    if (b.verbose) {
-        log.info("truncate {s}", .{dest_path});
-    }
+    const io = b.graph.io;
+    if (b.verbose) log.info("truncate {s}", .{dest_path});
     const cwd = fs.cwd();
     var src_file = cwd.createFile(dest_path, .{}) catch |err| switch (err) {
         error.FileNotFound => blk: {
@@ -1713,7 +1712,7 @@ pub fn truncateFile(b: *Build, dest_path: []const u8) (fs.Dir.MakeError || fs.Di
         },
         else => |e| return e,
     };
-    src_file.close();
+    src_file.close(io);
 }
 
 /// References a file or directory relative to the source root.

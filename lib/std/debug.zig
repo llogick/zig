@@ -1104,7 +1104,14 @@ pub inline fn stripInstructionPtrAuthCode(ptr: usize) usize {
     return ptr;
 }
 
-fn printSourceAtAddress(gpa: Allocator, io: Io, debug_info: *SelfInfo, writer: *Writer, address: usize, tty_config: tty.Config) Writer.Error!void {
+fn printSourceAtAddress(
+    gpa: Allocator,
+    io: Io,
+    debug_info: *SelfInfo,
+    writer: *Writer,
+    address: usize,
+    tty_config: tty.Config,
+) Writer.Error!void {
     const symbol: Symbol = debug_info.getSymbol(gpa, io, address) catch |err| switch (err) {
         error.MissingDebugInfo,
         error.UnsupportedDebugInfo,
@@ -1125,6 +1132,7 @@ fn printSourceAtAddress(gpa: Allocator, io: Io, debug_info: *SelfInfo, writer: *
     };
     defer if (symbol.source_location) |sl| gpa.free(sl.file_name);
     return printLineInfo(
+        io,
         writer,
         symbol.source_location,
         address,
@@ -1134,6 +1142,7 @@ fn printSourceAtAddress(gpa: Allocator, io: Io, debug_info: *SelfInfo, writer: *
     );
 }
 fn printLineInfo(
+    io: Io,
     writer: *Writer,
     source_location: ?SourceLocation,
     address: usize,
@@ -1159,7 +1168,7 @@ fn printLineInfo(
 
         // Show the matching source code line if possible
         if (source_location) |sl| {
-            if (printLineFromFile(writer, sl)) {
+            if (printLineFromFile(io, writer, sl)) {
                 if (sl.column > 0) {
                     // The caret already takes one char
                     const space_needed = @as(usize, @intCast(sl.column - 1));
@@ -1177,16 +1186,17 @@ fn printLineInfo(
         }
     }
 }
-fn printLineFromFile(writer: *Writer, source_location: SourceLocation) !void {
+fn printLineFromFile(io: Io, writer: *Writer, source_location: SourceLocation) !void {
     // Allow overriding the target-agnostic source line printing logic by exposing `root.debug.printLineFromFile`.
     if (@hasDecl(root, "debug") and @hasDecl(root.debug, "printLineFromFile")) {
-        return root.debug.printLineFromFile(writer, source_location);
+        return root.debug.printLineFromFile(io, writer, source_location);
     }
 
     // Need this to always block even in async I/O mode, because this could potentially
     // be called from e.g. the event loop code crashing.
-    var f = try fs.cwd().openFile(source_location.file_name, .{});
-    defer f.close();
+    const cwd: Io.Dir = .cwd();
+    var f = try cwd.openFile(io, source_location.file_name, .{});
+    defer f.close(io);
     // TODO fstat and make sure that the file has the correct size
 
     var buf: [4096]u8 = undefined;
@@ -1237,11 +1247,13 @@ fn printLineFromFile(writer: *Writer, source_location: SourceLocation) !void {
 }
 
 test printLineFromFile {
-    var aw: Writer.Allocating = .init(std.testing.allocator);
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+
+    var aw: Writer.Allocating = .init(gpa);
     defer aw.deinit();
     const output_stream = &aw.writer;
 
-    const allocator = std.testing.allocator;
     const join = std.fs.path.join;
     const expectError = std.testing.expectError;
     const expectEqualStrings = std.testing.expectEqualStrings;
@@ -1249,24 +1261,24 @@ test printLineFromFile {
     var test_dir = std.testing.tmpDir(.{});
     defer test_dir.cleanup();
     // Relies on testing.tmpDir internals which is not ideal, but SourceLocation requires paths.
-    const test_dir_path = try join(allocator, &.{ ".zig-cache", "tmp", test_dir.sub_path[0..] });
-    defer allocator.free(test_dir_path);
+    const test_dir_path = try join(gpa, &.{ ".zig-cache", "tmp", test_dir.sub_path[0..] });
+    defer gpa.free(test_dir_path);
 
     // Cases
     {
-        const path = try join(allocator, &.{ test_dir_path, "one_line.zig" });
-        defer allocator.free(path);
+        const path = try join(gpa, &.{ test_dir_path, "one_line.zig" });
+        defer gpa.free(path);
         try test_dir.dir.writeFile(.{ .sub_path = "one_line.zig", .data = "no new lines in this file, but one is printed anyway" });
 
-        try expectError(error.EndOfFile, printLineFromFile(output_stream, .{ .file_name = path, .line = 2, .column = 0 }));
+        try expectError(error.EndOfFile, printLineFromFile(io, output_stream, .{ .file_name = path, .line = 2, .column = 0 }));
 
-        try printLineFromFile(output_stream, .{ .file_name = path, .line = 1, .column = 0 });
+        try printLineFromFile(io, output_stream, .{ .file_name = path, .line = 1, .column = 0 });
         try expectEqualStrings("no new lines in this file, but one is printed anyway\n", aw.written());
         aw.clearRetainingCapacity();
     }
     {
-        const path = try fs.path.join(allocator, &.{ test_dir_path, "three_lines.zig" });
-        defer allocator.free(path);
+        const path = try fs.path.join(gpa, &.{ test_dir_path, "three_lines.zig" });
+        defer gpa.free(path);
         try test_dir.dir.writeFile(.{
             .sub_path = "three_lines.zig",
             .data =
@@ -1276,19 +1288,19 @@ test printLineFromFile {
             ,
         });
 
-        try printLineFromFile(output_stream, .{ .file_name = path, .line = 1, .column = 0 });
+        try printLineFromFile(io, output_stream, .{ .file_name = path, .line = 1, .column = 0 });
         try expectEqualStrings("1\n", aw.written());
         aw.clearRetainingCapacity();
 
-        try printLineFromFile(output_stream, .{ .file_name = path, .line = 3, .column = 0 });
+        try printLineFromFile(io, output_stream, .{ .file_name = path, .line = 3, .column = 0 });
         try expectEqualStrings("3\n", aw.written());
         aw.clearRetainingCapacity();
     }
     {
         const file = try test_dir.dir.createFile("line_overlaps_page_boundary.zig", .{});
         defer file.close();
-        const path = try fs.path.join(allocator, &.{ test_dir_path, "line_overlaps_page_boundary.zig" });
-        defer allocator.free(path);
+        const path = try fs.path.join(gpa, &.{ test_dir_path, "line_overlaps_page_boundary.zig" });
+        defer gpa.free(path);
 
         const overlap = 10;
         var buf: [16]u8 = undefined;
@@ -1299,55 +1311,55 @@ test printLineFromFile {
         try writer.splatByteAll('a', overlap);
         try writer.flush();
 
-        try printLineFromFile(output_stream, .{ .file_name = path, .line = 2, .column = 0 });
+        try printLineFromFile(io, output_stream, .{ .file_name = path, .line = 2, .column = 0 });
         try expectEqualStrings(("a" ** overlap) ++ "\n", aw.written());
         aw.clearRetainingCapacity();
     }
     {
         const file = try test_dir.dir.createFile("file_ends_on_page_boundary.zig", .{});
         defer file.close();
-        const path = try fs.path.join(allocator, &.{ test_dir_path, "file_ends_on_page_boundary.zig" });
-        defer allocator.free(path);
+        const path = try fs.path.join(gpa, &.{ test_dir_path, "file_ends_on_page_boundary.zig" });
+        defer gpa.free(path);
 
         var file_writer = file.writer(&.{});
         const writer = &file_writer.interface;
         try writer.splatByteAll('a', std.heap.page_size_max);
 
-        try printLineFromFile(output_stream, .{ .file_name = path, .line = 1, .column = 0 });
+        try printLineFromFile(io, output_stream, .{ .file_name = path, .line = 1, .column = 0 });
         try expectEqualStrings(("a" ** std.heap.page_size_max) ++ "\n", aw.written());
         aw.clearRetainingCapacity();
     }
     {
         const file = try test_dir.dir.createFile("very_long_first_line_spanning_multiple_pages.zig", .{});
         defer file.close();
-        const path = try fs.path.join(allocator, &.{ test_dir_path, "very_long_first_line_spanning_multiple_pages.zig" });
-        defer allocator.free(path);
+        const path = try fs.path.join(gpa, &.{ test_dir_path, "very_long_first_line_spanning_multiple_pages.zig" });
+        defer gpa.free(path);
 
         var file_writer = file.writer(&.{});
         const writer = &file_writer.interface;
         try writer.splatByteAll('a', 3 * std.heap.page_size_max);
 
-        try expectError(error.EndOfFile, printLineFromFile(output_stream, .{ .file_name = path, .line = 2, .column = 0 }));
+        try expectError(error.EndOfFile, printLineFromFile(io, output_stream, .{ .file_name = path, .line = 2, .column = 0 }));
 
-        try printLineFromFile(output_stream, .{ .file_name = path, .line = 1, .column = 0 });
+        try printLineFromFile(io, output_stream, .{ .file_name = path, .line = 1, .column = 0 });
         try expectEqualStrings(("a" ** (3 * std.heap.page_size_max)) ++ "\n", aw.written());
         aw.clearRetainingCapacity();
 
         try writer.writeAll("a\na");
 
-        try printLineFromFile(output_stream, .{ .file_name = path, .line = 1, .column = 0 });
+        try printLineFromFile(io, output_stream, .{ .file_name = path, .line = 1, .column = 0 });
         try expectEqualStrings(("a" ** (3 * std.heap.page_size_max)) ++ "a\n", aw.written());
         aw.clearRetainingCapacity();
 
-        try printLineFromFile(output_stream, .{ .file_name = path, .line = 2, .column = 0 });
+        try printLineFromFile(io, output_stream, .{ .file_name = path, .line = 2, .column = 0 });
         try expectEqualStrings("a\n", aw.written());
         aw.clearRetainingCapacity();
     }
     {
         const file = try test_dir.dir.createFile("file_of_newlines.zig", .{});
         defer file.close();
-        const path = try fs.path.join(allocator, &.{ test_dir_path, "file_of_newlines.zig" });
-        defer allocator.free(path);
+        const path = try fs.path.join(gpa, &.{ test_dir_path, "file_of_newlines.zig" });
+        defer gpa.free(path);
 
         var file_writer = file.writer(&.{});
         const writer = &file_writer.interface;
@@ -1355,11 +1367,11 @@ test printLineFromFile {
         try writer.splatByteAll('\n', real_file_start);
         try writer.writeAll("abc\ndef");
 
-        try printLineFromFile(output_stream, .{ .file_name = path, .line = real_file_start + 1, .column = 0 });
+        try printLineFromFile(io, output_stream, .{ .file_name = path, .line = real_file_start + 1, .column = 0 });
         try expectEqualStrings("abc\n", aw.written());
         aw.clearRetainingCapacity();
 
-        try printLineFromFile(output_stream, .{ .file_name = path, .line = real_file_start + 2, .column = 0 });
+        try printLineFromFile(io, output_stream, .{ .file_name = path, .line = real_file_start + 2, .column = 0 });
         try expectEqualStrings("def\n", aw.written());
         aw.clearRetainingCapacity();
     }

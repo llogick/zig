@@ -7,12 +7,23 @@ const is_windows = native_os == .windows;
 const std = @import("../std.zig");
 const Io = std.Io;
 const assert = std.debug.assert;
+const Dir = std.Io.Dir;
 
 handle: Handle,
 
 pub const Handle = std.posix.fd_t;
 pub const Mode = std.posix.mode_t;
 pub const INode = std.posix.ino_t;
+pub const Uid = std.posix.uid_t;
+pub const Gid = std.posix.gid_t;
+
+/// This is the default mode given to POSIX operating systems for creating
+/// files. `0o666` is "-rw-rw-rw-" which is counter-intuitive at first,
+/// since most people would expect "-rw-r--r--", for example, when using
+/// the `touch` command, which would correspond to `0o644`. However, POSIX
+/// libc implementations use `0o666` inside `fopen` and then rely on the
+/// process-scoped "umask" setting to adjust this number for file creation.
+pub const default_mode: Mode = if (Mode == u0) 0 else 0o666;
 
 pub const Kind = enum {
     block_device,
@@ -92,6 +103,11 @@ pub const Lock = enum {
     exclusive,
 };
 
+pub const LockError = error{
+    SystemResources,
+    FileLocksNotSupported,
+} || Io.UnexpectedError;
+
 pub const OpenFlags = struct {
     mode: OpenMode = .read_only,
 
@@ -141,7 +157,53 @@ pub const OpenFlags = struct {
     }
 };
 
-pub const CreateFlags = std.fs.File.CreateFlags;
+pub const CreateFlags = struct {
+    /// Whether the file will be created with read access.
+    read: bool = false,
+
+    /// If the file already exists, and is a regular file, and the access
+    /// mode allows writing, it will be truncated to length 0.
+    truncate: bool = true,
+
+    /// Ensures that this open call creates the file, otherwise causes
+    /// `error.PathAlreadyExists` to be returned.
+    exclusive: bool = false,
+
+    /// Open the file with an advisory lock to coordinate with other processes
+    /// accessing it at the same time. An exclusive lock will prevent other
+    /// processes from acquiring a lock. A shared lock will prevent other
+    /// processes from acquiring a exclusive lock, but does not prevent
+    /// other process from getting their own shared locks.
+    ///
+    /// The lock is advisory, except on Linux in very specific circumstances[1].
+    /// This means that a process that does not respect the locking API can still get access
+    /// to the file, despite the lock.
+    ///
+    /// On these operating systems, the lock is acquired atomically with
+    /// opening the file:
+    /// * Darwin
+    /// * DragonFlyBSD
+    /// * FreeBSD
+    /// * Haiku
+    /// * NetBSD
+    /// * OpenBSD
+    /// On these operating systems, the lock is acquired via a separate syscall
+    /// after opening the file:
+    /// * Linux
+    /// * Windows
+    ///
+    /// [1]: https://www.kernel.org/doc/Documentation/filesystems/mandatory-locking.txt
+    lock: Lock = .none,
+
+    /// Sets whether or not to wait until the file is locked to return. If set to true,
+    /// `error.WouldBlock` will be returned. Otherwise, the file will wait until the file
+    /// is available to proceed.
+    lock_nonblocking: bool = false,
+
+    /// For POSIX systems this is the file system mode the file will
+    /// be created with. On other systems this is always 0.
+    mode: Mode = default_mode,
+};
 
 pub const OpenError = error{
     SharingViolation,
@@ -231,6 +293,17 @@ pub fn writePositional(file: File, io: Io, buffer: [][]const u8, offset: u64) Wr
     return io.vtable.fileWritePositional(io.userdata, file, buffer, offset);
 }
 
+/// Opens a file for reading or writing, without attempting to create a new
+/// file, based on an absolute path.
+///
+/// Returns an open resource to be released with `close`.
+///
+/// Asserts that the path is absolute. See `Dir.openFile` for a function that
+/// operates on both absolute and relative paths.
+///
+/// On Windows, `absolute_path` should be encoded as [WTF-8](https://wtf-8.codeberg.page/).
+/// On WASI, `absolute_path` should be encoded as valid UTF-8.
+/// On other platforms, `absolute_path` is an opaque sequence of bytes with no particular encoding.
 pub fn openAbsolute(io: Io, absolute_path: []const u8, flags: OpenFlags) OpenError!File {
     assert(std.fs.path.isAbsolute(absolute_path));
     return Io.Dir.cwd().openFile(io, absolute_path, flags);
@@ -362,11 +435,6 @@ pub const Reader = struct {
             .file = file,
             .interface = initInterface(buffer),
         };
-    }
-
-    /// Takes a legacy `std.fs.File` to help with upgrading.
-    pub fn initAdapted(file: std.fs.File, io: Io, buffer: []u8) Reader {
-        return .init(.{ .handle = file.handle }, io, buffer);
     }
 
     pub fn initSize(file: File, io: Io, buffer: []u8, size: ?u64) Reader {
@@ -652,3 +720,113 @@ pub const Reader = struct {
         return size - logicalPos(r) == 0;
     }
 };
+
+pub const Atomic = struct {
+    file_writer: File.Writer,
+    random_integer: u64,
+    dest_basename: []const u8,
+    file_open: bool,
+    file_exists: bool,
+    close_dir_on_deinit: bool,
+    dir: Dir,
+
+    pub const InitError = File.OpenError;
+
+    /// Note that the `Dir.atomicFile` API may be more handy than this lower-level function.
+    pub fn init(
+        dest_basename: []const u8,
+        mode: File.Mode,
+        dir: Dir,
+        close_dir_on_deinit: bool,
+        write_buffer: []u8,
+    ) InitError!Atomic {
+        while (true) {
+            const random_integer = std.crypto.random.int(u64);
+            const tmp_sub_path = std.fmt.hex(random_integer);
+            const file = dir.createFile(&tmp_sub_path, .{ .mode = mode, .exclusive = true }) catch |err| switch (err) {
+                error.PathAlreadyExists => continue,
+                else => |e| return e,
+            };
+            return .{
+                .file_writer = file.writer(write_buffer),
+                .random_integer = random_integer,
+                .dest_basename = dest_basename,
+                .file_open = true,
+                .file_exists = true,
+                .close_dir_on_deinit = close_dir_on_deinit,
+                .dir = dir,
+            };
+        }
+    }
+
+    /// Always call deinit, even after a successful finish().
+    pub fn deinit(af: *Atomic) void {
+        if (af.file_open) {
+            af.file_writer.file.close();
+            af.file_open = false;
+        }
+        if (af.file_exists) {
+            const tmp_sub_path = std.fmt.hex(af.random_integer);
+            af.dir.deleteFile(&tmp_sub_path) catch {};
+            af.file_exists = false;
+        }
+        if (af.close_dir_on_deinit) {
+            af.dir.close();
+        }
+        af.* = undefined;
+    }
+
+    pub const FlushError = File.WriteError;
+
+    pub fn flush(af: *Atomic) FlushError!void {
+        af.file_writer.interface.flush() catch |err| switch (err) {
+            error.WriteFailed => return af.file_writer.err.?,
+        };
+    }
+
+    pub const RenameIntoPlaceError = Dir.RenameError;
+
+    /// On Windows, this function introduces a period of time where some file
+    /// system operations on the destination file will result in
+    /// `error.AccessDenied`, including rename operations (such as the one used in
+    /// this function).
+    pub fn renameIntoPlace(af: *Atomic) RenameIntoPlaceError!void {
+        const io = af.file_writer.io;
+        assert(af.file_exists);
+        if (af.file_open) {
+            af.file_writer.file.close();
+            af.file_open = false;
+        }
+        const tmp_sub_path = std.fmt.hex(af.random_integer);
+        try af.dir.rename(&tmp_sub_path, af.dir, af.dest_basename, io);
+        af.file_exists = false;
+    }
+
+    pub const FinishError = FlushError || RenameIntoPlaceError;
+
+    /// Combination of `flush` followed by `renameIntoPlace`.
+    pub fn finish(af: *Atomic) FinishError!void {
+        try af.flush();
+        try af.renameIntoPlace();
+    }
+};
+
+pub const SetModeError = error{
+    AccessDenied,
+    PermissionDenied,
+    InputOutput,
+    SymLinkLoop,
+    FileNotFound,
+    SystemResources,
+    ReadOnlyFileSystem,
+} || Io.Cancelable || Io.UnexpectedError;
+
+pub const SetOwnerError = error{
+    AccessDenied,
+    PermissionDenied,
+    InputOutput,
+    SymLinkLoop,
+    FileNotFound,
+    SystemResources,
+    ReadOnlyFileSystem,
+} || Io.Cancelable || Io.UnexpectedError;

@@ -2065,21 +2065,6 @@ test "chown" {
     try dir.chown(null, null);
 }
 
-test "delete a setAsCwd directory on Windows" {
-    if (native_os != .windows) return error.SkipZigTest;
-
-    var tmp = tmpDir(.{});
-    // Set tmp dir as current working directory.
-    try tmp.dir.setAsCwd();
-    tmp.dir.close();
-    try testing.expectError(error.FileBusy, tmp.parent_dir.deleteTree(&tmp.sub_path));
-    // Now set the parent dir as the current working dir for clean up.
-    try tmp.parent_dir.setAsCwd();
-    try tmp.parent_dir.deleteTree(&tmp.sub_path);
-    // Close the parent "tmp" so we don't leak the HANDLE.
-    tmp.parent_dir.close();
-}
-
 test "invalid UTF-8/WTF-8 paths" {
     const expected_err = switch (native_os) {
         .wasi => error.BadPathName,
