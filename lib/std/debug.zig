@@ -1604,6 +1604,13 @@ pub fn dumpStackPointerAddr(prefix: []const u8) void {
 
 test "manage resources correctly" {
     if (SelfInfo == void) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_c) {
+        // The C backend emits an extremely large C source file, meaning it has a huge
+        // amount of debug information. Parsing this debug information makes this test
+        // take too long to be worth running.
+        return error.SkipZigTest;
+    }
+
     const S = struct {
         noinline fn showMyTrace() usize {
             return @returnAddress();
