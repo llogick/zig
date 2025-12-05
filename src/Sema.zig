@@ -31629,13 +31629,7 @@ fn analyzeIsNonErrComptimeOnly(
         return .bool_false;
     }
 
-    if (operand.toIndex()) |operand_inst| {
-        switch (sema.air_instructions.items(.tag)[@intFromEnum(operand_inst)]) {
-            .wrap_errunion_payload => return .bool_true,
-            .wrap_errunion_err => return .bool_false,
-            else => {},
-        }
-    } else if (operand == .undef) {
+    if (operand == .undef) {
         return .undef_bool;
     } else if (@intFromEnum(operand) < InternPool.static_len) {
         // None of the ref tags can be errors.
