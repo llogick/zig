@@ -1066,6 +1066,7 @@ test "tag name with signed enum values" {
 test "tag name with large enum values" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_c) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_wasm) return error.SkipZigTest;
 
     const Kdf = enum(u128) {
         aes_kdf = 0xea4f8ac1080d74bf60448a629af3d9c9,

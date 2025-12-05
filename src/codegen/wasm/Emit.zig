@@ -85,7 +85,7 @@ pub fn lowerToCode(emit: *Emit) Error!void {
             if (is_obj) {
                 @panic("TODO");
             } else {
-                writeUleb128(code, 1 + @intFromEnum(indirect_func_idx));
+                writeSleb128(code, 1 + @intFromEnum(indirect_func_idx));
             }
             inst += 1;
             continue :loop tags[inst];
