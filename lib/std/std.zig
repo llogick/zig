@@ -173,6 +173,9 @@ pub const Options = struct {
     /// If this is `false`, then captured stack traces will always be empty, and attempts to write
     /// stack traces will just print an error to the relevant `Io.Writer` and return.
     allow_stack_tracing: bool = !@import("builtin").strip_debug_info,
+
+    /// Overrides `std.Io.File.Permissions`.
+    FilePermissions: ?type = null,
 };
 
 // This forces the start.zig file to be imported, and the comptime logic inside that

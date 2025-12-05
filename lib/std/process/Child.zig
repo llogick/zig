@@ -596,7 +596,7 @@ fn spawnPosix(self: *ChildProcess) SpawnError!void {
             error.NoSpaceLeft => unreachable,
             error.FileTooBig => unreachable,
             error.DeviceBusy => unreachable,
-            error.FileLocksNotSupported => unreachable,
+            error.FileLocksUnsupported => unreachable,
             error.BadPathName => unreachable, // Windows-only
             error.WouldBlock => unreachable,
             error.NetworkNotFound => unreachable, // Windows-only

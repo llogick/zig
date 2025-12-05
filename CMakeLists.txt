@@ -436,7 +436,6 @@ set(ZIG_STAGE2_SOURCES
     lib/std/fmt.zig
     lib/std/fmt/parse_float.zig
     lib/std/fs.zig
-    lib/std/fs/File.zig
     lib/std/fs/get_app_data_dir.zig
     lib/std/fs/path.zig
     lib/std/hash.zig

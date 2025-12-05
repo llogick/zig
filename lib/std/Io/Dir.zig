@@ -11,9 +11,6 @@ const Allocator = std.mem.Allocator;
 
 handle: Handle,
 
-pub const Mode = Io.File.Mode;
-pub const default_mode: Mode = 0o755;
-
 pub const Entry = struct {
     name: []const u8,
     kind: File.Kind,
@@ -435,10 +432,10 @@ pub const PrevStatus = enum {
 
 pub const UpdateFileError = File.OpenError;
 
-/// Check the file size, mtime, and mode of `source_path` and `dest_path`. If
+/// Check the file size, mtime, and permissions of `source_path` and `dest_path`. If
 /// they are equal, does nothing. Otherwise, atomically copies `source_path` to
 /// `dest_path`, creating the parent directory hierarchy as needed. The
-/// destination file gains the mtime, atime, and mode of the source file so
+/// destination file gains the mtime, atime, and permissions of the source file so
 /// that the next call to `updateFile` will not need a copy.
 ///
 /// Returns the previous status of the file before updating.
@@ -459,7 +456,7 @@ pub fn updateFile(
     defer src_file.close(io);
 
     const src_stat = try src_file.stat(io);
-    const actual_mode = options.override_mode orelse src_stat.mode;
+    const actual_permissions = options.override_permissions orelse src_stat.permissions;
     check_dest_stat: {
         const dest_stat = blk: {
             var dest_file = dest_dir.openFile(io, dest_path, .{}) catch |err| switch (err) {
@@ -473,19 +470,19 @@ pub fn updateFile(
 
         if (src_stat.size == dest_stat.size and
             src_stat.mtime.nanoseconds == dest_stat.mtime.nanoseconds and
-            actual_mode == dest_stat.mode)
+            actual_permissions == dest_stat.permissions)
         {
             return .fresh;
         }
     }
 
     if (std.fs.path.dirname(dest_path)) |dirname| {
-        try dest_dir.makePathMode(io, dirname, default_mode);
+        try dest_dir.makePath(io, dirname, .default_dir);
     }
 
     var buffer: [1000]u8 = undefined; // Used only when direct fd-to-fd is not available.
     var atomic_file = try std.fs.Dir.atomicFile(.adaptFromNewApi(dest_dir), dest_path, .{
-        .mode = actual_mode,
+        .permissions = actual_permissions,
         .write_buffer = &buffer,
     });
     defer atomic_file.deinit();
@@ -555,16 +552,11 @@ pub const MakeError = error{
 /// Related:
 /// * `makePath`
 /// * `makeDirAbsolute`
-pub fn makeDir(dir: Dir, io: Io, sub_path: []const u8) MakeError!void {
-    return io.vtable.dirMake(io.userdata, dir, sub_path, default_mode);
+pub fn makeDir(dir: Dir, io: Io, sub_path: []const u8, permissions: Permissions) MakeError!void {
+    return io.vtable.dirMake(io.userdata, dir, sub_path, permissions);
 }
 
 pub const MakePathError = MakeError || StatPathError;
-
-/// Same as `makePathMode` but passes `default_mode`.
-pub fn makePath(dir: Dir, io: Io, sub_path: []const u8) MakePathError!void {
-    _ = try io.vtable.dirMakePath(io.userdata, dir, sub_path, default_mode);
-}
 
 /// Creates parent directories as necessary to ensure `sub_path` exists as a directory.
 ///
@@ -587,16 +579,16 @@ pub fn makePath(dir: Dir, io: Io, sub_path: []const u8) MakePathError!void {
 /// - On other platforms, `..` are not resolved before the path is passed to `mkdirat`,
 ///   meaning a `sub_path` like "first/../second" will create both a `./first`
 ///   and a `./second` directory.
-pub fn makePathMode(dir: Dir, io: Io, sub_path: []const u8, mode: Mode) MakePathError!void {
-    _ = try io.vtable.dirMakePath(io.userdata, dir, sub_path, mode);
+pub fn makePath(dir: Dir, io: Io, sub_path: []const u8, permissions: Permissions) MakePathError!void {
+    _ = try io.vtable.dirMakePath(io.userdata, dir, sub_path, permissions);
 }
 
 pub const MakePathStatus = enum { existed, created };
 
 /// Same as `makePath` except returns whether the path already existed or was
 /// successfully created.
-pub fn makePathStatus(dir: Dir, io: Io, sub_path: []const u8) MakePathError!MakePathStatus {
-    return io.vtable.dirMakePath(io.userdata, dir, sub_path, default_mode);
+pub fn makePathStatus(dir: Dir, io: Io, sub_path: []const u8, permissions: Permissions) MakePathError!MakePathStatus {
+    return io.vtable.dirMakePath(io.userdata, dir, sub_path, permissions);
 }
 
 pub const MakeOpenPathError = MakeError || OpenError || StatPathError;
@@ -609,8 +601,8 @@ pub const MakeOpenPathError = MakeError || OpenError || StatPathError;
 /// On Windows, `sub_path` should be encoded as [WTF-8](https://wtf-8.codeberg.page/).
 /// On WASI, `sub_path` should be encoded as valid UTF-8.
 /// On other platforms, `sub_path` is an opaque sequence of bytes with no particular encoding.
-pub fn makeOpenPath(dir: Dir, io: Io, sub_path: []const u8, options: OpenOptions) MakeOpenPathError!Dir {
-    return io.vtable.dirMakeOpenPath(io.userdata, dir, sub_path, options);
+pub fn makeOpenPath(dir: Dir, io: Io, sub_path: []const u8, permissions: Permissions, options: OpenOptions) MakeOpenPathError!Dir {
+    return io.vtable.dirMakeOpenPath(io.userdata, dir, sub_path, permissions, options);
 }
 
 pub const Stat = File.Stat;
@@ -1453,8 +1445,8 @@ fn deleteTreeOpenInitialSubpath(dir: Dir, sub_path: []const u8, kind_hint: File.
 }
 
 pub const CopyFileOptions = struct {
-    /// When this is `null` the mode is copied from the source file.
-    override_mode: ?File.Mode = null,
+    /// When this is `null` the permissions are copied from the source file.
+    override_permissions: ?File.Permissions = null,
 };
 
 pub const CopyFileError = File.OpenError || File.StatError ||
@@ -1486,15 +1478,15 @@ pub fn copyFile(
     var file_reader: File.Reader = .init(.{ .handle = file.handle }, io, &.{});
     defer file_reader.file.close(io);
 
-    const mode = options.override_mode orelse blk: {
+    const permissions = options.override_permissions orelse blk: {
         const st = try file_reader.file.stat(io);
         file_reader.size = st.size;
-        break :blk st.mode;
+        break :blk st.permissions;
     };
 
     var buffer: [1024]u8 = undefined; // Used only when direct fd-to-fd is not available.
     var atomic_file = try dest_dir.atomicFile(io, dest_path, .{
-        .mode = mode,
+        .permissions = permissions,
         .write_buffer = &buffer,
     });
     defer atomic_file.deinit(io);
@@ -1508,7 +1500,7 @@ pub fn copyFile(
 }
 
 pub const AtomicFileOptions = struct {
-    mode: File.Mode = File.default_mode,
+    permissions: File.Permissions = .default_file,
     make_path: bool = false,
     write_buffer: []u8,
 };
@@ -1530,13 +1522,14 @@ pub fn atomicFile(parent: Dir, io: Io, dest_path: []const u8, options: AtomicFil
         else
             try parent.openDir(io, dirname, .{});
 
-        return .init(std.fs.path.basename(dest_path), options.mode, dir, true, options.write_buffer);
+        return .init(std.fs.path.basename(dest_path), options.permissions, dir, true, options.write_buffer);
     } else {
-        return .init(dest_path, options.mode, parent, false, options.write_buffer);
+        return .init(dest_path, options.permissions, parent, false, options.write_buffer);
     }
 }
 
-pub const SetModeError = File.SetModeError;
+pub const SetPermissionsError = File.SetPermissionsError;
+pub const Permissions = File.Permissions;
 
 /// Also known as "chmod".
 ///
@@ -1544,8 +1537,8 @@ pub const SetModeError = File.SetModeError;
 /// successfully, or must have the effective user ID matching the owner
 /// of the directory. Additionally, the directory must have been opened
 /// with `OpenOptions.iterate` set to `true`.
-pub fn setMode(dir: Dir, io: Io, new_mode: File.Mode) SetModeError!void {
-    return io.vtable.dirSetMode(io.userdata, dir, new_mode);
+pub fn setPermissions(dir: Dir, io: Io, new_permissions: File.Permissions) SetPermissionsError!void {
+    return io.vtable.dirSetPermissions(io.userdata, dir, new_permissions);
 }
 
 pub const SetOwnerError = File.SetOwnerError;
@@ -1561,9 +1554,31 @@ pub fn setOwner(dir: Dir, io: Io, owner: ?File.Uid, group: ?File.Gid) SetOwnerEr
     return io.vtable.dirSetOwner(io.userdata, dir, owner, group);
 }
 
-pub const SetPermissionsError = File.SetPermissionsError;
-pub const Permissions = File.Permissions;
+pub const SetTimestampsError = File.SetTimestampsError;
 
-pub fn setPermissions(dir: Dir, io: Io, permissions: Permissions) SetPermissionsError!void {
-    return io.vtable.dirSetPermissions(io.userdata, dir, permissions);
+pub const SetTimestampsOptions = struct {
+    follow_symlinks: bool = true,
+};
+
+/// The granularity that ultimately is stored depends on the combination of
+/// operating system and file system. When a value as provided that exceeds
+/// this range, the value is clamped to the maximum.
+pub fn setTimestamps(
+    dir: Dir,
+    io: Io,
+    sub_path: []const u8,
+    last_accessed: Io.Timestamp,
+    last_modified: Io.Timestamp,
+    options: SetTimestampsOptions,
+) SetTimestampsError!void {
+    return io.vtable.dirSetTimestamps(io.userdata, dir, sub_path, last_accessed, last_modified, options);
+}
+
+/// Sets the accessed and modification timestamps of the provided path to the
+/// current wall clock time.
+///
+/// The granularity that ultimately is stored depends on the combination of
+/// operating system and file system.
+pub fn setTimestampsNow(dir: Dir, io: Io, sub_path: []const u8, options: SetTimestampsOptions) SetTimestampsError!void {
+    return io.vtable.fileSetTimestampsNow(io.userdata, dir, sub_path, options);
 }

@@ -23,12 +23,6 @@ pub const Dir = std.Io.Dir;
 pub const File = std.Io.File;
 
 pub const path = @import("fs/path.zig");
-
-pub const has_executable_bit = switch (native_os) {
-    .windows, .wasi => false,
-    else => true,
-};
-
 pub const wasi = @import("fs/wasi.zig");
 
 // TODO audit these APIs with respect to Dir and absolute paths

@@ -309,17 +309,7 @@ pub fn close(fd: fd_t) void {
     }
 }
 
-pub const FChmodError = error{
-    AccessDenied,
-    PermissionDenied,
-    InputOutput,
-    SymLinkLoop,
-    FileNotFound,
-    SystemResources,
-    ReadOnlyFileSystem,
-} || UnexpectedError;
-
-pub const FChmodAtError = FChmodError || error{
+pub const FChmodAtError = std.Io.File.SetPermissionsError || error{
     /// A component of `path` exceeded `NAME_MAX`, or the entire path exceeded
     /// `PATH_MAX`.
     NameTooLong,
@@ -335,7 +325,6 @@ pub const FChmodAtError = FChmodError || error{
     ProcessFdQuotaExceeded,
     /// The procfs fallback was used but the system exceeded it open file limit.
     SystemFdQuotaExceeded,
-    Canceled,
 };
 
 /// Changes the `mode` of `path` relative to the directory referred to by
@@ -969,72 +958,6 @@ pub fn pread(fd: fd_t, buf: []u8, offset: u64) PReadError!usize {
     }
 }
 
-pub const TruncateError = error{
-    FileTooBig,
-    InputOutput,
-    FileBusy,
-    AccessDenied,
-    PermissionDenied,
-    NonResizable,
-} || UnexpectedError;
-
-/// Length must be positive when treated as an i64.
-pub fn ftruncate(fd: fd_t, length: u64) TruncateError!void {
-    const signed_len: i64 = @bitCast(length);
-    if (signed_len < 0) return error.FileTooBig; // avoid ambiguous EINVAL errors
-
-    if (native_os == .windows) {
-        var io_status_block: windows.IO_STATUS_BLOCK = undefined;
-        const eof_info: windows.FILE.END_OF_FILE_INFORMATION = .{
-            .EndOfFile = signed_len,
-        };
-        const rc = windows.ntdll.NtSetInformationFile(
-            fd,
-            &io_status_block,
-            &eof_info,
-            @sizeOf(windows.FILE.END_OF_FILE_INFORMATION),
-            .EndOfFile,
-        );
-        switch (rc) {
-            .SUCCESS => return,
-            .INVALID_HANDLE => unreachable, // Handle not open for writing
-            .ACCESS_DENIED => return error.AccessDenied,
-            .USER_MAPPED_FILE => return error.AccessDenied,
-            .INVALID_PARAMETER => return error.FileTooBig,
-            else => return windows.unexpectedStatus(rc),
-        }
-    }
-    if (native_os == .wasi and !builtin.link_libc) {
-        switch (wasi.fd_filestat_set_size(fd, length)) {
-            .SUCCESS => return,
-            .INTR => unreachable,
-            .FBIG => return error.FileTooBig,
-            .IO => return error.InputOutput,
-            .PERM => return error.PermissionDenied,
-            .TXTBSY => return error.FileBusy,
-            .BADF => unreachable, // Handle not open for writing
-            .INVAL => return error.NonResizable,
-            .NOTCAPABLE => return error.AccessDenied,
-            else => |err| return unexpectedErrno(err),
-        }
-    }
-
-    const ftruncate_sym = if (lfs64_abi) system.ftruncate64 else system.ftruncate;
-    while (true) {
-        switch (errno(ftruncate_sym(fd, signed_len))) {
-            .SUCCESS => return,
-            .INTR => continue,
-            .FBIG => return error.FileTooBig,
-            .IO => return error.InputOutput,
-            .PERM => return error.PermissionDenied,
-            .TXTBSY => return error.FileBusy,
-            .BADF => unreachable, // Handle not open for writing
-            .INVAL => return error.NonResizable, // This is returned for /dev/null for example.
-            else => |err| return unexpectedErrno(err),
-        }
-    }
-}
-
 /// Number of bytes read is returned. Upon reading end-of-file, zero is returned.
 ///
 /// Retries when interrupted by a signal.
@@ -1602,7 +1525,7 @@ pub fn openatZ(dir_fd: fd_t, file_path: [*:0]const u8, flags: O, mode: mode_t) O
             .PERM => return error.PermissionDenied,
             .EXIST => return error.PathAlreadyExists,
             .BUSY => return error.DeviceBusy,
-            .OPNOTSUPP => return error.FileLocksNotSupported,
+            .OPNOTSUPP => return error.FileLocksUnsupported,
             .AGAIN => return error.WouldBlock,
             .TXTBSY => return error.FileBusy,
             .NXIO => return error.NoDevice,
@@ -2311,47 +2234,6 @@ pub fn getgid() gid_t {
 
 pub fn getegid() gid_t {
     return system.getegid();
-}
-
-/// Test whether a file descriptor refers to a terminal.
-pub fn isatty(handle: fd_t) bool {
-    if (native_os == .windows) {
-        if (fs.File.isCygwinPty(.{ .handle = handle }))
-            return true;
-
-        var out: windows.DWORD = undefined;
-        return windows.kernel32.GetConsoleMode(handle, &out) != 0;
-    }
-    if (builtin.link_libc) {
-        return system.isatty(handle) != 0;
-    }
-    if (native_os == .wasi) {
-        var statbuf: wasi.fdstat_t = undefined;
-        const err = wasi.fd_fdstat_get(handle, &statbuf);
-        if (err != .SUCCESS)
-            return false;
-
-        // A tty is a character device that we can't seek or tell on.
-        if (statbuf.fs_filetype != .CHARACTER_DEVICE)
-            return false;
-        if (statbuf.fs_rights_base.FD_SEEK or statbuf.fs_rights_base.FD_TELL)
-            return false;
-
-        return true;
-    }
-    if (native_os == .linux) {
-        while (true) {
-            var wsz: winsize = undefined;
-            const fd: usize = @bitCast(@as(isize, handle));
-            const rc = linux.syscall3(.ioctl, fd, linux.T.IOCGWINSZ, @intFromPtr(&wsz));
-            switch (linux.errno(rc)) {
-                .SUCCESS => return true,
-                .INTR => continue,
-                else => return false,
-            }
-        }
-    }
-    return system.isatty(handle) != 0;
 }
 
 pub const SocketError = error{
@@ -3923,34 +3805,6 @@ pub fn fcntl(fd: fd_t, cmd: i32, arg: usize) FcntlError!usize {
     }
 }
 
-pub const FlockError = error{
-    WouldBlock,
-
-    /// The kernel ran out of memory for allocating file locks
-    SystemResources,
-
-    /// The underlying filesystem does not support file locks
-    FileLocksNotSupported,
-} || UnexpectedError;
-
-/// Depending on the operating system `flock` may or may not interact with
-/// `fcntl` locks made by other processes.
-pub fn flock(fd: fd_t, operation: i32) FlockError!void {
-    while (true) {
-        const rc = system.flock(fd, operation);
-        switch (errno(rc)) {
-            .SUCCESS => return,
-            .BADF => unreachable,
-            .INTR => continue,
-            .INVAL => unreachable, // invalid parameters
-            .NOLCK => return error.SystemResources,
-            .AGAIN => return error.WouldBlock, // TODO: integrate with async instead of just returning an error
-            .OPNOTSUPP => return error.FileLocksNotSupported,
-            else => |err| return unexpectedErrno(err),
-        }
-    }
-}
-
 /// Spurious wakeups are possible and no precision of timing is guaranteed.
 pub fn nanosleep(seconds: u64, nanoseconds: u64) void {
     var req = timespec{
@@ -4212,74 +4066,6 @@ pub fn sigprocmask(flags: u32, noalias set: ?*const sigset_t, noalias oldset: ?*
         .FAULT => unreachable,
         .INVAL => unreachable,
         else => unreachable,
-    }
-}
-
-pub const FutimensError = error{
-    /// times is NULL, or both nsec values are UTIME_NOW, and either:
-    /// *  the effective user ID of the caller does not match the  owner
-    ///    of  the  file,  the  caller does not have write access to the
-    ///    file, and the caller is not privileged (Linux: does not  have
-    ///    either  the  CAP_FOWNER  or the CAP_DAC_OVERRIDE capability);
-    ///    or,
-    /// *  the file is marked immutable (see chattr(1)).
-    AccessDenied,
-
-    /// The caller attempted to change one or both timestamps to a value
-    /// other than the current time, or to change one of the  timestamps
-    /// to the current time while leaving the other timestamp unchanged,
-    /// (i.e., times is not NULL, neither nsec  field  is  UTIME_NOW,
-    /// and neither nsec field is UTIME_OMIT) and either:
-    /// *  the  caller's  effective  user ID does not match the owner of
-    ///    file, and the caller is not privileged (Linux: does not  have
-    ///    the CAP_FOWNER capability); or,
-    /// *  the file is marked append-only or immutable (see chattr(1)).
-    PermissionDenied,
-
-    ReadOnlyFileSystem,
-} || UnexpectedError;
-
-pub fn futimens(fd: fd_t, times: ?*const [2]timespec) FutimensError!void {
-    if (native_os == .wasi and !builtin.link_libc) {
-        // TODO WASI encodes `wasi.fstflags` to signify magic values
-        // similar to UTIME_NOW and UTIME_OMIT. Currently, we ignore
-        // this here, but we should really handle it somehow.
-        const error_code = blk: {
-            if (times) |times_arr| {
-                const atim = times_arr[0].toTimestamp();
-                const mtim = times_arr[1].toTimestamp();
-                break :blk wasi.fd_filestat_set_times(fd, atim, mtim, .{
-                    .ATIM = true,
-                    .MTIM = true,
-                });
-            }
-
-            break :blk wasi.fd_filestat_set_times(fd, 0, 0, .{
-                .ATIM_NOW = true,
-                .MTIM_NOW = true,
-            });
-        };
-        switch (error_code) {
-            .SUCCESS => return,
-            .ACCES => return error.AccessDenied,
-            .PERM => return error.PermissionDenied,
-            .BADF => unreachable, // always a race condition
-            .FAULT => unreachable,
-            .INVAL => unreachable,
-            .ROFS => return error.ReadOnlyFileSystem,
-            else => |err| return unexpectedErrno(err),
-        }
-    }
-
-    switch (errno(system.futimens(fd, times))) {
-        .SUCCESS => return,
-        .ACCES => return error.AccessDenied,
-        .PERM => return error.PermissionDenied,
-        .BADF => unreachable, // always a race condition
-        .FAULT => unreachable,
-        .INVAL => unreachable,
-        .ROFS => return error.ReadOnlyFileSystem,
-        else => |err| return unexpectedErrno(err),
     }
 }
 
@@ -5104,12 +4890,7 @@ pub fn signalfd(fd: fd_t, mask: *const sigset_t, flags: u32) !fd_t {
     }
 }
 
-pub const SyncError = error{
-    InputOutput,
-    NoSpaceLeft,
-    DiskQuota,
-    AccessDenied,
-} || UnexpectedError;
+pub const SyncError = std.Io.File.SyncError;
 
 /// Write all pending file contents and metadata modifications to all filesystems.
 pub fn sync() void {
@@ -5129,38 +4910,8 @@ pub fn syncfs(fd: fd_t) SyncError!void {
     }
 }
 
-/// Write all pending file contents and metadata modifications for the specified file descriptor to the underlying filesystem.
-pub fn fsync(fd: fd_t) SyncError!void {
-    if (native_os == .windows) {
-        if (windows.kernel32.FlushFileBuffers(fd) != 0)
-            return;
-        switch (windows.GetLastError()) {
-            .SUCCESS => return,
-            .INVALID_HANDLE => unreachable,
-            .ACCESS_DENIED => return error.AccessDenied, // a sync was performed but the system couldn't update the access time
-            .UNEXP_NET_ERR => return error.InputOutput,
-            else => return error.InputOutput,
-        }
-    }
-    const rc = system.fsync(fd);
-    switch (errno(rc)) {
-        .SUCCESS => return,
-        .BADF, .INVAL, .ROFS => unreachable,
-        .IO => return error.InputOutput,
-        .NOSPC => return error.NoSpaceLeft,
-        .DQUOT => return error.DiskQuota,
-        else => |err| return unexpectedErrno(err),
-    }
-}
-
 /// Write all pending file contents for the specified file descriptor to the underlying filesystem, but not necessarily the metadata.
 pub fn fdatasync(fd: fd_t) SyncError!void {
-    if (native_os == .windows) {
-        return fsync(fd) catch |err| switch (err) {
-            SyncError.AccessDenied => return, // fdatasync doesn't promise that the access time was synced
-            else => return err,
-        };
-    }
     const rc = system.fdatasync(fd);
     switch (errno(rc)) {
         .SUCCESS => return,

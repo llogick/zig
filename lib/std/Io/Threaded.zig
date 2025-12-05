@@ -668,9 +668,10 @@ pub fn io(t: *Threaded) Io {
             .dirRename = dirRename,
             .dirSymLink = dirSymLink,
             .dirReadLink = dirReadLink,
-            .dirSetMode = dirSetMode,
             .dirSetOwner = dirSetOwner,
             .dirSetPermissions = dirSetPermissions,
+            .dirSetTimestamps = dirSetTimestamps,
+            .dirSetTimestampsNow = dirSetTimestampsNow,
 
             .fileStat = fileStat,
             .fileClose = fileClose,
@@ -681,6 +682,19 @@ pub fn io(t: *Threaded) Io {
             .fileSeekBy = fileSeekBy,
             .fileSeekTo = fileSeekTo,
             .openSelfExe = openSelfExe,
+            .fileSync = fileSync,
+            .fileIsTty = fileIsTty,
+            .fileEnableAnsiEscapeCodes = fileEnableAnsiEscapeCodes,
+            .fileSupportsAnsiEscapeCodes = fileSupportsAnsiEscapeCodes,
+            .fileSetLength = fileSetLength,
+            .fileSetOwner = fileSetOwner,
+            .fileSetPermissions = fileSetPermissions,
+            .fileSetTimestamps = fileSetTimestamps,
+            .fileSetTimestampsNow = fileSetTimestampsNow,
+            .fileLock = fileLock,
+            .fileTryLock = fileTryLock,
+            .fileUnlock = fileUnlock,
+            .fileDowngradeLock = fileDowngradeLock,
 
             .now = now,
             .sleep = sleep,
@@ -774,9 +788,10 @@ pub fn ioBasic(t: *Threaded) Io {
             .dirRename = dirRename,
             .dirSymLink = dirSymLink,
             .dirReadLink = dirReadLink,
-            .dirSetMode = dirSetMode,
             .dirSetOwner = dirSetOwner,
             .dirSetPermissions = dirSetPermissions,
+            .dirSetTimestamps = dirSetTimestamps,
+            .dirSetTimestampsNow = dirSetTimestampsNow,
 
             .fileStat = fileStat,
             .fileClose = fileClose,
@@ -787,6 +802,19 @@ pub fn ioBasic(t: *Threaded) Io {
             .fileSeekBy = fileSeekBy,
             .fileSeekTo = fileSeekTo,
             .openSelfExe = openSelfExe,
+            .fileSync = fileSync,
+            .fileIsTty = fileIsTty,
+            .fileEnableAnsiEscapeCodes = fileEnableAnsiEscapeCodes,
+            .fileSupportsAnsiEscapeCodes = fileSupportsAnsiEscapeCodes,
+            .fileSetLength = fileSetLength,
+            .fileSetOwner = fileSetOwner,
+            .fileSetPermissions = fileSetPermissions,
+            .fileSetTimestamps = fileSetTimestamps,
+            .fileSetTimestampsNow = fileSetTimestampsNow,
+            .fileLock = fileLock,
+            .fileTryLock = fileTryLock,
+            .fileUnlock = fileUnlock,
+            .fileDowngradeLock = fileDowngradeLock,
 
             .now = now,
             .sleep = sleep,
@@ -831,6 +859,7 @@ const fstat_sym = if (posix.lfs64_abi) posix.system.fstat64 else posix.system.fs
 const fstatat_sym = if (posix.lfs64_abi) posix.system.fstatat64 else posix.system.fstatat;
 const lseek_sym = if (posix.lfs64_abi) posix.system.lseek64 else posix.system.lseek;
 const preadv_sym = if (posix.lfs64_abi) posix.system.preadv64 else posix.system.preadv;
+const ftruncate_sym = if (posix.lfs64_abi) posix.system.ftruncate64 else posix.system.ftruncate;
 
 /// Trailing data:
 /// 1. context
@@ -1956,7 +1985,7 @@ fn fileStatWindows(userdata: ?*anyopaque, file: Io.File) Io.File.StatError!Io.Fi
         // size provided. This is treated as success because the type of variable-length information that this would be relevant for
         // (name, volume name, etc) we don't care about.
         .BUFFER_OVERFLOW => {},
-        .INVALID_PARAMETER => unreachable,
+        .INVALID_PARAMETER => |err| return windows.statusBug(err),
         .ACCESS_DENIED => return error.AccessDenied,
         else => return windows.unexpectedStatus(rc),
     }
@@ -1971,7 +2000,7 @@ fn fileStatWindows(userdata: ?*anyopaque, file: Io.File) Io.File.StatError!Io.Fi
                 .SUCCESS => {},
                 // INFO_LENGTH_MISMATCH and ACCESS_DENIED are the only documented possible errors
                 // https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-fscc/d295752f-ce89-4b98-8553-266d37c84f0e
-                .INFO_LENGTH_MISMATCH => unreachable,
+                .INFO_LENGTH_MISMATCH => |err| return windows.statusBug(err),
                 .ACCESS_DENIED => return error.AccessDenied,
                 else => return windows.unexpectedStatus(rc),
             }
@@ -2279,7 +2308,7 @@ fn dirCreateFilePosix(
                     .PERM => return error.PermissionDenied,
                     .EXIST => return error.PathAlreadyExists,
                     .BUSY => return error.DeviceBusy,
-                    .OPNOTSUPP => return error.FileLocksNotSupported,
+                    .OPNOTSUPP => return error.FileLocksUnsupported,
                     .AGAIN => return error.WouldBlock,
                     .TXTBSY => return error.FileBusy,
                     .NXIO => return error.NoDevice,
@@ -2318,7 +2347,7 @@ fn dirCreateFilePosix(
                         .INVAL => |err| return errnoBug(err), // invalid parameters
                         .NOLCK => return error.SystemResources,
                         .AGAIN => return error.WouldBlock,
-                        .OPNOTSUPP => return error.FileLocksNotSupported,
+                        .OPNOTSUPP => return error.FileLocksUnsupported,
                         else => |err| return posix.unexpectedErrno(err),
                     }
                 },
@@ -2588,7 +2617,7 @@ fn dirOpenFilePosix(
                     .PERM => return error.PermissionDenied,
                     .EXIST => return error.PathAlreadyExists,
                     .BUSY => return error.DeviceBusy,
-                    .OPNOTSUPP => return error.FileLocksNotSupported,
+                    .OPNOTSUPP => return error.FileLocksUnsupported,
                     .AGAIN => return error.WouldBlock,
                     .TXTBSY => return error.FileBusy,
                     .NXIO => return error.NoDevice,
@@ -2626,7 +2655,7 @@ fn dirOpenFilePosix(
                         .INVAL => |err| return errnoBug(err), // invalid parameters
                         .NOLCK => return error.SystemResources,
                         .AGAIN => return error.WouldBlock,
-                        .OPNOTSUPP => return error.FileLocksNotSupported,
+                        .OPNOTSUPP => return error.FileLocksUnsupported,
                         else => |err| return posix.unexpectedErrno(err),
                     }
                 },
@@ -3544,12 +3573,12 @@ fn dirDeleteWindows(userdata: ?*anyopaque, dir: Io.Dir, sub_path: []const u8, re
     );
     switch (rc) {
         .SUCCESS => {},
-        .OBJECT_NAME_INVALID => unreachable,
+        .OBJECT_NAME_INVALID => |err| return w.statusBug(err),
         .OBJECT_NAME_NOT_FOUND => return error.FileNotFound,
         .OBJECT_PATH_NOT_FOUND => return error.FileNotFound,
         .BAD_NETWORK_PATH => return error.NetworkNotFound, // \\server was not found
         .BAD_NETWORK_NAME => return error.NetworkNotFound, // \\server was found but \\server\share wasn't
-        .INVALID_PARAMETER => unreachable,
+        .INVALID_PARAMETER => |err| return w.statusBug(err),
         .FILE_IS_A_DIRECTORY => return error.IsDir,
         .NOT_A_DIRECTORY => return error.NotDir,
         .SHARING_VIOLATION => return error.FileBusy,
@@ -3621,7 +3650,7 @@ fn dirDeleteWindows(userdata: ?*anyopaque, dir: Io.Dir, sub_path: []const u8, re
     switch (rc) {
         .SUCCESS => {},
         .DIRECTORY_NOT_EMPTY => return error.DirNotEmpty,
-        .INVALID_PARAMETER => unreachable,
+        .INVALID_PARAMETER => |err| return w.statusBug(err),
         .CANNOT_DELETE => return error.AccessDenied,
         .MEDIA_WRITE_PROTECTED => return error.AccessDenied,
         .ACCESS_DENIED => return error.AccessDenied,
@@ -3835,9 +3864,9 @@ fn dirRenameWindows(
 
     switch (rc) {
         .SUCCESS => {},
-        .INVALID_HANDLE => unreachable,
-        .INVALID_PARAMETER => unreachable,
-        .OBJECT_PATH_SYNTAX_BAD => unreachable,
+        .INVALID_HANDLE => |err| return w.statusBug(err),
+        .INVALID_PARAMETER => |err| return w.statusBug(err),
+        .OBJECT_PATH_SYNTAX_BAD => |err| return w.statusBug(err),
         .ACCESS_DENIED => return error.AccessDenied,
         .OBJECT_NAME_NOT_FOUND => return error.FileNotFound,
         .OBJECT_PATH_NOT_FOUND => return error.FileNotFound,
@@ -4320,50 +4349,23 @@ fn dirReadLinkPosix(userdata: ?*anyopaque, dir: Io.Dir, sub_path: []const u8, bu
     }
 }
 
-const dirSetMode = switch (native_os) {
-    .windows => dirSetModeUnsupported,
-    else => dirSetModePosix,
+const dirSetPermissions = switch (native_os) {
+    .windows => dirSetPermissionsWindows,
+    else => dirSetPermissionsPosix,
 };
 
-fn dirSetModeUnsupported(userdata: ?*anyopaque, dir: Io.Dir, new_mode: Io.Dir.Mode) Io.Dir.SetModeError!void {
+fn dirSetPermissionsWindows(userdata: ?*anyopaque, dir: Io.Dir, permissions: Io.Dir.Permissions) Io.Dir.SetPermissionsError!void {
+    // TODO I think we can actually set permissions on a dir on windows?
     _ = userdata;
     _ = dir;
-    _ = new_mode;
+    _ = permissions;
     return error.Unexpected;
 }
 
-fn dirSetModePosix(userdata: ?*anyopaque, dir: Io.Dir, new_mode: Io.Dir.Mode) Io.Dir.SetModeError!void {
+fn dirSetPermissionsPosix(userdata: ?*anyopaque, dir: Io.Dir, permissions: Io.Dir.Permissions) Io.Dir.SetPermissionsError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
-
-    try current_thread.beginSyscall();
-    while (true) {
-        switch (posix.errno(posix.system.fchmod(dir.handle, new_mode))) {
-            .SUCCESS => return current_thread.endSyscall(),
-            .CANCELED => return current_thread.endSyscallCanceled(),
-            .INTR => {
-                try current_thread.checkCancel();
-                continue;
-            },
-            else => |e| {
-                current_thread.endSyscall();
-                switch (e) {
-                    .BADF => |err| return errnoBug(err),
-                    .FAULT => |err| return errnoBug(err),
-                    .INVAL => |err| return errnoBug(err),
-                    .ACCES => return error.AccessDenied,
-                    .IO => return error.InputOutput,
-                    .LOOP => return error.SymLinkLoop,
-                    .NOENT => return error.FileNotFound,
-                    .NOMEM => return error.SystemResources,
-                    .NOTDIR => return error.FileNotFound,
-                    .PERM => return error.PermissionDenied,
-                    .ROFS => return error.ReadOnlyFileSystem,
-                    else => |err| return posix.unexpectedErrno(err),
-                }
-            },
-        }
-    }
+    return setPermissionsPosix(current_thread, dir.handle, permissions.toMode());
 }
 
 const dirSetOwner = switch (native_os) {
@@ -4384,10 +4386,13 @@ fn dirSetOwnerPosix(userdata: ?*anyopaque, dir: Io.Dir, owner: ?Io.File.Uid, gro
     const current_thread = Thread.getCurrent(t);
     const uid = owner orelse ~@as(posix.uid_t, 0);
     const gid = group orelse ~@as(posix.gid_t, 0);
+    return setOwnerPosix(current_thread, dir.handle, uid, gid);
+}
 
+fn setOwnerPosix(current_thread: *Thread, fd: posix.fd_t, uid: posix.uid_t, gid: posix.gid_t) Io.File.SetOwnerError!void {
     try current_thread.beginSyscall();
     while (true) {
-        switch (posix.errno(posix.system.fchown(dir.handle, uid, gid))) {
+        switch (posix.errno(posix.system.fchown(fd, uid, gid))) {
             .SUCCESS => return current_thread.endSyscall(),
             .CANCELED => return current_thread.endSyscallCanceled(),
             .INTR => {
@@ -4415,31 +4420,916 @@ fn dirSetOwnerPosix(userdata: ?*anyopaque, dir: Io.Dir, owner: ?Io.File.Uid, gro
     }
 }
 
-const dirSetPermissions = switch (native_os) {
-    .windows => dirSetPermissionsWindows,
-    else => dirSetPermissionsPosix,
+const fileSync = switch (native_os) {
+    .windows => fileSyncWindows,
+    else => fileSyncPosix,
 };
 
-fn dirSetPermissionsWindows(
-    userdata: ?*anyopaque,
-    dir: Io.Dir,
-    permissions: Io.Dir.Permissions,
-) Io.Dir.SetPermissionsError!void {
-    _ = userdata;
-    _ = dir;
-    _ = permissions;
-    @panic("TODO");
+fn fileSyncWindows(userdata: ?*anyopaque, file: Io.File) Io.File.SyncError!void {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+
+    try current_thread.checkCancel();
+
+    if (windows.kernel32.FlushFileBuffers(file.handle) != 0)
+        return;
+
+    switch (windows.GetLastError()) {
+        .SUCCESS => return,
+        .INVALID_HANDLE => unreachable,
+        .ACCESS_DENIED => return error.AccessDenied, // a sync was performed but the system couldn't update the access time
+        .UNEXP_NET_ERR => return error.InputOutput,
+        else => |err| return windows.unexpectedError(err),
+    }
 }
 
-fn dirSetPermissionsPosix(
+fn fileSyncPosix(userdata: ?*anyopaque, file: Io.File) Io.File.SyncError!void {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+    try current_thread.beginSyscall();
+    while (true) {
+        switch (posix.system.fsync(file.handle)) {
+            .SUCCESS => return current_thread.endSyscall(),
+            .CANCELED => return current_thread.endSyscallCanceled(),
+            .INTR => {
+                try current_thread.checkCancel();
+                continue;
+            },
+            else => |e| {
+                current_thread.endSyscall();
+                switch (e) {
+                    .BADF => |err| return errnoBug(err),
+                    .INVAL => |err| return errnoBug(err),
+                    .ROFS => |err| return errnoBug(err),
+                    .IO => return error.InputOutput,
+                    .NOSPC => return error.NoSpaceLeft,
+                    .DQUOT => return error.DiskQuota,
+                    else => |err| return posix.unexpectedErrno(err),
+                }
+            },
+        }
+    }
+}
+
+fn fileIsTty(userdata: ?*anyopaque, file: Io.File) Io.Cancelable!bool {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+    return isTty(current_thread, file);
+}
+
+fn isTty(current_thread: *Thread, file: Io.File) Io.Cancelable!bool {
+    if (is_windows) {
+        if (try isCygwinPty(current_thread, file)) return true;
+        try current_thread.checkCancel();
+        var out: windows.DWORD = undefined;
+        return windows.kernel32.GetConsoleMode(file.handle, &out) != 0;
+    }
+
+    if (builtin.link_libc) {
+        try current_thread.beginSyscall();
+        while (true) {
+            const rc = posix.system.isatty(file.handle);
+            switch (posix.errno(rc - 1)) {
+                .SUCCESS => {
+                    current_thread.endSyscall();
+                    return true;
+                },
+                .CANCELED => return current_thread.endSyscallCanceled(),
+                .INTR => {
+                    try current_thread.checkCancel();
+                    continue;
+                },
+                else => {
+                    current_thread.endSyscall();
+                    return false;
+                },
+            }
+        }
+    }
+
+    if (native_os == .wasi) {
+        var statbuf: std.os.wasi.fdstat_t = undefined;
+        const err = std.os.wasi.fd_fdstat_get(file.handle, &statbuf);
+        if (err != .SUCCESS)
+            return false;
+
+        // A tty is a character device that we can't seek or tell on.
+        if (statbuf.fs_filetype != .CHARACTER_DEVICE)
+            return false;
+        if (statbuf.fs_rights_base.FD_SEEK or statbuf.fs_rights_base.FD_TELL)
+            return false;
+
+        return true;
+    }
+
+    if (native_os == .linux) {
+        const linux = std.os.linux;
+        try current_thread.beginSyscall();
+        while (true) {
+            var wsz: linux.winsize = undefined;
+            const fd: usize = @bitCast(@as(isize, file.handle));
+            const rc = linux.syscall3(.ioctl, fd, linux.T.IOCGWINSZ, @intFromPtr(&wsz));
+            switch (linux.errno(rc)) {
+                .SUCCESS => {
+                    current_thread.endSyscall();
+                    return true;
+                },
+                .CANCELED => return current_thread.endSyscallCanceled(),
+                .INTR => {
+                    try current_thread.checkCancel();
+                    continue;
+                },
+                else => {
+                    current_thread.endSyscall();
+                    return false;
+                },
+            }
+        }
+    }
+
+    @compileError("unimplemented");
+}
+
+fn fileEnableAnsiEscapeCodes(userdata: ?*anyopaque, file: Io.File) Io.File.EnableAnsiEscapeCodesError!void {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+
+    if (is_windows) {
+        try current_thread.checkCancel();
+
+        // For Windows Terminal, VT Sequences processing is enabled by default.
+        var original_console_mode: windows.DWORD = 0;
+        if (windows.kernel32.GetConsoleMode(file.handle, &original_console_mode) != 0) {
+            if (original_console_mode & windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING != 0) return;
+
+            // For Windows Console, VT Sequences processing support was added in Windows 10 build 14361, but disabled by default.
+            // https://devblogs.microsoft.com/commandline/tmux-support-arrives-for-bash-on-ubuntu-on-windows/
+            //
+            // Note: In Microsoft's example for enabling virtual terminal processing, it
+            // shows attempting to enable `DISABLE_NEWLINE_AUTO_RETURN` as well:
+            // https://learn.microsoft.com/en-us/windows/console/console-virtual-terminal-sequences#example-of-enabling-virtual-terminal-processing
+            // This is avoided because in the old Windows Console, that flag causes \n (as opposed to \r\n)
+            // to behave unexpectedly (the cursor moves down 1 row but remains on the same column).
+            // Additionally, the default console mode in Windows Terminal does not have
+            // `DISABLE_NEWLINE_AUTO_RETURN` set, so by only enabling `ENABLE_VIRTUAL_TERMINAL_PROCESSING`
+            // we end up matching the mode of Windows Terminal.
+            const requested_console_modes = windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+            const console_mode = original_console_mode | requested_console_modes;
+            try current_thread.checkCancel();
+            if (windows.kernel32.SetConsoleMode(file.handle, console_mode) != 0) return;
+        }
+        if (try isCygwinPty(current_thread, file)) return;
+    } else {
+        if (try supportsAnsiEscapeCodes(current_thread, file)) return;
+    }
+    return error.NotTerminalDevice;
+}
+
+fn fileSupportsAnsiEscapeCodes(userdata: ?*anyopaque, file: Io.File) Io.Cancelable!bool {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+    return supportsAnsiEscapeCodes(current_thread, file);
+}
+
+fn supportsAnsiEscapeCodes(current_thread: *Thread, file: Io.File) Io.Cancelable!bool {
+    if (is_windows) {
+        try current_thread.checkCancel();
+        var console_mode: windows.DWORD = 0;
+        if (windows.kernel32.GetConsoleMode(file.handle, &console_mode) != 0) {
+            if (console_mode & windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING != 0) return true;
+        }
+        return isCygwinPty(current_thread, file);
+    }
+
+    if (native_os == .wasi) {
+        // WASI sanitizes stdout when fd is a tty so ANSI escape codes will not
+        // be interpreted as actual cursor commands, and stderr is always
+        // sanitized.
+        return false;
+    }
+
+    if (try isTty(current_thread, file)) return true;
+
+    return false;
+}
+
+fn isCygwinPty(current_thread: *Thread, file: Io.File) Io.Cancelable!bool {
+    if (!is_windows) return false;
+
+    const handle = file.handle;
+
+    // If this is a MSYS2/cygwin pty, then it will be a named pipe with a name in one of these formats:
+    //   msys-[...]-ptyN-[...]
+    //   cygwin-[...]-ptyN-[...]
+    //
+    // Example: msys-1888ae32e00d56aa-pty0-to-master
+
+    // First, just check that the handle is a named pipe.
+    // This allows us to avoid the more costly NtQueryInformationFile call
+    // for handles that aren't named pipes.
+    {
+        try current_thread.checkCancel();
+        var io_status: windows.IO_STATUS_BLOCK = undefined;
+        var device_info: windows.FILE_FS_DEVICE_INFORMATION = undefined;
+        const rc = windows.ntdll.NtQueryVolumeInformationFile(handle, &io_status, &device_info, @sizeOf(windows.FILE_FS_DEVICE_INFORMATION), .FileFsDeviceInformation);
+        switch (rc) {
+            .SUCCESS => {},
+            else => return false,
+        }
+        if (device_info.DeviceType != windows.FILE_DEVICE_NAMED_PIPE) return false;
+    }
+
+    const name_bytes_offset = @offsetOf(windows.FILE_NAME_INFO, "FileName");
+    // `NAME_MAX` UTF-16 code units (2 bytes each)
+    // This buffer may not be long enough to handle *all* possible paths
+    // (PATH_MAX_WIDE would be necessary for that), but because we only care
+    // about certain paths and we know they must be within a reasonable length,
+    // we can use this smaller buffer and just return false on any error from
+    // NtQueryInformationFile.
+    const num_name_bytes = windows.MAX_PATH * 2;
+    var name_info_bytes align(@alignOf(windows.FILE_NAME_INFO)) = [_]u8{0} ** (name_bytes_offset + num_name_bytes);
+
+    var io_status_block: windows.IO_STATUS_BLOCK = undefined;
+    try current_thread.checkCancel();
+    const rc = windows.ntdll.NtQueryInformationFile(handle, &io_status_block, &name_info_bytes, @intCast(name_info_bytes.len), .FileNameInformation);
+    switch (rc) {
+        .SUCCESS => {},
+        .INVALID_PARAMETER => unreachable,
+        else => return false,
+    }
+
+    const name_info: *const windows.FILE_NAME_INFO = @ptrCast(&name_info_bytes);
+    const name_bytes = name_info_bytes[name_bytes_offset .. name_bytes_offset + name_info.FileNameLength];
+    const name_wide = std.mem.bytesAsSlice(u16, name_bytes);
+    // The name we get from NtQueryInformationFile will be prefixed with a '\', e.g. \msys-1888ae32e00d56aa-pty0-to-master
+    return (std.mem.startsWith(u16, name_wide, &[_]u16{ '\\', 'm', 's', 'y', 's', '-' }) or
+        std.mem.startsWith(u16, name_wide, &[_]u16{ '\\', 'c', 'y', 'g', 'w', 'i', 'n', '-' })) and
+        std.mem.indexOf(u16, name_wide, &[_]u16{ '-', 'p', 't', 'y' }) != null;
+}
+
+fn fileSetLength(userdata: ?*anyopaque, file: Io.File, length: u64) Io.File.SetLengthError!void {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+
+    const signed_len: i64 = @bitCast(length);
+    if (signed_len < 0) return error.FileTooBig; // Avoid ambiguous EINVAL errors.
+
+    if (is_windows) {
+        try current_thread.checkCancel();
+
+        var io_status_block: windows.IO_STATUS_BLOCK = undefined;
+        var eof_info: windows.FILE_END_OF_FILE_INFORMATION = .{
+            .EndOfFile = signed_len,
+        };
+
+        const status = windows.ntdll.NtSetInformationFile(
+            file.handle,
+            &io_status_block,
+            &eof_info,
+            @sizeOf(windows.FILE_END_OF_FILE_INFORMATION),
+            .FileEndOfFileInformation,
+        );
+        switch (status) {
+            .SUCCESS => return,
+            .INVALID_HANDLE => |err| return windows.statusBug(err), // Handle not open for writing.
+            .ACCESS_DENIED => return error.AccessDenied,
+            .USER_MAPPED_FILE => return error.AccessDenied,
+            .INVALID_PARAMETER => return error.FileTooBig,
+            else => return windows.unexpectedStatus(status),
+        }
+    }
+
+    if (native_os == .wasi and !builtin.link_libc) {
+        try current_thread.beginSyscall();
+        while (true) {
+            switch (std.os.wasi.fd_filestat_set_size(file.handle, length)) {
+                .SUCCESS => return current_thread.endSyscall(),
+                .CANCELED => return current_thread.endSyscallCanceled(),
+                .INTR => {
+                    try current_thread.checkCancel();
+                    continue;
+                },
+                else => |e| {
+                    current_thread.endSyscall();
+                    switch (e) {
+                        .FBIG => return error.FileTooBig,
+                        .IO => return error.InputOutput,
+                        .PERM => return error.PermissionDenied,
+                        .TXTBSY => return error.FileBusy,
+                        .BADF => |err| return errnoBug(err), // Handle not open for writing
+                        .INVAL => return error.NonResizable,
+                        .NOTCAPABLE => return error.AccessDenied,
+                        else => |err| return posix.unexpectedErrno(err),
+                    }
+                },
+            }
+        }
+    }
+
+    try current_thread.beginSyscall();
+    while (true) {
+        switch (posix.errno(ftruncate_sym(file.handle, signed_len))) {
+            .SUCCESS => return current_thread.endSyscall(),
+            .CANCELED => return current_thread.endSyscallCanceled(),
+            .INTR => {
+                try current_thread.checkCancel();
+                continue;
+            },
+            else => |e| {
+                current_thread.endSyscall();
+                switch (e) {
+                    .FBIG => return error.FileTooBig,
+                    .IO => return error.InputOutput,
+                    .PERM => return error.PermissionDenied,
+                    .TXTBSY => return error.FileBusy,
+                    .BADF => |err| return errnoBug(err), // Handle not open for writing.
+                    .INVAL => return error.NonResizable, // This is returned for /dev/null for example.
+                    else => |err| return posix.unexpectedErrno(err),
+                }
+            },
+        }
+    }
+}
+
+fn fileSetOwner(userdata: ?*anyopaque, file: Io.File, owner: ?Io.File.Uid, group: ?Io.File.Gid) Io.File.SetOwnerError!void {
+    switch (native_os) {
+        .windows, .wasi => return error.Unexpected,
+        else => {},
+    }
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+    const uid = owner orelse ~@as(posix.uid_t, 0);
+    const gid = group orelse ~@as(posix.gid_t, 0);
+    return setOwnerPosix(current_thread, file.handle, uid, gid);
+}
+
+fn fileSetPermissions(userdata: ?*anyopaque, file: Io.File, permissions: Io.File.Permissions) Io.File.SetPermissionsError!void {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+    switch (native_os) {
+        .windows => {
+            try current_thread.checkCancel();
+            var io_status_block: windows.IO_STATUS_BLOCK = undefined;
+            var info: windows.FILE_BASIC_INFORMATION = .{
+                .CreationTime = 0,
+                .LastAccessTime = 0,
+                .LastWriteTime = 0,
+                .ChangeTime = 0,
+                .FileAttributes = permissions.inner.attributes,
+            };
+            const status = windows.ntdll.NtSetInformationFile(
+                file.handle,
+                &io_status_block,
+                &info,
+                @sizeOf(windows.FILE_BASIC_INFORMATION),
+                .FileBasicInformation,
+            );
+            switch (status) {
+                .SUCCESS => return,
+                .INVALID_HANDLE => |err| return windows.statusBug(err),
+                .ACCESS_DENIED => return error.AccessDenied,
+                else => return windows.unexpectedStatus(status),
+            }
+        },
+        .wasi => return error.Unexpected, // Unsupported OS.
+        else => return setPermissionsPosix(current_thread, file.handle, permissions.toMode()),
+    }
+}
+
+fn setPermissionsPosix(current_thread: *Thread, fd: posix.fd_t, mode: posix.mode_t) Io.File.SetPermissionsError!void {
+    try current_thread.beginSyscall();
+    while (true) {
+        switch (posix.errno(posix.system.fchmod(fd, mode))) {
+            .SUCCESS => return current_thread.endSyscall(),
+            .CANCELED => return current_thread.endSyscallCanceled(),
+            .INTR => {
+                try current_thread.checkCancel();
+                continue;
+            },
+            else => |e| {
+                current_thread.endSyscall();
+                switch (e) {
+                    .BADF => |err| return errnoBug(err),
+                    .FAULT => |err| return errnoBug(err),
+                    .INVAL => |err| return errnoBug(err),
+                    .ACCES => return error.AccessDenied,
+                    .IO => return error.InputOutput,
+                    .LOOP => return error.SymLinkLoop,
+                    .NOENT => return error.FileNotFound,
+                    .NOMEM => return error.SystemResources,
+                    .NOTDIR => return error.FileNotFound,
+                    .PERM => return error.PermissionDenied,
+                    .ROFS => return error.ReadOnlyFileSystem,
+                    else => |err| return posix.unexpectedErrno(err),
+                }
+            },
+        }
+    }
+}
+
+fn dirSetTimestamps(
     userdata: ?*anyopaque,
     dir: Io.Dir,
-    permissions: Io.Dir.Permissions,
-) Io.Dir.SetPermissionsError!void {
-    _ = userdata;
-    _ = dir;
-    _ = permissions;
-    @panic("TODO");
+    sub_path: []const u8,
+    last_accessed: Io.Timestamp,
+    last_modified: Io.Timestamp,
+    options: Io.File.SetTimestampsOptions,
+) Io.File.SetTimestampsError!void {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+
+    if (is_windows) {
+        @panic("TODO");
+    }
+
+    if (native_os == .wasi and !builtin.link_libc) {
+        @panic("TODO");
+    }
+
+    const times: [2]posix.timespec = .{
+        timestampToPosix(last_accessed),
+        timestampToPosix(last_modified),
+    };
+
+    const flags: u32 = if (!options.follow_symlinks) posix.AT.SYMLINK_NOFOLLOW else 0;
+
+    var path_buffer: [posix.PATH_MAX]u8 = undefined;
+    const sub_path_posix = try pathToPosix(sub_path, &path_buffer);
+
+    try current_thread.beginSyscall();
+    while (true) {
+        switch (posix.errno(posix.system.utimensat(dir.handle, sub_path_posix, &times, flags))) {
+            .SUCCESS => return current_thread.endSyscall(),
+            .CANCELED => return current_thread.endSyscallCanceled(),
+            .INTR => {
+                try current_thread.checkCancel();
+                continue;
+            },
+            else => |e| {
+                current_thread.endSyscall();
+                switch (e) {
+                    .ACCES => return error.AccessDenied,
+                    .PERM => return error.PermissionDenied,
+                    .BADF => |err| return errnoBug(err), // always a race condition
+                    .FAULT => |err| return errnoBug(err),
+                    .INVAL => |err| return errnoBug(err),
+                    .ROFS => return error.ReadOnlyFileSystem,
+                    else => |err| return posix.unexpectedErrno(err),
+                }
+            },
+        }
+    }
+}
+
+fn dirSetTimestampsNow(
+    userdata: ?*anyopaque,
+    dir: Io.Dir,
+    sub_path: []const u8,
+    options: Io.File.SetTimestampsOptions,
+) Io.File.SetTimestampsError!void {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+
+    if (is_windows) {
+        @panic("TODO");
+    }
+
+    if (native_os == .wasi and !builtin.link_libc) {
+        @panic("TODO");
+    }
+
+    const flags: u32 = if (!options.follow_symlinks) posix.AT.SYMLINK_NOFOLLOW else 0;
+
+    var path_buffer: [posix.PATH_MAX]u8 = undefined;
+    const sub_path_posix = try pathToPosix(sub_path, &path_buffer);
+
+    try current_thread.beginSyscall();
+    while (true) {
+        switch (posix.errno(posix.system.utimensat(dir.handle, sub_path_posix, null, flags))) {
+            .SUCCESS => return current_thread.endSyscall(),
+            .CANCELED => return current_thread.endSyscallCanceled(),
+            .INTR => {
+                try current_thread.checkCancel();
+                continue;
+            },
+            else => |e| {
+                current_thread.endSyscall();
+                switch (e) {
+                    .ACCES => return error.AccessDenied,
+                    .PERM => return error.PermissionDenied,
+                    .BADF => |err| return errnoBug(err), // always a race condition
+                    .FAULT => |err| return errnoBug(err),
+                    .INVAL => |err| return errnoBug(err),
+                    .ROFS => return error.ReadOnlyFileSystem,
+                    else => |err| return posix.unexpectedErrno(err),
+                }
+            },
+        }
+    }
+}
+
+fn fileSetTimestamps(
+    userdata: ?*anyopaque,
+    file: Io.File,
+    last_accessed: Io.Timestamp,
+    last_modified: Io.Timestamp,
+) Io.File.SetTimestampsError!void {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+
+    if (is_windows) {
+        try current_thread.checkCancel();
+
+        const atime_ft = windows.nanoSecondsToFileTime(last_accessed.toNanoseconds());
+        const mtime_ft = windows.nanoSecondsToFileTime(last_modified.toNanoseconds());
+
+        // https://github.com/ziglang/zig/issues/1840
+        const rc = windows.kernel32.SetFileTime(file.handle, null, &atime_ft, &mtime_ft);
+        if (rc == 0) {
+            switch (windows.GetLastError()) {
+                else => |err| return windows.unexpectedError(err),
+            }
+        }
+        return;
+    }
+
+    const times: [2]posix.timespec = .{
+        timestampToPosix(last_accessed),
+        timestampToPosix(last_modified),
+    };
+
+    if (native_os == .wasi and !builtin.link_libc) {
+        const atim = times[0].toTimestamp();
+        const mtim = times[1].toTimestamp();
+        try current_thread.beginSyscall();
+        while (true) {
+            switch (std.os.wasi.fd_filestat_set_times(file.handle, atim, mtim, .{
+                .ATIM = true,
+                .MTIM = true,
+            })) {
+                .SUCCESS => return current_thread.endSyscall(),
+                .CANCELED => return current_thread.endSyscallCanceled(),
+                .INTR => {
+                    try current_thread.checkCancel();
+                    continue;
+                },
+                else => |e| {
+                    current_thread.endSyscall();
+                    switch (e) {
+                        .ACCES => return error.AccessDenied,
+                        .PERM => return error.PermissionDenied,
+                        .BADF => |err| return errnoBug(err), // File descriptor use-after-free.
+                        .FAULT => |err| return errnoBug(err),
+                        .INVAL => |err| return errnoBug(err),
+                        .ROFS => return error.ReadOnlyFileSystem,
+                        else => |err| return posix.unexpectedErrno(err),
+                    }
+                },
+            }
+        }
+    }
+
+    try current_thread.beginSyscall();
+    while (true) {
+        switch (posix.errno(posix.system.futimens(file.handle, &times))) {
+            .SUCCESS => return current_thread.endSyscall(),
+            .CANCELED => return current_thread.endSyscallCanceled(),
+            .INTR => {
+                try current_thread.checkCancel();
+                continue;
+            },
+            else => |e| {
+                current_thread.endSyscall();
+                switch (e) {
+                    .ACCES => return error.AccessDenied,
+                    .PERM => return error.PermissionDenied,
+                    .BADF => |err| return errnoBug(err), // always a race condition
+                    .FAULT => |err| return errnoBug(err),
+                    .INVAL => |err| return errnoBug(err),
+                    .ROFS => return error.ReadOnlyFileSystem,
+                    else => |err| return posix.unexpectedErrno(err),
+                }
+            },
+        }
+    }
+}
+
+fn fileSetTimestampsNow(userdata: ?*anyopaque, file: Io.File) Io.File.SetTimestampsError!void {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+
+    if (is_windows) {
+        @panic("TODO");
+    }
+
+    if (native_os == .wasi and !builtin.link_libc) {
+        try current_thread.beginSyscall();
+        while (true) {
+            switch (std.os.wasi.fd_filestat_set_times(file.handle, 0, 0, .{
+                .ATIM_NOW = true,
+                .MTIM_NOW = true,
+            })) {
+                .SUCCESS => return current_thread.endSyscall(),
+                .CANCELED => return current_thread.endSyscallCanceled(),
+                .INTR => {
+                    try current_thread.checkCancel();
+                    continue;
+                },
+                else => |e| {
+                    current_thread.endSyscall();
+                    switch (e) {
+                        .ACCES => return error.AccessDenied,
+                        .PERM => return error.PermissionDenied,
+                        .BADF => |err| return errnoBug(err), // always a race condition
+                        .FAULT => |err| return errnoBug(err),
+                        .INVAL => |err| return errnoBug(err),
+                        .ROFS => return error.ReadOnlyFileSystem,
+                        else => |err| return posix.unexpectedErrno(err),
+                    }
+                },
+            }
+        }
+    }
+
+    try current_thread.beginSyscall();
+    while (true) {
+        switch (posix.errno(posix.system.futimens(file.handle, null))) {
+            .SUCCESS => return current_thread.endSyscall(),
+            .CANCELED => return current_thread.endSyscallCanceled(),
+            .INTR => {
+                try current_thread.checkCancel();
+                continue;
+            },
+            else => |e| {
+                current_thread.endSyscall();
+                switch (e) {
+                    .ACCES => return error.AccessDenied,
+                    .PERM => return error.PermissionDenied,
+                    .BADF => |err| return errnoBug(err), // always a race condition
+                    .FAULT => |err| return errnoBug(err),
+                    .INVAL => |err| return errnoBug(err),
+                    .ROFS => return error.ReadOnlyFileSystem,
+                    else => |err| return posix.unexpectedErrno(err),
+                }
+            },
+        }
+    }
+}
+
+const windows_lock_range_off: windows.LARGE_INTEGER = 0;
+const windows_lock_range_len: windows.LARGE_INTEGER = 1;
+
+fn fileLock(userdata: ?*anyopaque, file: Io.File, lock: Io.File.Lock) Io.File.LockError!void {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+
+    if (is_windows) {
+        const exclusive = switch (lock) {
+            .none => return,
+            .shared => false,
+            .exclusive => true,
+        };
+        try current_thread.checkCancel();
+        var io_status_block: windows.IO_STATUS_BLOCK = undefined;
+        const status = windows.ntdll.NtLockFile(
+            file.handle,
+            null,
+            null,
+            null,
+            &io_status_block,
+            &windows_lock_range_off,
+            &windows_lock_range_len,
+            null,
+            windows.FALSE,
+            @intFromBool(exclusive),
+        );
+        switch (status) {
+            .SUCCESS => return,
+            .INSUFFICIENT_RESOURCES => return error.SystemResources,
+            .LOCK_NOT_GRANTED => |err| return windows.statusBug(err), // passed FailImmediately=false
+            .ACCESS_VIOLATION => |err| return windows.statusBug(err), // bad io_status_block pointer
+            else => return windows.unexpectedStatus(status),
+        }
+    }
+
+    const operation = switch (lock) {
+        .none => posix.LOCK.UN,
+        .shared => posix.LOCK.SH,
+        .exclusive => posix.LOCK.EX,
+    };
+    try current_thread.beginSyscall();
+    while (true) {
+        switch (posix.errno(posix.system.flock(file.handle, operation))) {
+            .SUCCESS => return current_thread.endSyscall(),
+            .CANCELED => return current_thread.endSyscallCanceled(),
+            .INTR => {
+                try current_thread.checkCancel();
+                continue;
+            },
+            else => |e| {
+                current_thread.endSyscall();
+                switch (e) {
+                    .BADF => |err| return errnoBug(err),
+                    .INVAL => |err| return errnoBug(err), // invalid parameters
+                    .NOLCK => return error.SystemResources,
+                    .AGAIN => |err| return errnoBug(err),
+                    .OPNOTSUPP => return error.FileLocksUnsupported,
+                    else => |err| return posix.unexpectedErrno(err),
+                }
+            },
+        }
+    }
+}
+
+fn fileTryLock(userdata: ?*anyopaque, file: Io.File, lock: Io.File.Lock) Io.File.LockError!bool {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+
+    if (is_windows) {
+        const exclusive = switch (lock) {
+            .none => return,
+            .shared => false,
+            .exclusive => true,
+        };
+        try current_thread.checkCancel();
+        var io_status_block: windows.IO_STATUS_BLOCK = undefined;
+        const status = windows.ntdll.NtLockFile(
+            file.handle,
+            null,
+            null,
+            null,
+            &io_status_block,
+            &windows_lock_range_off,
+            &windows_lock_range_len,
+            null,
+            windows.TRUE,
+            @intFromBool(exclusive),
+        );
+        switch (status) {
+            .SUCCESS => return true,
+            .INSUFFICIENT_RESOURCES => return error.SystemResources,
+            .LOCK_NOT_GRANTED => return false,
+            .ACCESS_VIOLATION => |err| return windows.statusBug(err), // bad io_status_block pointer
+            else => return windows.unexpectedStatus(status),
+        }
+    }
+
+    const operation = switch (lock) {
+        .none => posix.LOCK.UN,
+        .shared => posix.LOCK.SH | posix.LOCK.NB,
+        .exclusive => posix.LOCK.EX | posix.LOCK.NB,
+    };
+    try current_thread.beginSyscall();
+    while (true) {
+        switch (posix.errno(posix.system.flock(file.handle, operation))) {
+            .SUCCESS => {
+                current_thread.endSyscall();
+                return true;
+            },
+            .CANCELED => return current_thread.endSyscallCanceled(),
+            .INTR => {
+                try current_thread.checkCancel();
+                continue;
+            },
+            .AGAIN => {
+                current_thread.endSyscall();
+                return false;
+            },
+            else => |e| {
+                current_thread.endSyscall();
+                switch (e) {
+                    .BADF => |err| return errnoBug(err),
+                    .INVAL => |err| return errnoBug(err), // invalid parameters
+                    .NOLCK => return error.SystemResources,
+                    .OPNOTSUPP => return error.FileLocksUnsupported,
+                    else => |err| return posix.unexpectedErrno(err),
+                }
+            },
+        }
+    }
+}
+
+fn fileUnlock(userdata: ?*anyopaque, file: Io.File) void {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+
+    if (is_windows) {
+        try current_thread.checkCancel();
+        var io_status_block: windows.IO_STATUS_BLOCK = undefined;
+        const status = windows.ntdll.NtUnlockFile(
+            file.handle,
+            &io_status_block,
+            &windows_lock_range_off,
+            &windows_lock_range_len,
+            null,
+        );
+        if (is_debug) switch (status) {
+            .SUCCESS => {},
+            .RANGE_NOT_LOCKED => unreachable, // Function asserts unlocked.
+            .ACCESS_VIOLATION => unreachable, // bad io_status_block pointer
+            else => unreachable, // Resource deallocation must succeed.
+        };
+        return;
+    }
+
+    try current_thread.beginSyscall();
+    while (true) {
+        switch (posix.errno(posix.system.flock(file.handle, posix.LOCK.UN))) {
+            .SUCCESS => return current_thread.endSyscall(),
+            .CANCELED => return current_thread.endSyscallCanceled(),
+            .INTR => {
+                try current_thread.checkCancel();
+                continue;
+            },
+            else => |e| {
+                current_thread.endSyscall();
+                if (is_debug) switch (e) {
+                    .AGAIN => unreachable, // unlocking can't block
+                    .BADF => unreachable, // File descriptor used after closed.
+                    .INVAL => unreachable, // invalid parameters
+                    .NOLCK => unreachable, // Resource deallocation.
+                    .OPNOTSUPP => unreachable, // We already got the lock.
+                    else => unreachable, // Resource deallocation must succeed.
+                };
+                return;
+            },
+        }
+    }
+}
+
+fn fileDowngradeLock(userdata: ?*anyopaque, file: Io.File) Io.File.DowngradeLockError!void {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+
+    if (is_windows) {
+        try current_thread.checkCancel();
+        // On Windows it works like a semaphore + exclusivity flag. To
+        // implement this function, we first obtain another lock in shared
+        // mode. This changes the exclusivity flag, but increments the
+        // semaphore to 2. So we follow up with an NtUnlockFile which
+        // decrements the semaphore but does not modify the exclusivity flag.
+        var io_status_block: windows.IO_STATUS_BLOCK = undefined;
+        switch (windows.ntdll.NtLockFile(
+            file.handle,
+            null,
+            null,
+            null,
+            &io_status_block,
+            &windows_lock_range_off,
+            &windows_lock_range_len,
+            null,
+            windows.TRUE,
+            windows.FALSE,
+        )) {
+            .SUCCESS => {},
+            .INSUFFICIENT_RESOURCES => |err| return windows.statusBug(err),
+            .LOCK_NOT_GRANTED => |err| return windows.statusBug(err), // File was not locked in exclusive mode.
+            .ACCESS_VIOLATION => |err| return windows.statusBug(err), // bad io_status_block pointer
+            else => |status| return windows.unexpectedStatus(status),
+        }
+        const status = windows.ntdll.NtUnlockFile(
+            file.handle,
+            &io_status_block,
+            &windows_lock_range_off,
+            &windows_lock_range_len,
+            null,
+        );
+        if (is_debug) switch (status) {
+            .SUCCESS => {},
+            .RANGE_NOT_LOCKED => unreachable, // File was not locked.
+            .ACCESS_VIOLATION => unreachable, // bad io_status_block pointer
+            else => unreachable, // Resource deallocation must succeed.
+        };
+        return;
+    }
+
+    const operation = posix.LOCK.SH | posix.LOCK.NB;
+
+    try current_thread.beginSyscall();
+    while (true) {
+        switch (posix.errno(posix.system.flock(file.handle, operation))) {
+            .SUCCESS => {
+                current_thread.endSyscall();
+                return true;
+            },
+            .CANCELED => return current_thread.endSyscallCanceled(),
+            .INTR => {
+                try current_thread.checkCancel();
+                continue;
+            },
+            else => |e| {
+                current_thread.endSyscall();
+                switch (e) {
+                    .AGAIN => |err| return errnoBug(err), // File was not locked in exclusive mode.
+                    .BADF => |err| return errnoBug(err),
+                    .INVAL => |err| return errnoBug(err), // invalid parameters
+                    .NOLCK => |err| return errnoBug(err), // Lock already obtained.
+                    .OPNOTSUPP => |err| return errnoBug(err), // Lock already obtained.
+                    else => |err| return posix.unexpectedErrno(err),
+                }
+            },
+        }
+    }
 }
 
 fn dirOpenDirWasi(

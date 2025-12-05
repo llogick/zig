@@ -343,7 +343,7 @@ const Module = struct {
                 error.AntivirusInterference,
                 error.ProcessFdQuotaExceeded,
                 error.SystemFdQuotaExceeded,
-                error.FileLocksNotSupported,
+                error.FileLocksUnsupported,
                 error.FileBusy,
                 => return error.ReadFailed,
             };

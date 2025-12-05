@@ -824,7 +824,7 @@ fn glibcVerFromRPath(io: Io, rpath: []const u8) !std.SemanticVersion {
         error.SharingViolation => return error.Unexpected, // Windows-only
         error.NetworkNotFound => return error.Unexpected, // Windows-only
         error.AntivirusInterference => return error.Unexpected, // Windows-only
-        error.FileLocksNotSupported => return error.Unexpected, // No lock requested.
+        error.FileLocksUnsupported => return error.Unexpected, // No lock requested.
         error.NoSpaceLeft => return error.Unexpected, // read-only
         error.PathAlreadyExists => return error.Unexpected, // read-only
         error.DeviceBusy => return error.Unexpected, // read-only
@@ -1033,7 +1033,7 @@ fn detectAbiAndDynamicLinker(io: Io, cpu: Target.Cpu, os: Target.Os, query: Targ
                 error.SharingViolation => return error.Unexpected,
                 error.BadPathName => return error.Unexpected,
                 error.PipeBusy => return error.Unexpected,
-                error.FileLocksNotSupported => return error.Unexpected,
+                error.FileLocksUnsupported => return error.Unexpected,
                 error.FileBusy => return error.Unexpected, // opened without write permissions
                 error.AntivirusInterference => return error.Unexpected, // Windows-only error
 
