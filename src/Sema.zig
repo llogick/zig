@@ -18486,6 +18486,9 @@ fn zirCondbr(
         break :blk try sub_block.addTyOp(.unwrap_errunion_err, result_ty, err_operand);
     };
 
+    // Reset, this may have been updated by the then block analysis
+    sub_block.error_return_trace_index = parent_block.error_return_trace_index;
+
     const false_hint: std.builtin.BranchHint = if (err_cond != null and
         try sema.maybeErrorUnwrap(&sub_block, else_body, err_cond.?, cond_src, false))
     h: {
@@ -18961,9 +18964,10 @@ fn restoreErrRetIndex(sema: *Sema, start_block: *Block, src: LazySrcLoc, target_
         while (true) {
             if (block.label) |label| {
                 if (label.zir_block == zir_block) {
-                    const target_trace_index = if (block.parent) |parent_block| tgt: {
-                        break :tgt parent_block.error_return_trace_index;
-                    } else sema.error_return_trace_index_on_fn_entry;
+                    const target_trace_index = if (block.parent) |parent_block|
+                        parent_block.error_return_trace_index
+                    else
+                        sema.error_return_trace_index_on_fn_entry;
 
                     if (start_block.error_return_trace_index != target_trace_index)
                         break :b target_trace_index;
