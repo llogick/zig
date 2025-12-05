@@ -1090,7 +1090,8 @@ pub const Socket = struct {
     }
 
     pub fn sendMany(s: *const Socket, io: Io, messages: []OutgoingMessage, flags: SendFlags) SendError!void {
-        return io.vtable.netSend(io.userdata, s.handle, messages, flags);
+        const err, const n = io.vtable.netSend(io.userdata, s.handle, messages, flags);
+        if (n != messages.len) return err.?;
     }
 
     pub const ReceiveError = error{
