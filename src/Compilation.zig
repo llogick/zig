@@ -173,6 +173,7 @@ verbose_llvm_bc: ?[]const u8,
 verbose_cimport: bool,
 verbose_llvm_cpu_features: bool,
 verbose_link: bool,
+link_depfile: ?[]const u8,
 disable_c_depfile: bool,
 stack_report: bool,
 debug_compiler_runtime_libs: bool,
@@ -1403,6 +1404,7 @@ pub const MiscTask = enum {
     compiler_rt,
     libzigc,
     analyze_mod,
+    link_depfile,
     docs_copy,
     docs_wasm,
 
@@ -1732,6 +1734,7 @@ pub const CreateOptions = struct {
     verbose_generic_instances: bool = false,
     verbose_llvm_ir: ?[]const u8 = null,
     verbose_llvm_bc: ?[]const u8 = null,
+    link_depfile: ?[]const u8 = null,
     verbose_cimport: bool = false,
     verbose_llvm_cpu_features: bool = false,
     debug_compiler_runtime_libs: bool = false,
@@ -2247,6 +2250,7 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
             .verbose_generic_instances = options.verbose_generic_instances,
             .verbose_llvm_ir = options.verbose_llvm_ir,
             .verbose_llvm_bc = options.verbose_llvm_bc,
+            .link_depfile = options.link_depfile,
             .verbose_cimport = options.verbose_cimport,
             .verbose_llvm_cpu_features = options.verbose_llvm_cpu_features,
             .verbose_link = options.verbose_link,
@@ -3098,6 +3102,15 @@ pub fn update(comp: *Compilation, main_progress_node: std.Progress.Node) UpdateE
             zcu.intern_pool.dumpGenericInstances(gpa);
         }
     }
+
+    if (comp.link_depfile) |depfile_path| if (comp.bin_file) |lf| {
+        assert(comp.file_system_inputs != null);
+        comp.createDepFile(depfile_path, lf.emit) catch |err| comp.setMiscFailure(
+            .link_depfile,
+            "unable to write linker dependency file: {t}",
+            .{err},
+        );
+    };
 
     if (anyErrors(comp)) {
         // Skip flushing and keep source files loaded for error reporting.
@@ -5206,6 +5219,43 @@ pub fn separateCodegenThreadOk(comp: *const Compilation) bool {
     if (InternPool.single_threaded) return false;
     const zcu = comp.zcu orelse return true;
     return zcu.backendSupportsFeature(.separate_thread);
+}
+
+fn createDepFile(
+    comp: *Compilation,
+    depfile: []const u8,
+    binfile: Cache.Path,
+) anyerror!void {
+    var buf: [4096]u8 = undefined;
+    var af = try std.fs.cwd().atomicFile(depfile, .{ .write_buffer = &buf });
+    defer af.deinit();
+
+    comp.writeDepFile(binfile, &af.file_writer.interface) catch return af.file_writer.err.?;
+
+    try af.finish();
+}
+
+fn writeDepFile(
+    comp: *Compilation,
+    binfile: Cache.Path,
+    w: *std.Io.Writer,
+) std.Io.Writer.Error!void {
+    const prefixes = comp.cache_parent.prefixes();
+    const fsi = comp.file_system_inputs.?.items;
+
+    try w.print("{f}:", .{binfile});
+
+    {
+        var it = std.mem.splitScalar(u8, fsi, 0);
+        while (it.next()) |input| try w.print(" \\\n {f}{s}", .{ prefixes[input[0] - 1], input[1..] });
+    }
+
+    {
+        var it = std.mem.splitScalar(u8, fsi, 0);
+        while (it.next()) |input| try w.print("\n\n{f}{s}:", .{ prefixes[input[0] - 1], input[1..] });
+    }
+
+    try w.writeByte('\n');
 }
 
 fn workerDocsCopy(comp: *Compilation) void {

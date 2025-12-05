@@ -821,6 +821,7 @@ fn buildOutputType(
     var verbose_generic_instances = false;
     var verbose_llvm_ir: ?[]const u8 = null;
     var verbose_llvm_bc: ?[]const u8 = null;
+    var link_depfile: ?[]const u8 = null;
     var verbose_cimport = false;
     var verbose_llvm_cpu_features = false;
     var time_report = false;
@@ -2704,6 +2705,8 @@ fn buildOutputType(
                 {
                     emit_implib = .{ .yes = linker_args_it.nextOrFatal() };
                     emit_implib_arg_provided = true;
+                } else if (mem.eql(u8, arg, "--dependency-file")) {
+                    link_depfile = linker_args_it.nextOrFatal();
                 } else if (mem.eql(u8, arg, "-Brepro") or mem.eql(u8, arg, "/Brepro")) {
                     linker_repro = true;
                 } else if (mem.eql(u8, arg, "-undefined")) {
@@ -3479,6 +3482,7 @@ fn buildOutputType(
         .verbose_generic_instances = verbose_generic_instances,
         .verbose_llvm_ir = verbose_llvm_ir,
         .verbose_llvm_bc = verbose_llvm_bc,
+        .link_depfile = link_depfile,
         .verbose_cimport = verbose_cimport,
         .verbose_llvm_cpu_features = verbose_llvm_cpu_features,
         .time_report = time_report,
