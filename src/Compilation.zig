@@ -6419,6 +6419,38 @@ fn updateCObject(comp: *Compilation, c_object: *CObject, c_obj_prog_node: std.Pr
 
         if (out_dep_path) |dep_file_path| {
             const dep_basename = fs.path.basename(dep_file_path);
+
+            if (comp.file_system_inputs != null) {
+                // Use the same file size limit as the cache code does for dependency files.
+                const dep_file_contents = try zig_cache_tmp_dir.readFileAlloc(dep_basename, gpa, .limited(Cache.manifest_file_size_max));
+                defer gpa.free(dep_file_contents);
+
+                var str_buf: std.ArrayList(u8) = .empty;
+                defer str_buf.deinit(gpa);
+
+                var it: std.Build.Cache.DepTokenizer = .{ .bytes = dep_file_contents };
+                while (it.next()) |token| {
+                    const input_path: Compilation.Path = switch (token) {
+                        .target, .target_must_resolve => continue,
+                        .prereq => |file_path| try .fromUnresolved(arena, comp.dirs, &.{file_path}),
+                        .prereq_must_resolve => p: {
+                            try token.resolve(gpa, &str_buf);
+                            break :p try .fromUnresolved(arena, comp.dirs, &.{str_buf.items});
+                        },
+                        else => |err| {
+                            try err.printError(gpa, &str_buf);
+                            log.err("failed parsing {s}: {s}", .{ dep_basename, str_buf.items });
+                            return error.InvalidDepFile;
+                        },
+                    };
+
+                    // There may be concurrent calls to `appendFileSystemInput` from other C objects.
+                    comp.mutex.lock();
+                    defer comp.mutex.unlock();
+                    try comp.appendFileSystemInput(input_path);
+                }
+            }
+
             // Add the files depended on to the cache system.
             try man.addDepFilePost(zig_cache_tmp_dir, dep_basename);
             switch (comp.cache_use) {
