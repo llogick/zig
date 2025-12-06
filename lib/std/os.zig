@@ -30,7 +30,6 @@ pub const uefi = @import("os/uefi.zig");
 pub const wasi = @import("os/wasi.zig");
 pub const emscripten = @import("os/emscripten.zig");
 pub const windows = @import("os/windows.zig");
-pub const freebsd = @import("os/freebsd.zig");
 
 test {
     _ = linux;

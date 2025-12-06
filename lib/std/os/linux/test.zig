@@ -401,14 +401,6 @@ test "futex2_requeue" {
     try expectEqual(0, rc);
 }
 
-test "copy_file_range error" {
-    const fds = try std.posix.pipe();
-    defer std.posix.close(fds[0]);
-    defer std.posix.close(fds[1]);
-
-    try std.testing.expectError(error.InvalidArguments, linux.wrapped.copy_file_range(fds[0], null, fds[1], null, 1, 0));
-}
-
 test {
     _ = linux.IoUring;
 }

@@ -662,8 +662,8 @@ pub const VTable = struct {
     futexWaitUncancelable: *const fn (?*anyopaque, ptr: *const u32, expected: u32) void,
     futexWake: *const fn (?*anyopaque, ptr: *const u32, max_waiters: u32) void,
 
-    dirMake: *const fn (?*anyopaque, Dir, []const u8, Dir.Mode) Dir.MakeError!void,
-    dirMakePath: *const fn (?*anyopaque, Dir, []const u8, Dir.Mode) Dir.MakePathError!Dir.MakePathStatus,
+    dirMake: *const fn (?*anyopaque, Dir, []const u8, Dir.Permissions) Dir.MakeError!void,
+    dirMakePath: *const fn (?*anyopaque, Dir, []const u8, Dir.Permissions) Dir.MakePathError!Dir.MakePathStatus,
     dirMakeOpenPath: *const fn (?*anyopaque, Dir, []const u8, Dir.OpenOptions) Dir.MakeOpenPathError!Dir,
     dirStat: *const fn (?*anyopaque, Dir) Dir.StatError!Dir.Stat,
     dirStatPath: *const fn (?*anyopaque, Dir, []const u8, Dir.StatPathOptions) Dir.StatPathError!File.Stat,
@@ -687,8 +687,10 @@ pub const VTable = struct {
     fileStat: *const fn (?*anyopaque, File) File.StatError!File.Stat,
     fileLength: *const fn (?*anyopaque, File) File.LengthError!u64,
     fileClose: *const fn (?*anyopaque, File) void,
-    fileWriteStreaming: *const fn (?*anyopaque, File, buffer: [][]const u8) File.WriteStreamingError!usize,
-    fileWritePositional: *const fn (?*anyopaque, File, buffer: [][]const u8, offset: u64) File.WritePositionalError!usize,
+    fileWriteStreaming: *const fn (?*anyopaque, File, header: []const u8, data: []const []const u8, splat: usize) File.Writer.Error!usize,
+    fileWritePositional: *const fn (?*anyopaque, File, header: []const u8, data: []const []const u8, splat: usize, offset: u64) File.WritePositionalError!usize,
+    fileWriteFileStreaming: *const fn (?*anyopaque, File, header: []const u8, *Io.File.Reader, Io.Limit) File.Writer.WriteFileError!usize,
+    fileWriteFilePositional: *const fn (?*anyopaque, File, header: []const u8, *Io.File.Reader, Io.Limit, offset: u64) File.WriteFilePositionalError!usize,
     /// Returns 0 on end of stream.
     fileReadStreaming: *const fn (?*anyopaque, File, data: [][]u8) File.Reader.Error!usize,
     /// Returns 0 on end of stream.
@@ -724,6 +726,7 @@ pub const VTable = struct {
     /// Returns 0 on end of stream.
     netRead: *const fn (?*anyopaque, src: net.Socket.Handle, data: [][]u8) net.Stream.Reader.Error!usize,
     netWrite: *const fn (?*anyopaque, dest: net.Socket.Handle, header: []const u8, data: []const []const u8, splat: usize) net.Stream.Writer.Error!usize,
+    netWriteFile: *const fn (?*anyopaque, net.Socket.Handle, header: []const u8, *Io.File.Reader, Io.Limit) net.Stream.WriteFileError!usize,
     netClose: *const fn (?*anyopaque, handle: net.Socket.Handle) void,
     netInterfaceNameResolve: *const fn (?*anyopaque, *const net.Interface.Name) net.Interface.Name.ResolveError!net.Interface,
     netInterfaceName: *const fn (?*anyopaque, net.Interface) net.Interface.NameError!net.Interface.Name,

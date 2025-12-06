@@ -652,7 +652,6 @@ pub const RealPathError = error{
     NoSpaceLeft,
     FileSystem,
     DeviceBusy,
-    ProcessNotFound,
     SharingViolation,
     PipeBusy,
     /// Windows: file paths provided by the user must be valid WTF-8.
@@ -1038,7 +1037,6 @@ pub const DeleteTreeError = error{
     FileSystem,
     FileBusy,
     DeviceBusy,
-    ProcessNotFound,
     /// One of the path components was not a directory.
     /// This error is unreachable if `sub_path` does not contain a path separator.
     NotDir,

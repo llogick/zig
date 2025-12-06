@@ -3,6 +3,7 @@ const Threaded = @This();
 const builtin = @import("builtin");
 const native_os = builtin.os.tag;
 const is_windows = native_os == .windows;
+const is_darwin = native_os.isDarwin();
 const windows = std.os.windows;
 const ws2_32 = std.os.windows.ws2_32;
 const is_debug = builtin.mode == .Debug;
@@ -70,6 +71,10 @@ have_signal_handler: bool,
 old_sig_io: if (have_sig_io) posix.Sigaction else void,
 old_sig_pipe: if (have_sig_pipe) posix.Sigaction else void,
 
+use_sendfile: UseSendfile = .default,
+use_copy_file_range: UseCopyFileRange = .default,
+use_fcopyfile: UseFcopyfile = .default,
+
 pub const RobustCancel = if (std.Thread.use_pthreads or native_os == .linux) enum {
     enabled,
     disabled,
@@ -81,6 +86,33 @@ pub const Pid = if (native_os == .linux) enum(posix.pid_t) {
     unknown = 0,
     _,
 } else enum(u0) { unknown = 0 };
+
+pub const UseSendfile = if (have_sendfile) enum {
+    enabled,
+    disabled,
+    pub const default: UseSendfile = .enabled;
+} else enum {
+    disabled,
+    pub const default: UseSendfile = .disabled;
+};
+
+pub const UseCopyFileRange = if (have_copy_file_range) enum {
+    enabled,
+    disabled,
+    pub const default: UseCopyFileRange = .enabled;
+} else enum {
+    disabled,
+    pub const default: UseCopyFileRange = .disabled;
+};
+
+pub const UseFcopyfile = if (have_fcopyfile) enum {
+    enabled,
+    disabled,
+    pub const default: UseFcopyfile = .enabled;
+} else enum {
+    disabled,
+    pub const default: UseFcopyfile = .disabled;
+};
 
 const Thread = struct {
     /// The value that needs to be passed to pthread_kill or tgkill in order to
@@ -677,6 +709,8 @@ pub fn io(t: *Threaded) Io {
             .fileClose = fileClose,
             .fileWriteStreaming = fileWriteStreaming,
             .fileWritePositional = fileWritePositional,
+            .fileWriteFileStreaming = fileWriteFileStreaming,
+            .fileWriteFilePositional = fileWriteFilePositional,
             .fileReadStreaming = fileReadStreaming,
             .fileReadPositional = fileReadPositional,
             .fileSeekBy = fileSeekBy,
@@ -797,6 +831,8 @@ pub fn ioBasic(t: *Threaded) Io {
             .fileClose = fileClose,
             .fileWriteStreaming = fileWriteStreaming,
             .fileWritePositional = fileWritePositional,
+            .fileWriteFileStreaming = fileWriteFileStreaming,
+            .fileWriteFilePositional = fileWriteFilePositional,
             .fileReadStreaming = fileReadStreaming,
             .fileReadPositional = fileReadPositional,
             .fileSeekBy = fileSeekBy,
@@ -837,7 +873,7 @@ pub fn ioBasic(t: *Threaded) Io {
     };
 }
 
-pub const socket_flags_unsupported = native_os.isDarwin() or native_os == .haiku;
+pub const socket_flags_unsupported = is_darwin or native_os == .haiku;
 const have_accept4 = !socket_flags_unsupported;
 const have_flock_open_flags = @hasField(posix.O, "EXLOCK");
 const have_networking = native_os != .wasi;
@@ -853,6 +889,12 @@ const have_preadv = switch (native_os) {
 };
 const have_sig_io = posix.SIG != void and @hasField(posix.SIG, "IO");
 const have_sig_pipe = posix.SIG != void and @hasField(posix.SIG, "PIPE");
+const have_sendfile = if (builtin.link_libc) @TypeOf(std.c.sendfile) != void else native_os == .linux;
+const have_copy_file_range = switch (native_os) {
+    .linux, .freebsd => true,
+    else => false,
+};
+const have_fcopyfile = is_darwin;
 
 const openat_sym = if (posix.lfs64_abi) posix.system.openat64 else posix.system.openat;
 const fstat_sym = if (posix.lfs64_abi) posix.system.fstat64 else posix.system.fstat;
@@ -860,6 +902,18 @@ const fstatat_sym = if (posix.lfs64_abi) posix.system.fstatat64 else posix.syste
 const lseek_sym = if (posix.lfs64_abi) posix.system.lseek64 else posix.system.lseek;
 const preadv_sym = if (posix.lfs64_abi) posix.system.preadv64 else posix.system.preadv;
 const ftruncate_sym = if (posix.lfs64_abi) posix.system.ftruncate64 else posix.system.ftruncate;
+const pwritev_sym = if (posix.lfs64_abi) posix.system.pwritev64 else posix.system.pwritev;
+const sendfile_sym = if (posix.lfs64_abi) posix.system.sendfile64 else posix.system.sendfile;
+const linux_copy_file_range_use_c = std.c.versionCheck(if (builtin.abi.isAndroid()) .{
+    .major = 34,
+    .minor = 0,
+    .patch = 0,
+} else .{
+    .major = 2,
+    .minor = 27,
+    .patch = 0,
+});
+const linux_copy_file_range_sys = if (linux_copy_file_range_use_c) std.c else std.os.linux;
 
 /// Trailing data:
 /// 1. context
@@ -5896,27 +5950,828 @@ fn openSelfExe(userdata: ?*anyopaque, flags: Io.File.OpenFlags) Io.File.OpenSelf
 fn fileWritePositional(
     userdata: ?*anyopaque,
     file: Io.File,
-    buffer: [][]const u8,
+    header: []const u8,
+    data: []const []const u8,
+    splat: usize,
     offset: u64,
 ) Io.File.WritePositionalError!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    _ = t;
+    const current_thread = Thread.getCurrent(t);
+
+    if (is_windows) @panic("TODO");
+
+    var iovecs: [max_iovecs_len]posix.iovec_const = undefined;
+    var iovlen: iovlen_t = 0;
+    addBuf(&iovecs, &iovlen, header);
+    for (data[0 .. data.len - 1]) |bytes| addBuf(&iovecs, &iovlen, bytes);
+    const pattern = data[data.len - 1];
+    if (iovecs.len - iovlen != 0) switch (splat) {
+        0 => {},
+        1 => addBuf(&iovecs, &iovlen, pattern),
+        else => switch (pattern.len) {
+            0 => {},
+            1 => {
+                var backup_buffer: [splat_buffer_size]u8 = undefined;
+                const splat_buffer = &backup_buffer;
+                const memset_len = @min(splat_buffer.len, splat);
+                const buf = splat_buffer[0..memset_len];
+                @memset(buf, pattern[0]);
+                addBuf(&iovecs, &iovlen, buf);
+                var remaining_splat = splat - buf.len;
+                while (remaining_splat > splat_buffer.len and iovecs.len - iovlen != 0) {
+                    assert(buf.len == splat_buffer.len);
+                    addBuf(&iovecs, &iovlen, splat_buffer);
+                    remaining_splat -= splat_buffer.len;
+                }
+                addBuf(&iovecs, &iovlen, splat_buffer[0..remaining_splat]);
+            },
+            else => for (0..@min(splat, iovecs.len - iovlen)) |_| {
+                addBuf(&iovecs, &iovlen, pattern);
+            },
+        },
+    };
+
+    if (native_os == .wasi and !builtin.link_libc) {
+        var n_written: usize = undefined;
+        try current_thread.beginSyscall();
+        while (true) {
+            switch (std.os.wasi.fd_pwrite(file.handle, &iovecs, iovlen, offset, &n_written)) {
+                .SUCCESS => {
+                    current_thread.endSyscall();
+                    return n_written;
+                },
+                .INTR => {
+                    try current_thread.checkCancel();
+                    continue;
+                },
+                .CANCELED => return current_thread.endSyscallCanceled(),
+                else => |e| {
+                    current_thread.endSyscall();
+                    switch (e) {
+                        .INVAL => |err| return errnoBug(err),
+                        .FAULT => |err| return errnoBug(err),
+                        .AGAIN => |err| return errnoBug(err),
+                        .BADF => return error.NotOpenForWriting, // can be a race condition.
+                        .DESTADDRREQ => |err| return errnoBug(err), // `connect` was never called.
+                        .DQUOT => return error.DiskQuota,
+                        .FBIG => return error.FileTooBig,
+                        .IO => return error.InputOutput,
+                        .NOSPC => return error.NoSpaceLeft,
+                        .PERM => return error.PermissionDenied,
+                        .PIPE => return error.BrokenPipe,
+                        .NOTCAPABLE => return error.AccessDenied,
+                        .NXIO => return error.Unseekable,
+                        .SPIPE => return error.Unseekable,
+                        .OVERFLOW => return error.Unseekable,
+                        else => |err| return posix.unexpectedErrno(err),
+                    }
+                },
+            }
+        }
+    }
+
+    try current_thread.beginSyscall();
     while (true) {
-        _ = file;
-        _ = buffer;
-        _ = offset;
-        @panic("TODO implement fileWritePositional");
+        const rc = pwritev_sym(file.handle, &iovecs, iovlen, @bitCast(offset));
+        switch (posix.errno(rc)) {
+            .SUCCESS => {
+                current_thread.endSyscall();
+                return @intCast(rc);
+            },
+            .INTR => {
+                try current_thread.checkCancel();
+                continue;
+            },
+            .CANCELED => return current_thread.endSyscallCanceled(),
+            else => |e| {
+                current_thread.endSyscall();
+                switch (e) {
+                    .INVAL => return error.InvalidArgument,
+                    .FAULT => |err| return errnoBug(err),
+                    .AGAIN => return error.WouldBlock,
+                    .BADF => return error.NotOpenForWriting, // Usually a race condition.
+                    .DESTADDRREQ => |err| return errnoBug(err), // `connect` was never called.
+                    .DQUOT => return error.DiskQuota,
+                    .FBIG => return error.FileTooBig,
+                    .IO => return error.InputOutput,
+                    .NOSPC => return error.NoSpaceLeft,
+                    .PERM => return error.PermissionDenied,
+                    .PIPE => return error.BrokenPipe,
+                    .CONNRESET => return error.ConnectionResetByPeer,
+                    .BUSY => return error.DeviceBusy,
+                    .NXIO => return error.Unseekable,
+                    .SPIPE => return error.Unseekable,
+                    .OVERFLOW => return error.Unseekable,
+                    else => |err| return posix.unexpectedErrno(err),
+                }
+            },
+        }
     }
 }
 
-fn fileWriteStreaming(userdata: ?*anyopaque, file: Io.File, buffer: [][]const u8) Io.File.WriteStreamingError!usize {
+fn fileWriteStreaming(
+    userdata: ?*anyopaque,
+    file: Io.File,
+    header: []const u8,
+    data: []const []const u8,
+    splat: usize,
+) Io.File.WriteStreamingError!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    _ = t;
-    while (true) {
-        _ = file;
-        _ = buffer;
-        @panic("TODO implement fileWriteStreaming");
+    const current_thread = Thread.getCurrent(t);
+
+    if (is_windows) @panic("TODO");
+
+    var iovecs: [max_iovecs_len]posix.iovec_const = undefined;
+    var iovlen: iovlen_t = 0;
+    addBuf(&iovecs, &iovlen, header);
+    for (data[0 .. data.len - 1]) |bytes| addBuf(&iovecs, &iovlen, bytes);
+    const pattern = data[data.len - 1];
+    if (iovecs.len - iovlen != 0) switch (splat) {
+        0 => {},
+        1 => addBuf(&iovecs, &iovlen, pattern),
+        else => switch (pattern.len) {
+            0 => {},
+            1 => {
+                var backup_buffer: [splat_buffer_size]u8 = undefined;
+                const splat_buffer = &backup_buffer;
+                const memset_len = @min(splat_buffer.len, splat);
+                const buf = splat_buffer[0..memset_len];
+                @memset(buf, pattern[0]);
+                addBuf(&iovecs, &iovlen, buf);
+                var remaining_splat = splat - buf.len;
+                while (remaining_splat > splat_buffer.len and iovecs.len - iovlen != 0) {
+                    assert(buf.len == splat_buffer.len);
+                    addBuf(&iovecs, &iovlen, splat_buffer);
+                    remaining_splat -= splat_buffer.len;
+                }
+                addBuf(&iovecs, &iovlen, splat_buffer[0..remaining_splat]);
+            },
+            else => for (0..@min(splat, iovecs.len - iovlen)) |_| {
+                addBuf(&iovecs, &iovlen, pattern);
+            },
+        },
+    };
+
+    if (native_os == .wasi and !builtin.link_libc) {
+        var n_written: usize = undefined;
+        try current_thread.beginSyscall();
+        while (true) {
+            switch (std.os.wasi.fd_write(file.handle, &iovecs, iovlen, &n_written)) {
+                .SUCCESS => {
+                    current_thread.endSyscall();
+                    return n_written;
+                },
+                .INTR => {
+                    try current_thread.checkCancel();
+                    continue;
+                },
+                .CANCELED => return current_thread.endSyscallCanceled(),
+                else => |e| {
+                    current_thread.endSyscall();
+                    switch (e) {
+                        .INVAL => |err| return errnoBug(err),
+                        .FAULT => |err| return errnoBug(err),
+                        .AGAIN => |err| return errnoBug(err),
+                        .BADF => return error.NotOpenForWriting, // can be a race condition.
+                        .DESTADDRREQ => |err| return errnoBug(err), // `connect` was never called.
+                        .DQUOT => return error.DiskQuota,
+                        .FBIG => return error.FileTooBig,
+                        .IO => return error.InputOutput,
+                        .NOSPC => return error.NoSpaceLeft,
+                        .PERM => return error.PermissionDenied,
+                        .PIPE => return error.BrokenPipe,
+                        .NOTCAPABLE => return error.AccessDenied,
+                        else => |err| return posix.unexpectedErrno(err),
+                    }
+                },
+            }
+        }
     }
+
+    try current_thread.beginSyscall();
+    while (true) {
+        const rc = posix.system.writev(file.handle, &iovecs, iovlen);
+        switch (posix.errno(rc)) {
+            .SUCCESS => {
+                current_thread.endSyscall();
+                return @intCast(rc);
+            },
+            .INTR => {
+                try current_thread.checkCancel();
+                continue;
+            },
+            .CANCELED => return current_thread.endSyscallCanceled(),
+            else => |e| {
+                current_thread.endSyscall();
+                switch (e) {
+                    .INVAL => return error.InvalidArgument,
+                    .FAULT => |err| return errnoBug(err),
+                    .SRCH => return error.ProcessNotFound,
+                    .AGAIN => return error.WouldBlock,
+                    .BADF => return error.NotOpenForWriting, // Can be a race condition.
+                    .DESTADDRREQ => |err| return errnoBug(err), // `connect` was never called.
+                    .DQUOT => return error.DiskQuota,
+                    .FBIG => return error.FileTooBig,
+                    .IO => return error.InputOutput,
+                    .NOSPC => return error.NoSpaceLeft,
+                    .PERM => return error.PermissionDenied,
+                    .PIPE => return error.BrokenPipe,
+                    .CONNRESET => return error.ConnectionResetByPeer,
+                    .BUSY => return error.DeviceBusy,
+                    else => |err| return posix.unexpectedErrno(err),
+                }
+            },
+        }
+    }
+}
+
+fn fileWriteFileStreaming(
+    userdata: ?*anyopaque,
+    file: Io.File,
+    header: []const u8,
+    file_reader: *Io.File.Reader,
+    limit: Io.Limit,
+) Io.File.WriteFileStreamingError!usize {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const reader_buffered = file_reader.interface.buffered();
+    if (reader_buffered.len >= @intFromEnum(limit)) {
+        const n = try fileWriteStreaming(t, file, header, &.{limit.slice(reader_buffered)}, 1);
+        file_reader.seekBy(n -| header.len) catch return error.ReadFailed;
+        return n;
+    }
+    const file_limit = @intFromEnum(limit) - reader_buffered.len;
+    const out_fd = file.handle;
+    const in_fd = file_reader.file.handle;
+
+    if (file_reader.size) |size| {
+        if (size - file_reader.pos == 0) {
+            if (reader_buffered.len != 0) {
+                const n = try fileWriteStreaming(t, file, header, &.{limit.slice(reader_buffered)}, 1);
+                file_reader.seekBy(n -| header.len) catch return error.ReadFailed;
+                return n;
+            } else {
+                return error.EndOfStream;
+            }
+        }
+    }
+
+    if (native_os == .freebsd) sf: {
+        // Try using sendfile on FreeBSD.
+        if (@atomicLoad(UseSendfile, &t.use_sendfile, .monotonic) == .disabled) break :sf;
+        const offset = std.math.cast(std.c.off_t, file_reader.pos) orelse break :sf;
+        var hdtr_data: std.c.sf_hdtr = undefined;
+        var headers: [2]posix.iovec_const = undefined;
+        var headers_i: u8 = 0;
+        if (header.len != 0) {
+            headers[headers_i] = .{ .base = header.ptr, .len = header.len };
+            headers_i += 1;
+        }
+        if (reader_buffered.len != 0) {
+            headers[headers_i] = .{ .base = reader_buffered.ptr, .len = reader_buffered.len };
+            headers_i += 1;
+        }
+        const hdtr: ?*std.c.sf_hdtr = if (headers_i == 0) null else b: {
+            hdtr_data = .{
+                .headers = &headers,
+                .hdr_cnt = headers_i,
+                .trailers = null,
+                .trl_cnt = 0,
+            };
+            break :b &hdtr_data;
+        };
+        var sbytes: std.c.off_t = 0;
+        const nbytes: usize = @min(file_limit, std.math.maxInt(usize));
+        const flags = 0;
+
+        const current_thread = Thread.getCurrent(t);
+        try current_thread.beginSyscall();
+        while (true) {
+            switch (posix.errno(std.c.sendfile(in_fd, out_fd, offset, nbytes, hdtr, &sbytes, flags))) {
+                .SUCCESS => {
+                    current_thread.endSyscall();
+                    break;
+                },
+                .INVAL, .OPNOTSUPP, .NOTSOCK, .NOSYS => {
+                    // Give calling code chance to observe before trying
+                    // something else.
+                    current_thread.endSyscall();
+                    @atomicStore(UseSendfile, &t.use_sendfile, .disabled, .monotonic);
+                    return 0;
+                },
+                .INTR, .BUSY => {
+                    if (sbytes == 0) {
+                        try current_thread.checkCancel();
+                        continue;
+                    } else {
+                        // Even if we are being canceled, there have been side
+                        // effects, so it is better to report those side
+                        // effects to the caller.
+                        current_thread.endSyscall();
+                        break;
+                    }
+                },
+                .AGAIN => {
+                    current_thread.endSyscall();
+                    if (sbytes == 0) return error.WouldBlock;
+                    break;
+                },
+                else => |e| {
+                    current_thread.endSyscall();
+                    assert(error.Unexpected == switch (e) {
+                        .NOTCONN => return error.BrokenPipe,
+                        .IO => return error.InputOutput,
+                        .PIPE => return error.BrokenPipe,
+                        .NOBUFS => return error.SystemResources,
+                        .BADF => |err| errnoBug(err),
+                        .FAULT => |err| errnoBug(err),
+                        else => |err| posix.unexpectedErrno(err),
+                    });
+                    // Give calling code chance to observe the error before trying
+                    // something else.
+                    @atomicStore(UseSendfile, &t.use_sendfile, .disabled, .monotonic);
+                    return 0;
+                },
+            }
+        }
+        if (sbytes == 0) {
+            file_reader.size = file_reader.pos;
+            return error.EndOfStream;
+        }
+        const ubytes: usize = @intCast(sbytes);
+        file_reader.seekBy(ubytes -| header.len) catch return error.ReadFailed;
+        return ubytes;
+    }
+
+    if (is_darwin) sf: {
+        // Try using sendfile on macOS.
+        if (@atomicLoad(UseSendfile, &t.use_sendfile, .monotonic) == .disabled) break :sf;
+        const offset = std.math.cast(std.c.off_t, file_reader.pos) orelse break :sf;
+        var hdtr_data: std.c.sf_hdtr = undefined;
+        var headers: [2]posix.iovec_const = undefined;
+        var headers_i: u8 = 0;
+        if (header.len != 0) {
+            headers[headers_i] = .{ .base = header.ptr, .len = header.len };
+            headers_i += 1;
+        }
+        if (reader_buffered.len != 0) {
+            headers[headers_i] = .{ .base = reader_buffered.ptr, .len = reader_buffered.len };
+            headers_i += 1;
+        }
+        const hdtr: ?*std.c.sf_hdtr = if (headers_i == 0) null else b: {
+            hdtr_data = .{
+                .headers = &headers,
+                .hdr_cnt = headers_i,
+                .trailers = null,
+                .trl_cnt = 0,
+            };
+            break :b &hdtr_data;
+        };
+        const max_count = std.math.maxInt(i32); // Avoid EINVAL.
+        var len: std.c.off_t = @min(file_limit, max_count);
+        const flags = 0;
+        const current_thread = Thread.getCurrent(t);
+        try current_thread.beginSyscall();
+        while (true) {
+            switch (posix.errno(std.c.sendfile(in_fd, out_fd, offset, &len, hdtr, flags))) {
+                .SUCCESS => {
+                    current_thread.endSyscall();
+                    break;
+                },
+                .OPNOTSUPP, .NOTSOCK, .NOSYS => {
+                    // Give calling code chance to observe before trying
+                    // something else.
+                    current_thread.endSyscall();
+                    @atomicStore(UseSendfile, &t.use_sendfile, .disabled, .monotonic);
+                    return 0;
+                },
+                .INTR => {
+                    if (len == 0) {
+                        try current_thread.checkCancel();
+                        continue;
+                    } else {
+                        // Even if we are being canceled, there have been side
+                        // effects, so it is better to report those side
+                        // effects to the caller.
+                        current_thread.endSyscall();
+                        break;
+                    }
+                },
+                .AGAIN => {
+                    current_thread.endSyscall();
+                    if (len == 0) return error.WouldBlock;
+                    break;
+                },
+                else => |e| {
+                    current_thread.endSyscall();
+                    assert(error.Unexpected == switch (e) {
+                        .NOTCONN => return error.BrokenPipe,
+                        .IO => return error.InputOutput,
+                        .PIPE => return error.BrokenPipe,
+                        .BADF => |err| errnoBug(err),
+                        .FAULT => |err| errnoBug(err),
+                        .INVAL => |err| errnoBug(err),
+                        else => |err| posix.unexpectedErrno(err),
+                    });
+                    // Give calling code chance to observe the error before trying
+                    // something else.
+                    @atomicStore(UseSendfile, &t.use_sendfile, .disabled, .monotonic);
+                    return 0;
+                },
+            }
+        }
+        if (len == 0) {
+            file_reader.size = file_reader.pos;
+            return error.EndOfStream;
+        }
+        const u_len: usize = @bitCast(len);
+        file_reader.seekBy(u_len -| header.len) catch return error.ReadFailed;
+        return u_len;
+    }
+
+    if (native_os == .linux) sf: {
+        // Try using sendfile on Linux.
+        if (@atomicLoad(UseSendfile, &t.use_sendfile, .monotonic) == .disabled) break :sf;
+        // Linux sendfile does not support headers.
+        if (header.len != 0 or reader_buffered.len != 0) {
+            const n = try fileWriteStreaming(t, file, header, &.{limit.slice(reader_buffered)}, 1);
+            file_reader.seekBy(n -| header.len) catch return error.ReadFailed;
+            return n;
+        }
+        const max_count = 0x7ffff000; // Avoid EINVAL.
+        var off: std.os.linux.off_t = undefined;
+        const off_ptr: ?*std.os.linux.off_t, const count: usize = switch (file_reader.mode) {
+            .positional => o: {
+                const size = file_reader.getSize() catch return 0;
+                off = std.math.cast(std.os.linux.off_t, file_reader.pos) orelse return error.ReadFailed;
+                break :o .{ &off, @min(@intFromEnum(limit), size - file_reader.pos, max_count) };
+            },
+            .streaming => .{ null, limit.minInt(max_count) },
+            .streaming_reading, .positional_reading => break :sf,
+            .failure => return error.ReadFailed,
+        };
+        const current_thread = Thread.getCurrent(t);
+        try current_thread.beginSyscall();
+        const n: usize = while (true) {
+            const rc = sendfile_sym(out_fd, in_fd, off_ptr, count);
+            switch (posix.errno(rc)) {
+                .SUCCESS => {
+                    current_thread.endSyscall();
+                    break @intCast(rc);
+                },
+                .NOSYS, .INVAL => {
+                    // Give calling code chance to observe before trying
+                    // something else.
+                    current_thread.endSyscall();
+                    @atomicStore(UseSendfile, &t.use_sendfile, .disabled, .monotonic);
+                    return 0;
+                },
+                .INTR => {
+                    try current_thread.checkCancel();
+                    continue;
+                },
+                .CANCELED => return current_thread.endSyscallCanceled(),
+                else => |e| {
+                    current_thread.endSyscall();
+                    assert(error.Unexpected == switch (e) {
+                        .NOTCONN => return error.BrokenPipe, // `out_fd` is an unconnected socket
+                        .AGAIN => return error.WouldBlock,
+                        .IO => return error.InputOutput,
+                        .PIPE => return error.BrokenPipe,
+                        .NOMEM => return error.SystemResources,
+                        .NXIO, .SPIPE => {
+                            file_reader.mode = file_reader.mode.toStreaming();
+                            const pos = file_reader.pos;
+                            if (pos != 0) {
+                                file_reader.pos = 0;
+                                file_reader.seekBy(@intCast(pos)) catch {
+                                    file_reader.mode = .failure;
+                                    return error.ReadFailed;
+                                };
+                            }
+                            return 0;
+                        },
+                        .BADF => |err| errnoBug(err), // Always a race condition.
+                        .FAULT => |err| errnoBug(err), // Segmentation fault.
+                        .OVERFLOW => |err| errnoBug(err), // We avoid passing too large of a `count`.
+                        else => |err| posix.unexpectedErrno(err),
+                    });
+                    // Give calling code chance to observe the error before trying
+                    // something else.
+                    @atomicStore(UseSendfile, &t.use_sendfile, .disabled, .monotonic);
+                    return 0;
+                },
+            }
+        };
+        if (n == 0) {
+            file_reader.size = file_reader.pos;
+            return error.EndOfStream;
+        }
+        file_reader.pos += n;
+        return n;
+    }
+
+    if (have_copy_file_range) cfr: {
+        if (@atomicLoad(UseCopyFileRange, &t.use_copy_file_range, .monotonic) == .disabled) break :cfr;
+        if (header.len != 0 or reader_buffered.len != 0) {
+            const n = try fileWriteStreaming(t, file, header, &.{limit.slice(reader_buffered)}, 1);
+            file_reader.seekBy(n -| header.len) catch return error.ReadFailed;
+            return n;
+        }
+        var off_in: i64 = undefined;
+        const off_in_ptr: ?*i64 = switch (file_reader.mode) {
+            .positional_reading, .streaming_reading => return error.Unimplemented,
+            .positional => p: {
+                off_in = @intCast(file_reader.pos);
+                break :p &off_in;
+            },
+            .streaming => null,
+            .failure => return error.WriteFailed,
+        };
+        const current_thread = Thread.getCurrent(t);
+        const n: usize = switch (native_os) {
+            .linux => n: {
+                try current_thread.beginSyscall();
+                while (true) {
+                    const rc = linux_copy_file_range_sys.copy_file_range(in_fd, off_in_ptr, out_fd, null, @intFromEnum(limit), 0);
+                    switch (linux_copy_file_range_sys.errno(rc)) {
+                        .SUCCESS => {
+                            current_thread.endSyscall();
+                            break :n @intCast(rc);
+                        },
+                        .INTR => {
+                            try current_thread.checkCancel();
+                            continue;
+                        },
+                        .CANCELED => return current_thread.endSyscallCanceled(),
+                        .OPNOTSUPP, .INVAL, .NOSYS => {
+                            // Give calling code chance to observe before trying
+                            // something else.
+                            current_thread.endSyscall();
+                            @atomicStore(UseCopyFileRange, &t.use_copy_file_range, .disabled, .monotonic);
+                            return 0;
+                        },
+                        else => |e| {
+                            current_thread.endSyscall();
+                            assert(error.Unexpected == switch (e) {
+                                .FBIG => return error.FileTooBig,
+                                .IO => return error.InputOutput,
+                                .ISDIR => return error.IsDir,
+                                .NOMEM => return error.SystemResources,
+                                .NOSPC => return error.NoSpaceLeft,
+                                .OVERFLOW => return error.Overflow,
+                                .PERM => return error.PermissionDenied,
+                                .TXTBSY => return error.SwapFile,
+                                .XDEV => return error.NotSameFileSystem,
+                                .BADF => |err| errnoBug(err),
+                                else => |err| posix.unexpectedErrno(err),
+                            });
+                            @atomicStore(UseCopyFileRange, &t.use_copy_file_range, .disabled, .monotonic);
+                            return 0;
+                        },
+                    }
+                }
+            },
+            .freebsd => n: {
+                try current_thread.beginSyscall();
+                while (true) {
+                    const rc = std.c.copy_file_range(in_fd, off_in_ptr, out_fd, null, @intFromEnum(limit), 0);
+                    switch (std.c.errno(rc)) {
+                        .SUCCESS => {
+                            current_thread.endSyscall();
+                            break :n @intCast(rc);
+                        },
+                        .INTR => {
+                            try current_thread.checkCancel();
+                            continue;
+                        },
+                        .OPNOTSUPP, .INVAL, .NOSYS => {
+                            // Give calling code chance to observe before trying
+                            // something else.
+                            current_thread.endSyscall();
+                            @atomicStore(UseCopyFileRange, &t.use_copy_file_range, .disabled, .monotonic);
+                            return 0;
+                        },
+                        else => |e| {
+                            current_thread.endSyscall();
+                            assert(error.Unexpected == switch (e) {
+                                .FBIG => return error.FileTooBig,
+                                .IO => return error.InputOutput,
+                                .INTEGRITY => return error.CorruptedData,
+                                .ISDIR => return error.IsDir,
+                                .NOSPC => return error.NoSpaceLeft,
+                                .BADF => |err| errnoBug(err),
+                                else => |err| posix.unexpectedErrno(err),
+                            });
+                            @atomicStore(UseCopyFileRange, &t.use_copy_file_range, .disabled, .monotonic);
+                            return 0;
+                        },
+                    }
+                }
+            },
+            else => comptime unreachable,
+        };
+        if (n == 0) {
+            file_reader.size = file_reader.pos;
+            return error.EndOfStream;
+        }
+        file_reader.pos += n;
+        return n;
+    }
+
+    return error.Unimplemented;
+}
+
+fn fileWriteFilePositional(
+    userdata: ?*anyopaque,
+    file: Io.File,
+    header: []const u8,
+    file_reader: *Io.File.Reader,
+    limit: Io.Limit,
+    offset: u64,
+) Io.File.WriteFilePositionalError!usize {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const reader_buffered = file_reader.interface.buffered();
+    if (reader_buffered.len >= @intFromEnum(limit)) {
+        const n = try fileWritePositional(t, file, header, &.{limit.slice(reader_buffered)}, 1, offset);
+        file_reader.seekBy(n -| header.len) catch return error.ReadFailed;
+        return n;
+    }
+    const out_fd = file.handle;
+    const in_fd = file_reader.file.handle;
+
+    if (file_reader.size) |size| {
+        if (size - file_reader.pos == 0) {
+            if (reader_buffered.len != 0) {
+                const n = try fileWritePositional(t, file, header, &.{limit.slice(reader_buffered)}, 1, offset);
+                file_reader.seekBy(n -| header.len) catch return error.ReadFailed;
+                return n;
+            } else {
+                return error.EndOfStream;
+            }
+        }
+    }
+
+    if (have_copy_file_range) cfr: {
+        if (@atomicLoad(UseCopyFileRange, &t.use_copy_file_range, .monotonic) == .disabled) break :cfr;
+        if (header.len != 0 or reader_buffered.len != 0) {
+            const n = try fileWritePositional(t, file, header, &.{limit.slice(reader_buffered)}, 1, offset);
+            file_reader.seekBy(n -| header.len) catch return error.ReadFailed;
+            return n;
+        }
+        var off_in: i64 = undefined;
+        const off_in_ptr: ?*i64 = switch (file_reader.mode) {
+            .positional_reading, .streaming_reading => return error.Unimplemented,
+            .positional => p: {
+                off_in = @intCast(file_reader.pos);
+                break :p &off_in;
+            },
+            .streaming => null,
+            .failure => return error.WriteFailed,
+        };
+        var off_out: i64 = @intCast(offset);
+        const current_thread = Thread.getCurrent(t);
+        const n: usize = switch (native_os) {
+            .linux => n: {
+                try current_thread.beginSyscall();
+                while (true) {
+                    const rc = linux_copy_file_range_sys.copy_file_range(in_fd, off_in_ptr, out_fd, &off_out, @intFromEnum(limit), 0);
+                    switch (linux_copy_file_range_sys.errno(rc)) {
+                        .SUCCESS => {
+                            current_thread.endSyscall();
+                            break :n @intCast(rc);
+                        },
+                        .INTR => {
+                            try current_thread.checkCancel();
+                            continue;
+                        },
+                        .CANCELED => return current_thread.endSyscallCanceled(),
+                        .OPNOTSUPP, .INVAL, .NOSYS => {
+                            // Give calling code chance to observe before trying
+                            // something else.
+                            current_thread.endSyscall();
+                            @atomicStore(UseCopyFileRange, &t.use_copy_file_range, .disabled, .monotonic);
+                            return 0;
+                        },
+                        else => |e| {
+                            current_thread.endSyscall();
+                            assert(error.Unexpected == switch (e) {
+                                .FBIG => return error.FileTooBig,
+                                .IO => return error.InputOutput,
+                                .ISDIR => return error.IsDir,
+                                .NOMEM => return error.SystemResources,
+                                .NOSPC => return error.NoSpaceLeft,
+                                .OVERFLOW => return error.Unseekable,
+                                .NXIO => return error.Unseekable,
+                                .SPIPE => return error.Unseekable,
+                                .PERM => return error.PermissionDenied,
+                                .TXTBSY => return error.SwapFile,
+                                .XDEV => return error.NotSameFileSystem,
+                                .BADF => |err| errnoBug(err),
+                                else => |err| posix.unexpectedErrno(err),
+                            });
+                            @atomicStore(UseCopyFileRange, &t.use_copy_file_range, .disabled, .monotonic);
+                            return 0;
+                        },
+                    }
+                }
+            },
+            .freebsd => n: {
+                try current_thread.beginSyscall();
+                while (true) {
+                    const rc = std.c.copy_file_range(in_fd, off_in_ptr, out_fd, &off_out, @intFromEnum(limit), 0);
+                    switch (std.c.errno(rc)) {
+                        .SUCCESS => {
+                            current_thread.endSyscall();
+                            break :n @intCast(rc);
+                        },
+                        .INTR => {
+                            try current_thread.checkCancel();
+                            continue;
+                        },
+                        .OPNOTSUPP, .INVAL, .NOSYS => {
+                            // Give calling code chance to observe before trying
+                            // something else.
+                            current_thread.endSyscall();
+                            @atomicStore(UseCopyFileRange, &t.use_copy_file_range, .disabled, .monotonic);
+                            return 0;
+                        },
+                        else => |e| {
+                            current_thread.endSyscall();
+                            assert(error.Unexpected == switch (e) {
+                                .FBIG => return error.FileTooBig,
+                                .IO => return error.InputOutput,
+                                .INTEGRITY => return error.CorruptedData,
+                                .ISDIR => return error.IsDir,
+                                .NOSPC => return error.NoSpaceLeft,
+                                .OVERFLOW => return error.Unseekable,
+                                .NXIO => return error.Unseekable,
+                                .SPIPE => return error.Unseekable,
+                                .BADF => |err| errnoBug(err),
+                                else => |err| posix.unexpectedErrno(err),
+                            });
+                            @atomicStore(UseCopyFileRange, &t.use_copy_file_range, .disabled, .monotonic);
+                            return 0;
+                        },
+                    }
+                }
+            },
+            else => comptime unreachable,
+        };
+        if (n == 0) {
+            file_reader.size = file_reader.pos;
+            return error.EndOfStream;
+        }
+        file_reader.pos += n;
+        return n;
+    }
+
+    if (is_darwin) fcf: {
+        if (@atomicLoad(UseFcopyfile, &t.use_fcopyfile, .monotonic) == .disabled) break :fcf;
+        if (file_reader.pos != 0) break :fcf;
+        if (offset != 0) break :fcf;
+        if (limit != .unlimited) break :fcf;
+        const size = file_reader.getSize() catch break :fcf;
+        if (header.len != 0 or reader_buffered.len != 0) {
+            const n = try fileWritePositional(t, file, header, &.{limit.slice(reader_buffered)}, 1, offset);
+            file_reader.seekBy(n -| header.len) catch return error.ReadFailed;
+            return n;
+        }
+        const current_thread = Thread.getCurrent(t);
+        try current_thread.beginSyscall();
+        while (true) {
+            const rc = std.c.fcopyfile(in_fd, out_fd, null, .{ .DATA = true });
+            switch (posix.errno(rc)) {
+                .SUCCESS => {
+                    current_thread.endSyscall();
+                    break;
+                },
+                .INTR => {
+                    try current_thread.checkCancel();
+                    continue;
+                },
+                .OPNOTSUPP => {
+                    // Give calling code chance to observe before trying
+                    // something else.
+                    current_thread.endSyscall();
+                    @atomicStore(UseFcopyfile, &t.use_fcopyfile, .disabled, .monotonic);
+                    return 0;
+                },
+                else => |e| {
+                    current_thread.endSyscall();
+                    assert(error.Unexpected == switch (e) {
+                        .NOMEM => return error.SystemResources,
+                        .INVAL => |err| posix.errnoBug(err),
+                        else => |err| posix.unexpectedErrno(err),
+                    });
+                    return 0;
+                },
+            }
+        }
+        file_reader.pos = size;
+        return size;
+    }
+
+    return error.Unimplemented;
 }
 
 fn nowPosix(userdata: ?*anyopaque, clock: Io.Clock) Io.Clock.Error!Io.Timestamp {
@@ -7847,6 +8702,7 @@ fn netWritePosix(
         },
     };
     const flags = posix.MSG.NOSIGNAL;
+
     try current_thread.beginSyscall();
     while (true) {
         const rc = posix.system.sendmsg(fd, &msg, flags);
@@ -8010,7 +8866,11 @@ fn netWriteUnavailable(
     return error.NetworkDown;
 }
 
-fn addBuf(v: []posix.iovec_const, i: *@FieldType(posix.msghdr_const, "iovlen"), bytes: []const u8) void {
+/// This is either usize or u32. Since, either is fine, let's use the same
+/// `addBuf` function for both writing to a file and sending network messages.
+const iovlen_t = @FieldType(posix.msghdr_const, "iovlen");
+
+fn addBuf(v: []posix.iovec_const, i: *iovlen_t, bytes: []const u8) void {
     // OS checks ptr addr before length so zero length vectors must be omitted.
     if (bytes.len == 0) return;
     if (v.len - i.* == 0) return;
@@ -8336,7 +9196,7 @@ fn netLookupFallible(
         // TODO use dnsres_getaddrinfo
     }
 
-    if (native_os.isDarwin()) {
+    if (is_darwin) {
         // TODO use CFHostStartInfoResolution / CFHostCancelInfoResolution
     }
 

@@ -198,7 +198,6 @@ pub const OpenError = error{
     NoDevice,
     /// On Windows, `\\server` or `\\server\share` was not found.
     NetworkNotFound,
-    ProcessNotFound,
     /// On Windows, antivirus software is enabled by default. It can be
     /// disabled, but Windows Update sometimes ignores the user's preference
     /// and re-enables it. When enabled, antivirus software on Windows
@@ -477,17 +476,24 @@ pub fn readPositional(file: File, io: Io, buffer: [][]u8, offset: u64) ReadPosit
     return io.vtable.fileReadPositional(io.userdata, file, buffer, offset);
 }
 
-pub const WriteStreamingError = error{} || Io.UnexpectedError || Io.Cancelable;
-
-pub fn writeStreaming(file: File, io: Io, buffer: [][]const u8) WriteStreamingError!usize {
-    return file.fileWriteStreaming(io, buffer);
-}
-
-pub const WritePositionalError = WriteStreamingError || error{Unseekable};
+pub const WritePositionalError = Writer.Error || error{Unseekable};
 
 pub fn writePositional(file: File, io: Io, buffer: [][]const u8, offset: u64) WritePositionalError!usize {
     return io.vtable.fileWritePositional(io.userdata, file, buffer, offset);
 }
+
+pub const WriteFileStreamingError = error{
+    /// `out_fd` is an unconnected socket, or out_fd closed its read end.
+    BrokenPipe,
+    /// Descriptor is not valid or locked, or an mmap(2)-like operation is not available for in_fd.
+    UnsupportedOperation,
+    /// Nonblocking I/O has been selected but the write would block.
+    WouldBlock,
+    /// Unspecified error while reading from in_fd.
+    InputOutput,
+    /// Insufficient kernel memory to read from in_fd.
+    SystemResources,
+} || Io.Cancelable || Io.UnexpectedError;
 
 /// Opens a file for reading or writing, without attempting to create a new
 /// file, based on an absolute path.
@@ -510,6 +516,8 @@ pub const SeekError = error{
     /// The file descriptor does not hold the required rights to seek on it.
     AccessDenied,
 } || Io.Cancelable || Io.UnexpectedError;
+
+pub const WriteFilePositionalError = Writer.WriteFileError || error{Unseekable};
 
 /// Defaults to positional reading; falls back to streaming.
 ///

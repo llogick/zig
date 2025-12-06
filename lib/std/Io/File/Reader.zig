@@ -17,13 +17,13 @@ const assert = std.debug.assert;
 io: Io,
 file: File,
 err: ?Error = null,
-mode: Reader.Mode = .positional,
+mode: Mode = .positional,
 /// Tracks the true seek position in the file. To obtain the logical
 /// position, use `logicalPos`.
 pos: u64 = 0,
 size: ?u64 = null,
 size_err: ?SizeError = null,
-seek_err: ?Reader.SeekError = null,
+seek_err: ?SeekError = null,
 interface: Io.Reader,
 
 pub const Error = error{
@@ -37,15 +37,12 @@ pub const Error = error{
     /// trying to read a directory file descriptor as if it were a file.
     NotOpenForReading,
     SocketUnconnected,
-    /// This error occurs when no global event loop is configured,
-    /// and reading from the file descriptor would block.
+    /// Non-blocking has been enabled, and reading from the file descriptor
+    /// would block.
     WouldBlock,
     /// In WASI, this error occurs when the file descriptor does
     /// not hold the required rights to read from it.
     AccessDenied,
-    /// This error occurs in Linux if the process to be read from
-    /// no longer exists.
-    ProcessNotFound,
     /// Unable to read file due to lock.
     LockViolation,
 } || Io.Cancelable || Io.UnexpectedError;
@@ -93,9 +90,9 @@ pub const Mode = enum {
 pub fn initInterface(buffer: []u8) Io.Reader {
     return .{
         .vtable = &.{
-            .stream = Reader.stream,
-            .discard = Reader.discard,
-            .readVec = Reader.readVec,
+            .stream = stream,
+            .discard = discard,
+            .readVec = readVec,
         },
         .buffer = buffer,
         .seek = 0,
@@ -153,7 +150,7 @@ pub fn getSize(r: *Reader) SizeError!u64 {
     };
 }
 
-pub fn seekBy(r: *Reader, offset: i64) Reader.SeekError!void {
+pub fn seekBy(r: *Reader, offset: i64) SeekError!void {
     const io = r.io;
     switch (r.mode) {
         .positional, .positional_reading => {
@@ -183,7 +180,7 @@ pub fn seekBy(r: *Reader, offset: i64) Reader.SeekError!void {
 }
 
 /// Repositions logical read offset relative to the beginning of the file.
-pub fn seekTo(r: *Reader, offset: u64) Reader.SeekError!void {
+pub fn seekTo(r: *Reader, offset: u64) SeekError!void {
     const io = r.io;
     switch (r.mode) {
         .positional, .positional_reading => {
@@ -191,7 +188,7 @@ pub fn seekTo(r: *Reader, offset: u64) Reader.SeekError!void {
         },
         .streaming, .streaming_reading => {
             const logical_pos = logicalPos(r);
-            if (offset >= logical_pos) return Reader.seekBy(r, @intCast(offset - logical_pos));
+            if (offset >= logical_pos) return seekBy(r, @intCast(offset - logical_pos));
             if (r.seek_err) |err| return err;
             io.vtable.fileSeekTo(io.userdata, r.file, offset) catch |err| {
                 r.seek_err = err;
@@ -224,7 +221,7 @@ fn stream(io_reader: *Io.Reader, w: *Io.Writer, limit: Io.Limit) Io.Reader.Strea
     return streamMode(r, w, limit, r.mode);
 }
 
-pub fn streamMode(r: *Reader, w: *Io.Writer, limit: Io.Limit, mode: Reader.Mode) Io.Reader.StreamError!usize {
+pub fn streamMode(r: *Reader, w: *Io.Writer, limit: Io.Limit, mode: Mode) Io.Reader.StreamError!usize {
     switch (mode) {
         .positional, .streaming => return w.sendFile(r, limit) catch |write_err| switch (write_err) {
             error.Unimplemented => {
