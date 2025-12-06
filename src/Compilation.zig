@@ -173,6 +173,7 @@ verbose_llvm_bc: ?[]const u8,
 verbose_cimport: bool,
 verbose_llvm_cpu_features: bool,
 verbose_link: bool,
+link_depfile: ?[]const u8,
 disable_c_depfile: bool,
 stack_report: bool,
 debug_compiler_runtime_libs: bool,
@@ -1403,6 +1404,7 @@ pub const MiscTask = enum {
     compiler_rt,
     libzigc,
     analyze_mod,
+    link_depfile,
     docs_copy,
     docs_wasm,
 
@@ -1732,6 +1734,7 @@ pub const CreateOptions = struct {
     verbose_generic_instances: bool = false,
     verbose_llvm_ir: ?[]const u8 = null,
     verbose_llvm_bc: ?[]const u8 = null,
+    link_depfile: ?[]const u8 = null,
     verbose_cimport: bool = false,
     verbose_llvm_cpu_features: bool = false,
     debug_compiler_runtime_libs: bool = false,
@@ -2247,6 +2250,7 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
             .verbose_generic_instances = options.verbose_generic_instances,
             .verbose_llvm_ir = options.verbose_llvm_ir,
             .verbose_llvm_bc = options.verbose_llvm_bc,
+            .link_depfile = options.link_depfile,
             .verbose_cimport = options.verbose_cimport,
             .verbose_llvm_cpu_features = options.verbose_llvm_cpu_features,
             .verbose_link = options.verbose_link,
@@ -3098,6 +3102,15 @@ pub fn update(comp: *Compilation, main_progress_node: std.Progress.Node) UpdateE
             zcu.intern_pool.dumpGenericInstances(gpa);
         }
     }
+
+    if (comp.link_depfile) |depfile_path| if (comp.bin_file) |lf| {
+        assert(comp.file_system_inputs != null);
+        comp.createDepFile(depfile_path, lf.emit) catch |err| comp.setMiscFailure(
+            .link_depfile,
+            "unable to write linker dependency file: {t}",
+            .{err},
+        );
+    };
 
     if (anyErrors(comp)) {
         // Skip flushing and keep source files loaded for error reporting.
@@ -5208,6 +5221,43 @@ pub fn separateCodegenThreadOk(comp: *const Compilation) bool {
     return zcu.backendSupportsFeature(.separate_thread);
 }
 
+fn createDepFile(
+    comp: *Compilation,
+    depfile: []const u8,
+    binfile: Cache.Path,
+) anyerror!void {
+    var buf: [4096]u8 = undefined;
+    var af = try std.fs.cwd().atomicFile(depfile, .{ .write_buffer = &buf });
+    defer af.deinit();
+
+    comp.writeDepFile(binfile, &af.file_writer.interface) catch return af.file_writer.err.?;
+
+    try af.finish();
+}
+
+fn writeDepFile(
+    comp: *Compilation,
+    binfile: Cache.Path,
+    w: *std.Io.Writer,
+) std.Io.Writer.Error!void {
+    const prefixes = comp.cache_parent.prefixes();
+    const fsi = comp.file_system_inputs.?.items;
+
+    try w.print("{f}:", .{binfile});
+
+    {
+        var it = std.mem.splitScalar(u8, fsi, 0);
+        while (it.next()) |input| try w.print(" \\\n {f}{s}", .{ prefixes[input[0] - 1], input[1..] });
+    }
+
+    {
+        var it = std.mem.splitScalar(u8, fsi, 0);
+        while (it.next()) |input| try w.print("\n\n{f}{s}:", .{ prefixes[input[0] - 1], input[1..] });
+    }
+
+    try w.writeByte('\n');
+}
+
 fn workerDocsCopy(comp: *Compilation) void {
     docsCopyFallible(comp) catch |err| return comp.lockAndSetMiscFailure(
         .docs_copy,
@@ -6369,6 +6419,38 @@ fn updateCObject(comp: *Compilation, c_object: *CObject, c_obj_prog_node: std.Pr
 
         if (out_dep_path) |dep_file_path| {
             const dep_basename = fs.path.basename(dep_file_path);
+
+            if (comp.file_system_inputs != null) {
+                // Use the same file size limit as the cache code does for dependency files.
+                const dep_file_contents = try zig_cache_tmp_dir.readFileAlloc(dep_basename, gpa, .limited(Cache.manifest_file_size_max));
+                defer gpa.free(dep_file_contents);
+
+                var str_buf: std.ArrayList(u8) = .empty;
+                defer str_buf.deinit(gpa);
+
+                var it: std.Build.Cache.DepTokenizer = .{ .bytes = dep_file_contents };
+                while (it.next()) |token| {
+                    const input_path: Compilation.Path = switch (token) {
+                        .target, .target_must_resolve => continue,
+                        .prereq => |file_path| try .fromUnresolved(arena, comp.dirs, &.{file_path}),
+                        .prereq_must_resolve => p: {
+                            try token.resolve(gpa, &str_buf);
+                            break :p try .fromUnresolved(arena, comp.dirs, &.{str_buf.items});
+                        },
+                        else => |err| {
+                            try err.printError(gpa, &str_buf);
+                            log.err("failed parsing {s}: {s}", .{ dep_basename, str_buf.items });
+                            return error.InvalidDepFile;
+                        },
+                    };
+
+                    // There may be concurrent calls to `appendFileSystemInput` from other C objects.
+                    comp.mutex.lock();
+                    defer comp.mutex.unlock();
+                    try comp.appendFileSystemInput(input_path);
+                }
+            }
+
             // Add the files depended on to the cache system.
             try man.addDepFilePost(zig_cache_tmp_dir, dep_basename);
             switch (comp.cache_use) {

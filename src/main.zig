@@ -814,6 +814,7 @@ fn buildOutputType(
     var verbose_generic_instances = false;
     var verbose_llvm_ir: ?[]const u8 = null;
     var verbose_llvm_bc: ?[]const u8 = null;
+    var link_depfile: ?[]const u8 = null;
     var verbose_cimport = false;
     var verbose_llvm_cpu_features = false;
     var time_report = false;
@@ -2063,6 +2064,8 @@ fn buildOutputType(
                     .wl => {
                         var split_it = mem.splitScalar(u8, it.only_arg, ',');
                         while (split_it.next()) |linker_arg| {
+                            // Unfortunately duplicated with the `for_linker` handling below.
+
                             // Handle nested-joined args like `-Wl,-rpath=foo`.
                             // Must be prefixed with 1 or 2 dashes.
                             if (linker_arg.len >= 3 and
@@ -2072,6 +2075,10 @@ fn buildOutputType(
                                 if (mem.indexOfScalar(u8, linker_arg, '=')) |equals_pos| {
                                     const key = linker_arg[0..equals_pos];
                                     const value = linker_arg[equals_pos + 1 ..];
+
+                                    // We have to handle these here because they would be ambiguous
+                                    // if split and added to `linker_args`, as there are argument-less
+                                    // variants of them.
                                     if (mem.eql(u8, key, "--build-id")) {
                                         build_id = std.zig.BuildId.parse(value) catch |err| {
                                             fatal("unable to parse --build-id style '{s}': {s}", .{
@@ -2084,22 +2091,19 @@ fn buildOutputType(
                                         // is done below.
                                         continue;
                                     }
+
                                     try linker_args.append(key);
                                     try linker_args.append(value);
                                     continue;
                                 }
                             }
-                            if (mem.eql(u8, linker_arg, "--build-id")) {
-                                build_id = .fast;
-                            } else if (mem.eql(u8, linker_arg, "--as-needed")) {
+
+                            // These options are handled inline because their order matters for
+                            // other non-linker options.
+                            if (mem.eql(u8, linker_arg, "--as-needed")) {
                                 needed = false;
                             } else if (mem.eql(u8, linker_arg, "--no-as-needed")) {
                                 needed = true;
-                            } else if (mem.eql(u8, linker_arg, "-no-pie")) {
-                                create_module.opts.pie = false;
-                            } else if (mem.eql(u8, linker_arg, "--sort-common")) {
-                                // from ld.lld(1): --sort-common is ignored for GNU compatibility,
-                                // this ignores plain --sort-common
                             } else if (mem.eql(u8, linker_arg, "--whole-archive") or
                                 mem.eql(u8, linker_arg, "-whole-archive"))
                             {
@@ -2272,7 +2276,74 @@ fn buildOutputType(
                         disable_c_depfile = true;
                         try cc_argv.append(arena, "-###");
                     },
-                    .for_linker => try linker_args.append(it.only_arg),
+                    .for_linker => blk: {
+                        // Unfortunately duplicated with the `wl` handling above.
+
+                        // Handle joined args like `--dependency-file=foo.d`.
+                        // Must be prefixed with 1 or 2 dashes.
+                        if (it.only_arg.len >= 3 and it.only_arg[0] == '-' and it.only_arg[2] != '-') {
+                            if (mem.indexOfScalar(u8, it.only_arg, '=')) |equals_pos| {
+                                const key = it.only_arg[0..equals_pos];
+                                const value = it.only_arg[equals_pos + 1 ..];
+
+                                // We have to handle these here because they would be ambiguous
+                                // if split and added to `linker_args`, as there are argument-less
+                                // variants of them.
+                                if (mem.eql(u8, key, "--build-id")) {
+                                    build_id = std.zig.BuildId.parse(value) catch |err| {
+                                        fatal("unable to parse --build-id style '{s}': {s}", .{
+                                            value, @errorName(err),
+                                        });
+                                    };
+                                    continue;
+                                } else if (mem.eql(u8, key, "--sort-common")) {
+                                    // this ignores --sort-common=<anything>
+                                    continue;
+                                }
+
+                                try linker_args.append(key);
+                                try linker_args.append(value);
+                                break :blk;
+                            }
+                        }
+
+                        // These options are handled inline because their order matters for
+                        // other non-linker options.
+                        if (mem.eql(u8, it.only_arg, "--as-needed")) {
+                            needed = false;
+                        } else if (mem.eql(u8, it.only_arg, "--no-as-needed")) {
+                            needed = true;
+                        } else if (mem.eql(u8, it.only_arg, "--whole-archive") or
+                            mem.eql(u8, it.only_arg, "-whole-archive"))
+                        {
+                            must_link = true;
+                        } else if (mem.eql(u8, it.only_arg, "--no-whole-archive") or
+                            mem.eql(u8, it.only_arg, "-no-whole-archive"))
+                        {
+                            must_link = false;
+                        } else if (mem.eql(u8, it.only_arg, "-Bdynamic") or
+                            mem.eql(u8, it.only_arg, "-dy") or
+                            mem.eql(u8, it.only_arg, "-call_shared"))
+                        {
+                            lib_search_strategy = .no_fallback;
+                            lib_preferred_mode = .dynamic;
+                        } else if (mem.eql(u8, it.only_arg, "-Bstatic") or
+                            mem.eql(u8, it.only_arg, "-dn") or
+                            mem.eql(u8, it.only_arg, "-non_shared") or
+                            mem.eql(u8, it.only_arg, "-static"))
+                        {
+                            lib_search_strategy = .no_fallback;
+                            lib_preferred_mode = .static;
+                        } else if (mem.eql(u8, it.only_arg, "-search_paths_first")) {
+                            lib_search_strategy = .paths_first;
+                            lib_preferred_mode = .dynamic;
+                        } else if (mem.eql(u8, it.only_arg, "-search_dylibs_first")) {
+                            lib_search_strategy = .mode_first;
+                            lib_preferred_mode = .dynamic;
+                        } else {
+                            try linker_args.append(it.only_arg);
+                        }
+                    },
                     .linker_input_z => {
                         try linker_args.append("-z");
                         try linker_args.append(it.only_arg);
@@ -2402,6 +2473,13 @@ fn buildOutputType(
                         }
                     }
                     provided_name = name[prefix..end];
+                } else if (mem.eql(u8, arg, "--build-id")) {
+                    build_id = .fast;
+                } else if (mem.eql(u8, arg, "-no-pie")) {
+                    create_module.opts.pie = false;
+                } else if (mem.eql(u8, arg, "--sort-common")) {
+                    // from ld.lld(1): --sort-common is ignored for GNU compatibility,
+                    // this ignores plain --sort-common
                 } else if (mem.eql(u8, arg, "-rpath") or mem.eql(u8, arg, "--rpath") or mem.eql(u8, arg, "-R")) {
                     try create_module.rpath_list.append(arena, linker_args_it.nextOrFatal());
                 } else if (mem.eql(u8, arg, "--subsystem")) {
@@ -2697,6 +2775,8 @@ fn buildOutputType(
                 {
                     emit_implib = .{ .yes = linker_args_it.nextOrFatal() };
                     emit_implib_arg_provided = true;
+                } else if (mem.eql(u8, arg, "--dependency-file")) {
+                    link_depfile = linker_args_it.nextOrFatal();
                 } else if (mem.eql(u8, arg, "-Brepro") or mem.eql(u8, arg, "/Brepro")) {
                     linker_repro = true;
                 } else if (mem.eql(u8, arg, "-undefined")) {
@@ -3472,6 +3552,7 @@ fn buildOutputType(
         .verbose_generic_instances = verbose_generic_instances,
         .verbose_llvm_ir = verbose_llvm_ir,
         .verbose_llvm_bc = verbose_llvm_bc,
+        .link_depfile = link_depfile,
         .verbose_cimport = verbose_cimport,
         .verbose_llvm_cpu_features = verbose_llvm_cpu_features,
         .time_report = time_report,
