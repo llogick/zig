@@ -11,6 +11,8 @@ const is_debug = builtin.mode == .Debug;
 const std = @import("../std.zig");
 const Io = std.Io;
 const net = std.Io.net;
+const File = std.Io.File;
+const Dir = std.Dir;
 const HostName = std.Io.net.HostName;
 const IpAddress = std.Io.net.IpAddress;
 const Allocator = std.mem.Allocator;
@@ -1444,7 +1446,7 @@ const dirMake = switch (native_os) {
     else => dirMakePosix,
 };
 
-fn dirMakePosix(userdata: ?*anyopaque, dir: Io.Dir, sub_path: []const u8, mode: Io.Dir.Mode) Io.Dir.MakeError!void {
+fn dirMakePosix(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, mode: Dir.Mode) Dir.MakeError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
@@ -1490,7 +1492,7 @@ fn dirMakePosix(userdata: ?*anyopaque, dir: Io.Dir, sub_path: []const u8, mode: 
     }
 }
 
-fn dirMakeWasi(userdata: ?*anyopaque, dir: Io.Dir, sub_path: []const u8, mode: Io.Dir.Mode) Io.Dir.MakeError!void {
+fn dirMakeWasi(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, mode: Dir.Mode) Dir.MakeError!void {
     if (builtin.link_libc) return dirMakePosix(userdata, dir, sub_path, mode);
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
@@ -1532,7 +1534,7 @@ fn dirMakeWasi(userdata: ?*anyopaque, dir: Io.Dir, sub_path: []const u8, mode: I
     }
 }
 
-fn dirMakeWindows(userdata: ?*anyopaque, dir: Io.Dir, sub_path: []const u8, mode: Io.Dir.Mode) Io.Dir.MakeError!void {
+fn dirMakeWindows(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, mode: Dir.Mode) Dir.MakeError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
     try current_thread.checkCancel();
@@ -1560,14 +1562,14 @@ fn dirMakeWindows(userdata: ?*anyopaque, dir: Io.Dir, sub_path: []const u8, mode
 
 fn dirMakePath(
     userdata: ?*anyopaque,
-    dir: Io.Dir,
+    dir: Dir,
     sub_path: []const u8,
-    mode: Io.Dir.Mode,
-) Io.Dir.MakePathError!Io.Dir.MakePathStatus {
+    mode: Dir.Mode,
+) Dir.MakePathError!Dir.MakePathStatus {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
 
     var it = std.fs.path.componentIterator(sub_path);
-    var status: Io.Dir.MakePathStatus = .existed;
+    var status: Dir.MakePathStatus = .existed;
     var component = it.last() orelse return error.BadPathName;
     while (true) {
         if (dirMake(t, dir, component.path, mode)) |_| {
@@ -1604,10 +1606,10 @@ const dirMakeOpenPath = switch (native_os) {
 
 fn dirMakeOpenPathPosix(
     userdata: ?*anyopaque,
-    dir: Io.Dir,
+    dir: Dir,
     sub_path: []const u8,
-    options: Io.Dir.OpenOptions,
-) Io.Dir.MakeOpenPathError!Io.Dir {
+    options: Dir.OpenOptions,
+) Dir.MakeOpenPathError!Dir {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const t_io = ioBasic(t);
     return dirOpenDirPosix(t, dir, sub_path, options) catch |err| switch (err) {
@@ -1621,10 +1623,10 @@ fn dirMakeOpenPathPosix(
 
 fn dirMakeOpenPathWindows(
     userdata: ?*anyopaque,
-    dir: Io.Dir,
+    dir: Dir,
     sub_path: []const u8,
-    options: Io.Dir.OpenOptions,
-) Io.Dir.MakeOpenPathError!Io.Dir {
+    options: Dir.OpenOptions,
+) Dir.MakeOpenPathError!Dir {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
     const w = windows;
@@ -1644,7 +1646,7 @@ fn dirMakeOpenPathWindows(
         const is_last = it.peekNext() == null;
         const create_disposition: w.FILE.CREATE_DISPOSITION = if (is_last) .OPEN_IF else .CREATE;
 
-        var result: Io.Dir = .{ .handle = undefined };
+        var result: Dir = .{ .handle = undefined };
 
         const path_len_bytes: u16 = @intCast(sub_path_w.len * 2);
         var nt_name: w.UNICODE_STRING = .{
@@ -1736,10 +1738,10 @@ fn dirMakeOpenPathWindows(
 
 fn dirMakeOpenPathWasi(
     userdata: ?*anyopaque,
-    dir: Io.Dir,
+    dir: Dir,
     sub_path: []const u8,
-    options: Io.Dir.OpenOptions,
-) Io.Dir.MakeOpenPathError!Io.Dir {
+    options: Dir.OpenOptions,
+) Dir.MakeOpenPathError!Dir {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const t_io = ioBasic(t);
     return dirOpenDirWasi(t, dir, sub_path, options) catch |err| switch (err) {
@@ -1751,9 +1753,9 @@ fn dirMakeOpenPathWasi(
     };
 }
 
-fn dirStat(userdata: ?*anyopaque, dir: Io.Dir) Io.Dir.StatError!Io.Dir.Stat {
+fn dirStat(userdata: ?*anyopaque, dir: Dir) Dir.StatError!Dir.Stat {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const file: Io.File = .{ .handle = dir.handle };
+    const file: File = .{ .handle = dir.handle };
     return fileStat(t, file);
 }
 
@@ -1766,10 +1768,10 @@ const dirStatPath = switch (native_os) {
 
 fn dirStatPathLinux(
     userdata: ?*anyopaque,
-    dir: Io.Dir,
+    dir: Dir,
     sub_path: []const u8,
-    options: Io.Dir.StatPathOptions,
-) Io.Dir.StatPathError!Io.File.Stat {
+    options: Dir.StatPathOptions,
+) Dir.StatPathError!File.Stat {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
     const linux = std.os.linux;
@@ -1828,10 +1830,10 @@ fn dirStatPathLinux(
 
 fn dirStatPathPosix(
     userdata: ?*anyopaque,
-    dir: Io.Dir,
+    dir: Dir,
     sub_path: []const u8,
-    options: Io.Dir.StatPathOptions,
-) Io.Dir.StatPathError!Io.File.Stat {
+    options: Dir.StatPathOptions,
+) Dir.StatPathError!File.Stat {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
@@ -1876,10 +1878,10 @@ fn dirStatPathPosix(
 
 fn dirStatPathWindows(
     userdata: ?*anyopaque,
-    dir: Io.Dir,
+    dir: Dir,
     sub_path: []const u8,
-    options: Io.Dir.StatPathOptions,
-) Io.Dir.StatPathError!Io.File.Stat {
+    options: Dir.StatPathOptions,
+) Dir.StatPathError!File.Stat {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const file = try dirOpenFileWindows(t, dir, sub_path, .{
         .follow_symlinks = options.follow_symlinks,
@@ -1890,10 +1892,10 @@ fn dirStatPathWindows(
 
 fn dirStatPathWasi(
     userdata: ?*anyopaque,
-    dir: Io.Dir,
+    dir: Dir,
     sub_path: []const u8,
-    options: Io.Dir.StatPathOptions,
-) Io.Dir.StatPathError!Io.File.Stat {
+    options: Dir.StatPathOptions,
+) Dir.StatPathError!File.Stat {
     if (builtin.link_libc) return dirStatPathPosix(userdata, dir, sub_path, options);
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
@@ -1941,7 +1943,7 @@ const fileStat = switch (native_os) {
     else => fileStatPosix,
 };
 
-fn fileStatPosix(userdata: ?*anyopaque, file: Io.File) Io.File.StatError!Io.File.Stat {
+fn fileStatPosix(userdata: ?*anyopaque, file: File) File.StatError!File.Stat {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
@@ -1974,7 +1976,7 @@ fn fileStatPosix(userdata: ?*anyopaque, file: Io.File) Io.File.StatError!Io.File
     }
 }
 
-fn fileStatLinux(userdata: ?*anyopaque, file: Io.File) Io.File.StatError!Io.File.Stat {
+fn fileStatLinux(userdata: ?*anyopaque, file: File) File.StatError!File.Stat {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
     const linux = std.os.linux;
@@ -2025,7 +2027,7 @@ fn fileStatLinux(userdata: ?*anyopaque, file: Io.File) Io.File.StatError!Io.File
     }
 }
 
-fn fileStatWindows(userdata: ?*anyopaque, file: Io.File) Io.File.StatError!Io.File.Stat {
+fn fileStatWindows(userdata: ?*anyopaque, file: File) File.StatError!File.Stat {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
     try current_thread.checkCancel();
@@ -2071,7 +2073,7 @@ fn fileStatWindows(userdata: ?*anyopaque, file: Io.File) Io.File.StatError!Io.Fi
     };
 }
 
-fn fileStatWasi(userdata: ?*anyopaque, file: Io.File) Io.File.StatError!Io.File.Stat {
+fn fileStatWasi(userdata: ?*anyopaque, file: File) File.StatError!File.Stat {
     if (builtin.link_libc) return fileStatPosix(userdata, file);
 
     const t: *Threaded = @ptrCast(@alignCast(userdata));
@@ -2113,10 +2115,10 @@ const dirAccess = switch (native_os) {
 
 fn dirAccessPosix(
     userdata: ?*anyopaque,
-    dir: Io.Dir,
+    dir: Dir,
     sub_path: []const u8,
-    options: Io.Dir.AccessOptions,
-) Io.Dir.AccessError!void {
+    options: Dir.AccessOptions,
+) Dir.AccessError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
@@ -2167,10 +2169,10 @@ fn dirAccessPosix(
 
 fn dirAccessWasi(
     userdata: ?*anyopaque,
-    dir: Io.Dir,
+    dir: Dir,
     sub_path: []const u8,
-    options: Io.Dir.AccessOptions,
-) Io.Dir.AccessError!void {
+    options: Dir.AccessOptions,
+) Dir.AccessError!void {
     if (builtin.link_libc) return dirAccessPosix(userdata, dir, sub_path, options);
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
@@ -2240,10 +2242,10 @@ fn dirAccessWasi(
 
 fn dirAccessWindows(
     userdata: ?*anyopaque,
-    dir: Io.Dir,
+    dir: Dir,
     sub_path: []const u8,
-    options: Io.Dir.AccessOptions,
-) Io.Dir.AccessError!void {
+    options: Dir.AccessOptions,
+) Dir.AccessError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
     try current_thread.checkCancel();
@@ -2292,10 +2294,10 @@ const dirCreateFile = switch (native_os) {
 
 fn dirCreateFilePosix(
     userdata: ?*anyopaque,
-    dir: Io.Dir,
+    dir: Dir,
     sub_path: []const u8,
-    flags: Io.File.CreateFlags,
-) Io.File.OpenError!Io.File {
+    flags: File.CreateFlags,
+) File.OpenError!File {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
@@ -2455,10 +2457,10 @@ fn dirCreateFilePosix(
 
 fn dirCreateFileWindows(
     userdata: ?*anyopaque,
-    dir: Io.Dir,
+    dir: Dir,
     sub_path: []const u8,
-    flags: Io.File.CreateFlags,
-) Io.File.OpenError!Io.File {
+    flags: File.CreateFlags,
+) File.OpenError!File {
     const w = windows;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
@@ -2509,10 +2511,10 @@ fn dirCreateFileWindows(
 
 fn dirCreateFileWasi(
     userdata: ?*anyopaque,
-    dir: Io.Dir,
+    dir: Dir,
     sub_path: []const u8,
-    flags: Io.File.CreateFlags,
-) Io.File.OpenError!Io.File {
+    flags: File.CreateFlags,
+) File.OpenError!File {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
     const wasi = std.os.wasi;
@@ -2593,10 +2595,10 @@ const dirOpenFile = switch (native_os) {
 
 fn dirOpenFilePosix(
     userdata: ?*anyopaque,
-    dir: Io.Dir,
+    dir: Dir,
     sub_path: []const u8,
-    flags: Io.File.OpenFlags,
-) Io.File.OpenError!Io.File {
+    flags: File.OpenFlags,
+) File.OpenError!File {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
@@ -2765,10 +2767,10 @@ fn dirOpenFilePosix(
 
 fn dirOpenFileWindows(
     userdata: ?*anyopaque,
-    dir: Io.Dir,
+    dir: Dir,
     sub_path: []const u8,
-    flags: Io.File.OpenFlags,
-) Io.File.OpenError!Io.File {
+    flags: File.OpenFlags,
+) File.OpenError!File {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const sub_path_w_array = try windows.sliceToPrefixedFileW(dir.handle, sub_path);
     const sub_path_w = sub_path_w_array.span();
@@ -2780,8 +2782,8 @@ pub fn dirOpenFileWtf16(
     t: *Threaded,
     dir_handle: ?windows.HANDLE,
     sub_path_w: [:0]const u16,
-    flags: Io.File.OpenFlags,
-) Io.File.OpenError!Io.File {
+    flags: File.OpenFlags,
+) File.OpenError!File {
     if (std.mem.eql(u16, sub_path_w, &.{'.'})) return error.IsDir;
     if (std.mem.eql(u16, sub_path_w, &.{ '.', '.' })) return error.IsDir;
     const path_len_bytes = std.math.cast(u16, sub_path_w.len * 2) orelse return error.NameTooLong;
@@ -2904,10 +2906,10 @@ pub fn dirOpenFileWtf16(
 
 fn dirOpenFileWasi(
     userdata: ?*anyopaque,
-    dir: Io.Dir,
+    dir: Dir,
     sub_path: []const u8,
-    flags: Io.File.OpenFlags,
-) Io.File.OpenError!Io.File {
+    flags: File.OpenFlags,
+) File.OpenError!File {
     if (builtin.link_libc) return dirOpenFilePosix(userdata, dir, sub_path, flags);
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
@@ -2991,10 +2993,10 @@ const dirOpenDir = switch (native_os) {
 /// This function is also used for WASI when libc is linked.
 fn dirOpenDirPosix(
     userdata: ?*anyopaque,
-    dir: Io.Dir,
+    dir: Dir,
     sub_path: []const u8,
-    options: Io.Dir.OpenOptions,
-) Io.Dir.OpenError!Io.Dir {
+    options: Dir.OpenOptions,
+) Dir.OpenError!Dir {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
 
     if (is_windows) {
@@ -3065,10 +3067,10 @@ fn dirOpenDirPosix(
 
 fn dirOpenDirHaiku(
     userdata: ?*anyopaque,
-    dir: Io.Dir,
+    dir: Dir,
     sub_path: []const u8,
-    options: Io.Dir.OpenOptions,
-) Io.Dir.OpenError!Io.Dir {
+    options: Dir.OpenOptions,
+) Dir.OpenError!Dir {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
@@ -3116,10 +3118,10 @@ fn dirOpenDirHaiku(
 
 pub fn dirOpenDirWindows(
     t: *Io.Threaded,
-    dir: Io.Dir,
+    dir: Dir,
     sub_path_w: [:0]const u16,
-    options: Io.Dir.OpenOptions,
-) Io.Dir.OpenError!Io.Dir {
+    options: Dir.OpenOptions,
+) Dir.OpenError!Dir {
     const current_thread = Thread.getCurrent(t);
     const w = windows;
 
@@ -3130,7 +3132,7 @@ pub fn dirOpenDirWindows(
         .Buffer = @constCast(sub_path_w.ptr),
     };
     var io_status_block: w.IO_STATUS_BLOCK = undefined;
-    var result: Io.Dir = .{ .handle = undefined };
+    var result: Dir = .{ .handle = undefined };
     try current_thread.checkCancel();
     const rc = w.ntdll.NtCreateFile(
         &result.handle,
@@ -3190,7 +3192,7 @@ const MakeOpenDirAccessMaskWOptions = struct {
     create_disposition: u32,
 };
 
-fn dirClose(userdata: ?*anyopaque, dir: Io.Dir) void {
+fn dirClose(userdata: ?*anyopaque, dir: Dir) void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     _ = t;
     posix.close(dir.handle);
@@ -3201,7 +3203,7 @@ const dirRealPath = switch (native_os) {
     else => dirRealPathPosix,
 };
 
-fn dirRealPathWindows(userdata: ?*anyopaque, dir: Io.Dir, sub_path: []const u8, out_buffer: []u8) Io.Dir.RealPathError!usize {
+fn dirRealPathWindows(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, out_buffer: []u8) Dir.RealPathError!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const w = windows;
     const current_thread = Thread.getCurrent(t);
@@ -3237,7 +3239,7 @@ fn dirRealPathWindows(userdata: ?*anyopaque, dir: Io.Dir, sub_path: []const u8, 
     return std.unicode.wtf16LeToWtf8(out_buffer, wide_slice);
 }
 
-fn dirRealPathPosix(userdata: ?*anyopaque, dir: Io.Dir, sub_path: []const u8, out_buffer: []u8) Io.Dir.RealPathError!usize {
+fn dirRealPathPosix(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, out_buffer: []u8) Dir.RealPathError!usize {
     if (native_os == .wasi) @compileError("unsupported operating system");
     const max_path_bytes = std.fs.max_path_bytes;
 
@@ -3434,11 +3436,11 @@ const dirDeleteFile = switch (native_os) {
     else => dirDeleteFilePosix,
 };
 
-fn dirDeleteFileWindows(userdata: ?*anyopaque, dir: Io.Dir, sub_path: []const u8) Io.Dir.DeleteFileError!void {
+fn dirDeleteFileWindows(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8) Dir.DeleteFileError!void {
     return dirDeleteWindows(userdata, dir, sub_path, false);
 }
 
-fn dirDeleteFileWasi(userdata: ?*anyopaque, dir: Io.Dir, sub_path: []const u8) Io.Dir.DeleteFileError!void {
+fn dirDeleteFileWasi(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8) Dir.DeleteFileError!void {
     if (builtin.link_libc) return dirDeleteFilePosix(userdata, dir, sub_path);
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
@@ -3482,7 +3484,7 @@ fn dirDeleteFileWasi(userdata: ?*anyopaque, dir: Io.Dir, sub_path: []const u8) I
     }
 }
 
-fn dirDeleteFilePosix(userdata: ?*anyopaque, dir: Io.Dir, sub_path: []const u8) Io.Dir.DeleteFileError!void {
+fn dirDeleteFilePosix(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8) Dir.DeleteFileError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
@@ -3567,11 +3569,11 @@ const dirDeleteDir = switch (native_os) {
     else => dirDeleteDirPosix,
 };
 
-fn dirDeleteDirWindows(userdata: ?*anyopaque, dir: Io.Dir, sub_path: []const u8) Io.Dir.DeleteDirError!void {
+fn dirDeleteDirWindows(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8) Dir.DeleteDirError!void {
     return dirDeleteWindows(userdata, dir, sub_path, true);
 }
 
-fn dirDeleteWindows(userdata: ?*anyopaque, dir: Io.Dir, sub_path: []const u8, remove_dir: bool) Io.Dir.DeleteFileError!void {
+fn dirDeleteWindows(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, remove_dir: bool) Dir.DeleteFileError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
     const w = windows;
@@ -3712,7 +3714,7 @@ fn dirDeleteWindows(userdata: ?*anyopaque, dir: Io.Dir, sub_path: []const u8, re
     }
 }
 
-fn dirDeleteDirWasi(userdata: ?*anyopaque, dir: Io.Dir, sub_path: []const u8) Io.Dir.DeleteDirError!void {
+fn dirDeleteDirWasi(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8) Dir.DeleteDirError!void {
     if (builtin.link_libc) return dirDeleteDirPosix(userdata, dir, sub_path);
 
     const t: *Threaded = @ptrCast(@alignCast(userdata));
@@ -3758,7 +3760,7 @@ fn dirDeleteDirWasi(userdata: ?*anyopaque, dir: Io.Dir, sub_path: []const u8) Io
     }
 }
 
-fn dirDeleteDirPosix(userdata: ?*anyopaque, dir: Io.Dir, sub_path: []const u8) Io.Dir.DeleteDirError!void {
+fn dirDeleteDirPosix(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8) Dir.DeleteDirError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
@@ -3812,11 +3814,11 @@ const dirRename = switch (native_os) {
 
 fn dirRenameWindows(
     userdata: ?*anyopaque,
-    old_dir: Io.Dir,
+    old_dir: Dir,
     old_sub_path: []const u8,
-    new_dir: Io.Dir,
+    new_dir: Dir,
     new_sub_path: []const u8,
-) Io.Dir.RenameError!void {
+) Dir.RenameError!void {
     const w = windows;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
@@ -3935,11 +3937,11 @@ fn dirRenameWindows(
 
 fn dirRenameWasi(
     userdata: ?*anyopaque,
-    old_dir: Io.Dir,
+    old_dir: Dir,
     old_sub_path: []const u8,
-    new_dir: Io.Dir,
+    new_dir: Dir,
     new_sub_path: []const u8,
-) Io.Dir.RenameError!void {
+) Dir.RenameError!void {
     if (builtin.link_libc) return dirRenamePosix(userdata, old_dir, old_sub_path, new_dir, new_sub_path);
 
     const t: *Threaded = @ptrCast(@alignCast(userdata));
@@ -3986,11 +3988,11 @@ fn dirRenameWasi(
 
 fn dirRenamePosix(
     userdata: ?*anyopaque,
-    old_dir: Io.Dir,
+    old_dir: Dir,
     old_sub_path: []const u8,
-    new_dir: Io.Dir,
+    new_dir: Dir,
     new_sub_path: []const u8,
-) Io.Dir.RenameError!void {
+) Dir.RenameError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
@@ -4046,11 +4048,11 @@ const dirSymLink = switch (native_os) {
 
 fn dirSymLinkWindows(
     userdata: ?*anyopaque,
-    dir: Io.Dir,
+    dir: Dir,
     target_path: []const u8,
     sym_link_path: []const u8,
-    flags: Io.Dir.SymLinkFlags,
-) Io.Dir.SymLinkError!void {
+    flags: Dir.SymLinkFlags,
+) Dir.SymLinkError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
     const w = windows;
@@ -4161,11 +4163,11 @@ fn dirSymLinkWindows(
 
 fn dirSymLinkWasi(
     userdata: ?*anyopaque,
-    dir: Io.Dir,
+    dir: Dir,
     target_path: []const u8,
     sym_link_path: []const u8,
-    flags: Io.Dir.SymLinkFlags,
-) Io.Dir.SymLinkError!void {
+    flags: Dir.SymLinkFlags,
+) Dir.SymLinkError!void {
     if (builtin.link_libc) return dirSymLinkPosix(dir, target_path, sym_link_path, flags);
 
     const t: *Threaded = @ptrCast(@alignCast(userdata));
@@ -4209,11 +4211,11 @@ fn dirSymLinkWasi(
 
 fn dirSymLinkPosix(
     userdata: ?*anyopaque,
-    dir: Io.Dir,
+    dir: Dir,
     target_path: []const u8,
     sym_link_path: []const u8,
-    flags: Io.Dir.SymLinkFlags,
-) Io.Dir.SymLinkError!void {
+    flags: Dir.SymLinkFlags,
+) Dir.SymLinkError!void {
     _ = flags;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
@@ -4264,7 +4266,7 @@ const dirReadLink = switch (native_os) {
     else => dirReadLinkPosix,
 };
 
-fn dirReadLinkWindows(userdata: ?*anyopaque, dir: Io.Dir, sub_path: []const u8, buffer: []u8) Io.Dir.ReadLinkError!usize {
+fn dirReadLinkWindows(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, buffer: []u8) Dir.ReadLinkError!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
     const w = windows;
@@ -4322,7 +4324,7 @@ fn dirReadLinkWindows(userdata: ?*anyopaque, dir: Io.Dir, sub_path: []const u8, 
     return std.unicode.wtf16LeToWtf8(buffer, wide_result);
 }
 
-fn dirReadLinkWasi(userdata: ?*anyopaque, dir: Io.Dir, sub_path: []const u8, buffer: []u8) Io.Dir.ReadLinkError!usize {
+fn dirReadLinkWasi(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, buffer: []u8) Dir.ReadLinkError!usize {
     if (builtin.link_libc) return dirReadLinkPosix(userdata, dir, sub_path, buffer);
 
     const t: *Threaded = @ptrCast(@alignCast(userdata));
@@ -4362,7 +4364,7 @@ fn dirReadLinkWasi(userdata: ?*anyopaque, dir: Io.Dir, sub_path: []const u8, buf
     }
 }
 
-fn dirReadLinkPosix(userdata: ?*anyopaque, dir: Io.Dir, sub_path: []const u8, buffer: []u8) Io.Dir.ReadLinkError!usize {
+fn dirReadLinkPosix(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, buffer: []u8) Dir.ReadLinkError!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
@@ -4408,7 +4410,7 @@ const dirSetPermissions = switch (native_os) {
     else => dirSetPermissionsPosix,
 };
 
-fn dirSetPermissionsWindows(userdata: ?*anyopaque, dir: Io.Dir, permissions: Io.Dir.Permissions) Io.Dir.SetPermissionsError!void {
+fn dirSetPermissionsWindows(userdata: ?*anyopaque, dir: Dir, permissions: Dir.Permissions) Dir.SetPermissionsError!void {
     // TODO I think we can actually set permissions on a dir on windows?
     _ = userdata;
     _ = dir;
@@ -4416,7 +4418,7 @@ fn dirSetPermissionsWindows(userdata: ?*anyopaque, dir: Io.Dir, permissions: Io.
     return error.Unexpected;
 }
 
-fn dirSetPermissionsPosix(userdata: ?*anyopaque, dir: Io.Dir, permissions: Io.Dir.Permissions) Io.Dir.SetPermissionsError!void {
+fn dirSetPermissionsPosix(userdata: ?*anyopaque, dir: Dir, permissions: Dir.Permissions) Dir.SetPermissionsError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
     return setPermissionsPosix(current_thread, dir.handle, permissions.toMode());
@@ -4427,7 +4429,7 @@ const dirSetOwner = switch (native_os) {
     else => dirSetOwnerPosix,
 };
 
-fn dirSetOwnerUnsupported(userdata: ?*anyopaque, dir: Io.Dir, owner: ?Io.File.Uid, group: ?Io.File.Gid) Io.Dir.SetOwnerError!void {
+fn dirSetOwnerUnsupported(userdata: ?*anyopaque, dir: Dir, owner: ?File.Uid, group: ?File.Gid) Dir.SetOwnerError!void {
     _ = userdata;
     _ = dir;
     _ = owner;
@@ -4435,7 +4437,7 @@ fn dirSetOwnerUnsupported(userdata: ?*anyopaque, dir: Io.Dir, owner: ?Io.File.Ui
     return error.Unexpected;
 }
 
-fn dirSetOwnerPosix(userdata: ?*anyopaque, dir: Io.Dir, owner: ?Io.File.Uid, group: ?Io.File.Gid) Io.Dir.SetOwnerError!void {
+fn dirSetOwnerPosix(userdata: ?*anyopaque, dir: Dir, owner: ?File.Uid, group: ?File.Gid) Dir.SetOwnerError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
     const uid = owner orelse ~@as(posix.uid_t, 0);
@@ -4443,7 +4445,7 @@ fn dirSetOwnerPosix(userdata: ?*anyopaque, dir: Io.Dir, owner: ?Io.File.Uid, gro
     return setOwnerPosix(current_thread, dir.handle, uid, gid);
 }
 
-fn setOwnerPosix(current_thread: *Thread, fd: posix.fd_t, uid: posix.uid_t, gid: posix.gid_t) Io.File.SetOwnerError!void {
+fn setOwnerPosix(current_thread: *Thread, fd: posix.fd_t, uid: posix.uid_t, gid: posix.gid_t) File.SetOwnerError!void {
     try current_thread.beginSyscall();
     while (true) {
         switch (posix.errno(posix.system.fchown(fd, uid, gid))) {
@@ -4456,7 +4458,7 @@ fn setOwnerPosix(current_thread: *Thread, fd: posix.fd_t, uid: posix.uid_t, gid:
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
-                    .BADF => |err| return errnoBug(err), // likely fd refers to directory opened without `Io.Dir.OpenOptions.iterate`
+                    .BADF => |err| return errnoBug(err), // likely fd refers to directory opened without `Dir.OpenOptions.iterate`
                     .FAULT => |err| return errnoBug(err),
                     .INVAL => |err| return errnoBug(err),
                     .ACCES => return error.AccessDenied,
@@ -4479,7 +4481,7 @@ const fileSync = switch (native_os) {
     else => fileSyncPosix,
 };
 
-fn fileSyncWindows(userdata: ?*anyopaque, file: Io.File) Io.File.SyncError!void {
+fn fileSyncWindows(userdata: ?*anyopaque, file: File) File.SyncError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
@@ -4497,7 +4499,7 @@ fn fileSyncWindows(userdata: ?*anyopaque, file: Io.File) Io.File.SyncError!void 
     }
 }
 
-fn fileSyncPosix(userdata: ?*anyopaque, file: Io.File) Io.File.SyncError!void {
+fn fileSyncPosix(userdata: ?*anyopaque, file: File) File.SyncError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
     try current_thread.beginSyscall();
@@ -4525,13 +4527,13 @@ fn fileSyncPosix(userdata: ?*anyopaque, file: Io.File) Io.File.SyncError!void {
     }
 }
 
-fn fileIsTty(userdata: ?*anyopaque, file: Io.File) Io.Cancelable!bool {
+fn fileIsTty(userdata: ?*anyopaque, file: File) Io.Cancelable!bool {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
     return isTty(current_thread, file);
 }
 
-fn isTty(current_thread: *Thread, file: Io.File) Io.Cancelable!bool {
+fn isTty(current_thread: *Thread, file: File) Io.Cancelable!bool {
     if (is_windows) {
         if (try isCygwinPty(current_thread, file)) return true;
         try current_thread.checkCancel();
@@ -4604,7 +4606,7 @@ fn isTty(current_thread: *Thread, file: Io.File) Io.Cancelable!bool {
     @compileError("unimplemented");
 }
 
-fn fileEnableAnsiEscapeCodes(userdata: ?*anyopaque, file: Io.File) Io.File.EnableAnsiEscapeCodesError!void {
+fn fileEnableAnsiEscapeCodes(userdata: ?*anyopaque, file: File) File.EnableAnsiEscapeCodesError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
@@ -4639,13 +4641,13 @@ fn fileEnableAnsiEscapeCodes(userdata: ?*anyopaque, file: Io.File) Io.File.Enabl
     return error.NotTerminalDevice;
 }
 
-fn fileSupportsAnsiEscapeCodes(userdata: ?*anyopaque, file: Io.File) Io.Cancelable!bool {
+fn fileSupportsAnsiEscapeCodes(userdata: ?*anyopaque, file: File) Io.Cancelable!bool {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
     return supportsAnsiEscapeCodes(current_thread, file);
 }
 
-fn supportsAnsiEscapeCodes(current_thread: *Thread, file: Io.File) Io.Cancelable!bool {
+fn supportsAnsiEscapeCodes(current_thread: *Thread, file: File) Io.Cancelable!bool {
     if (is_windows) {
         try current_thread.checkCancel();
         var console_mode: windows.DWORD = 0;
@@ -4667,7 +4669,7 @@ fn supportsAnsiEscapeCodes(current_thread: *Thread, file: Io.File) Io.Cancelable
     return false;
 }
 
-fn isCygwinPty(current_thread: *Thread, file: Io.File) Io.Cancelable!bool {
+fn isCygwinPty(current_thread: *Thread, file: File) Io.Cancelable!bool {
     if (!is_windows) return false;
 
     const handle = file.handle;
@@ -4721,7 +4723,7 @@ fn isCygwinPty(current_thread: *Thread, file: Io.File) Io.Cancelable!bool {
         std.mem.indexOf(u16, name_wide, &[_]u16{ '-', 'p', 't', 'y' }) != null;
 }
 
-fn fileSetLength(userdata: ?*anyopaque, file: Io.File, length: u64) Io.File.SetLengthError!void {
+fn fileSetLength(userdata: ?*anyopaque, file: File, length: u64) File.SetLengthError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
@@ -4805,7 +4807,7 @@ fn fileSetLength(userdata: ?*anyopaque, file: Io.File, length: u64) Io.File.SetL
     }
 }
 
-fn fileSetOwner(userdata: ?*anyopaque, file: Io.File, owner: ?Io.File.Uid, group: ?Io.File.Gid) Io.File.SetOwnerError!void {
+fn fileSetOwner(userdata: ?*anyopaque, file: File, owner: ?File.Uid, group: ?File.Gid) File.SetOwnerError!void {
     switch (native_os) {
         .windows, .wasi => return error.Unexpected,
         else => {},
@@ -4817,7 +4819,7 @@ fn fileSetOwner(userdata: ?*anyopaque, file: Io.File, owner: ?Io.File.Uid, group
     return setOwnerPosix(current_thread, file.handle, uid, gid);
 }
 
-fn fileSetPermissions(userdata: ?*anyopaque, file: Io.File, permissions: Io.File.Permissions) Io.File.SetPermissionsError!void {
+fn fileSetPermissions(userdata: ?*anyopaque, file: File, permissions: File.Permissions) File.SetPermissionsError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
     switch (native_os) {
@@ -4850,7 +4852,7 @@ fn fileSetPermissions(userdata: ?*anyopaque, file: Io.File, permissions: Io.File
     }
 }
 
-fn setPermissionsPosix(current_thread: *Thread, fd: posix.fd_t, mode: posix.mode_t) Io.File.SetPermissionsError!void {
+fn setPermissionsPosix(current_thread: *Thread, fd: posix.fd_t, mode: posix.mode_t) File.SetPermissionsError!void {
     try current_thread.beginSyscall();
     while (true) {
         switch (posix.errno(posix.system.fchmod(fd, mode))) {
@@ -4883,12 +4885,12 @@ fn setPermissionsPosix(current_thread: *Thread, fd: posix.fd_t, mode: posix.mode
 
 fn dirSetTimestamps(
     userdata: ?*anyopaque,
-    dir: Io.Dir,
+    dir: Dir,
     sub_path: []const u8,
     last_accessed: Io.Timestamp,
     last_modified: Io.Timestamp,
-    options: Io.File.SetTimestampsOptions,
-) Io.File.SetTimestampsError!void {
+    options: File.SetTimestampsOptions,
+) File.SetTimestampsError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
@@ -4937,10 +4939,10 @@ fn dirSetTimestamps(
 
 fn dirSetTimestampsNow(
     userdata: ?*anyopaque,
-    dir: Io.Dir,
+    dir: Dir,
     sub_path: []const u8,
-    options: Io.File.SetTimestampsOptions,
-) Io.File.SetTimestampsError!void {
+    options: File.SetTimestampsOptions,
+) File.SetTimestampsError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
@@ -4984,10 +4986,10 @@ fn dirSetTimestampsNow(
 
 fn fileSetTimestamps(
     userdata: ?*anyopaque,
-    file: Io.File,
+    file: File,
     last_accessed: Io.Timestamp,
     last_modified: Io.Timestamp,
-) Io.File.SetTimestampsError!void {
+) File.SetTimestampsError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
@@ -5068,7 +5070,7 @@ fn fileSetTimestamps(
     }
 }
 
-fn fileSetTimestampsNow(userdata: ?*anyopaque, file: Io.File) Io.File.SetTimestampsError!void {
+fn fileSetTimestampsNow(userdata: ?*anyopaque, file: File) File.SetTimestampsError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
@@ -5133,7 +5135,7 @@ fn fileSetTimestampsNow(userdata: ?*anyopaque, file: Io.File) Io.File.SetTimesta
 const windows_lock_range_off: windows.LARGE_INTEGER = 0;
 const windows_lock_range_len: windows.LARGE_INTEGER = 1;
 
-fn fileLock(userdata: ?*anyopaque, file: Io.File, lock: Io.File.Lock) Io.File.LockError!void {
+fn fileLock(userdata: ?*anyopaque, file: File, lock: File.Lock) File.LockError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
@@ -5195,7 +5197,7 @@ fn fileLock(userdata: ?*anyopaque, file: Io.File, lock: Io.File.Lock) Io.File.Lo
     }
 }
 
-fn fileTryLock(userdata: ?*anyopaque, file: Io.File, lock: Io.File.Lock) Io.File.LockError!bool {
+fn fileTryLock(userdata: ?*anyopaque, file: File, lock: File.Lock) File.LockError!bool {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
@@ -5263,7 +5265,7 @@ fn fileTryLock(userdata: ?*anyopaque, file: Io.File, lock: Io.File.Lock) Io.File
     }
 }
 
-fn fileUnlock(userdata: ?*anyopaque, file: Io.File) void {
+fn fileUnlock(userdata: ?*anyopaque, file: File) void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
@@ -5311,7 +5313,7 @@ fn fileUnlock(userdata: ?*anyopaque, file: Io.File) void {
     }
 }
 
-fn fileDowngradeLock(userdata: ?*anyopaque, file: Io.File) Io.File.DowngradeLockError!void {
+fn fileDowngradeLock(userdata: ?*anyopaque, file: File) File.DowngradeLockError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
@@ -5388,10 +5390,10 @@ fn fileDowngradeLock(userdata: ?*anyopaque, file: Io.File) Io.File.DowngradeLock
 
 fn dirOpenDirWasi(
     userdata: ?*anyopaque,
-    dir: Io.Dir,
+    dir: Dir,
     sub_path: []const u8,
-    options: Io.Dir.OpenOptions,
-) Io.Dir.OpenError!Io.Dir {
+    options: Dir.OpenOptions,
+) Dir.OpenError!Dir {
     if (builtin.link_libc) return dirOpenDirPosix(userdata, dir, sub_path, options);
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
@@ -5462,7 +5464,7 @@ fn dirOpenDirWasi(
     }
 }
 
-fn fileClose(userdata: ?*anyopaque, file: Io.File) void {
+fn fileClose(userdata: ?*anyopaque, file: File) void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     _ = t;
     posix.close(file.handle);
@@ -5473,7 +5475,7 @@ const fileReadStreaming = switch (native_os) {
     else => fileReadStreamingPosix,
 };
 
-fn fileReadStreamingPosix(userdata: ?*anyopaque, file: Io.File, data: [][]u8) Io.File.Reader.Error!usize {
+fn fileReadStreamingPosix(userdata: ?*anyopaque, file: File, data: [][]u8) File.Reader.Error!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
@@ -5562,7 +5564,7 @@ fn fileReadStreamingPosix(userdata: ?*anyopaque, file: Io.File, data: [][]u8) Io
     }
 }
 
-fn fileReadStreamingWindows(userdata: ?*anyopaque, file: Io.File, data: [][]u8) Io.File.Reader.Error!usize {
+fn fileReadStreamingWindows(userdata: ?*anyopaque, file: File, data: [][]u8) File.Reader.Error!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
@@ -5591,7 +5593,7 @@ fn fileReadStreamingWindows(userdata: ?*anyopaque, file: Io.File, data: [][]u8) 
     }
 }
 
-fn fileReadPositionalPosix(userdata: ?*anyopaque, file: Io.File, data: [][]u8, offset: u64) Io.File.ReadPositionalError!usize {
+fn fileReadPositionalPosix(userdata: ?*anyopaque, file: File, data: [][]u8, offset: u64) File.ReadPositionalError!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
@@ -5694,7 +5696,7 @@ const fileReadPositional = switch (native_os) {
     else => fileReadPositionalPosix,
 };
 
-fn fileReadPositionalWindows(userdata: ?*anyopaque, file: Io.File, data: [][]u8, offset: u64) Io.File.ReadPositionalError!usize {
+fn fileReadPositionalWindows(userdata: ?*anyopaque, file: File, data: [][]u8, offset: u64) File.ReadPositionalError!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
@@ -5736,7 +5738,7 @@ fn fileReadPositionalWindows(userdata: ?*anyopaque, file: Io.File, data: [][]u8,
     }
 }
 
-fn fileSeekBy(userdata: ?*anyopaque, file: Io.File, offset: i64) Io.File.SeekError!void {
+fn fileSeekBy(userdata: ?*anyopaque, file: File, offset: i64) File.SeekError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
     const fd = file.handle;
@@ -5834,7 +5836,7 @@ fn fileSeekBy(userdata: ?*anyopaque, file: Io.File, offset: i64) Io.File.SeekErr
     }
 }
 
-fn fileSeekTo(userdata: ?*anyopaque, file: Io.File, offset: u64) Io.File.SeekError!void {
+fn fileSeekTo(userdata: ?*anyopaque, file: File, offset: u64) File.SeekError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
     const fd = file.handle;
@@ -5930,7 +5932,7 @@ fn fileSeekTo(userdata: ?*anyopaque, file: Io.File, offset: u64) Io.File.SeekErr
     }
 }
 
-fn openSelfExe(userdata: ?*anyopaque, flags: Io.File.OpenFlags) Io.File.OpenSelfExeError!Io.File {
+fn openSelfExe(userdata: ?*anyopaque, flags: File.OpenFlags) File.OpenSelfExeError!File {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     switch (native_os) {
         .linux, .serenity => return dirOpenFilePosix(t, .{ .handle = posix.AT.FDCWD }, "/proc/self/exe", flags),
@@ -5949,12 +5951,12 @@ fn openSelfExe(userdata: ?*anyopaque, flags: Io.File.OpenFlags) Io.File.OpenSelf
 
 fn fileWritePositional(
     userdata: ?*anyopaque,
-    file: Io.File,
+    file: File,
     header: []const u8,
     data: []const []const u8,
     splat: usize,
     offset: u64,
-) Io.File.WritePositionalError!usize {
+) File.WritePositionalError!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
@@ -6071,11 +6073,11 @@ fn fileWritePositional(
 
 fn fileWriteStreaming(
     userdata: ?*anyopaque,
-    file: Io.File,
+    file: File,
     header: []const u8,
     data: []const []const u8,
     splat: usize,
-) Io.File.WriteStreamingError!usize {
+) File.WriteStreamingError!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
@@ -6187,11 +6189,11 @@ fn fileWriteStreaming(
 
 fn fileWriteFileStreaming(
     userdata: ?*anyopaque,
-    file: Io.File,
+    file: File,
     header: []const u8,
-    file_reader: *Io.File.Reader,
+    file_reader: *File.Reader,
     limit: Io.Limit,
-) Io.File.WriteFileStreamingError!usize {
+) File.WriteFileStreamingError!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const reader_buffered = file_reader.interface.buffered();
     if (reader_buffered.len >= @intFromEnum(limit)) {
@@ -6585,7 +6587,7 @@ fn netWriteFile(
     userdata: ?*anyopaque,
     socket_handle: net.Socket.Handle,
     header: []const u8,
-    file_reader: *Io.File.Reader,
+    file_reader: *File.Reader,
     limit: Io.Limit,
 ) net.Stream.WriteFileError!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
@@ -6599,12 +6601,12 @@ fn netWriteFile(
 
 fn fileWriteFilePositional(
     userdata: ?*anyopaque,
-    file: Io.File,
+    file: File,
     header: []const u8,
-    file_reader: *Io.File.Reader,
+    file_reader: *File.Reader,
     limit: Io.Limit,
     offset: u64,
-) Io.File.WriteFilePositionalError!usize {
+) File.WriteFilePositionalError!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const reader_buffered = file_reader.interface.buffered();
     if (reader_buffered.len >= @intFromEnum(limit)) {
@@ -9488,7 +9490,7 @@ fn clockToWasi(clock: Io.Clock) std.os.wasi.clockid_t {
     };
 }
 
-fn statFromLinux(stx: *const std.os.linux.Statx) Io.File.Stat {
+fn statFromLinux(stx: *const std.os.linux.Statx) File.Stat {
     const atime = stx.atime;
     const mtime = stx.mtime;
     const ctime = stx.ctime;
@@ -9512,7 +9514,7 @@ fn statFromLinux(stx: *const std.os.linux.Statx) Io.File.Stat {
     };
 }
 
-fn statFromPosix(st: *const posix.Stat) Io.File.Stat {
+fn statFromPosix(st: *const posix.Stat) File.Stat {
     const atime = st.atime();
     const mtime = st.mtime();
     const ctime = st.ctime();
@@ -9546,7 +9548,7 @@ fn statFromPosix(st: *const posix.Stat) Io.File.Stat {
     };
 }
 
-fn statFromWasi(st: *const std.os.wasi.filestat_t) Io.File.Stat {
+fn statFromWasi(st: *const std.os.wasi.filestat_t) File.Stat {
     return .{
         .inode = st.ino,
         .size = @bitCast(st.size),
@@ -9577,7 +9579,7 @@ fn timestampToPosix(nanoseconds: i96) posix.timespec {
     };
 }
 
-fn pathToPosix(file_path: []const u8, buffer: *[posix.PATH_MAX]u8) Io.Dir.PathNameError![:0]u8 {
+fn pathToPosix(file_path: []const u8, buffer: *[posix.PATH_MAX]u8) Dir.PathNameError![:0]u8 {
     if (std.mem.containsAtLeastScalar2(u8, file_path, 0, 1)) return error.BadPathName;
     // >= rather than > to make room for the null byte
     if (file_path.len >= buffer.len) return error.NameTooLong;
@@ -9824,7 +9826,7 @@ fn lookupHosts(
     options: HostName.LookupOptions,
 ) !void {
     const t_io = io(t);
-    const file = Io.File.openAbsolute(t_io, "/etc/hosts", .{}) catch |err| switch (err) {
+    const file = File.openAbsolute(t_io, "/etc/hosts", .{}) catch |err| switch (err) {
         error.FileNotFound,
         error.NotDir,
         error.AccessDenied,
