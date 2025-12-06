@@ -60,18 +60,21 @@ pub fn fmtValueSemaFull(ctx: print_value.FormatContext) std.fmt.Alt(print_value.
 /// Asserts `val` is an array of `u8`
 pub fn toIpString(val: Value, ty: Type, pt: Zcu.PerThread) !InternPool.NullTerminatedString {
     const zcu = pt.zcu;
+    const comp = zcu.comp;
+    const gpa = comp.gpa;
+    const io = comp.io;
+    const ip = &zcu.intern_pool;
     assert(ty.zigTypeTag(zcu) == .array);
     assert(ty.childType(zcu).toIntern() == .u8_type);
-    const ip = &zcu.intern_pool;
     switch (zcu.intern_pool.indexToKey(val.toIntern()).aggregate.storage) {
         .bytes => |bytes| return bytes.toNullTerminatedString(ty.arrayLen(zcu), ip),
         .elems => return arrayToIpString(val, ty.arrayLen(zcu), pt),
         .repeated_elem => |elem| {
             const byte: u8 = @intCast(Value.fromInterned(elem).toUnsignedInt(zcu));
             const len: u32 = @intCast(ty.arrayLen(zcu));
-            const string_bytes = ip.getLocal(pt.tid).getMutableStringBytes(zcu.gpa);
+            const string_bytes = ip.getLocal(pt.tid).getMutableStringBytes(gpa, io);
             try string_bytes.appendNTimes(.{byte}, len);
-            return ip.getOrPutTrailingString(zcu.gpa, pt.tid, len, .no_embedded_nulls);
+            return ip.getOrPutTrailingString(gpa, io, pt.tid, len, .no_embedded_nulls);
         },
     }
 }
@@ -109,10 +112,12 @@ fn arrayToAllocatedBytes(val: Value, len: u64, allocator: Allocator, pt: Zcu.Per
 
 fn arrayToIpString(val: Value, len_u64: u64, pt: Zcu.PerThread) !InternPool.NullTerminatedString {
     const zcu = pt.zcu;
-    const gpa = zcu.gpa;
+    const comp = zcu.comp;
+    const gpa = comp.gpa;
+    const io = comp.io;
     const ip = &zcu.intern_pool;
     const len: u32 = @intCast(len_u64);
-    const string_bytes = ip.getLocal(pt.tid).getMutableStringBytes(gpa);
+    const string_bytes = ip.getLocal(pt.tid).getMutableStringBytes(gpa, io);
     try string_bytes.ensureUnusedCapacity(len);
     for (0..len) |i| {
         // I don't think elemValue has the possibility to affect ip.string_bytes. Let's
@@ -123,7 +128,7 @@ fn arrayToIpString(val: Value, len_u64: u64, pt: Zcu.PerThread) !InternPool.Null
         const byte: u8 = @intCast(elem_val.toUnsignedInt(zcu));
         string_bytes.appendAssumeCapacity(.{byte});
     }
-    return ip.getOrPutTrailingString(gpa, pt.tid, len, .no_embedded_nulls);
+    return ip.getOrPutTrailingString(gpa, io, pt.tid, len, .no_embedded_nulls);
 }
 
 pub fn fromInterned(i: InternPool.Index) Value {
@@ -1141,6 +1146,7 @@ pub fn sliceArray(
 ) error{OutOfMemory}!Value {
     const pt = sema.pt;
     const ip = &pt.zcu.intern_pool;
+    const io = pt.zcu.comp.io;
     return Value.fromInterned(try pt.intern(.{
         .aggregate = .{
             .ty = switch (pt.zcu.intern_pool.indexToKey(pt.zcu.intern_pool.typeOf(val.toIntern()))) {
@@ -1160,6 +1166,7 @@ pub fn sliceArray(
                     try ip.string_bytes.ensureUnusedCapacity(sema.gpa, end - start + 1);
                     break :storage .{ .bytes = try ip.getOrPutString(
                         sema.gpa,
+                        io,
                         bytes.toSlice(end, ip)[start..],
                         .maybe_embedded_nulls,
                     ) };
@@ -2874,6 +2881,7 @@ const interpret_mode: InterpretMode = @field(InterpretMode, @tagName(build_optio
 /// `val` must be fully resolved.
 pub fn interpret(val: Value, comptime T: type, pt: Zcu.PerThread) error{ OutOfMemory, UndefinedValue, TypeMismatch }!T {
     const zcu = pt.zcu;
+    const io = zcu.comp.io;
     const ip = &zcu.intern_pool;
     const ty = val.typeOf(zcu);
     if (ty.zigTypeTag(zcu) != @typeInfo(T)) return error.TypeMismatch;
@@ -2960,7 +2968,7 @@ pub fn interpret(val: Value, comptime T: type, pt: Zcu.PerThread) error{ OutOfMe
                 const struct_obj = zcu.typeToStruct(ty) orelse return error.TypeMismatch;
                 var result: T = undefined;
                 inline for (@"struct".fields) |field| {
-                    const field_name_ip = try ip.getOrPutString(zcu.gpa, pt.tid, field.name, .no_embedded_nulls);
+                    const field_name_ip = try ip.getOrPutString(zcu.gpa, io, pt.tid, field.name, .no_embedded_nulls);
                     @field(result, field.name) = if (struct_obj.nameIndex(ip, field_name_ip)) |field_idx| f: {
                         const field_val = try val.fieldValue(pt, field_idx);
                         break :f try field_val.interpret(field.type, pt);
@@ -2979,6 +2987,7 @@ pub fn uninterpret(val: anytype, ty: Type, pt: Zcu.PerThread) error{ OutOfMemory
     const T = @TypeOf(val);
 
     const zcu = pt.zcu;
+    const io = zcu.comp.io;
     const ip = &zcu.intern_pool;
     if (ty.zigTypeTag(zcu) != @typeInfo(T)) return error.TypeMismatch;
 
@@ -3022,7 +3031,7 @@ pub fn uninterpret(val: anytype, ty: Type, pt: Zcu.PerThread) error{ OutOfMemory
         .@"enum" => switch (interpret_mode) {
             .direct => try pt.enumValue(ty, (try uninterpret(@intFromEnum(val), ty.intTagType(zcu), pt)).toIntern()),
             .by_name => {
-                const field_name_ip = try ip.getOrPutString(zcu.gpa, pt.tid, @tagName(val), .no_embedded_nulls);
+                const field_name_ip = try ip.getOrPutString(zcu.gpa, io, pt.tid, @tagName(val), .no_embedded_nulls);
                 const field_idx = ty.enumFieldIndex(field_name_ip, zcu) orelse return error.TypeMismatch;
                 return pt.enumValueFieldIndex(ty, field_idx);
             },
@@ -3059,7 +3068,7 @@ pub fn uninterpret(val: anytype, ty: Type, pt: Zcu.PerThread) error{ OutOfMemory
                 defer zcu.gpa.free(field_vals);
                 @memset(field_vals, .none);
                 inline for (@"struct".fields) |field| {
-                    const field_name_ip = try ip.getOrPutString(zcu.gpa, pt.tid, field.name, .no_embedded_nulls);
+                    const field_name_ip = try ip.getOrPutString(zcu.gpa, io, pt.tid, field.name, .no_embedded_nulls);
                     if (struct_obj.nameIndex(ip, field_name_ip)) |field_idx| {
                         const field_ty = ty.fieldType(field_idx, zcu);
                         field_vals[field_idx] = (try uninterpret(@field(val, field.name), field_ty, pt)).toIntern();

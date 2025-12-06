@@ -11,7 +11,7 @@ pub const BuildError = error{
     AlreadyReported,
     ZigCompilerNotBuiltWithLLVMExtensions,
     TSANUnsupportedCPUArchitecture,
-};
+} || std.Io.Cancelable;
 
 pub fn buildTsan(comp: *Compilation, prog_node: std.Progress.Node) BuildError!void {
     if (!build_options.have_llvm) {
@@ -279,8 +279,8 @@ pub fn buildTsan(comp: *Compilation, prog_node: std.Progress.Node) BuildError!vo
 
     var sub_create_diag: Compilation.CreateDiagnostic = undefined;
     const sub_compilation = Compilation.create(comp.gpa, arena, io, &sub_create_diag, .{
+        .thread_limit = comp.thread_limit,
         .dirs = comp.dirs.withoutLocalCache(),
-        .thread_pool = comp.thread_pool,
         .self_exe_path = comp.self_exe_path,
         .cache_mode = .whole,
         .config = config,
@@ -319,7 +319,7 @@ pub fn buildTsan(comp: *Compilation, prog_node: std.Progress.Node) BuildError!vo
     };
 
     const crt_file = try sub_compilation.toCrtFile();
-    comp.queuePrelinkTaskMode(crt_file.full_object_path, &config);
+    try comp.queuePrelinkTaskMode(crt_file.full_object_path, &config);
     assert(comp.tsan_lib == null);
     comp.tsan_lib = crt_file;
 }

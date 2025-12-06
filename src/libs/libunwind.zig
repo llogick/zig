@@ -12,7 +12,7 @@ pub const BuildError = error{
     OutOfMemory,
     AlreadyReported,
     ZigCompilerNotBuiltWithLLVMExtensions,
-};
+} || std.Io.Cancelable;
 
 pub fn buildStaticLib(comp: *Compilation, prog_node: std.Progress.Node) BuildError!void {
     if (!build_options.have_llvm) {
@@ -145,6 +145,7 @@ pub fn buildStaticLib(comp: *Compilation, prog_node: std.Progress.Node) BuildErr
 
     var sub_create_diag: Compilation.CreateDiagnostic = undefined;
     const sub_compilation = Compilation.create(comp.gpa, arena, io, &sub_create_diag, .{
+        .thread_limit = comp.thread_limit,
         .dirs = comp.dirs.withoutLocalCache(),
         .self_exe_path = comp.self_exe_path,
         .config = config,
@@ -152,7 +153,6 @@ pub fn buildStaticLib(comp: *Compilation, prog_node: std.Progress.Node) BuildErr
         .cache_mode = .whole,
         .root_name = root_name,
         .main_mod = null,
-        .thread_pool = comp.thread_pool,
         .libc_installation = comp.libc_installation,
         .emit_bin = .yes_cache,
         .function_sections = comp.function_sections,
@@ -184,7 +184,7 @@ pub fn buildStaticLib(comp: *Compilation, prog_node: std.Progress.Node) BuildErr
     };
 
     const crt_file = try sub_compilation.toCrtFile();
-    comp.queuePrelinkTaskMode(crt_file.full_object_path, &config);
+    try comp.queuePrelinkTaskMode(crt_file.full_object_path, &config);
     assert(comp.libunwind_static_lib == null);
     comp.libunwind_static_lib = crt_file;
 }

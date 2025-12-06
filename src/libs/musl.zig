@@ -248,12 +248,12 @@ pub fn buildCrtFile(comp: *Compilation, in_crt_file: CrtFile, prog_node: std.Pro
 
             var sub_create_diag: Compilation.CreateDiagnostic = undefined;
             const sub_compilation = Compilation.create(comp.gpa, arena, io, &sub_create_diag, .{
+                .thread_limit = comp.thread_limit,
                 .dirs = comp.dirs.withoutLocalCache(),
                 .self_exe_path = comp.self_exe_path,
                 .cache_mode = .whole,
                 .config = config,
                 .root_mod = root_mod,
-                .thread_pool = comp.thread_pool,
                 .root_name = "c",
                 .libc_installation = comp.libc_installation,
                 .emit_bin = .yes_cache,
@@ -287,10 +287,10 @@ pub fn buildCrtFile(comp: *Compilation, in_crt_file: CrtFile, prog_node: std.Pro
             errdefer comp.gpa.free(basename);
 
             const crt_file = try sub_compilation.toCrtFile();
-            comp.queuePrelinkTaskMode(crt_file.full_object_path, &config);
+            try comp.queuePrelinkTaskMode(crt_file.full_object_path, &config);
             {
-                comp.mutex.lock();
-                defer comp.mutex.unlock();
+                comp.mutex.lockUncancelable(io);
+                defer comp.mutex.unlock(io);
                 try comp.crt_files.ensureUnusedCapacity(comp.gpa, 1);
                 comp.crt_files.putAssumeCapacityNoClobber(basename, crt_file);
             }

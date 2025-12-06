@@ -555,9 +555,10 @@ fn reportUndefSymbol(self: Atom, rel: Relocation, macho_file: *MachO) !bool {
     const file = self.getFile(macho_file);
     const ref = file.getSymbolRef(rel.target, macho_file);
     if (ref.getFile(macho_file) == null) {
-        macho_file.undefs_mutex.lock();
-        defer macho_file.undefs_mutex.unlock();
         const gpa = macho_file.base.comp.gpa;
+        const io = macho_file.base.comp.io;
+        macho_file.undefs_mutex.lockUncancelable(io);
+        defer macho_file.undefs_mutex.unlock(io);
         const gop = try macho_file.undefs.getOrPut(gpa, file.getGlobals()[rel.target]);
         if (!gop.found_existing) {
             gop.value_ptr.* = .{ .refs = .{} };

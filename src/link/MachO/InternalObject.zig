@@ -512,8 +512,9 @@ pub fn checkUndefs(self: InternalObject, macho_file: *MachO) !void {
     const addUndef = struct {
         fn addUndef(mf: *MachO, index: MachO.SymbolResolver.Index, tag: anytype) !void {
             const gpa = mf.base.comp.gpa;
-            mf.undefs_mutex.lock();
-            defer mf.undefs_mutex.unlock();
+            const io = mf.base.comp.io;
+            mf.undefs_mutex.lockUncancelable(io);
+            defer mf.undefs_mutex.unlock(io);
             const gop = try mf.undefs.getOrPut(gpa, index);
             if (!gop.found_existing) {
                 gop.value_ptr.* = tag;

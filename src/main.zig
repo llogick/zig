@@ -11,7 +11,6 @@ const Allocator = mem.Allocator;
 const Ast = std.zig.Ast;
 const Color = std.zig.Color;
 const warn = std.log.warn;
-const ThreadPool = std.Thread.Pool;
 const cleanExit = std.process.cleanExit;
 const Cache = std.Build.Cache;
 const Path = std.Build.Cache.Path;
@@ -200,6 +199,8 @@ fn mainArgs(gpa: Allocator, arena: Allocator, args: []const []const u8) !void {
     const tr = tracy.trace(@src());
     defer tr.end();
 
+    Compilation.setMainThread();
+
     if (args.len <= 1) {
         std.log.info("{s}", .{usage});
         fatal("expected command argument", .{});
@@ -239,6 +240,8 @@ fn mainArgs(gpa: Allocator, arena: Allocator, args: []const []const u8) !void {
 
     var threaded: Io.Threaded = .init(gpa);
     defer threaded.deinit();
+    threaded_impl_ptr = &threaded;
+    threaded.stack_size = thread_stack_size;
     const io = threaded.io();
 
     const cmd = args[1];
@@ -3361,14 +3364,11 @@ fn buildOutputType(
         },
     };
 
-    var thread_pool: ThreadPool = undefined;
-    try thread_pool.init(.{
-        .allocator = gpa,
-        .n_jobs = @min(@max(n_jobs orelse std.Thread.getCpuCount() catch 1, 1), std.math.maxInt(Zcu.PerThread.IdBacking)),
-        .track_ids = true,
-        .stack_size = thread_stack_size,
-    });
-    defer thread_pool.deinit();
+    const thread_limit = @min(
+        @max(n_jobs orelse std.Thread.getCpuCount() catch 1, 1),
+        std.math.maxInt(Zcu.PerThread.IdBacking),
+    );
+    setThreadLimit(thread_limit);
 
     for (create_module.c_source_files.items) |*src| {
         dev.check(.c_compiler);
@@ -3461,7 +3461,7 @@ fn buildOutputType(
     var create_diag: Compilation.CreateDiagnostic = undefined;
     const comp = Compilation.create(gpa, arena, io, &create_diag, .{
         .dirs = dirs,
-        .thread_pool = &thread_pool,
+        .thread_limit = thread_limit,
         .self_exe_path = switch (native_os) {
             .wasi => null,
             else => self_exe_path,
@@ -4150,6 +4150,7 @@ fn serve(
     runtime_args_start: ?usize,
 ) !void {
     const gpa = comp.gpa;
+    const io = comp.io;
 
     var server = try Server.init(.{
         .in = in,
@@ -4178,8 +4179,8 @@ fn serve(
         const hdr = try server.receiveMessage();
 
         // Lock the debug server while handling the message.
-        if (comp.debugIncremental()) ids.mutex.lock();
-        defer if (comp.debugIncremental()) ids.mutex.unlock();
+        if (comp.debugIncremental()) try ids.mutex.lock(io);
+        defer if (comp.debugIncremental()) ids.mutex.unlock(io);
 
         switch (hdr.tag) {
             .exit => return cleanExit(),
@@ -5140,14 +5141,11 @@ fn cmdBuild(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) 
     child_argv.items[argv_index_global_cache_dir] = dirs.global_cache.path orelse cwd_path;
     child_argv.items[argv_index_cache_dir] = dirs.local_cache.path orelse cwd_path;
 
-    var thread_pool: ThreadPool = undefined;
-    try thread_pool.init(.{
-        .allocator = gpa,
-        .n_jobs = @min(@max(n_jobs orelse std.Thread.getCpuCount() catch 1, 1), std.math.maxInt(Zcu.PerThread.IdBacking)),
-        .track_ids = true,
-        .stack_size = thread_stack_size,
-    });
-    defer thread_pool.deinit();
+    const thread_limit = @min(
+        @max(n_jobs orelse std.Thread.getCpuCount() catch 1, 1),
+        std.math.maxInt(Zcu.PerThread.IdBacking),
+    );
+    setThreadLimit(thread_limit);
 
     // Dummy http client that is not actually used when fetch_command is unsupported.
     // Prevents bootstrap from depending on a bunch of unnecessary stuff.
@@ -5376,7 +5374,7 @@ fn cmdBuild(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) 
                 .main_mod = build_mod,
                 .emit_bin = .yes_cache,
                 .self_exe_path = self_exe_path,
-                .thread_pool = &thread_pool,
+                .thread_limit = thread_limit,
                 .verbose_cc = verbose_cc,
                 .verbose_link = verbose_link,
                 .verbose_air = verbose_air,
@@ -5548,14 +5546,11 @@ fn jitCmd(
     );
     defer dirs.deinit();
 
-    var thread_pool: ThreadPool = undefined;
-    try thread_pool.init(.{
-        .allocator = gpa,
-        .n_jobs = @min(@max(std.Thread.getCpuCount() catch 1, 1), std.math.maxInt(Zcu.PerThread.IdBacking)),
-        .track_ids = true,
-        .stack_size = thread_stack_size,
-    });
-    defer thread_pool.deinit();
+    const thread_limit = @min(
+        @max(std.Thread.getCpuCount() catch 1, 1),
+        std.math.maxInt(Zcu.PerThread.IdBacking),
+    );
+    setThreadLimit(thread_limit);
 
     var child_argv: std.ArrayList([]const u8) = .empty;
     try child_argv.ensureUnusedCapacity(arena, args.len + 4);
@@ -5619,7 +5614,7 @@ fn jitCmd(
             .main_mod = root_mod,
             .emit_bin = .yes_cache,
             .self_exe_path = self_exe_path,
-            .thread_pool = &thread_pool,
+            .thread_limit = thread_limit,
             .cache_mode = .whole,
         }) catch |err| switch (err) {
             error.CreateFail => fatal("failed to create compilation: {f}", .{create_diag}),
@@ -6946,10 +6941,6 @@ fn cmdFetch(
 
     const path_or_url = opt_path_or_url orelse fatal("missing url or path parameter", .{});
 
-    var thread_pool: ThreadPool = undefined;
-    try thread_pool.init(.{ .allocator = gpa });
-    defer thread_pool.deinit();
-
     var http_client: std.http.Client = .{ .allocator = gpa, .io = io };
     defer http_client.deinit();
 
@@ -7600,4 +7591,15 @@ fn addLibDirectoryWarn2(
         },
         .path = path,
     });
+}
+
+var threaded_impl_ptr: *Io.Threaded = undefined;
+fn setThreadLimit(n: usize) void {
+    // We want a maximum of n total threads to keep the InternPool happy, but
+    // the main thread doesn't count towards the limits, so use n-1. Also, the
+    // linker can run concurrently, so we need to set both the async *and* the
+    // concurrency limit.
+    const limit: Io.Limit = .limited(n - 1);
+    threaded_impl_ptr.setAsyncLimit(limit);
+    threaded_impl_ptr.concurrent_limit = limit;
 }

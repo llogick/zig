@@ -34,7 +34,8 @@ pub const Diags = struct {
     /// Stored here so that function definitions can distinguish between
     /// needing an allocator for things besides error reporting.
     gpa: Allocator,
-    mutex: std.Thread.Mutex,
+    io: Io,
+    mutex: Io.Mutex,
     msgs: std.ArrayList(Msg),
     flags: Flags,
     lld: std.ArrayList(Lld),
@@ -126,10 +127,11 @@ pub const Diags = struct {
         }
     };
 
-    pub fn init(gpa: Allocator) Diags {
+    pub fn init(gpa: Allocator, io: Io) Diags {
         return .{
             .gpa = gpa,
-            .mutex = .{},
+            .io = io,
+            .mutex = .init,
             .msgs = .empty,
             .flags = .{},
             .lld = .empty,
@@ -153,8 +155,10 @@ pub const Diags = struct {
     }
 
     pub fn lockAndParseLldStderr(diags: *Diags, prefix: []const u8, stderr: []const u8) void {
-        diags.mutex.lock();
-        defer diags.mutex.unlock();
+        const io = diags.io;
+
+        diags.mutex.lockUncancelable(io);
+        defer diags.mutex.unlock(io);
 
         diags.parseLldStderr(prefix, stderr) catch diags.setAllocFailure();
     }
@@ -226,9 +230,10 @@ pub const Diags = struct {
     pub fn addErrorSourceLocation(diags: *Diags, sl: SourceLocation, comptime format: []const u8, args: anytype) void {
         @branchHint(.cold);
         const gpa = diags.gpa;
+        const io = diags.io;
         const eu_main_msg = std.fmt.allocPrint(gpa, format, args);
-        diags.mutex.lock();
-        defer diags.mutex.unlock();
+        diags.mutex.lockUncancelable(io);
+        defer diags.mutex.unlock(io);
         addErrorLockedFallible(diags, sl, eu_main_msg) catch |err| switch (err) {
             error.OutOfMemory => diags.setAllocFailureLocked(),
         };
@@ -247,8 +252,9 @@ pub const Diags = struct {
     pub fn addErrorWithNotes(diags: *Diags, note_count: usize) error{OutOfMemory}!ErrorWithNotes {
         @branchHint(.cold);
         const gpa = diags.gpa;
-        diags.mutex.lock();
-        defer diags.mutex.unlock();
+        const io = diags.io;
+        diags.mutex.lockUncancelable(io);
+        defer diags.mutex.unlock(io);
         try diags.msgs.ensureUnusedCapacity(gpa, 1);
         return addErrorWithNotesAssumeCapacity(diags, note_count);
     }
@@ -276,9 +282,10 @@ pub const Diags = struct {
     ) void {
         @branchHint(.cold);
         const gpa = diags.gpa;
+        const io = diags.io;
         const eu_main_msg = std.fmt.allocPrint(gpa, format, args);
-        diags.mutex.lock();
-        defer diags.mutex.unlock();
+        diags.mutex.lockUncancelable(io);
+        defer diags.mutex.unlock(io);
         addMissingLibraryErrorLockedFallible(diags, checked_paths, eu_main_msg) catch |err| switch (err) {
             error.OutOfMemory => diags.setAllocFailureLocked(),
         };
@@ -312,9 +319,10 @@ pub const Diags = struct {
     ) void {
         @branchHint(.cold);
         const gpa = diags.gpa;
+        const io = diags.io;
         const eu_main_msg = std.fmt.allocPrint(gpa, format, args);
-        diags.mutex.lock();
-        defer diags.mutex.unlock();
+        diags.mutex.lockUncancelable(io);
+        defer diags.mutex.unlock(io);
         addParseErrorLockedFallible(diags, path, eu_main_msg) catch |err| switch (err) {
             error.OutOfMemory => diags.setAllocFailureLocked(),
         };
@@ -349,8 +357,9 @@ pub const Diags = struct {
 
     pub fn setAllocFailure(diags: *Diags) void {
         @branchHint(.cold);
-        diags.mutex.lock();
-        defer diags.mutex.unlock();
+        const io = diags.io;
+        diags.mutex.lockUncancelable(io);
+        defer diags.mutex.unlock(io);
         setAllocFailureLocked(diags);
     }
 
@@ -1101,6 +1110,7 @@ pub const File = struct {
         const comp = base.comp;
         const diags = &comp.link_diags;
         const gpa = comp.gpa;
+        const io = comp.io;
         const stat = try file.stat();
         const size = std.math.cast(u32, stat.size) orelse return error.FileTooBig;
         const buf = try gpa.alloc(u8, size);
@@ -1123,8 +1133,8 @@ pub const File = struct {
             } else {
                 if (fs.path.isAbsolute(arg.path)) {
                     const new_path = Path.initCwd(path: {
-                        comp.mutex.lock();
-                        defer comp.mutex.unlock();
+                        comp.mutex.lockUncancelable(io);
+                        defer comp.mutex.unlock(io);
                         break :path try comp.arena.dupe(u8, arg.path);
                     });
                     switch (Compilation.classifyFileExt(arg.path)) {
@@ -1309,61 +1319,13 @@ pub const ZcuTask = union(enum) {
     /// Write the constant value for a Decl to the output file.
     link_nav: InternPool.Nav.Index,
     /// Write the machine code for a function to the output file.
-    link_func: LinkFunc,
+    link_func: Zcu.CodegenTaskPool.Index,
     link_type: InternPool.Index,
     update_line_number: InternPool.TrackedInst.Index,
-    pub fn deinit(task: ZcuTask, zcu: *const Zcu) void {
-        switch (task) {
-            .link_nav,
-            .link_type,
-            .update_line_number,
-            => {},
-            .link_func => |link_func| {
-                switch (link_func.mir.status.load(.acquire)) {
-                    .pending => unreachable, // cannot deinit until MIR done
-                    .failed => {}, // MIR not populated so doesn't need freeing
-                    .ready => link_func.mir.value.deinit(zcu),
-                }
-                zcu.gpa.destroy(link_func.mir);
-            },
-        }
-    }
-    pub const LinkFunc = struct {
-        /// This will either be a non-generic `func_decl` or a `func_instance`.
-        func: InternPool.Index,
-        /// This pointer is allocated into `gpa` and must be freed when the `ZcuTask` is processed.
-        /// The pointer is shared with the codegen worker, which will populate the MIR inside once
-        /// it has been generated. It's important that the `link_func` is queued at the same time as
-        /// the codegen job to ensure that the linker receives functions in a deterministic order,
-        /// allowing reproducible builds.
-        mir: *SharedMir,
-        /// This is not actually used by `doZcuTask`. Instead, `Queue` uses this value as a heuristic
-        /// to avoid queueing too much AIR/MIR for codegen/link at a time. Essentially, we cap the
-        /// total number of AIR bytes which are being processed at once, preventing unbounded memory
-        /// usage when AIR is produced faster than it is processed.
-        air_bytes: u32,
-
-        pub const SharedMir = struct {
-            /// This is initially `.pending`. When `value` is populated, the codegen thread will set
-            /// this to `.ready`, and alert the queue if needed. It could also end up `.failed`.
-            /// The action of storing a value (other than `.pending`) to this atomic transfers
-            /// ownership of memory assoicated with `value` to this `ZcuTask`.
-            status: std.atomic.Value(enum(u8) {
-                /// We are waiting on codegen to generate MIR (or die trying).
-                pending,
-                /// `value` is not populated and will not be populated. Just drop the task from the queue and move on.
-                failed,
-                /// `value` is populated with the MIR from the backend in use, which is not LLVM.
-                ready,
-            }),
-            /// This is `undefined` until `ready` is set to `true`. Once populated, this MIR belongs
-            /// to the `ZcuTask`, and must be `deinit`ed when it is processed. Allocated into `gpa`.
-            value: codegen.AnyMir,
-        };
-    };
 };
 
 pub fn doPrelinkTask(comp: *Compilation, task: PrelinkTask) void {
+    const io = comp.io;
     const diags = &comp.link_diags;
     const base = comp.bin_file orelse {
         comp.link_prog_node.completeOne();
@@ -1372,8 +1334,8 @@ pub fn doPrelinkTask(comp: *Compilation, task: PrelinkTask) void {
 
     var timer = comp.startTimer();
     defer if (timer.finish()) |ns| {
-        comp.mutex.lock();
-        defer comp.mutex.unlock();
+        comp.mutex.lockUncancelable(io);
+        defer comp.mutex.unlock(io);
         comp.time_report.?.stats.cpu_ns_link += ns;
     };
 
@@ -1484,6 +1446,7 @@ pub fn doPrelinkTask(comp: *Compilation, task: PrelinkTask) void {
     }
 }
 pub fn doZcuTask(comp: *Compilation, tid: usize, task: ZcuTask) void {
+    const io = comp.io;
     const diags = &comp.link_diags;
     const zcu = comp.zcu.?;
     const ip = &zcu.intern_pool;
@@ -1492,8 +1455,8 @@ pub fn doZcuTask(comp: *Compilation, tid: usize, task: ZcuTask) void {
 
     var timer = comp.startTimer();
 
-    switch (task) {
-        .link_nav => |nav_index| {
+    const maybe_nav: ?InternPool.Nav.Index = switch (task) {
+        .link_nav => |nav_index| nav: {
             const fqn_slice = ip.getNav(nav_index).fqn.toSlice(ip);
             const nav_prog_node = comp.link_prog_node.start(fqn_slice, 0);
             defer nav_prog_node.end();
@@ -1514,21 +1477,25 @@ pub fn doZcuTask(comp: *Compilation, tid: usize, task: ZcuTask) void {
                     },
                 };
             }
+            break :nav nav_index;
         },
-        .link_func => |func| {
-            const nav = zcu.funcInfo(func.func).owner_nav;
+        .link_func => |codegen_task| nav: {
+            timer.pause();
+            const func, var mir = codegen_task.wait(&zcu.codegen_task_pool, io) catch |err| switch (err) {
+                error.Canceled, error.AlreadyReported => return,
+            };
+            defer mir.deinit(zcu);
+            timer.@"resume"();
+
+            const nav = zcu.funcInfo(func).owner_nav;
             const fqn_slice = ip.getNav(nav).fqn.toSlice(ip);
+
             const nav_prog_node = comp.link_prog_node.start(fqn_slice, 0);
             defer nav_prog_node.end();
-            switch (func.mir.status.load(.acquire)) {
-                .pending => unreachable,
-                .ready => {},
-                .failed => return,
-            }
+
             assert(zcu.llvm_object == null); // LLVM codegen doesn't produce MIR
-            const mir = &func.mir.value;
             if (comp.bin_file) |lf| {
-                lf.updateFunc(pt, func.func, mir) catch |err| switch (err) {
+                lf.updateFunc(pt, func, &mir) catch |err| switch (err) {
                     error.OutOfMemory => return diags.setAllocFailure(),
                     error.CodegenFail => return zcu.assertCodegenFailed(nav),
                     error.Overflow, error.RelocationNotByteAligned => {
@@ -1539,8 +1506,9 @@ pub fn doZcuTask(comp: *Compilation, tid: usize, task: ZcuTask) void {
                     },
                 };
             }
+            break :nav ip.indexToKey(func).func.owner_nav;
         },
-        .link_type => |ty| {
+        .link_type => |ty| nav: {
             const name = Type.fromInterned(ty).containerTypeName(ip).toSlice(ip);
             const nav_prog_node = comp.link_prog_node.start(name, 0);
             defer nav_prog_node.end();
@@ -1552,8 +1520,9 @@ pub fn doZcuTask(comp: *Compilation, tid: usize, task: ZcuTask) void {
                     };
                 }
             }
+            break :nav null;
         },
-        .update_line_number => |ti| {
+        .update_line_number => |ti| nav: {
             const nav_prog_node = comp.link_prog_node.start("Update line number", 0);
             defer nav_prog_node.end();
             if (pt.zcu.llvm_object == null) {
@@ -1564,21 +1533,18 @@ pub fn doZcuTask(comp: *Compilation, tid: usize, task: ZcuTask) void {
                     };
                 }
             }
+            break :nav null;
         },
-    }
+    };
 
     if (timer.finish()) |ns_link| report_time: {
-        const zir_decl: ?InternPool.TrackedInst.Index = switch (task) {
-            .link_type, .update_line_number => null,
-            .link_nav => |nav| ip.getNav(nav).srcInst(ip),
-            .link_func => |f| ip.getNav(ip.indexToKey(f.func).func.owner_nav).srcInst(ip),
-        };
-        comp.mutex.lock();
-        defer comp.mutex.unlock();
+        comp.mutex.lockUncancelable(io);
+        defer comp.mutex.unlock(io);
         const tr = &zcu.comp.time_report.?;
         tr.stats.cpu_ns_link += ns_link;
-        if (zir_decl) |inst| {
-            const gop = tr.decl_link_ns.getOrPut(zcu.gpa, inst) catch |err| switch (err) {
+        if (maybe_nav) |nav| {
+            const zir_decl = ip.getNav(nav).srcInst(ip);
+            const gop = tr.decl_link_ns.getOrPut(zcu.gpa, zir_decl) catch |err| switch (err) {
                 error.OutOfMemory => {
                     zcu.comp.setAllocFailure();
                     break :report_time;
@@ -2208,8 +2174,13 @@ fn resolvePathInputLib(
         const n2 = file.preadAll(buf2, n) catch |err|
             fatal("failed to read {f}: {s}", .{ test_path, @errorName(err) });
         if (n2 != buf2.len) fatal("failed to read {f}: unexpected end of file", .{test_path});
-        var diags = Diags.init(gpa);
+
+        // This `Io` is only used for a mutex, and we know we aren't doing anything async/concurrent.
+        var threaded: Io.Threaded = .init_single_threaded;
+        defer threaded.deinit();
+        var diags: Diags = .init(gpa, threaded.io());
         defer diags.deinit();
+
         const ld_script_result = LdScript.parse(gpa, &diags, test_path, ld_script_bytes.items);
         if (diags.hasErrors()) {
             var wip_errors: std.zig.ErrorBundle.Wip = undefined;

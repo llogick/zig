@@ -645,7 +645,8 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
     });
 }
 
-fn queueSharedObjects(comp: *Compilation, so_files: BuiltSharedObjects) void {
+fn queueSharedObjects(comp: *Compilation, so_files: BuiltSharedObjects) std.Io.Cancelable!void {
+    const io = comp.io;
     assert(comp.netbsd_so_files == null);
     comp.netbsd_so_files = so_files;
 
@@ -653,8 +654,8 @@ fn queueSharedObjects(comp: *Compilation, so_files: BuiltSharedObjects) void {
     var task_buffer_i: usize = 0;
 
     {
-        comp.mutex.lock(); // protect comp.arena
-        defer comp.mutex.unlock();
+        comp.mutex.lockUncancelable(io); // protect comp.arena
+        defer comp.mutex.unlock(io);
 
         for (libs) |lib| {
             const so_path: Path = .{
@@ -668,7 +669,7 @@ fn queueSharedObjects(comp: *Compilation, so_files: BuiltSharedObjects) void {
         }
     }
 
-    comp.queuePrelinkTasks(task_buffer[0..task_buffer_i]);
+    try comp.queuePrelinkTasks(task_buffer[0..task_buffer_i]);
 }
 
 fn buildSharedLib(
@@ -737,8 +738,8 @@ fn buildSharedLib(
 
     var sub_create_diag: Compilation.CreateDiagnostic = undefined;
     const sub_compilation = Compilation.create(comp.gpa, arena, io, &sub_create_diag, .{
+        .thread_limit = comp.thread_limit,
         .dirs = comp.dirs.withoutLocalCache(),
-        .thread_pool = comp.thread_pool,
         .self_exe_path = comp.self_exe_path,
         // Because we manually cache the whole set of objects, we don't cache the individual objects
         // within it. In fact, we *can't* do that, because we need `emit_bin` to specify the path.

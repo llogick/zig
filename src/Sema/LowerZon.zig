@@ -38,8 +38,11 @@ pub fn run(
     block: *Sema.Block,
 ) CompileError!InternPool.Index {
     const pt = sema.pt;
+    const comp = pt.zcu.comp;
+    const gpa = comp.gpa;
+    const io = comp.io;
 
-    const tracked_inst = try pt.zcu.intern_pool.trackZir(pt.zcu.gpa, pt.tid, .{
+    const tracked_inst = try pt.zcu.intern_pool.trackZir(gpa, io, pt.tid, .{
         .file = file_index,
         .inst = .main_struct_inst, // this is the only trackable instruction in a ZON file
     });
@@ -63,8 +66,10 @@ pub fn run(
 }
 
 fn lowerExprAnonResTy(self: *LowerZon, node: Zoir.Node.Index) CompileError!InternPool.Index {
-    const gpa = self.sema.gpa;
     const pt = self.sema.pt;
+    const comp = pt.zcu.comp;
+    const gpa = comp.gpa;
+    const io = comp.io;
     const ip = &pt.zcu.intern_pool;
     switch (node.get(self.file.zoir.?)) {
         .true => return .bool_true,
@@ -94,13 +99,14 @@ fn lowerExprAnonResTy(self: *LowerZon, node: Zoir.Node.Index) CompileError!Inter
         .enum_literal => |val| return pt.intern(.{
             .enum_literal = try ip.getOrPutString(
                 gpa,
+                io,
                 pt.tid,
                 val.get(self.file.zoir.?),
                 .no_embedded_nulls,
             ),
         }),
         .string_literal => |val| {
-            const ip_str = try ip.getOrPutString(gpa, pt.tid, val, .maybe_embedded_nulls);
+            const ip_str = try ip.getOrPutString(gpa, io, pt.tid, val, .maybe_embedded_nulls);
             const result = try self.sema.addStrLit(ip_str, val.len);
             return result.toInterned().?;
         },
@@ -112,14 +118,10 @@ fn lowerExprAnonResTy(self: *LowerZon, node: Zoir.Node.Index) CompileError!Inter
                 values[i] = try self.lowerExprAnonResTy(nodes.at(@intCast(i)));
                 types[i] = Value.fromInterned(values[i]).typeOf(pt.zcu).toIntern();
             }
-            const ty = try ip.getTupleType(
-                gpa,
-                pt.tid,
-                .{
-                    .types = types,
-                    .values = values,
-                },
-            );
+            const ty = try ip.getTupleType(gpa, io, pt.tid, .{
+                .types = types,
+                .values = values,
+            });
             return (try pt.aggregateValue(.fromInterned(ty), values)).toIntern();
         },
         .struct_literal => |init| {
@@ -129,6 +131,7 @@ fn lowerExprAnonResTy(self: *LowerZon, node: Zoir.Node.Index) CompileError!Inter
             }
             const struct_ty = switch (try ip.getStructType(
                 gpa,
+                io,
                 pt.tid,
                 .{
                     .layout = .auto,
@@ -168,6 +171,7 @@ fn lowerExprAnonResTy(self: *LowerZon, node: Zoir.Node.Index) CompileError!Inter
                     for (init.names, 0..) |name, field_idx| {
                         const name_interned = try ip.getOrPutString(
                             gpa,
+                            io,
                             pt.tid,
                             name.get(self.file.zoir.?),
                             .no_embedded_nulls,
@@ -636,11 +640,16 @@ fn lowerArray(self: *LowerZon, node: Zoir.Node.Index, res_ty: Type) !InternPool.
 }
 
 fn lowerEnum(self: *LowerZon, node: Zoir.Node.Index, res_ty: Type) !InternPool.Index {
-    const ip = &self.sema.pt.zcu.intern_pool;
+    const pt = self.sema.pt;
+    const comp = pt.zcu.comp;
+    const gpa = comp.gpa;
+    const io = comp.io;
+    const ip = &pt.zcu.intern_pool;
     switch (node.get(self.file.zoir.?)) {
         .enum_literal => |field_name| {
             const field_name_interned = try ip.getOrPutString(
-                self.sema.gpa,
+                gpa,
+                io,
                 self.sema.pt.tid,
                 field_name.get(self.file.zoir.?),
                 .no_embedded_nulls,
@@ -665,11 +674,16 @@ fn lowerEnum(self: *LowerZon, node: Zoir.Node.Index, res_ty: Type) !InternPool.I
 }
 
 fn lowerEnumLiteral(self: *LowerZon, node: Zoir.Node.Index) !InternPool.Index {
-    const ip = &self.sema.pt.zcu.intern_pool;
+    const pt = self.sema.pt;
+    const comp = pt.zcu.comp;
+    const gpa = comp.gpa;
+    const io = comp.io;
+    const ip = &pt.zcu.intern_pool;
     switch (node.get(self.file.zoir.?)) {
         .enum_literal => |field_name| {
             const field_name_interned = try ip.getOrPutString(
-                self.sema.gpa,
+                gpa,
+                io,
                 self.sema.pt.tid,
                 field_name.get(self.file.zoir.?),
                 .no_embedded_nulls,
@@ -747,8 +761,11 @@ fn lowerTuple(self: *LowerZon, node: Zoir.Node.Index, res_ty: Type) !InternPool.
 }
 
 fn lowerStruct(self: *LowerZon, node: Zoir.Node.Index, res_ty: Type) !InternPool.Index {
-    const ip = &self.sema.pt.zcu.intern_pool;
-    const gpa = self.sema.gpa;
+    const pt = self.sema.pt;
+    const comp = pt.zcu.comp;
+    const gpa = comp.gpa;
+    const io = comp.io;
+    const ip = &pt.zcu.intern_pool;
 
     try res_ty.resolveFields(self.sema.pt);
     try res_ty.resolveStructFieldInits(self.sema.pt);
@@ -772,6 +789,7 @@ fn lowerStruct(self: *LowerZon, node: Zoir.Node.Index, res_ty: Type) !InternPool
     for (0..fields.names.len) |i| {
         const field_name = try ip.getOrPutString(
             gpa,
+            io,
             self.sema.pt.tid,
             fields.names[i].get(self.file.zoir.?),
             .no_embedded_nulls,
@@ -807,8 +825,11 @@ fn lowerStruct(self: *LowerZon, node: Zoir.Node.Index, res_ty: Type) !InternPool
 }
 
 fn lowerSlice(self: *LowerZon, node: Zoir.Node.Index, res_ty: Type) !InternPool.Index {
-    const ip = &self.sema.pt.zcu.intern_pool;
-    const gpa = self.sema.gpa;
+    const pt = self.sema.pt;
+    const comp = pt.zcu.comp;
+    const gpa = comp.gpa;
+    const io = comp.io;
+    const ip = &pt.zcu.intern_pool;
 
     const ptr_info = res_ty.ptrInfo(self.sema.pt.zcu);
 
@@ -820,7 +841,7 @@ fn lowerSlice(self: *LowerZon, node: Zoir.Node.Index, res_ty: Type) !InternPool.
     if (string_alignment and ptr_info.child == .u8_type and string_sentinel) {
         switch (node.get(self.file.zoir.?)) {
             .string_literal => |val| {
-                const ip_str = try ip.getOrPutString(gpa, self.sema.pt.tid, val, .maybe_embedded_nulls);
+                const ip_str = try ip.getOrPutString(gpa, io, self.sema.pt.tid, val, .maybe_embedded_nulls);
                 const str_ref = try self.sema.addStrLit(ip_str, val.len);
                 return (try self.sema.coerce(
                     self.block,
@@ -892,7 +913,11 @@ fn lowerSlice(self: *LowerZon, node: Zoir.Node.Index, res_ty: Type) !InternPool.
 }
 
 fn lowerUnion(self: *LowerZon, node: Zoir.Node.Index, res_ty: Type) !InternPool.Index {
-    const ip = &self.sema.pt.zcu.intern_pool;
+    const pt = self.sema.pt;
+    const comp = pt.zcu.comp;
+    const gpa = comp.gpa;
+    const io = comp.io;
+    const ip = &pt.zcu.intern_pool;
     try res_ty.resolveFields(self.sema.pt);
     const union_info = self.sema.pt.zcu.typeToUnion(res_ty).?;
     const enum_tag_info = union_info.loadTagType(ip);
@@ -900,7 +925,8 @@ fn lowerUnion(self: *LowerZon, node: Zoir.Node.Index, res_ty: Type) !InternPool.
     const field_name, const maybe_field_node = switch (node.get(self.file.zoir.?)) {
         .enum_literal => |name| b: {
             const field_name = try ip.getOrPutString(
-                self.sema.gpa,
+                gpa,
+                io,
                 self.sema.pt.tid,
                 name.get(self.file.zoir.?),
                 .no_embedded_nulls,
@@ -916,7 +942,8 @@ fn lowerUnion(self: *LowerZon, node: Zoir.Node.Index, res_ty: Type) !InternPool.
                 return error.WrongType;
             }
             const field_name = try ip.getOrPutString(
-                self.sema.gpa,
+                gpa,
+                io,
                 self.sema.pt.tid,
                 fields.names[0].get(self.file.zoir.?),
                 .no_embedded_nulls,
@@ -942,7 +969,7 @@ fn lowerUnion(self: *LowerZon, node: Zoir.Node.Index, res_ty: Type) !InternPool.
         }
         break :b .void_value;
     };
-    return ip.getUnion(self.sema.pt.zcu.gpa, self.sema.pt.tid, .{
+    return ip.getUnion(gpa, io, self.sema.pt.tid, .{
         .ty = res_ty.toIntern(),
         .tag = tag.toIntern(),
         .val = val,

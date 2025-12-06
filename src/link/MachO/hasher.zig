@@ -3,7 +3,7 @@ pub fn ParallelHasher(comptime Hasher: type) type {
 
     return struct {
         allocator: Allocator,
-        thread_pool: *ThreadPool,
+        io: std.Io,
 
         pub fn hash(self: Self, file: fs.File, out: [][hash_size]u8, opts: struct {
             chunk_size: u64 = 0x4000,
@@ -12,7 +12,7 @@ pub fn ParallelHasher(comptime Hasher: type) type {
             const tracy = trace(@src());
             defer tracy.end();
 
-            var wg: WaitGroup = .{};
+            const io = self.io;
 
             const file_size = blk: {
                 const file_size = opts.max_file_size orelse try file.getEndPos();
@@ -27,8 +27,8 @@ pub fn ParallelHasher(comptime Hasher: type) type {
             defer self.allocator.free(results);
 
             {
-                wg.reset();
-                defer wg.wait();
+                var group: std.Io.Group = .init;
+                errdefer group.cancel(io);
 
                 for (out, results, 0..) |*out_buf, *result, i| {
                     const fstart = i * chunk_size;
@@ -36,7 +36,7 @@ pub fn ParallelHasher(comptime Hasher: type) type {
                         file_size - fstart
                     else
                         chunk_size;
-                    self.thread_pool.spawnWg(&wg, worker, .{
+                    group.async(io, worker, .{
                         file,
                         fstart,
                         buffer[fstart..][0..fsize],
@@ -44,6 +44,8 @@ pub fn ParallelHasher(comptime Hasher: type) type {
                         &(result.*),
                     });
                 }
+
+                group.wait(io);
             }
             for (results) |result| _ = try result;
         }
@@ -72,5 +74,3 @@ const std = @import("std");
 const trace = @import("../../tracy.zig").trace;
 
 const Allocator = mem.Allocator;
-const ThreadPool = std.Thread.Pool;
-const WaitGroup = std.Thread.WaitGroup;

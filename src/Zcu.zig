@@ -37,6 +37,7 @@ const InternPool = @import("InternPool.zig");
 const Alignment = InternPool.Alignment;
 const AnalUnit = InternPool.AnalUnit;
 const BuiltinFn = std.zig.BuiltinFn;
+const codegen = @import("codegen.zig");
 const LlvmObject = @import("codegen/llvm.zig").Object;
 const dev = @import("dev.zig");
 const Zoir = std.zig.Zoir;
@@ -316,6 +317,8 @@ incremental_debug_state: if (build_options.enable_debug_extensions) IncrementalD
 /// Times semantic analysis of the current `AnalUnit`. When we pause to analyze a different unit,
 /// this timer must be temporarily paused and resumed later.
 cur_analysis_timer: ?Compilation.Timer = null,
+
+codegen_task_pool: CodegenTaskPool,
 
 generation: u32 = 0,
 
@@ -895,12 +898,13 @@ pub const Namespace = struct {
         ns: Namespace,
         ip: *InternPool,
         gpa: Allocator,
+        io: Io,
         tid: Zcu.PerThread.Id,
         name: InternPool.NullTerminatedString,
     ) !InternPool.NullTerminatedString {
         const ns_name = Type.fromInterned(ns.owner_type).containerTypeName(ip);
         if (name == .empty) return ns_name;
-        return ip.getOrPutStringFmt(gpa, tid, "{f}.{f}", .{ ns_name.fmt(ip), name.fmt(ip) }, .no_embedded_nulls);
+        return ip.getOrPutStringFmt(gpa, io, tid, "{f}.{f}", .{ ns_name.fmt(ip), name.fmt(ip) }, .no_embedded_nulls);
     }
 };
 
@@ -1139,13 +1143,15 @@ pub const File = struct {
     }
 
     pub fn internFullyQualifiedName(file: File, pt: Zcu.PerThread) !InternPool.NullTerminatedString {
-        const gpa = pt.zcu.gpa;
         const ip = &pt.zcu.intern_pool;
-        const string_bytes = ip.getLocal(pt.tid).getMutableStringBytes(gpa);
+        const comp = pt.zcu.comp;
+        const gpa = comp.gpa;
+        const io = comp.io;
+        const string_bytes = ip.getLocal(pt.tid).getMutableStringBytes(gpa, io);
         var w: Writer = .fixed((try string_bytes.addManyAsSlice(file.fullyQualifiedNameLen()))[0]);
         file.renderFullyQualifiedName(&w) catch unreachable;
         assert(w.end == w.buffer.len);
-        return ip.getOrPutTrailingString(gpa, pt.tid, @intCast(w.end), .no_embedded_nulls);
+        return ip.getOrPutTrailingString(gpa, io, pt.tid, @intCast(w.end), .no_embedded_nulls);
     }
 
     pub const Index = InternPool.FileIndex;
@@ -2801,13 +2807,14 @@ pub const CompileError = error{
     ComptimeBreak,
 };
 
-pub fn init(zcu: *Zcu, thread_count: usize) !void {
-    const gpa = zcu.gpa;
-    try zcu.intern_pool.init(gpa, thread_count);
+pub fn init(zcu: *Zcu, gpa: Allocator, io: Io, thread_count: usize) !void {
+    try zcu.intern_pool.init(gpa, io, thread_count);
 }
 
 pub fn deinit(zcu: *Zcu) void {
-    const gpa = zcu.gpa;
+    const comp = zcu.comp;
+    const gpa = comp.gpa;
+    const io = comp.io;
     {
         const pt: Zcu.PerThread = .activate(zcu, .main);
         defer pt.deactivate();
@@ -2897,7 +2904,7 @@ pub fn deinit(zcu: *Zcu) void {
             zcu.incremental_debug_state.deinit(gpa);
         }
     }
-    zcu.intern_pool.deinit(gpa);
+    zcu.intern_pool.deinit(gpa, io);
 }
 
 pub fn namespacePtr(zcu: *Zcu, index: Namespace.Index) *Namespace {
@@ -4442,7 +4449,7 @@ pub fn maybeUnresolveIes(zcu: *Zcu, func_index: InternPool.Index) !void {
                 try zcu.outdated_ready.put(gpa, unit, {});
             }
         }
-        zcu.intern_pool.funcSetIesResolved(func_index, .none);
+        zcu.intern_pool.funcSetIesResolved(zcu.comp.io, func_index, .none);
     }
 }
 
@@ -4620,10 +4627,12 @@ pub fn codegenFail(
 
 /// Takes ownership of `msg`, even on OOM.
 pub fn codegenFailMsg(zcu: *Zcu, nav_index: InternPool.Nav.Index, msg: *ErrorMsg) CodegenFailError {
-    const gpa = zcu.gpa;
+    const comp = zcu.comp;
+    const gpa = comp.gpa;
+    const io = comp.io;
     {
-        zcu.comp.mutex.lock();
-        defer zcu.comp.mutex.unlock();
+        comp.mutex.lockUncancelable(io);
+        defer comp.mutex.unlock(io);
         errdefer msg.deinit(gpa);
         try zcu.failed_codegen.putNoClobber(gpa, nav_index, msg);
     }
@@ -4632,8 +4641,10 @@ pub fn codegenFailMsg(zcu: *Zcu, nav_index: InternPool.Nav.Index, msg: *ErrorMsg
 
 /// Asserts that `zcu.failed_codegen` contains the key `nav`, with the necessary lock held.
 pub fn assertCodegenFailed(zcu: *Zcu, nav: InternPool.Nav.Index) void {
-    zcu.comp.mutex.lock();
-    defer zcu.comp.mutex.unlock();
+    const comp = zcu.comp;
+    const io = comp.io;
+    comp.mutex.lockUncancelable(io);
+    defer comp.mutex.unlock(io);
     assert(zcu.failed_codegen.contains(nav));
 }
 
@@ -4794,8 +4805,9 @@ const TrackedUnitSema = struct {
         report_time: {
             const sema_ns = zcu.cur_analysis_timer.?.finish() orelse break :report_time;
             const zir_decl = tus.analysis_timer_decl orelse break :report_time;
-            comp.mutex.lock();
-            defer comp.mutex.unlock();
+            const io = comp.io;
+            comp.mutex.lockUncancelable(io);
+            defer comp.mutex.unlock(io);
             comp.time_report.?.stats.cpu_ns_sema += sema_ns;
             const gop = comp.time_report.?.decl_sema_info.getOrPut(comp.gpa, zir_decl) catch |err| switch (err) {
                 error.OutOfMemory => {
@@ -4830,3 +4842,170 @@ pub fn trackUnitSema(zcu: *Zcu, name: []const u8, zir_inst: ?InternPool.TrackedI
         .analysis_timer_decl = zir_inst,
     };
 }
+
+pub const CodegenTaskPool = struct {
+    const CodegenResult = PerThread.RunCodegenError!codegen.AnyMir;
+
+    /// In the worst observed case, MIR is around 50 times as large as AIR. More typically, the ratio is
+    /// around 20. Going by that 50x multiplier, and assuming we want to consume no more than 500 MiB of
+    /// memory on AIR/MIR, we see a limit of around 10 MiB of AIR in-flight.
+    const max_air_bytes_in_flight = 10 * 1024 * 1024;
+
+    const max_funcs_in_flight = @import("link.zig").Queue.buffer_size;
+
+    available_air_bytes: u32,
+
+    /// Locks the freelist and `available_air_bytes`.
+    mutex: Io.Mutex,
+
+    /// Signaled when an item is added to the freelist.
+    free_cond: Io.Condition,
+    /// Pre-allocated with enough capacity for all indices.
+    free: std.ArrayList(Index),
+
+    /// `.none` means this task is in the freelist. The `task_air_bytes` and
+    /// `task_futures` entries are `undefined`.
+    task_funcs: []InternPool.Index,
+    task_air_bytes: []u32,
+    task_futures: []Io.Future(CodegenResult),
+
+    pub fn init(arena: Allocator) Allocator.Error!CodegenTaskPool {
+        const task_funcs = try arena.alloc(InternPool.Index, max_funcs_in_flight);
+        const task_air_bytes = try arena.alloc(u32, max_funcs_in_flight);
+        const task_futures = try arena.alloc(Io.Future(CodegenResult), max_funcs_in_flight);
+        @memset(task_funcs, .none);
+
+        var free: std.ArrayList(Index) = try .initCapacity(arena, max_funcs_in_flight);
+        for (0..max_funcs_in_flight) |index| free.appendAssumeCapacity(@enumFromInt(index));
+
+        return .{
+            .available_air_bytes = max_air_bytes_in_flight,
+            .mutex = .init,
+            .free_cond = .init,
+            .free = free,
+            .task_funcs = task_funcs,
+            .task_air_bytes = task_air_bytes,
+            .task_futures = task_futures,
+        };
+    }
+
+    pub fn cancel(pool: *CodegenTaskPool, zcu: *const Zcu) void {
+        const io = zcu.comp.io;
+        for (
+            pool.task_funcs,
+            pool.task_air_bytes,
+            pool.task_futures,
+        ) |func, effective_air_bytes, *future| {
+            if (func == .none) continue;
+            pool.available_air_bytes += effective_air_bytes;
+            var mir = future.cancel(io) catch continue;
+            mir.deinit(zcu);
+        }
+        assert(pool.available_air_bytes == max_air_bytes_in_flight);
+    }
+
+    pub fn start(
+        pool: *CodegenTaskPool,
+        zcu: *Zcu,
+        func_index: InternPool.Index,
+        air: *Air,
+        /// If `true`, this function will take ownership of `air`, freeing it after codegen
+        /// completes; it is not assumed that `air` will outlive this function. If `false`,
+        /// codegen will operate on `air` via the given pointer, which it is assumed will
+        /// outline the codegen task.
+        move_air: bool,
+    ) Io.Cancelable!Index {
+        const io = zcu.comp.io;
+
+        // To avoid consuming an excessive amount of memory, there is a limit on the total number of AIR
+        // bytes which can be in the codegen/link pipeline at one time. If we exceed this limit, we must
+        // wait for codegen/link to finish some WIP functions so they catch up with us.
+        const actual_air_bytes: u32 = @intCast(air.instructions.len * 5 + air.extra.items.len * 4);
+        // We need to let all AIR through eventually, even if one function exceeds `max_air_bytes_in_flight`.
+        const effective_air_bytes: u32 = @min(actual_air_bytes, max_air_bytes_in_flight);
+        assert(effective_air_bytes > 0);
+
+        const index: Index = index: {
+            try pool.mutex.lock(io);
+            defer pool.mutex.unlock(io);
+
+            while (pool.free.items.len == 0 or pool.available_air_bytes < effective_air_bytes) {
+                // The linker thread needs to catch up!
+                try pool.free_cond.wait(io, &pool.mutex);
+            }
+
+            pool.available_air_bytes -= effective_air_bytes;
+            break :index pool.free.pop().?;
+        };
+
+        // No turning back now: we're incrementing `pending_codegen_jobs` and starting the worker.
+        errdefer comptime unreachable;
+
+        assert(zcu.pending_codegen_jobs.fetchAdd(1, .monotonic) > 0); // the "Code Generation" node is still active
+        assert(pool.task_funcs[@intFromEnum(index)] == .none);
+        pool.task_funcs[@intFromEnum(index)] = func_index;
+        pool.task_air_bytes[@intFromEnum(index)] = actual_air_bytes;
+        pool.task_futures[@intFromEnum(index)] = if (move_air) io.async(
+            workerCodegenOwnedAir,
+            .{ zcu, func_index, air.* },
+        ) else io.async(
+            workerCodegenExternalAir,
+            .{ zcu, func_index, air },
+        );
+
+        return index;
+    }
+    pub const Index = enum(u32) {
+        _,
+
+        /// Blocks until codegen has completed, successfully or otherwise.
+        /// The returned MIR is owned by the caller.
+        pub fn wait(
+            index: Index,
+            pool: *CodegenTaskPool,
+            io: Io,
+        ) PerThread.RunCodegenError!struct { InternPool.Index, codegen.AnyMir } {
+            const func = pool.task_funcs[@intFromEnum(index)];
+            assert(func != .none);
+            const effective_air_bytes = pool.task_air_bytes[@intFromEnum(index)];
+            const result = pool.task_futures[@intFromEnum(index)].await(io);
+
+            pool.task_funcs[@intFromEnum(index)] = .none;
+            pool.task_air_bytes[@intFromEnum(index)] = undefined;
+            pool.task_futures[@intFromEnum(index)] = undefined;
+
+            {
+                pool.mutex.lockUncancelable(io);
+                defer pool.mutex.unlock(io);
+                pool.available_air_bytes += effective_air_bytes;
+                pool.free.appendAssumeCapacity(index);
+                pool.free_cond.signal(io);
+            }
+
+            return .{ func, try result };
+        }
+    };
+    fn workerCodegenOwnedAir(
+        zcu: *Zcu,
+        func_index: InternPool.Index,
+        orig_air: Air,
+    ) CodegenResult {
+        // We own `air` now, so we are responsbile for freeing it.
+        var air = orig_air;
+        defer air.deinit(zcu.comp.gpa);
+        const tid = Compilation.getTid();
+        const pt: Zcu.PerThread = .activate(zcu, @enumFromInt(tid));
+        defer pt.deactivate();
+        return pt.runCodegen(func_index, &air);
+    }
+    fn workerCodegenExternalAir(
+        zcu: *Zcu,
+        func_index: InternPool.Index,
+        air: *Air,
+    ) CodegenResult {
+        const tid = Compilation.getTid();
+        const pt: Zcu.PerThread = .activate(zcu, @enumFromInt(tid));
+        defer pt.deactivate();
+        return pt.runCodegen(func_index, air);
+    }
+};

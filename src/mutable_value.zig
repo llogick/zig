@@ -55,6 +55,9 @@ pub const MutableValue = union(enum) {
     };
 
     pub fn intern(mv: MutableValue, pt: Zcu.PerThread, arena: Allocator) Allocator.Error!Value {
+        const zcu = pt.zcu;
+        const comp = zcu.comp;
+        const io = comp.io;
         return Value.fromInterned(switch (mv) {
             .interned => |ip_index| ip_index,
             .eu_payload => |sv| try pt.intern(.{ .error_union = .{
@@ -68,7 +71,7 @@ pub const MutableValue = union(enum) {
             .repeated => |sv| return pt.aggregateSplatValue(.fromInterned(sv.ty), try sv.child.intern(pt, arena)),
             .bytes => |b| try pt.intern(.{ .aggregate = .{
                 .ty = b.ty,
-                .storage = .{ .bytes = try pt.zcu.intern_pool.getOrPutString(pt.zcu.gpa, pt.tid, b.data, .maybe_embedded_nulls) },
+                .storage = .{ .bytes = try zcu.intern_pool.getOrPutString(comp.gpa, io, pt.tid, b.data, .maybe_embedded_nulls) },
             } }),
             .aggregate => |a| {
                 const elems = try arena.alloc(InternPool.Index, a.elems.len);

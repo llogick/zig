@@ -242,6 +242,7 @@ pub const File = union(enum) {
         const tracy = trace(@src());
         defer tracy.end();
 
+        const io = macho_file.base.comp.io;
         const gpa = macho_file.base.comp.gpa;
 
         for (file.getSymbols(), file.getNlists(), 0..) |sym, nlist, i| {
@@ -252,8 +253,8 @@ pub const File = union(enum) {
             const ref_file = ref.getFile(macho_file) orelse continue;
             if (ref_file.getIndex() == file.getIndex()) continue;
 
-            macho_file.dupes_mutex.lock();
-            defer macho_file.dupes_mutex.unlock();
+            macho_file.dupes_mutex.lockUncancelable(io);
+            defer macho_file.dupes_mutex.unlock(io);
 
             const gop = try macho_file.dupes.getOrPut(gpa, file.getGlobals()[i]);
             if (!gop.found_existing) {
