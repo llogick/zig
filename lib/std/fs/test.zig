@@ -178,6 +178,8 @@ fn setupSymlinkAbsolute(target: []const u8, link: []const u8, flags: SymLinkFlag
 }
 
 test "Dir.readLink" {
+    const io = testing.io;
+
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {
             // Create some targets
@@ -208,7 +210,7 @@ test "Dir.readLink" {
             const parent_file = ".." ++ fs.path.sep_str ++ "target.txt";
             const canonical_parent_file = try ctx.toCanonicalPathSep(parent_file);
             var subdir = try ctx.dir.makeOpenPath("subdir", .{});
-            defer subdir.close();
+            defer subdir.close(io);
             try setupSymlink(subdir, canonical_parent_file, "relative-link.txt", .{});
             try testReadLink(subdir, canonical_parent_file, "relative-link.txt");
             if (builtin.os.tag == .windows) {
@@ -268,6 +270,8 @@ fn testReadLinkAbsolute(target_path: []const u8, symlink_path: []const u8) !void
 }
 
 test "File.stat on a File that is a symlink returns Kind.sym_link" {
+    const io = testing.io;
+
     // This test requires getting a file descriptor of a symlink which
     // is not possible on all targets
     switch (builtin.target.os.tag) {
@@ -302,7 +306,7 @@ test "File.stat on a File that is a symlink returns Kind.sym_link" {
                         .SecurityDescriptor = null,
                         .SecurityQualityOfService = null,
                     };
-                    var io: windows.IO_STATUS_BLOCK = undefined;
+                    var io_status_block: windows.IO_STATUS_BLOCK = undefined;
                     const rc = windows.ntdll.NtCreateFile(
                         &handle,
                         .{
@@ -317,7 +321,7 @@ test "File.stat on a File that is a symlink returns Kind.sym_link" {
                             },
                         },
                         &attr,
-                        &io,
+                        &io_status_block,
                         null,
                         .{ .NORMAL = true },
                         .VALID_FLAGS,
@@ -352,7 +356,7 @@ test "File.stat on a File that is a symlink returns Kind.sym_link" {
                 },
                 else => unreachable,
             };
-            defer symlink.close();
+            defer symlink.close(io);
 
             const stat = try symlink.stat();
             try testing.expectEqual(File.Kind.sym_link, stat.kind);
@@ -361,6 +365,8 @@ test "File.stat on a File that is a symlink returns Kind.sym_link" {
 }
 
 test "openDir" {
+    const io = testing.io;
+
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {
             const allocator = ctx.arena.allocator();
@@ -370,7 +376,7 @@ test "openDir" {
             for ([_][]const u8{ "", ".", ".." }) |sub_path| {
                 const dir_path = try fs.path.join(allocator, &.{ subdir_path, sub_path });
                 var dir = try ctx.dir.openDir(dir_path, .{});
-                defer dir.close();
+                defer dir.close(io);
             }
         }
     }.impl);
@@ -393,6 +399,8 @@ test "openDirAbsolute" {
     if (native_os == .wasi) return error.SkipZigTest;
     if (native_os == .openbsd) return error.SkipZigTest;
 
+    const io = testing.io;
+
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
@@ -404,7 +412,7 @@ test "openDirAbsolute" {
 
     // Can open sub_path
     var tmp_sub = try fs.openDirAbsolute(sub_path, .{});
-    defer tmp_sub.close();
+    defer tmp_sub.close(io);
 
     const sub_ino = (try tmp_sub.stat()).inode;
 
@@ -414,7 +422,7 @@ test "openDirAbsolute" {
         defer testing.allocator.free(dir_path);
 
         var dir = try fs.openDirAbsolute(dir_path, .{});
-        defer dir.close();
+        defer dir.close(io);
 
         const ino = (try dir.stat()).inode;
         try testing.expectEqual(tmp_ino, ino);
@@ -426,7 +434,7 @@ test "openDirAbsolute" {
         defer testing.allocator.free(dir_path);
 
         var dir = try fs.openDirAbsolute(dir_path, .{});
-        defer dir.close();
+        defer dir.close(io);
 
         const ino = (try dir.stat()).inode;
         try testing.expectEqual(sub_ino, ino);
@@ -438,7 +446,7 @@ test "openDirAbsolute" {
         defer testing.allocator.free(dir_path);
 
         var dir = try fs.openDirAbsolute(dir_path, .{});
-        defer dir.close();
+        defer dir.close(io);
 
         const ino = (try dir.stat()).inode;
         try testing.expectEqual(tmp_ino, ino);
@@ -446,13 +454,15 @@ test "openDirAbsolute" {
 }
 
 test "openDir cwd parent '..'" {
+    const io = testing.io;
+
     var dir = fs.cwd().openDir("..", .{}) catch |err| {
         if (native_os == .wasi and err == error.PermissionDenied) {
             return; // This is okay. WASI disallows escaping from the fs sandbox
         }
         return err;
     };
-    defer dir.close();
+    defer dir.close(io);
 }
 
 test "openDir non-cwd parent '..'" {
@@ -461,14 +471,16 @@ test "openDir non-cwd parent '..'" {
         else => {},
     }
 
+    const io = testing.io;
+
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
     var subdir = try tmp.dir.makeOpenPath("subdir", .{});
-    defer subdir.close();
+    defer subdir.close(io);
 
     var dir = try subdir.openDir("..", .{});
-    defer dir.close();
+    defer dir.close(io);
 
     const expected_path = try tmp.dir.realpathAlloc(testing.allocator, ".");
     defer testing.allocator.free(expected_path);
@@ -516,12 +528,14 @@ test "readLinkAbsolute" {
 }
 
 test "Dir.Iterator" {
+    const io = testing.io;
+
     var tmp_dir = tmpDir(.{ .iterate = true });
     defer tmp_dir.cleanup();
 
     // First, create a couple of entries to iterate over.
     const file = try tmp_dir.dir.createFile("some_file", .{});
-    file.close();
+    file.close(io);
 
     try tmp_dir.dir.makeDir("some_dir");
 
@@ -546,6 +560,8 @@ test "Dir.Iterator" {
 }
 
 test "Dir.Iterator many entries" {
+    const io = testing.io;
+
     var tmp_dir = tmpDir(.{ .iterate = true });
     defer tmp_dir.cleanup();
 
@@ -555,7 +571,7 @@ test "Dir.Iterator many entries" {
     while (i < num) : (i += 1) {
         const name = try std.fmt.bufPrint(&buf, "{}", .{i});
         const file = try tmp_dir.dir.createFile(name, .{});
-        file.close();
+        file.close(io);
     }
 
     var arena = ArenaAllocator.init(testing.allocator);
@@ -581,12 +597,14 @@ test "Dir.Iterator many entries" {
 }
 
 test "Dir.Iterator twice" {
+    const io = testing.io;
+
     var tmp_dir = tmpDir(.{ .iterate = true });
     defer tmp_dir.cleanup();
 
     // First, create a couple of entries to iterate over.
     const file = try tmp_dir.dir.createFile("some_file", .{});
-    file.close();
+    file.close(io);
 
     try tmp_dir.dir.makeDir("some_dir");
 
@@ -614,12 +632,14 @@ test "Dir.Iterator twice" {
 }
 
 test "Dir.Iterator reset" {
+    const io = testing.io;
+
     var tmp_dir = tmpDir(.{ .iterate = true });
     defer tmp_dir.cleanup();
 
     // First, create a couple of entries to iterate over.
     const file = try tmp_dir.dir.createFile("some_file", .{});
-    file.close();
+    file.close(io);
 
     try tmp_dir.dir.makeDir("some_dir");
 
@@ -650,12 +670,14 @@ test "Dir.Iterator reset" {
 }
 
 test "Dir.Iterator but dir is deleted during iteration" {
+    const io = testing.io;
+
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
     // Create directory and setup an iterator for it
     var subdir = try tmp.dir.makeOpenPath("subdir", .{ .iterate = true });
-    defer subdir.close();
+    defer subdir.close(io);
 
     var iterator = subdir.iterate();
 
@@ -742,11 +764,13 @@ test "Dir.realpath smoke test" {
 }
 
 test "readFileAlloc" {
+    const io = testing.io;
+
     var tmp_dir = tmpDir(.{});
     defer tmp_dir.cleanup();
 
     var file = try tmp_dir.dir.createFile("test_file", .{ .read = true });
-    defer file.close();
+    defer file.close(io);
 
     const buf1 = try tmp_dir.dir.readFileAlloc("test_file", testing.allocator, .limited(1024));
     defer testing.allocator.free(buf1);
@@ -815,10 +839,12 @@ test "statFile on dangling symlink" {
 test "directory operations on files" {
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {
+            const io = ctx.io;
+
             const test_file_name = try ctx.transformPath("test_file");
 
             var file = try ctx.dir.createFile(test_file_name, .{ .read = true });
-            file.close();
+            file.close(io);
 
             try testing.expectError(error.PathAlreadyExists, ctx.dir.makeDir(test_file_name));
             try testing.expectError(error.NotDir, ctx.dir.openDir(test_file_name, .{}));
@@ -833,7 +859,7 @@ test "directory operations on files" {
             file = try ctx.dir.openFile(test_file_name, .{});
             const stat = try file.stat();
             try testing.expectEqual(File.Kind.file, stat.kind);
-            file.close();
+            file.close(io);
         }
     }.impl);
 }
@@ -841,6 +867,8 @@ test "directory operations on files" {
 test "file operations on directories" {
     // TODO: fix this test on FreeBSD. https://github.com/ziglang/zig/issues/1759
     if (native_os == .freebsd) return error.SkipZigTest;
+
+    const io = testing.io;
 
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {
@@ -869,7 +897,7 @@ test "file operations on directories" {
             if (native_os == .wasi and builtin.link_libc) {
                 // wasmtime unexpectedly succeeds here, see https://github.com/ziglang/zig/issues/20747
                 const handle = try ctx.dir.openFile(test_dir_name, .{ .mode = .read_write });
-                handle.close();
+                handle.close(io);
             } else {
                 // Note: The `.mode = .read_write` is necessary to ensure the error occurs on all platforms.
                 // TODO: Add a read-only test as well, see https://github.com/ziglang/zig/issues/5732
@@ -883,21 +911,23 @@ test "file operations on directories" {
 
             // ensure the directory still exists as a sanity check
             var dir = try ctx.dir.openDir(test_dir_name, .{});
-            dir.close();
+            dir.close(io);
         }
     }.impl);
 }
 
 test "makeOpenPath parent dirs do not exist" {
+    const io = testing.io;
+
     var tmp_dir = tmpDir(.{});
     defer tmp_dir.cleanup();
 
     var dir = try tmp_dir.dir.makeOpenPath("root_dir/parent_dir/some_dir", .{});
-    dir.close();
+    dir.close(io);
 
     // double check that the full directory structure was created
     var dir_verification = try tmp_dir.dir.openDir("root_dir/parent_dir/some_dir", .{});
-    dir_verification.close();
+    dir_verification.close(io);
 }
 
 test "deleteDir" {
@@ -924,6 +954,7 @@ test "deleteDir" {
 test "Dir.rename files" {
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {
+            const io = ctx.io;
             // Rename on Windows can hit intermittent AccessDenied errors
             // when certain conditions are true about the host system.
             // For now, skip this test when the path type is UNC to avoid them.
@@ -939,13 +970,13 @@ test "Dir.rename files" {
             const test_file_name = try ctx.transformPath("test_file");
             const renamed_test_file_name = try ctx.transformPath("test_file_renamed");
             var file = try ctx.dir.createFile(test_file_name, .{ .read = true });
-            file.close();
+            file.close(io);
             try ctx.dir.rename(test_file_name, renamed_test_file_name);
 
             // Ensure the file was renamed
             try testing.expectError(error.FileNotFound, ctx.dir.openFile(test_file_name, .{}));
             file = try ctx.dir.openFile(renamed_test_file_name, .{});
-            file.close();
+            file.close(io);
 
             // Rename to self succeeds
             try ctx.dir.rename(renamed_test_file_name, renamed_test_file_name);
@@ -953,12 +984,12 @@ test "Dir.rename files" {
             // Rename to existing file succeeds
             const existing_file_path = try ctx.transformPath("existing_file");
             var existing_file = try ctx.dir.createFile(existing_file_path, .{ .read = true });
-            existing_file.close();
+            existing_file.close(io);
             try ctx.dir.rename(renamed_test_file_name, existing_file_path);
 
             try testing.expectError(error.FileNotFound, ctx.dir.openFile(renamed_test_file_name, .{}));
             file = try ctx.dir.openFile(existing_file_path, .{});
-            file.close();
+            file.close(io);
         }
     }.impl);
 }
@@ -966,6 +997,8 @@ test "Dir.rename files" {
 test "Dir.rename directories" {
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {
+            const io = ctx.io;
+
             // Rename on Windows can hit intermittent AccessDenied errors
             // when certain conditions are true about the host system.
             // For now, skip this test when the path type is UNC to avoid them.
@@ -985,8 +1018,8 @@ test "Dir.rename directories" {
 
             // Put a file in the directory
             var file = try dir.createFile("test_file", .{ .read = true });
-            file.close();
-            dir.close();
+            file.close(io);
+            dir.close(io);
 
             const test_dir_renamed_again_path = try ctx.transformPath("test_dir_renamed_again");
             try ctx.dir.rename(test_dir_renamed_path, test_dir_renamed_again_path);
@@ -995,8 +1028,8 @@ test "Dir.rename directories" {
             try testing.expectError(error.FileNotFound, ctx.dir.openDir(test_dir_renamed_path, .{}));
             dir = try ctx.dir.openDir(test_dir_renamed_again_path, .{});
             file = try dir.openFile("test_file", .{});
-            file.close();
-            dir.close();
+            file.close(io);
+            dir.close(io);
         }
     }.impl);
 }
@@ -1007,6 +1040,8 @@ test "Dir.rename directory onto empty dir" {
 
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {
+            const io = ctx.io;
+
             const test_dir_path = try ctx.transformPath("test_dir");
             const target_dir_path = try ctx.transformPath("target_dir_path");
 
@@ -1017,7 +1052,7 @@ test "Dir.rename directory onto empty dir" {
             // Ensure the directory was renamed
             try testing.expectError(error.FileNotFound, ctx.dir.openDir(test_dir_path, .{}));
             var dir = try ctx.dir.openDir(target_dir_path, .{});
-            dir.close();
+            dir.close(io);
         }
     }.impl);
 }
@@ -1028,6 +1063,7 @@ test "Dir.rename directory onto non-empty dir" {
 
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {
+            const io = ctx.io;
             const test_dir_path = try ctx.transformPath("test_dir");
             const target_dir_path = try ctx.transformPath("target_dir_path");
 
@@ -1035,15 +1071,15 @@ test "Dir.rename directory onto non-empty dir" {
 
             var target_dir = try ctx.dir.makeOpenPath(target_dir_path, .{});
             var file = try target_dir.createFile("test_file", .{ .read = true });
-            file.close();
-            target_dir.close();
+            file.close(io);
+            target_dir.close(io);
 
             // Rename should fail with PathAlreadyExists if target_dir is non-empty
             try testing.expectError(error.PathAlreadyExists, ctx.dir.rename(test_dir_path, target_dir_path));
 
             // Ensure the directory was not renamed
             var dir = try ctx.dir.openDir(test_dir_path, .{});
-            dir.close();
+            dir.close(io);
         }
     }.impl);
 }
@@ -1054,11 +1090,12 @@ test "Dir.rename file <-> dir" {
 
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {
+            const io = ctx.io;
             const test_file_path = try ctx.transformPath("test_file");
             const test_dir_path = try ctx.transformPath("test_dir");
 
             var file = try ctx.dir.createFile(test_file_path, .{ .read = true });
-            file.close();
+            file.close(io);
             try ctx.dir.makeDir(test_dir_path);
             try testing.expectError(error.IsDir, ctx.dir.rename(test_file_path, test_dir_path));
             try testing.expectError(error.NotDir, ctx.dir.rename(test_dir_path, test_file_path));
@@ -1067,6 +1104,8 @@ test "Dir.rename file <-> dir" {
 }
 
 test "rename" {
+    const io = testing.io;
+
     var tmp_dir1 = tmpDir(.{});
     defer tmp_dir1.cleanup();
 
@@ -1077,18 +1116,20 @@ test "rename" {
     const test_file_name = "test_file";
     const renamed_test_file_name = "test_file_renamed";
     var file = try tmp_dir1.dir.createFile(test_file_name, .{ .read = true });
-    file.close();
+    file.close(io);
     try fs.rename(tmp_dir1.dir, test_file_name, tmp_dir2.dir, renamed_test_file_name);
 
     // ensure the file was renamed
     try testing.expectError(error.FileNotFound, tmp_dir1.dir.openFile(test_file_name, .{}));
     file = try tmp_dir2.dir.openFile(renamed_test_file_name, .{});
-    file.close();
+    file.close(io);
 }
 
 test "renameAbsolute" {
     if (native_os == .wasi) return error.SkipZigTest;
     if (native_os == .openbsd) return error.SkipZigTest;
+
+    const io = testing.io;
 
     var tmp_dir = tmpDir(.{});
     defer tmp_dir.cleanup();
@@ -1109,7 +1150,7 @@ test "renameAbsolute" {
     const test_file_name = "test_file";
     const renamed_test_file_name = "test_file_renamed";
     var file = try tmp_dir.dir.createFile(test_file_name, .{ .read = true });
-    file.close();
+    file.close(io);
     try fs.renameAbsolute(
         try fs.path.join(allocator, &.{ base_path, test_file_name }),
         try fs.path.join(allocator, &.{ base_path, renamed_test_file_name }),
@@ -1120,7 +1161,7 @@ test "renameAbsolute" {
     file = try tmp_dir.dir.openFile(renamed_test_file_name, .{});
     const stat = try file.stat();
     try testing.expectEqual(File.Kind.file, stat.kind);
-    file.close();
+    file.close(io);
 
     // Renaming directories
     const test_dir_name = "test_dir";
@@ -1134,14 +1175,16 @@ test "renameAbsolute" {
     // ensure the directory was renamed
     try testing.expectError(error.FileNotFound, tmp_dir.dir.openDir(test_dir_name, .{}));
     var dir = try tmp_dir.dir.openDir(renamed_test_dir_name, .{});
-    dir.close();
+    dir.close(io);
 }
 
 test "openSelfExe" {
     if (native_os == .wasi) return error.SkipZigTest;
 
+    const io = testing.io;
+
     const self_exe_file = try std.fs.openSelfExe(.{});
-    self_exe_file.close();
+    self_exe_file.close(io);
 }
 
 test "selfExePath" {
@@ -1155,13 +1198,15 @@ test "selfExePath" {
 }
 
 test "deleteTree does not follow symlinks" {
+    const io = testing.io;
+
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
     try tmp.dir.makePath("b");
     {
         var a = try tmp.dir.makeOpenPath("a", .{});
-        defer a.close();
+        defer a.close(io);
 
         try setupSymlink(a, "../b", "b", .{ .is_directory = true });
     }
@@ -1257,27 +1302,31 @@ test "makePath but sub_path contains pre-existing file" {
     try testing.expectError(error.NotDir, tmp.dir.makePath("foo/bar/baz"));
 }
 
-fn expectDir(dir: Dir, path: []const u8) !void {
+fn expectDir(io: Io, dir: Dir, path: []const u8) !void {
     var d = try dir.openDir(path, .{});
-    d.close();
+    d.close(io);
 }
 
 test "makepath existing directories" {
+    const io = testing.io;
+
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
     try tmp.dir.makeDir("A");
     var tmpA = try tmp.dir.openDir("A", .{});
-    defer tmpA.close();
+    defer tmpA.close(io);
     try tmpA.makeDir("B");
 
     const testPath = "A" ++ fs.path.sep_str ++ "B" ++ fs.path.sep_str ++ "C";
     try tmp.dir.makePath(testPath);
 
-    try expectDir(tmp.dir, testPath);
+    try expectDir(io, tmp.dir, testPath);
 }
 
 test "makepath through existing valid symlink" {
+    const io = testing.io;
+
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
@@ -1286,10 +1335,12 @@ test "makepath through existing valid symlink" {
 
     try tmp.dir.makePath("working-symlink" ++ fs.path.sep_str ++ "in-realfolder");
 
-    try expectDir(tmp.dir, "realfolder" ++ fs.path.sep_str ++ "in-realfolder");
+    try expectDir(io, tmp.dir, "realfolder" ++ fs.path.sep_str ++ "in-realfolder");
 }
 
 test "makepath relative walks" {
+    const io = testing.io;
+
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
@@ -1305,21 +1356,23 @@ test "makepath relative walks" {
         .windows => {
             // On Windows, .. is resolved before passing the path to NtCreateFile,
             // meaning everything except `first/C` drops out.
-            try expectDir(tmp.dir, "first" ++ fs.path.sep_str ++ "C");
+            try expectDir(io, tmp.dir, "first" ++ fs.path.sep_str ++ "C");
             try testing.expectError(error.FileNotFound, tmp.dir.access("second", .{}));
             try testing.expectError(error.FileNotFound, tmp.dir.access("third", .{}));
         },
         else => {
-            try expectDir(tmp.dir, "first" ++ fs.path.sep_str ++ "A");
-            try expectDir(tmp.dir, "first" ++ fs.path.sep_str ++ "B");
-            try expectDir(tmp.dir, "first" ++ fs.path.sep_str ++ "C");
-            try expectDir(tmp.dir, "second");
-            try expectDir(tmp.dir, "third");
+            try expectDir(io, tmp.dir, "first" ++ fs.path.sep_str ++ "A");
+            try expectDir(io, tmp.dir, "first" ++ fs.path.sep_str ++ "B");
+            try expectDir(io, tmp.dir, "first" ++ fs.path.sep_str ++ "C");
+            try expectDir(io, tmp.dir, "second");
+            try expectDir(io, tmp.dir, "third");
         },
     }
 }
 
 test "makepath ignores '.'" {
+    const io = testing.io;
+
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
@@ -1337,14 +1390,14 @@ test "makepath ignores '.'" {
 
     try tmp.dir.makePath(dotPath);
 
-    try expectDir(tmp.dir, expectedPath);
+    try expectDir(io, tmp.dir, expectedPath);
 }
 
-fn testFilenameLimits(iterable_dir: Dir, maxed_filename: []const u8) !void {
+fn testFilenameLimits(io: Io, iterable_dir: Dir, maxed_filename: []const u8) !void {
     // setup, create a dir and a nested file both with maxed filenames, and walk the dir
     {
         var maxed_dir = try iterable_dir.makeOpenPath(maxed_filename, .{});
-        defer maxed_dir.close();
+        defer maxed_dir.close(io);
 
         try maxed_dir.writeFile(.{ .sub_path = maxed_filename, .data = "" });
 
@@ -1364,6 +1417,8 @@ fn testFilenameLimits(iterable_dir: Dir, maxed_filename: []const u8) !void {
 }
 
 test "max file name component lengths" {
+    const io = testing.io;
+
     var tmp = tmpDir(.{ .iterate = true });
     defer tmp.cleanup();
 
@@ -1371,16 +1426,16 @@ test "max file name component lengths" {
         // U+FFFF is the character with the largest code point that is encoded as a single
         // UTF-16 code unit, so Windows allows for NAME_MAX of them.
         const maxed_windows_filename = ("\u{FFFF}".*) ** windows.NAME_MAX;
-        try testFilenameLimits(tmp.dir, &maxed_windows_filename);
+        try testFilenameLimits(io, tmp.dir, &maxed_windows_filename);
     } else if (native_os == .wasi) {
         // On WASI, the maxed filename depends on the host OS, so in order for this test to
         // work on any host, we need to use a length that will work for all platforms
         // (i.e. the minimum max_name_bytes of all supported platforms).
         const maxed_wasi_filename = [_]u8{'1'} ** 255;
-        try testFilenameLimits(tmp.dir, &maxed_wasi_filename);
+        try testFilenameLimits(io, tmp.dir, &maxed_wasi_filename);
     } else {
         const maxed_ascii_filename = [_]u8{'1'} ** std.fs.max_name_bytes;
-        try testFilenameLimits(tmp.dir, &maxed_ascii_filename);
+        try testFilenameLimits(io, tmp.dir, &maxed_ascii_filename);
     }
 }
 
@@ -1399,7 +1454,7 @@ test "writev, readv" {
     var read_vecs: [2][]u8 = .{ &buf2, &buf1 };
 
     var src_file = try tmp.dir.createFile("test.txt", .{ .read = true });
-    defer src_file.close();
+    defer src_file.close(io);
 
     var writer = src_file.writerStreaming(&.{});
 
@@ -1429,7 +1484,7 @@ test "pwritev, preadv" {
     var read_vecs: [2][]u8 = .{ &buf2, &buf1 };
 
     var src_file = try tmp.dir.createFile("test.txt", .{ .read = true });
-    defer src_file.close();
+    defer src_file.close(io);
 
     var writer = src_file.writer(&.{});
 
@@ -1459,7 +1514,7 @@ test "setEndPos" {
     const file_name = "afile.txt";
     try tmp.dir.writeFile(.{ .sub_path = file_name, .data = "ninebytes" });
     const f = try tmp.dir.openFile(file_name, .{ .mode = .read_write });
-    defer f.close();
+    defer f.close(io);
 
     const initial_size = try f.getEndPos();
     var buffer: [32]u8 = undefined;
@@ -1522,21 +1577,21 @@ test "sendfile" {
     try tmp.dir.makePath("os_test_tmp");
 
     var dir = try tmp.dir.openDir("os_test_tmp", .{});
-    defer dir.close();
+    defer dir.close(io);
 
     const line1 = "line1\n";
     const line2 = "second line\n";
     var vecs = [_][]const u8{ line1, line2 };
 
     var src_file = try dir.createFile("sendfile1.txt", .{ .read = true });
-    defer src_file.close();
+    defer src_file.close(io);
     {
         var fw = src_file.writer(&.{});
         try fw.interface.writeVecAll(&vecs);
     }
 
     var dest_file = try dir.createFile("sendfile2.txt", .{ .read = true });
-    defer dest_file.close();
+    defer dest_file.close(io);
 
     const header1 = "header1\n";
     const header2 = "second header\n";
@@ -1569,15 +1624,15 @@ test "sendfile with buffered data" {
     try tmp.dir.makePath("os_test_tmp");
 
     var dir = try tmp.dir.openDir("os_test_tmp", .{});
-    defer dir.close();
+    defer dir.close(io);
 
     var src_file = try dir.createFile("sendfile1.txt", .{ .read = true });
-    defer src_file.close();
+    defer src_file.close(io);
 
     try src_file.writeAll("AAAABBBB");
 
     var dest_file = try dir.createFile("sendfile2.txt", .{ .read = true });
-    defer dest_file.close();
+    defer dest_file.close(io);
 
     var src_buffer: [32]u8 = undefined;
     var file_reader = src_file.reader(io, &src_buffer);
@@ -1659,10 +1714,11 @@ test "open file with exclusive nonblocking lock twice" {
 
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {
+            const io = ctx.io;
             const filename = try ctx.transformPath("file_nonblocking_lock_test.txt");
 
             const file1 = try ctx.dir.createFile(filename, .{ .lock = .exclusive, .lock_nonblocking = true });
-            defer file1.close();
+            defer file1.close(io);
 
             const file2 = ctx.dir.createFile(filename, .{ .lock = .exclusive, .lock_nonblocking = true });
             try testing.expectError(error.WouldBlock, file2);
@@ -1675,10 +1731,11 @@ test "open file with shared and exclusive nonblocking lock" {
 
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {
+            const io = ctx.io;
             const filename = try ctx.transformPath("file_nonblocking_lock_test.txt");
 
             const file1 = try ctx.dir.createFile(filename, .{ .lock = .shared, .lock_nonblocking = true });
-            defer file1.close();
+            defer file1.close(io);
 
             const file2 = ctx.dir.createFile(filename, .{ .lock = .exclusive, .lock_nonblocking = true });
             try testing.expectError(error.WouldBlock, file2);
@@ -1691,10 +1748,11 @@ test "open file with exclusive and shared nonblocking lock" {
 
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {
+            const io = ctx.io;
             const filename = try ctx.transformPath("file_nonblocking_lock_test.txt");
 
             const file1 = try ctx.dir.createFile(filename, .{ .lock = .exclusive, .lock_nonblocking = true });
-            defer file1.close();
+            defer file1.close(io);
 
             const file2 = ctx.dir.createFile(filename, .{ .lock = .shared, .lock_nonblocking = true });
             try testing.expectError(error.WouldBlock, file2);
@@ -1707,10 +1765,11 @@ test "open file with exclusive lock twice, make sure second lock waits" {
 
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {
+            const io = ctx.io;
             const filename = try ctx.transformPath("file_lock_test.txt");
 
             const file = try ctx.dir.createFile(filename, .{ .lock = .exclusive });
-            errdefer file.close();
+            errdefer file.close(io);
 
             const S = struct {
                 fn checkFn(dir: *fs.Dir, path: []const u8, started: *std.Thread.ResetEvent, locked: *std.Thread.ResetEvent) !void {
@@ -1718,7 +1777,7 @@ test "open file with exclusive lock twice, make sure second lock waits" {
                     const file1 = try dir.createFile(path, .{ .lock = .exclusive });
 
                     locked.set();
-                    file1.close();
+                    file1.close(io);
                 }
             };
 
@@ -1739,7 +1798,7 @@ test "open file with exclusive lock twice, make sure second lock waits" {
             try testing.expectError(error.Timeout, locked.timedWait(10 * std.time.ns_per_ms));
 
             // Release the file lock which should unlock the thread to lock it and set the locked event.
-            file.close();
+            file.close(io);
             locked.wait();
         }
     }.impl);
@@ -1747,6 +1806,8 @@ test "open file with exclusive lock twice, make sure second lock waits" {
 
 test "open file with exclusive nonblocking lock twice (absolute paths)" {
     if (native_os == .wasi) return error.SkipZigTest;
+
+    const io = testing.io;
 
     var random_bytes: [12]u8 = undefined;
     std.crypto.random.bytes(&random_bytes);
@@ -1774,18 +1835,19 @@ test "open file with exclusive nonblocking lock twice (absolute paths)" {
         .lock = .exclusive,
         .lock_nonblocking = true,
     });
-    file1.close();
+    file1.close(io);
     try testing.expectError(error.WouldBlock, file2);
 }
 
 test "read from locked file" {
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {
+            const io = ctx.io;
             const filename = try ctx.transformPath("read_lock_file_test.txt");
 
             {
                 const f = try ctx.dir.createFile(filename, .{ .read = true });
-                defer f.close();
+                defer f.close(io);
                 var buffer: [1]u8 = undefined;
                 _ = try f.read(&buffer);
             }
@@ -1794,9 +1856,9 @@ test "read from locked file" {
                     .read = true,
                     .lock = .exclusive,
                 });
-                defer f.close();
+                defer f.close(io);
                 const f2 = try ctx.dir.openFile(filename, .{});
-                defer f2.close();
+                defer f2.close(io);
                 var buffer: [1]u8 = undefined;
                 if (builtin.os.tag == .windows) {
                     try std.testing.expectError(error.LockViolation, f2.read(&buffer));
@@ -1809,6 +1871,8 @@ test "read from locked file" {
 }
 
 test "walker" {
+    const io = testing.io;
+
     var tmp = tmpDir(.{ .iterate = true });
     defer tmp.cleanup();
 
@@ -1857,13 +1921,15 @@ test "walker" {
         };
         // make sure that the entry.dir is the containing dir
         var entry_dir = try entry.dir.openDir(entry.basename, .{});
-        defer entry_dir.close();
+        defer entry_dir.close(io);
         num_walked += 1;
     }
     try testing.expectEqual(expected_paths.kvs.len, num_walked);
 }
 
 test "selective walker, skip entries that start with ." {
+    const io = testing.io;
+
     var tmp = tmpDir(.{ .iterate = true });
     defer tmp.cleanup();
 
@@ -1923,7 +1989,7 @@ test "selective walker, skip entries that start with ." {
 
         // make sure that the entry.dir is the containing dir
         var entry_dir = try entry.dir.openDir(entry.basename, .{});
-        defer entry_dir.close();
+        defer entry_dir.close(io);
         num_walked += 1;
     }
     try testing.expectEqual(expected_paths.kvs.len, num_walked);
@@ -1968,16 +2034,16 @@ test "'.' and '..' in fs.Dir functions" {
             try ctx.dir.makeDir(subdir_path);
             try ctx.dir.access(subdir_path, .{});
             var created_subdir = try ctx.dir.openDir(subdir_path, .{});
-            created_subdir.close();
+            created_subdir.close(io);
 
             const created_file = try ctx.dir.createFile(file_path, .{});
-            created_file.close();
+            created_file.close(io);
             try ctx.dir.access(file_path, .{});
 
             try ctx.dir.copyFile(file_path, ctx.dir, copy_path, .{});
             try ctx.dir.rename(copy_path, rename_path);
             const renamed_file = try ctx.dir.openFile(rename_path, .{});
-            renamed_file.close();
+            renamed_file.close(io);
             try ctx.dir.deleteFile(rename_path);
 
             try ctx.dir.writeFile(.{ .sub_path = update_path, .data = "something" });
@@ -1994,6 +2060,8 @@ test "'.' and '..' in absolute functions" {
     if (native_os == .wasi) return error.SkipZigTest;
     if (native_os == .openbsd) return error.SkipZigTest;
 
+    const io = testing.io;
+
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
@@ -2007,11 +2075,11 @@ test "'.' and '..' in absolute functions" {
     try fs.makeDirAbsolute(subdir_path);
     try fs.accessAbsolute(subdir_path, .{});
     var created_subdir = try fs.openDirAbsolute(subdir_path, .{});
-    created_subdir.close();
+    created_subdir.close(io);
 
     const created_file_path = try fs.path.join(allocator, &.{ subdir_path, "../file" });
     const created_file = try fs.createFileAbsolute(created_file_path, .{});
-    created_file.close();
+    created_file.close(io);
     try fs.accessAbsolute(created_file_path, .{});
 
     const copied_file_path = try fs.path.join(allocator, &.{ subdir_path, "../copy" });
@@ -2019,7 +2087,7 @@ test "'.' and '..' in absolute functions" {
     const renamed_file_path = try fs.path.join(allocator, &.{ subdir_path, "../rename" });
     try fs.renameAbsolute(copied_file_path, renamed_file_path);
     const renamed_file = try fs.openFileAbsolute(renamed_file_path, .{});
-    renamed_file.close();
+    renamed_file.close(io);
     try fs.deleteFileAbsolute(renamed_file_path);
 
     try fs.deleteDirAbsolute(subdir_path);
@@ -2029,11 +2097,13 @@ test "chmod" {
     if (native_os == .windows or native_os == .wasi)
         return error.SkipZigTest;
 
+    const io = testing.io;
+
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
     const file = try tmp.dir.createFile("test_file", .{ .mode = 0o600 });
-    defer file.close();
+    defer file.close(io);
     try testing.expectEqual(@as(File.Mode, 0o600), (try file.stat()).mode & 0o7777);
 
     try file.chmod(0o644);
@@ -2041,7 +2111,7 @@ test "chmod" {
 
     try tmp.dir.makeDir("test_dir");
     var dir = try tmp.dir.openDir("test_dir", .{ .iterate = true });
-    defer dir.close();
+    defer dir.close(io);
 
     try dir.chmod(0o700);
     try testing.expectEqual(@as(File.Mode, 0o700), (try dir.stat()).mode & 0o7777);
@@ -2051,17 +2121,19 @@ test "chown" {
     if (native_os == .windows or native_os == .wasi)
         return error.SkipZigTest;
 
+    const io = testing.io;
+
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
     const file = try tmp.dir.createFile("test_file", .{});
-    defer file.close();
+    defer file.close(io);
     try file.chown(null, null);
 
     try tmp.dir.makeDir("test_dir");
 
     var dir = try tmp.dir.openDir("test_dir", .{ .iterate = true });
-    defer dir.close();
+    defer dir.close(io);
     try dir.chown(null, null);
 }
 
@@ -2157,7 +2229,7 @@ test "read file non vectored" {
     const contents = "hello, world!\n";
 
     const file = try tmp_dir.dir.createFile("input.txt", .{ .read = true });
-    defer file.close();
+    defer file.close(io);
     {
         var file_writer: std.fs.File.Writer = .init(file, &.{});
         try file_writer.interface.writeAll(contents);
@@ -2189,7 +2261,7 @@ test "seek keeping partial buffer" {
     const contents = "0123456789";
 
     const file = try tmp_dir.dir.createFile("input.txt", .{ .read = true });
-    defer file.close();
+    defer file.close(io);
     {
         var file_writer: std.fs.File.Writer = .init(file, &.{});
         try file_writer.interface.writeAll(contents);
@@ -2231,7 +2303,7 @@ test "seekBy" {
 
     try tmp_dir.dir.writeFile(.{ .sub_path = "blah.txt", .data = "let's test seekBy" });
     const f = try tmp_dir.dir.openFile("blah.txt", .{ .mode = .read_only });
-    defer f.close();
+    defer f.close(io);
     var reader = f.readerStreaming(io, &.{});
     try reader.seekBy(2);
 
@@ -2250,7 +2322,7 @@ test "seekTo flushes buffered data" {
     const contents = "data";
 
     const file = try tmp.dir.createFile("seek.bin", .{ .read = true });
-    defer file.close();
+    defer file.close(io);
     {
         var buf: [16]u8 = undefined;
         var file_writer = std.fs.File.writer(file, &buf);
@@ -2277,9 +2349,9 @@ test "File.Writer sendfile with buffered contents" {
     {
         try tmp_dir.dir.writeFile(.{ .sub_path = "a", .data = "bcd" });
         const in = try tmp_dir.dir.openFile("a", .{});
-        defer in.close();
+        defer in.close(io);
         const out = try tmp_dir.dir.createFile("b", .{});
-        defer out.close();
+        defer out.close(io);
 
         var in_buf: [2]u8 = undefined;
         var in_r = in.reader(io, &in_buf);
@@ -2294,7 +2366,7 @@ test "File.Writer sendfile with buffered contents" {
     }
 
     var check = try tmp_dir.dir.openFile("b", .{});
-    defer check.close();
+    defer check.close(io);
     var check_buf: [4]u8 = undefined;
     var check_r = check.reader(io, &check_buf);
     try testing.expectEqualStrings("abcd", try check_r.interface.take(4));

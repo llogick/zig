@@ -232,8 +232,10 @@ test "listen on an in use port" {
 fn testClientToHost(allocator: mem.Allocator, name: []const u8, port: u16) anyerror!void {
     if (builtin.os.tag == .wasi) return error.SkipZigTest;
 
+    const io = testing.io;
+
     const connection = try net.tcpConnectToHost(allocator, name, port);
-    defer connection.close();
+    defer connection.close(io);
 
     var buf: [100]u8 = undefined;
     const len = try connection.read(&buf);
@@ -244,8 +246,10 @@ fn testClientToHost(allocator: mem.Allocator, name: []const u8, port: u16) anyer
 fn testClient(addr: net.IpAddress) anyerror!void {
     if (builtin.os.tag == .wasi) return error.SkipZigTest;
 
+    const io = testing.io;
+
     const socket_file = try net.tcpConnectToAddress(addr);
-    defer socket_file.close();
+    defer socket_file.close(io);
 
     var buf: [100]u8 = undefined;
     const len = try socket_file.read(&buf);
@@ -330,7 +334,7 @@ test "non-blocking tcp server" {
     try testing.expectError(error.WouldBlock, accept_err);
 
     const socket_file = try net.tcpConnectToAddress(server.socket.address);
-    defer socket_file.close();
+    defer socket_file.close(io);
 
     var stream = try server.accept(io);
     defer stream.close(io);

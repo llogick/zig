@@ -1,18 +1,21 @@
-const std = @import("std");
 const builtin = @import("builtin");
+const build_options = @import("build_options");
+
+const std = @import("std");
+const Io = std.Io;
 const mem = std.mem;
-const Allocator = mem.Allocator;
+const Allocator = std.mem.Allocator;
 const os = std.os;
 const fs = std.fs;
 const Cache = std.Build.Cache;
+
 const Compilation = @import("Compilation.zig");
 const Package = @import("Package.zig");
-const build_options = @import("build_options");
 
 /// Returns the sub_path that worked, or `null` if none did.
 /// The path of the returned Directory is relative to `base`.
 /// The handle of the returned Directory is open.
-fn testZigInstallPrefix(base_dir: fs.Dir) ?Cache.Directory {
+fn testZigInstallPrefix(io: Io, base_dir: Io.Dir) ?Cache.Directory {
     const test_index_file = "std" ++ fs.path.sep_str ++ "std.zig";
 
     zig_dir: {
@@ -20,31 +23,31 @@ fn testZigInstallPrefix(base_dir: fs.Dir) ?Cache.Directory {
         const lib_zig = "lib" ++ fs.path.sep_str ++ "zig";
         var test_zig_dir = base_dir.openDir(lib_zig, .{}) catch break :zig_dir;
         const file = test_zig_dir.openFile(test_index_file, .{}) catch {
-            test_zig_dir.close();
+            test_zig_dir.close(io);
             break :zig_dir;
         };
-        file.close();
+        file.close(io);
         return .{ .handle = test_zig_dir, .path = lib_zig };
     }
 
     // Try lib/std/std.zig
     var test_zig_dir = base_dir.openDir("lib", .{}) catch return null;
     const file = test_zig_dir.openFile(test_index_file, .{}) catch {
-        test_zig_dir.close();
+        test_zig_dir.close(io);
         return null;
     };
-    file.close();
+    file.close(io);
     return .{ .handle = test_zig_dir, .path = "lib" };
 }
 
 /// Both the directory handle and the path are newly allocated resources which the caller now owns.
-pub fn findZigLibDir(gpa: Allocator) !Cache.Directory {
+pub fn findZigLibDir(gpa: Allocator, io: Io) !Cache.Directory {
     const cwd_path = try getResolvedCwd(gpa);
     defer gpa.free(cwd_path);
     const self_exe_path = try fs.selfExePathAlloc(gpa);
     defer gpa.free(self_exe_path);
 
-    return findZigLibDirFromSelfExe(gpa, cwd_path, self_exe_path);
+    return findZigLibDirFromSelfExe(gpa, io, cwd_path, self_exe_path);
 }
 
 /// Like `std.process.getCwdAlloc`, but also resolves the path with `std.fs.path.resolve`. This
@@ -73,6 +76,7 @@ pub fn getResolvedCwd(gpa: Allocator) error{
 /// Both the directory handle and the path are newly allocated resources which the caller now owns.
 pub fn findZigLibDirFromSelfExe(
     allocator: Allocator,
+    io: Io,
     /// The return value of `getResolvedCwd`.
     /// Passed as an argument to avoid pointlessly repeating the call.
     cwd_path: []const u8,
@@ -82,9 +86,9 @@ pub fn findZigLibDirFromSelfExe(
     var cur_path: []const u8 = self_exe_path;
     while (fs.path.dirname(cur_path)) |dirname| : (cur_path = dirname) {
         var base_dir = cwd.openDir(dirname, .{}) catch continue;
-        defer base_dir.close();
+        defer base_dir.close(io);
 
-        const sub_directory = testZigInstallPrefix(base_dir) orelse continue;
+        const sub_directory = testZigInstallPrefix(io, base_dir) orelse continue;
         const p = try fs.path.join(allocator, &.{ dirname, sub_directory.path.? });
         defer allocator.free(p);
 

@@ -390,7 +390,7 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
     cache.addPrefix(.{ .path = null, .handle = fs.cwd() });
     cache.addPrefix(comp.dirs.zig_lib);
     cache.addPrefix(comp.dirs.global_cache);
-    defer cache.manifest_dir.close();
+    defer cache.manifest_dir.close(io);
 
     var man = cache.obtain();
     defer man.deinit();
@@ -421,7 +421,7 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
         .handle = try comp.dirs.global_cache.handle.makeOpenPath(o_sub_path, .{}),
         .path = try comp.dirs.global_cache.join(arena, &.{o_sub_path}),
     };
-    defer o_directory.handle.close();
+    defer o_directory.handle.close(io);
 
     const abilists_contents = man.files.keys()[abilists_index].contents.?;
     const metadata = try loadMetaData(gpa, abilists_contents);

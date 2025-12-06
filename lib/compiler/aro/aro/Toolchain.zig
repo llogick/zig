@@ -497,6 +497,7 @@ pub fn addBuiltinIncludeDir(tc: *const Toolchain) !void {
     const comp = d.comp;
     const gpa = comp.gpa;
     const arena = comp.arena;
+    const io = comp.io;
     try d.includes.ensureUnusedCapacity(gpa, 1);
     if (d.resource_dir) |resource_dir| {
         const path = try std.fs.path.join(arena, &.{ resource_dir, "include" });
@@ -509,7 +510,7 @@ pub fn addBuiltinIncludeDir(tc: *const Toolchain) !void {
     var search_path = d.aro_name;
     while (std.fs.path.dirname(search_path)) |dirname| : (search_path = dirname) {
         var base_dir = d.comp.cwd.openDir(dirname, .{}) catch continue;
-        defer base_dir.close();
+        defer base_dir.close(io);
 
         base_dir.access("include/stddef.h", .{}) catch continue;
         const path = try std.fs.path.join(arena, &.{ dirname, "include" });

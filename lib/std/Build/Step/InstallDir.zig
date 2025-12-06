@@ -68,7 +68,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
     var src_dir = src_dir_path.root_dir.handle.openDir(io, src_dir_path.subPathOrDot(), .{ .iterate = true }) catch |err| {
         return step.fail("unable to open source directory '{f}': {t}", .{ src_dir_path, err });
     };
-    defer src_dir.close();
+    defer src_dir.close(io);
     var it = try src_dir.walk(arena);
     var all_cached = true;
     next_entry: while (try it.next()) |entry| {

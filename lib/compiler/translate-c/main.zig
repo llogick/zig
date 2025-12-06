@@ -121,6 +121,7 @@ pub const usage =
 
 fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8, zig_integration: bool) !void {
     const gpa = d.comp.gpa;
+    const io = d.comp.io;
 
     const aro_args = args: {
         var i: usize = 0;
@@ -228,7 +229,7 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8, zig_integration
                 return d.fatal("unable to create dependency file '{s}': {s}", .{ path, aro.Driver.errorDescription(er) })
         else
             std.fs.File.stdout();
-        defer if (dep_file_name != null) file.close();
+        defer if (dep_file_name != null) file.close(io);
 
         var file_writer = file.writer(&out_buf);
         dep_file.write(&file_writer.interface) catch
@@ -246,7 +247,7 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8, zig_integration
     var close_out_file = false;
     var out_file_path: []const u8 = "<stdout>";
     var out_file: std.fs.File = .stdout();
-    defer if (close_out_file) out_file.close();
+    defer if (close_out_file) out_file.close(io);
 
     if (d.output_name) |path| blk: {
         if (std.mem.eql(u8, path, "-")) break :blk;

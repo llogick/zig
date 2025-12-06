@@ -1298,7 +1298,7 @@ test printLineFromFile {
     }
     {
         const file = try test_dir.dir.createFile("line_overlaps_page_boundary.zig", .{});
-        defer file.close();
+        defer file.close(io);
         const path = try fs.path.join(gpa, &.{ test_dir_path, "line_overlaps_page_boundary.zig" });
         defer gpa.free(path);
 
@@ -1317,7 +1317,7 @@ test printLineFromFile {
     }
     {
         const file = try test_dir.dir.createFile("file_ends_on_page_boundary.zig", .{});
-        defer file.close();
+        defer file.close(io);
         const path = try fs.path.join(gpa, &.{ test_dir_path, "file_ends_on_page_boundary.zig" });
         defer gpa.free(path);
 
@@ -1331,7 +1331,7 @@ test printLineFromFile {
     }
     {
         const file = try test_dir.dir.createFile("very_long_first_line_spanning_multiple_pages.zig", .{});
-        defer file.close();
+        defer file.close(io);
         const path = try fs.path.join(gpa, &.{ test_dir_path, "very_long_first_line_spanning_multiple_pages.zig" });
         defer gpa.free(path);
 
@@ -1357,7 +1357,7 @@ test printLineFromFile {
     }
     {
         const file = try test_dir.dir.createFile("file_of_newlines.zig", .{});
-        defer file.close();
+        defer file.close(io);
         const path = try fs.path.join(gpa, &.{ test_dir_path, "file_of_newlines.zig" });
         defer gpa.free(path);
 

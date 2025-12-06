@@ -851,7 +851,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
                         .{ file_path, err },
                     );
                 };
-                defer file.close();
+                defer file.close(io);
 
                 var buf: [1024]u8 = undefined;
                 var file_reader = file.reader(io, &buf);
@@ -1111,7 +1111,7 @@ pub fn rerunInFuzzMode(
                 result.writer.writeAll(file_plp.prefix) catch return error.OutOfMemory;
 
                 const file = try file_path.root_dir.handle.openFile(file_path.subPathOrDot(), .{});
-                defer file.close();
+                defer file.close(io);
 
                 var buf: [1024]u8 = undefined;
                 var file_reader = file.reader(io, &buf);
@@ -1671,8 +1671,10 @@ fn evalZigTest(
     options: Step.MakeOptions,
     fuzz_context: ?FuzzContext,
 ) !EvalZigTestResult {
-    const gpa = run.step.owner.allocator;
-    const arena = run.step.owner.allocator;
+    const step_owner = run.step.owner;
+    const gpa = step_owner.allocator;
+    const arena = step_owner.allocator;
+    const io = step_owner.graph.io;
 
     // We will update this every time a child runs.
     run.step.result_peak_rss = 0;
@@ -1724,7 +1726,7 @@ fn evalZigTest(
                 run.step.result_stderr = try arena.dupe(u8, poller.reader(.stderr).buffered());
 
                 // Clean up everything and wait for the child to exit.
-                child.stdin.?.close();
+                child.stdin.?.close(io);
                 child.stdin = null;
                 poller.deinit();
                 child_killed = true;
@@ -1744,7 +1746,7 @@ fn evalZigTest(
                 poller.reader(.stderr).tossBuffered();
 
                 // Clean up everything and wait for the child to exit.
-                child.stdin.?.close();
+                child.stdin.?.close(io);
                 child.stdin = null;
                 poller.deinit();
                 child_killed = true;
@@ -2177,7 +2179,7 @@ fn evalGeneric(run: *Run, child: *std.process.Child) !EvalGenericResult {
             child.stdin.?.writeAll(bytes) catch |err| {
                 return run.step.fail("unable to write stdin: {s}", .{@errorName(err)});
             };
-            child.stdin.?.close();
+            child.stdin.?.close(io);
             child.stdin = null;
         },
         .lazy_path => |lazy_path| {
@@ -2185,7 +2187,7 @@ fn evalGeneric(run: *Run, child: *std.process.Child) !EvalGenericResult {
             const file = path.root_dir.handle.openFile(path.subPathOrDot(), .{}) catch |err| {
                 return run.step.fail("unable to open stdin file: {s}", .{@errorName(err)});
             };
-            defer file.close();
+            defer file.close(io);
             // TODO https://github.com/ziglang/zig/issues/23955
             var read_buffer: [1024]u8 = undefined;
             var file_reader = file.reader(io, &read_buffer);
@@ -2204,7 +2206,7 @@ fn evalGeneric(run: *Run, child: *std.process.Child) !EvalGenericResult {
                     stdin_writer.err.?,
                 }),
             };
-            child.stdin.?.close();
+            child.stdin.?.close(io);
             child.stdin = null;
         },
         .none => {},

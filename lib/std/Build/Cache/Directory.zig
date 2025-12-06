@@ -52,8 +52,8 @@ pub fn joinZ(self: Directory, allocator: Allocator, paths: []const []const u8) !
 /// Whether or not the handle should be closed, or the path should be freed
 /// is determined by usage, however this function is provided for convenience
 /// if it happens to be what the caller needs.
-pub fn closeAndFree(self: *Directory, gpa: Allocator) void {
-    self.handle.close();
+pub fn closeAndFree(self: *Directory, gpa: Allocator, io: Io) void {
+    self.handle.close(io);
     if (self.path) |p| gpa.free(p);
     self.* = undefined;
 }

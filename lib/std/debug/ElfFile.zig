@@ -1,5 +1,13 @@
 //! A helper type for loading an ELF file and collecting its DWARF debug information, unwind
 //! information, and symbol table.
+const ElfFile = @This();
+
+const std = @import("std");
+const Io = std.Io;
+const Endian = std.builtin.Endian;
+const Dwarf = std.debug.Dwarf;
+const Allocator = std.mem.Allocator;
+const elf = std.elf;
 
 is_64: bool,
 endian: Endian,
@@ -358,10 +366,17 @@ const Section = struct {
     const Array = std.enums.EnumArray(Section.Id, ?Section);
 };
 
-fn loadSeparateDebugFile(arena: Allocator, main_loaded: *LoadInnerResult, opt_crc: ?u32, comptime fmt: []const u8, args: anytype) Allocator.Error!?[]align(std.heap.page_size_min) const u8 {
+fn loadSeparateDebugFile(
+    arena: Allocator,
+    io: Io,
+    main_loaded: *LoadInnerResult,
+    opt_crc: ?u32,
+    comptime fmt: []const u8,
+    args: anytype,
+) Allocator.Error!?[]align(std.heap.page_size_min) const u8 {
     const path = try std.fmt.allocPrint(arena, fmt, args);
     const elf_file = std.fs.cwd().openFile(path, .{}) catch return null;
-    defer elf_file.close();
+    defer elf_file.close(io);
 
     const result = loadInner(arena, elf_file, opt_crc) catch |err| switch (err) {
         error.OutOfMemory => |e| return e,
@@ -529,10 +544,3 @@ fn loadInner(
         .mapped_mem = mapped_mem,
     };
 }
-
-const std = @import("std");
-const Endian = std.builtin.Endian;
-const Dwarf = std.debug.Dwarf;
-const ElfFile = @This();
-const Allocator = std.mem.Allocator;
-const elf = std.elf;

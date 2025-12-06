@@ -131,7 +131,7 @@ pub const SelectiveWalker = struct {
     /// After each call to this function, and on deinit(), the memory returned
     /// from this function becomes invalid. A copy must be made in order to keep
     /// a reference to the path.
-    pub fn next(self: *SelectiveWalker) Error!?Walker.Entry {
+    pub fn next(self: *SelectiveWalker, io: Io) Error!?Walker.Entry {
         while (self.stack.items.len > 0) {
             const top = &self.stack.items[self.stack.items.len - 1];
             var dirname_len = top.dirname_len;
@@ -142,7 +142,7 @@ pub const SelectiveWalker = struct {
                 // likely just fail with the same error.
                 var item = self.stack.pop().?;
                 if (self.stack.items.len != 0) {
-                    item.iter.dir.close();
+                    item.iter.dir.close(io);
                 }
                 return err;
             }) |entry| {
@@ -164,7 +164,7 @@ pub const SelectiveWalker = struct {
             } else {
                 var item = self.stack.pop().?;
                 if (self.stack.items.len != 0) {
-                    item.iter.dir.close();
+                    item.iter.dir.close(io);
                 }
             }
         }
@@ -172,7 +172,7 @@ pub const SelectiveWalker = struct {
     }
 
     /// Traverses into the directory, continuing walking one level down.
-    pub fn enter(self: *SelectiveWalker, entry: Walker.Entry) !void {
+    pub fn enter(self: *SelectiveWalker, io: Io, entry: Walker.Entry) !void {
         if (entry.kind != .directory) {
             @branchHint(.cold);
             return;
@@ -184,7 +184,7 @@ pub const SelectiveWalker = struct {
                 else => |e| return e,
             }
         };
-        errdefer new_dir.close();
+        errdefer new_dir.close(io);
 
         try self.stack.append(self.allocator, .{
             .iter = new_dir.iterateAssumeFirstIteration(),
@@ -200,11 +200,11 @@ pub const SelectiveWalker = struct {
     /// Leaves the current directory, continuing walking one level up.
     /// If the current entry is a directory entry, then the "current directory"
     /// will pertain to that entry if `enter` is called before `leave`.
-    pub fn leave(self: *SelectiveWalker) void {
+    pub fn leave(self: *SelectiveWalker, io: Io) void {
         var item = self.stack.pop().?;
         if (self.stack.items.len != 0) {
             @branchHint(.likely);
-            item.iter.dir.close();
+            item.iter.dir.close(io);
         }
     }
 };
@@ -558,7 +558,8 @@ pub fn makeDir(dir: Dir, io: Io, sub_path: []const u8, permissions: Permissions)
 
 pub const MakePathError = MakeError || StatPathError;
 
-/// Creates parent directories as necessary to ensure `sub_path` exists as a directory.
+/// Creates parent directories with default permissions as necessary to ensure
+/// `sub_path` exists as a directory.
 ///
 /// Returns success if the path already exists and is a directory.
 ///
@@ -579,8 +580,11 @@ pub const MakePathError = MakeError || StatPathError;
 /// - On other platforms, `..` are not resolved before the path is passed to `mkdirat`,
 ///   meaning a `sub_path` like "first/../second" will create both a `./first`
 ///   and a `./second` directory.
-pub fn makePath(dir: Dir, io: Io, sub_path: []const u8, permissions: Permissions) MakePathError!void {
-    _ = try io.vtable.dirMakePath(io.userdata, dir, sub_path, permissions);
+///
+/// See also:
+/// * `makePathStatus`
+pub fn makePath(dir: Dir, io: Io, sub_path: []const u8) MakePathError!void {
+    _ = try io.vtable.dirMakePath(io.userdata, dir, sub_path, .default_dir);
 }
 
 pub const MakePathStatus = enum { existed, created };
@@ -593,6 +597,11 @@ pub fn makePathStatus(dir: Dir, io: Io, sub_path: []const u8, permissions: Permi
 
 pub const MakeOpenPathError = MakeError || OpenError || StatPathError;
 
+pub const MakeOpenPathOptions = struct {
+    open_options: OpenOptions = .{},
+    permissions: Permissions = .default_dir,
+};
+
 /// Performs the equivalent of `makePath` followed by `openDir`, atomically if possible.
 ///
 /// When this operation is canceled, it may leave the file system in a
@@ -601,8 +610,8 @@ pub const MakeOpenPathError = MakeError || OpenError || StatPathError;
 /// On Windows, `sub_path` should be encoded as [WTF-8](https://wtf-8.codeberg.page/).
 /// On WASI, `sub_path` should be encoded as valid UTF-8.
 /// On other platforms, `sub_path` is an opaque sequence of bytes with no particular encoding.
-pub fn makeOpenPath(dir: Dir, io: Io, sub_path: []const u8, permissions: Permissions, options: OpenOptions) MakeOpenPathError!Dir {
-    return io.vtable.dirMakeOpenPath(io.userdata, dir, sub_path, permissions, options);
+pub fn makeOpenPath(dir: Dir, io: Io, sub_path: []const u8, options: MakeOpenPathOptions) MakeOpenPathError!Dir {
+    return io.vtable.dirMakeOpenPath(io.userdata, dir, sub_path, options.permissions, options.open_options);
 }
 
 pub const Stat = File.Stat;
@@ -1266,10 +1275,10 @@ fn deleteTreeMinStackSizeWithKindHint(parent: Dir, io: Io, sub_path: []const u8,
     start_over: while (true) {
         var dir = (try parent.deleteTreeOpenInitialSubpath(io, sub_path, kind_hint)) orelse return;
         var cleanup_dir_parent: ?Dir = null;
-        defer if (cleanup_dir_parent) |*d| d.close();
+        defer if (cleanup_dir_parent) |*d| d.close(io);
 
         var cleanup_dir = true;
-        defer if (cleanup_dir) dir.close();
+        defer if (cleanup_dir) dir.close(io);
 
         // Valid use of max_path_bytes because dir_name_buf will only
         // ever store a single path component that was returned from the
@@ -1315,7 +1324,7 @@ fn deleteTreeMinStackSizeWithKindHint(parent: Dir, io: Io, sub_path: []const u8,
                             error.Canceled,
                             => |e| return e,
                         };
-                        if (cleanup_dir_parent) |*d| d.close();
+                        if (cleanup_dir_parent) |*d| d.close(io);
                         cleanup_dir_parent = dir;
                         dir = new_dir;
                         const result = dir_name_buf[0..entry.name.len];
@@ -1354,7 +1363,7 @@ fn deleteTreeMinStackSizeWithKindHint(parent: Dir, io: Io, sub_path: []const u8,
             }
             // Reached the end of the directory entries, which means we successfully deleted all of them.
             // Now to remove the directory itself.
-            dir.close();
+            dir.close(io);
             cleanup_dir = false;
 
             if (cleanup_dir_parent) |d| {

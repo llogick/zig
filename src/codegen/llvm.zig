@@ -799,6 +799,7 @@ pub const Object = struct {
     pub fn emit(o: *Object, pt: Zcu.PerThread, options: EmitOptions) error{ LinkFailure, OutOfMemory }!void {
         const zcu = pt.zcu;
         const comp = zcu.comp;
+        const io = comp.io;
         const diags = &comp.link_diags;
 
         {
@@ -979,7 +980,7 @@ pub const Object = struct {
             if (options.pre_bc_path) |path| {
                 var file = std.fs.cwd().createFile(path, .{}) catch |err|
                     return diags.fail("failed to create '{s}': {s}", .{ path, @errorName(err) });
-                defer file.close();
+                defer file.close(io);
 
                 const ptr: [*]const u8 = @ptrCast(bitcode.ptr);
                 file.writeAll(ptr[0..(bitcode.len * 4)]) catch |err|
@@ -992,7 +993,7 @@ pub const Object = struct {
             if (options.post_bc_path) |path| {
                 var file = std.fs.cwd().createFile(path, .{}) catch |err|
                     return diags.fail("failed to create '{s}': {s}", .{ path, @errorName(err) });
-                defer file.close();
+                defer file.close(io);
 
                 const ptr: [*]const u8 = @ptrCast(bitcode.ptr);
                 file.writeAll(ptr[0..(bitcode.len * 4)]) catch |err|

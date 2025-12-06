@@ -1,5 +1,28 @@
+const DebugSymbols = @This();
+
+const std = @import("std");
+const Io = std.Io;
+const assert = std.debug.assert;
+const fs = std.fs;
+const log = std.log.scoped(.link_dsym);
+const macho = std.macho;
+const makeStaticString = MachO.makeStaticString;
+const math = std.math;
+const mem = std.mem;
+const Writer = std.Io.Writer;
+const Allocator = std.mem.Allocator;
+
+const link = @import("../../link.zig");
+const MachO = @import("../MachO.zig");
+const StringTable = @import("../StringTable.zig");
+const Type = @import("../../Type.zig");
+const trace = @import("../../tracy.zig").trace;
+const load_commands = @import("load_commands.zig");
+const padToIdeal = MachO.padToIdeal;
+
+io: Io,
 allocator: Allocator,
-file: ?fs.File,
+file: ?Io.File,
 
 symtab_cmd: macho.symtab_command = .{},
 uuid_cmd: macho.uuid_command = .{ .uuid = [_]u8{0} ** 16 },
@@ -208,7 +231,8 @@ pub fn flush(self: *DebugSymbols, macho_file: *MachO) !void {
 
 pub fn deinit(self: *DebugSymbols) void {
     const gpa = self.allocator;
-    if (self.file) |file| file.close();
+    const io = self.io;
+    if (self.file) |file| file.close(io);
     self.segments.deinit(gpa);
     self.sections.deinit(gpa);
     self.relocs.deinit(gpa);
@@ -443,25 +467,3 @@ pub fn getSection(self: DebugSymbols, sect: u8) macho.section_64 {
     assert(sect < self.sections.items.len);
     return self.sections.items[sect];
 }
-
-const DebugSymbols = @This();
-
-const std = @import("std");
-const build_options = @import("build_options");
-const assert = std.debug.assert;
-const fs = std.fs;
-const link = @import("../../link.zig");
-const load_commands = @import("load_commands.zig");
-const log = std.log.scoped(.link_dsym);
-const macho = std.macho;
-const makeStaticString = MachO.makeStaticString;
-const math = std.math;
-const mem = std.mem;
-const padToIdeal = MachO.padToIdeal;
-const trace = @import("../../tracy.zig").trace;
-const Writer = std.Io.Writer;
-
-const Allocator = mem.Allocator;
-const MachO = @import("../MachO.zig");
-const StringTable = @import("../StringTable.zig");
-const Type = @import("../../Type.zig");

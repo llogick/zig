@@ -28,7 +28,7 @@ test "write a file, read it, then delete it" {
     const tmp_file_name = "temp_test_file.txt";
     {
         var file = try tmp.dir.createFile(tmp_file_name, .{});
-        defer file.close();
+        defer file.close(io);
 
         var file_writer = file.writer(&.{});
         const st = &file_writer.interface;
@@ -45,7 +45,7 @@ test "write a file, read it, then delete it" {
 
     {
         var file = try tmp.dir.openFile(tmp_file_name, .{});
-        defer file.close();
+        defer file.close(io);
 
         const file_size = try file.getEndPos();
         const expected_file_size: u64 = "begin".len + data.len + "end".len;
@@ -67,9 +67,11 @@ test "File seek ops" {
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
+    const io = testing.io;
+
     const tmp_file_name = "temp_test_file.txt";
     var file = try tmp.dir.createFile(tmp_file_name, .{});
-    defer file.close();
+    defer file.close(io);
 
     try file.writeAll(&([_]u8{0x55} ** 8192));
 
@@ -88,12 +90,14 @@ test "File seek ops" {
 }
 
 test "setEndPos" {
+    const io = testing.io;
+
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
     const tmp_file_name = "temp_test_file.txt";
     var file = try tmp.dir.createFile(tmp_file_name, .{});
-    defer file.close();
+    defer file.close(io);
 
     // Verify that the file size changes and the file offset is not moved
     try expect((try file.getEndPos()) == 0);
@@ -111,12 +115,14 @@ test "setEndPos" {
 }
 
 test "updateTimes" {
+    const io = testing.io;
+
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
     const tmp_file_name = "just_a_temporary_file.txt";
     var file = try tmp.dir.createFile(tmp_file_name, .{ .read = true });
-    defer file.close();
+    defer file.close(io);
 
     const stat_old = try file.stat();
     // Set atime and mtime to 5s before

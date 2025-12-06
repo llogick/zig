@@ -721,13 +721,13 @@ pub const Directories = struct {
     /// This may be the same as `global_cache`.
     local_cache: Cache.Directory,
 
-    pub fn deinit(dirs: *Directories) void {
+    pub fn deinit(dirs: *Directories, io: Io) void {
         // The local and global caches could be the same.
         const close_local = dirs.local_cache.handle.fd != dirs.global_cache.handle.fd;
 
-        dirs.global_cache.handle.close();
-        if (close_local) dirs.local_cache.handle.close();
-        dirs.zig_lib.handle.close();
+        dirs.global_cache.handle.close(io);
+        if (close_local) dirs.local_cache.handle.close(io);
+        dirs.zig_lib.handle.close(io);
     }
 
     /// Returns a `Directories` where `local_cache` is replaced with `global_cache`, intended for
@@ -1105,7 +1105,7 @@ pub const CObject = struct {
                 if (diag.src_loc.offset == 0 or diag.src_loc.column == 0) break :source_line 0;
 
                 const file = fs.cwd().openFile(file_name, .{}) catch break :source_line 0;
-                defer file.close();
+                defer file.close(io);
                 var buffer: [1024]u8 = undefined;
                 var file_reader = file.reader(io, &buffer);
                 file_reader.seekTo(diag.src_loc.offset + 1 - diag.src_loc.column) catch break :source_line 0;
@@ -1180,7 +1180,7 @@ pub const CObject = struct {
 
                 var buffer: [1024]u8 = undefined;
                 const file = try fs.cwd().openFile(path, .{});
-                defer file.close();
+                defer file.close(io);
                 var file_reader = file.reader(io, &buffer);
                 var bc = std.zig.llvm.BitcodeReader.init(gpa, .{ .reader = &file_reader.interface });
                 defer bc.deinit();
@@ -1617,13 +1617,13 @@ const CacheUse = union(CacheMode) {
         }
     };
 
-    fn deinit(cu: CacheUse) void {
+    fn deinit(cu: CacheUse, io: Io) void {
         switch (cu) {
             .none => |none| {
                 assert(none.tmp_artifact_directory == null);
             },
             .incremental => |incremental| {
-                incremental.artifact_directory.handle.close();
+                incremental.artifact_directory.handle.close(io);
             },
             .whole => |whole| {
                 assert(whole.tmp_artifact_directory == null);
@@ -2113,7 +2113,7 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
         cache.addPrefix(options.dirs.zig_lib);
         cache.addPrefix(options.dirs.local_cache);
         cache.addPrefix(options.dirs.global_cache);
-        errdefer cache.manifest_dir.close();
+        errdefer cache.manifest_dir.close(io);
 
         // This is shared hasher state common to zig source and all C source files.
         cache.hash.addBytes(build_options.version);
@@ -2157,7 +2157,7 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
             var local_zir_dir = options.dirs.local_cache.handle.makeOpenPath(zir_sub_dir, .{}) catch |err| {
                 return diag.fail(.{ .create_cache_path = .{ .which = .local, .sub = zir_sub_dir, .err = err } });
             };
-            errdefer local_zir_dir.close();
+            errdefer local_zir_dir.close(io);
             const local_zir_cache: Cache.Directory = .{
                 .handle = local_zir_dir,
                 .path = try options.dirs.local_cache.join(arena, &.{zir_sub_dir}),
@@ -2165,7 +2165,7 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
             var global_zir_dir = options.dirs.global_cache.handle.makeOpenPath(zir_sub_dir, .{}) catch |err| {
                 return diag.fail(.{ .create_cache_path = .{ .which = .global, .sub = zir_sub_dir, .err = err } });
             };
-            errdefer global_zir_dir.close();
+            errdefer global_zir_dir.close(io);
             const global_zir_cache: Cache.Directory = .{
                 .handle = global_zir_dir,
                 .path = try options.dirs.global_cache.join(arena, &.{zir_sub_dir}),
@@ -2436,7 +2436,7 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
                 var artifact_dir = options.dirs.local_cache.handle.makeOpenPath(artifact_sub_dir, .{}) catch |err| {
                     return diag.fail(.{ .create_cache_path = .{ .which = .local, .sub = artifact_sub_dir, .err = err } });
                 };
-                errdefer artifact_dir.close();
+                errdefer artifact_dir.close(io);
                 const artifact_directory: Cache.Directory = .{
                     .handle = artifact_dir,
                     .path = try options.dirs.local_cache.join(arena, &.{artifact_sub_dir}),
@@ -2689,6 +2689,7 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
 
 pub fn destroy(comp: *Compilation) void {
     const gpa = comp.gpa;
+    const io = comp.io;
 
     if (comp.bin_file) |lf| lf.destroy();
     if (comp.zcu) |zcu| zcu.deinit();
@@ -2760,7 +2761,7 @@ pub fn destroy(comp: *Compilation) void {
 
     comp.clearMiscFailures();
 
-    comp.cache_parent.manifest_dir.close();
+    comp.cache_parent.manifest_dir.close(io);
 }
 
 pub fn clearMiscFailures(comp: *Compilation) void {
@@ -2791,10 +2792,12 @@ pub fn hotCodeSwap(
 }
 
 fn cleanupAfterUpdate(comp: *Compilation, tmp_dir_rand_int: u64) void {
+    const io = comp.io;
+
     switch (comp.cache_use) {
         .none => |none| {
             if (none.tmp_artifact_directory) |*tmp_dir| {
-                tmp_dir.handle.close();
+                tmp_dir.handle.close(io);
                 none.tmp_artifact_directory = null;
                 if (dev.env == .bootstrap) {
                     // zig1 uses `CacheMode.none`, but it doesn't need to know how to delete
@@ -2834,7 +2837,7 @@ fn cleanupAfterUpdate(comp: *Compilation, tmp_dir_rand_int: u64) void {
                 comp.bin_file = null;
             }
             if (whole.tmp_artifact_directory) |*tmp_dir| {
-                tmp_dir.handle.close();
+                tmp_dir.handle.close(io);
                 whole.tmp_artifact_directory = null;
                 const tmp_dir_sub_path = "tmp" ++ fs.path.sep_str ++ std.fmt.hex(tmp_dir_rand_int);
                 comp.dirs.local_cache.handle.deleteTree(tmp_dir_sub_path) catch |err| {
@@ -3152,7 +3155,7 @@ pub fn update(comp: *Compilation, main_progress_node: std.Progress.Node) UpdateE
                         // the file handle and re-open it in the follow up call to
                         // `makeWritable`.
                         if (lf.file) |f| {
-                            f.close();
+                            f.close(io);
                             lf.file = null;
 
                             if (lf.closeDebugInfo()) break :w .lf_and_debug;
@@ -3165,7 +3168,7 @@ pub fn update(comp: *Compilation, main_progress_node: std.Progress.Node) UpdateE
 
             // Rename the temporary directory into place.
             // Close tmp dir and link.File to avoid open handle during rename.
-            whole.tmp_artifact_directory.?.handle.close();
+            whole.tmp_artifact_directory.?.handle.close(io);
             whole.tmp_artifact_directory = null;
             const s = fs.path.sep_str;
             const tmp_dir_sub_path = "tmp" ++ s ++ std.fmt.hex(tmp_dir_rand_int);
@@ -5258,6 +5261,7 @@ fn workerDocsCopy(comp: *Compilation) void {
 
 fn docsCopyFallible(comp: *Compilation) anyerror!void {
     const zcu = comp.zcu orelse return comp.lockAndSetMiscFailure(.docs_copy, "no Zig code to document", .{});
+    const io = comp.io;
 
     const docs_path = comp.resolveEmitPath(comp.emit_docs.?);
     var out_dir = docs_path.root_dir.handle.makeOpenPath(docs_path.sub_path, .{}) catch |err| {
@@ -5267,7 +5271,7 @@ fn docsCopyFallible(comp: *Compilation) anyerror!void {
             .{ docs_path, @errorName(err) },
         );
     };
-    defer out_dir.close();
+    defer out_dir.close(io);
 
     for (&[_][]const u8{ "docs/main.js", "docs/index.html" }) |sub_path| {
         const basename = fs.path.basename(sub_path);
@@ -5287,7 +5291,7 @@ fn docsCopyFallible(comp: *Compilation) anyerror!void {
             .{ docs_path, @errorName(err) },
         );
     };
-    defer tar_file.close();
+    defer tar_file.close(io);
 
     var buffer: [1024]u8 = undefined;
     var tar_file_writer = tar_file.writer(&buffer);
@@ -5331,7 +5335,7 @@ fn docsCopyModule(
     } catch |err| {
         return comp.lockAndSetMiscFailure(.docs_copy, "unable to open directory '{f}': {t}", .{ root.fmt(comp), err });
     };
-    defer mod_dir.close();
+    defer mod_dir.close(io);
 
     var walker = try mod_dir.walk(comp.gpa);
     defer walker.deinit();
@@ -5355,7 +5359,7 @@ fn docsCopyModule(
                 root.fmt(comp), entry.path, err,
             });
         };
-        defer file.close();
+        defer file.close(io);
         const stat = try file.stat();
         var file_reader: fs.File.Reader = .initSize(file.adaptToNewApi(), io, &buffer, stat.size);
 
@@ -5510,7 +5514,7 @@ fn workerDocsWasmFallible(comp: *Compilation, prog_node: std.Progress.Node) SubU
         );
         return error.AlreadyReported;
     };
-    defer out_dir.close();
+    defer out_dir.close(io);
 
     crt_file.full_object_path.root_dir.handle.copyFile(
         crt_file.full_object_path.sub_path,
@@ -5693,7 +5697,7 @@ pub fn translateC(
     const tmp_sub_path = "tmp" ++ fs.path.sep_str ++ tmp_basename;
     const cache_dir = comp.dirs.local_cache.handle;
     var cache_tmp_dir = try cache_dir.makeOpenPath(tmp_sub_path, .{});
-    defer cache_tmp_dir.close();
+    defer cache_tmp_dir.close(io);
 
     const translated_path = try comp.dirs.local_cache.join(arena, &.{ tmp_sub_path, translated_basename });
     const source_path = switch (source) {
@@ -6268,7 +6272,7 @@ fn updateCObject(comp: *Compilation, c_object: *CObject, c_obj_prog_node: std.Pr
         // so we need a temporary filename.
         const out_obj_path = try comp.tmpFilePath(arena, o_basename);
         var zig_cache_tmp_dir = try comp.dirs.local_cache.handle.makeOpenPath("tmp", .{});
-        defer zig_cache_tmp_dir.close();
+        defer zig_cache_tmp_dir.close(io);
 
         const out_diag_path = if (comp.clang_passthrough_mode or !ext.clangSupportsDiagnostics())
             null
@@ -6433,7 +6437,7 @@ fn updateCObject(comp: *Compilation, c_object: *CObject, c_obj_prog_node: std.Pr
         const digest = man.final();
         const o_sub_path = try fs.path.join(arena, &[_][]const u8{ "o", &digest });
         var o_dir = try comp.dirs.local_cache.handle.makeOpenPath(o_sub_path, .{});
-        defer o_dir.close();
+        defer o_dir.close(io);
         const tmp_basename = fs.path.basename(out_obj_path);
         try fs.rename(zig_cache_tmp_dir, tmp_basename, o_dir, o_basename);
         break :blk digest;
@@ -6477,8 +6481,6 @@ fn updateWin32Resource(comp: *Compilation, win32_resource: *Win32Resource, win32
     const tracy_trace = trace(@src());
     defer tracy_trace.end();
 
-    const io = comp.io;
-
     const src_path = switch (win32_resource.src) {
         .rc => |rc_src| rc_src.src_path,
         .manifest => |src_path| src_path,
@@ -6486,6 +6488,8 @@ fn updateWin32Resource(comp: *Compilation, win32_resource: *Win32Resource, win32
     const src_basename = fs.path.basename(src_path);
 
     log.debug("updating win32 resource: {s}", .{src_path});
+
+    const io = comp.io;
 
     var arena_allocator = std.heap.ArenaAllocator.init(comp.gpa);
     defer arena_allocator.deinit();
@@ -6522,7 +6526,7 @@ fn updateWin32Resource(comp: *Compilation, win32_resource: *Win32Resource, win32
 
             const o_sub_path = try fs.path.join(arena, &.{ "o", &digest });
             var o_dir = try comp.dirs.local_cache.handle.makeOpenPath(o_sub_path, .{});
-            defer o_dir.close();
+            defer o_dir.close(io);
 
             const in_rc_path = try comp.dirs.local_cache.join(comp.gpa, &.{
                 o_sub_path, rc_basename,
@@ -6610,7 +6614,7 @@ fn updateWin32Resource(comp: *Compilation, win32_resource: *Win32Resource, win32
 
     const digest = if (try man.hit()) man.final() else blk: {
         var zig_cache_tmp_dir = try comp.dirs.local_cache.handle.makeOpenPath("tmp", .{});
-        defer zig_cache_tmp_dir.close();
+        defer zig_cache_tmp_dir.close(io);
 
         const res_filename = try std.fmt.allocPrint(arena, "{s}.res", .{rc_basename_noext});
 
@@ -6681,7 +6685,7 @@ fn updateWin32Resource(comp: *Compilation, win32_resource: *Win32Resource, win32
         const digest = man.final();
         const o_sub_path = try fs.path.join(arena, &[_][]const u8{ "o", &digest });
         var o_dir = try comp.dirs.local_cache.handle.makeOpenPath(o_sub_path, .{});
-        defer o_dir.close();
+        defer o_dir.close(io);
         const tmp_basename = fs.path.basename(out_res_path);
         try fs.rename(zig_cache_tmp_dir, tmp_basename, o_dir, res_filename);
         break :blk digest;

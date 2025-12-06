@@ -4,6 +4,7 @@ const builtin = @import("builtin");
 const native_os = builtin.os.tag;
 
 const std = @import("../std.zig");
+const Io = std.Io;
 const unicode = std.unicode;
 const fs = std.fs;
 const process = std.process;
@@ -277,17 +278,17 @@ pub fn spawnAndWait(self: *ChildProcess) SpawnError!Term {
 }
 
 /// Forcibly terminates child process and then cleans up all resources.
-pub fn kill(self: *ChildProcess) !Term {
+pub fn kill(self: *ChildProcess, io: Io) !Term {
     if (native_os == .windows) {
-        return self.killWindows(1);
+        return self.killWindows(io, 1);
     } else {
-        return self.killPosix();
+        return self.killPosix(io);
     }
 }
 
-pub fn killWindows(self: *ChildProcess, exit_code: windows.UINT) !Term {
+pub fn killWindows(self: *ChildProcess, io: Io, exit_code: windows.UINT) !Term {
     if (self.term) |term| {
-        self.cleanupStreams();
+        self.cleanupStreams(io);
         return term;
     }
 
@@ -303,20 +304,20 @@ pub fn killWindows(self: *ChildProcess, exit_code: windows.UINT) !Term {
         },
         else => return err,
     };
-    try self.waitUnwrappedWindows();
+    try self.waitUnwrappedWindows(io);
     return self.term.?;
 }
 
-pub fn killPosix(self: *ChildProcess) !Term {
+pub fn killPosix(self: *ChildProcess, io: Io) !Term {
     if (self.term) |term| {
-        self.cleanupStreams();
+        self.cleanupStreams(io);
         return term;
     }
     posix.kill(self.id, posix.SIG.TERM) catch |err| switch (err) {
         error.ProcessNotFound => return error.AlreadyTerminated,
         else => return err,
     };
-    self.waitUnwrappedPosix();
+    self.waitUnwrappedPosix(io);
     return self.term.?;
 }
 
@@ -354,15 +355,15 @@ pub fn waitForSpawn(self: *ChildProcess) SpawnError!void {
 }
 
 /// Blocks until child process terminates and then cleans up all resources.
-pub fn wait(self: *ChildProcess) WaitError!Term {
+pub fn wait(self: *ChildProcess, io: Io) WaitError!Term {
     try self.waitForSpawn(); // report spawn errors
     if (self.term) |term| {
-        self.cleanupStreams();
+        self.cleanupStreams(io);
         return term;
     }
     switch (native_os) {
-        .windows => try self.waitUnwrappedWindows(),
-        else => self.waitUnwrappedPosix(),
+        .windows => try self.waitUnwrappedWindows(io),
+        else => self.waitUnwrappedPosix(io),
     }
     self.id = undefined;
     return self.term.?;
@@ -474,7 +475,7 @@ pub fn run(args: struct {
     };
 }
 
-fn waitUnwrappedWindows(self: *ChildProcess) WaitError!void {
+fn waitUnwrappedWindows(self: *ChildProcess, io: Io) WaitError!void {
     const result = windows.WaitForSingleObjectEx(self.id, windows.INFINITE, false);
 
     self.term = @as(SpawnError!Term, x: {
@@ -492,11 +493,11 @@ fn waitUnwrappedWindows(self: *ChildProcess) WaitError!void {
 
     posix.close(self.id);
     posix.close(self.thread_handle);
-    self.cleanupStreams();
+    self.cleanupStreams(io);
     return result;
 }
 
-fn waitUnwrappedPosix(self: *ChildProcess) void {
+fn waitUnwrappedPosix(self: *ChildProcess, io: Io) void {
     const res: posix.WaitPidResult = res: {
         if (self.request_resource_usage_statistics) {
             switch (native_os) {
@@ -527,7 +528,7 @@ fn waitUnwrappedPosix(self: *ChildProcess) void {
         break :res posix.waitpid(self.id, 0);
     };
     const status = res.status;
-    self.cleanupStreams();
+    self.cleanupStreams(io);
     self.handleWaitResult(status);
 }
 
@@ -535,17 +536,17 @@ fn handleWaitResult(self: *ChildProcess, status: u32) void {
     self.term = statusToTerm(status);
 }
 
-fn cleanupStreams(self: *ChildProcess) void {
+fn cleanupStreams(self: *ChildProcess, io: Io) void {
     if (self.stdin) |*stdin| {
-        stdin.close();
+        stdin.close(io);
         self.stdin = null;
     }
     if (self.stdout) |*stdout| {
-        stdout.close();
+        stdout.close(io);
         self.stdout = null;
     }
     if (self.stderr) |*stderr| {
-        stderr.close();
+        stderr.close(io);
         self.stderr = null;
     }
 }

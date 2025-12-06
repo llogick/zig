@@ -328,21 +328,21 @@ fn mainArgs(gpa: Allocator, arena: Allocator, args: []const []const u8) !void {
             .prepend_global_cache_path = true,
         });
     } else if (mem.eql(u8, cmd, "init")) {
-        return cmdInit(gpa, arena, cmd_args);
+        return cmdInit(gpa, arena, io, cmd_args);
     } else if (mem.eql(u8, cmd, "targets")) {
         dev.check(.targets_command);
         const host = std.zig.resolveTargetQueryOrFatal(io, .{});
-        var stdout_writer = fs.File.stdout().writer(&stdout_buffer);
-        try @import("print_targets.zig").cmdTargets(arena, cmd_args, &stdout_writer.interface, &host);
+        var stdout_writer = Io.File.stdout().writer(&stdout_buffer);
+        try @import("print_targets.zig").cmdTargets(arena, io, cmd_args, &stdout_writer.interface, &host);
         return stdout_writer.interface.flush();
     } else if (mem.eql(u8, cmd, "version")) {
         dev.check(.version_command);
-        try fs.File.stdout().writeAll(build_options.version ++ "\n");
+        try Io.File.stdout().writeAll(build_options.version ++ "\n");
         return;
     } else if (mem.eql(u8, cmd, "env")) {
         dev.check(.env_command);
         const host = std.zig.resolveTargetQueryOrFatal(io, .{});
-        var stdout_writer = fs.File.stdout().writer(&stdout_buffer);
+        var stdout_writer = Io.File.stdout().writer(&stdout_buffer);
         try @import("print_env.zig").cmdEnv(
             arena,
             &stdout_writer.interface,
@@ -358,10 +358,10 @@ fn mainArgs(gpa: Allocator, arena: Allocator, args: []const []const u8) !void {
         });
     } else if (mem.eql(u8, cmd, "zen")) {
         dev.check(.zen_command);
-        return fs.File.stdout().writeAll(info_zen);
+        return Io.File.stdout().writeAll(info_zen);
     } else if (mem.eql(u8, cmd, "help") or mem.eql(u8, cmd, "-h") or mem.eql(u8, cmd, "--help")) {
         dev.check(.help_command);
-        return fs.File.stdout().writeAll(usage);
+        return Io.File.stdout().writeAll(usage);
     } else if (mem.eql(u8, cmd, "ast-check")) {
         return cmdAstCheck(arena, io, cmd_args);
     } else if (mem.eql(u8, cmd, "detect-cpu")) {
@@ -698,7 +698,7 @@ const Emit = union(enum) {
     yes: []const u8,
 
     const OutputToCacheReason = enum { listen, @"zig run", @"zig test" };
-    fn resolve(emit: Emit, default_basename: []const u8, output_to_cache: ?OutputToCacheReason) Compilation.CreateOptions.Emit {
+    fn resolve(io: Io, emit: Emit, default_basename: []const u8, output_to_cache: ?OutputToCacheReason) Compilation.CreateOptions.Emit {
         return switch (emit) {
             .no => .no,
             .yes_default_path => if (output_to_cache != null) .yes_cache else .{ .yes_path = default_basename },
@@ -716,7 +716,7 @@ const Emit = union(enum) {
                     var dir = fs.cwd().openDir(dir_path, .{}) catch |err| {
                         fatal("unable to open output directory '{s}': {s}", .{ dir_path, @errorName(err) });
                     };
-                    dir.close();
+                    dir.close(io);
                 }
                 break :e .{ .yes_path = path };
             },
@@ -1034,7 +1034,7 @@ fn buildOutputType(
                     };
                 } else if (mem.startsWith(u8, arg, "-")) {
                     if (mem.eql(u8, arg, "-h") or mem.eql(u8, arg, "--help")) {
-                        try fs.File.stdout().writeAll(usage_build_generic);
+                        try Io.File.stdout().writeAll(usage_build_generic);
                         return cleanExit();
                     } else if (mem.eql(u8, arg, "--")) {
                         if (arg_mode == .run) {
@@ -2834,9 +2834,9 @@ fn buildOutputType(
                 } else if (mem.eql(u8, arg, "-V")) {
                     warn("ignoring request for supported emulations: unimplemented", .{});
                 } else if (mem.eql(u8, arg, "-v")) {
-                    try fs.File.stdout().writeAll("zig ld " ++ build_options.version ++ "\n");
+                    try Io.File.stdout().writeAll("zig ld " ++ build_options.version ++ "\n");
                 } else if (mem.eql(u8, arg, "--version")) {
-                    try fs.File.stdout().writeAll("zig ld " ++ build_options.version ++ "\n");
+                    try Io.File.stdout().writeAll("zig ld " ++ build_options.version ++ "\n");
                     process.exit(0);
                 } else {
                     fatal("unsupported linker arg: {s}", .{arg});
@@ -3251,8 +3251,8 @@ fn buildOutputType(
         }
     }
 
-    var cleanup_emit_bin_dir: ?fs.Dir = null;
-    defer if (cleanup_emit_bin_dir) |*dir| dir.close();
+    var cleanup_emit_bin_dir: ?Io.Dir = null;
+    defer if (cleanup_emit_bin_dir) |*dir| dir.close(io);
 
     // For `zig run` and `zig test`, we don't want to put the binary in the cwd by default. So, if
     // the binary is requested with no explicit path (as is the default), we emit to the cache.
@@ -3307,7 +3307,7 @@ fn buildOutputType(
                 var dir = fs.cwd().openDir(dir_path, .{}) catch |err| {
                     fatal("unable to open output directory '{s}': {s}", .{ dir_path, @errorName(err) });
                 };
-                dir.close();
+                dir.close(io);
             }
             break :emit .{ .yes_path = path };
         },
@@ -3390,7 +3390,7 @@ fn buildOutputType(
         // will be a hash of its contents — so multiple invocations of
         // `zig cc -` will result in the same temp file name.
         var f = try dirs.local_cache.handle.createFile(dump_path, .{});
-        defer f.close();
+        defer f.close(io);
 
         // Re-using the hasher from Cache, since the functional requirements
         // for the hashing algorithm here and in the cache are the same.
@@ -3399,7 +3399,7 @@ fn buildOutputType(
         var file_writer = f.writer(&.{});
         var buffer: [1000]u8 = undefined;
         var hasher = file_writer.interface.hashed(Cache.Hasher.init("0123456789abcdef"), &buffer);
-        var stdin_reader = fs.File.stdin().readerStreaming(io, &.{});
+        var stdin_reader = Io.File.stdin().readerStreaming(io, &.{});
         _ = hasher.writer.sendFileAll(&stdin_reader, .unlimited) catch |err| switch (err) {
             error.WriteFailed => fatal("failed to write {s}: {t}", .{ dump_path, file_writer.err.? }),
             else => fatal("failed to pipe stdin to {s}: {t}", .{ dump_path, err }),
@@ -3630,13 +3630,13 @@ fn buildOutputType(
     if (show_builtin) {
         const builtin_opts = comp.root_mod.getBuiltinOptions(comp.config);
         const source = try builtin_opts.generate(arena);
-        return fs.File.stdout().writeAll(source);
+        return Io.File.stdout().writeAll(source);
     }
     switch (listen) {
         .none => {},
         .stdio => {
-            var stdin_reader = fs.File.stdin().reader(io, &stdin_buffer);
-            var stdout_writer = fs.File.stdout().writer(&stdout_buffer);
+            var stdin_reader = Io.File.stdin().reader(io, &stdin_buffer);
+            var stdout_writer = Io.File.stdout().writer(&stdout_buffer);
             try serve(
                 comp,
                 &stdin_reader.interface,
@@ -4034,6 +4034,7 @@ fn createModule(
         link.resolveInputs(
             gpa,
             arena,
+            io,
             target,
             &unresolved_link_inputs,
             &create_module.link_inputs,
@@ -4689,8 +4690,8 @@ fn cmdTranslateC(
                 @errorName(err),
             });
         };
-        defer zig_file.close();
-        var stdout_writer = fs.File.stdout().writer(&stdout_buffer);
+        defer zig_file.close(io);
+        var stdout_writer = Io.File.stdout().writer(&stdout_buffer);
         var file_reader = zig_file.reader(io, &.{});
         _ = try stdout_writer.interface.sendFileAll(&file_reader, .unlimited);
         try stdout_writer.interface.flush();
@@ -4728,7 +4729,7 @@ const usage_init =
     \\
 ;
 
-fn cmdInit(gpa: Allocator, arena: Allocator, args: []const []const u8) !void {
+fn cmdInit(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) !void {
     dev.check(.init_command);
 
     var template: enum { example, minimal } = .example;
@@ -4740,7 +4741,7 @@ fn cmdInit(gpa: Allocator, arena: Allocator, args: []const []const u8) !void {
                 if (mem.eql(u8, arg, "-m") or mem.eql(u8, arg, "--minimal")) {
                     template = .minimal;
                 } else if (mem.eql(u8, arg, "-h") or mem.eql(u8, arg, "--help")) {
-                    try fs.File.stdout().writeAll(usage_init);
+                    try Io.File.stdout().writeAll(usage_init);
                     return cleanExit();
                 } else {
                     fatal("unrecognized parameter: '{s}'", .{arg});
@@ -4759,7 +4760,7 @@ fn cmdInit(gpa: Allocator, arena: Allocator, args: []const []const u8) !void {
 
     switch (template) {
         .example => {
-            var templates = findTemplates(gpa, arena);
+            var templates = findTemplates(gpa, arena, io);
             defer templates.deinit();
 
             const s = fs.path.sep_str;
@@ -4789,7 +4790,7 @@ fn cmdInit(gpa: Allocator, arena: Allocator, args: []const []const u8) !void {
             return cleanExit();
         },
         .minimal => {
-            writeSimpleTemplateFile(Package.Manifest.basename,
+            writeSimpleTemplateFile(io, Package.Manifest.basename,
                 \\.{{
                 \\    .name = .{s},
                 \\    .version = "0.0.1",
@@ -4806,7 +4807,7 @@ fn cmdInit(gpa: Allocator, arena: Allocator, args: []const []const u8) !void {
                 else => fatal("failed to create '{s}': {s}", .{ Package.Manifest.basename, @errorName(err) }),
                 error.PathAlreadyExists => fatal("refusing to overwrite '{s}'", .{Package.Manifest.basename}),
             };
-            writeSimpleTemplateFile(Package.build_zig_basename,
+            writeSimpleTemplateFile(io, Package.build_zig_basename,
                 \\const std = @import("std");
                 \\
                 \\pub fn build(b: *std.Build) void {{
@@ -5203,8 +5204,8 @@ fn cmdBuild(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) 
                 .parent = root_mod,
             });
 
-            var cleanup_build_dir: ?fs.Dir = null;
-            defer if (cleanup_build_dir) |*dir| dir.close();
+            var cleanup_build_dir: ?Io.Dir = null;
+            defer if (cleanup_build_dir) |*dir| dir.close(io);
 
             if (dev.env.supports(.fetch_command)) {
                 const fetch_prog_node = root_prog_node.start("Fetch Packages", 0);
@@ -5296,6 +5297,7 @@ fn cmdBuild(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) 
                 try job_queue.createDependenciesSource(&source_buf);
                 const deps_mod = try createDependenciesModule(
                     arena,
+                    io,
                     source_buf.items,
                     root_mod,
                     dirs,
@@ -5357,6 +5359,7 @@ fn cmdBuild(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) 
                 }
             } else try createEmptyDependenciesModule(
                 arena,
+                io,
                 root_mod,
                 dirs,
                 config,
@@ -5623,7 +5626,7 @@ fn jitCmd(
         defer comp.destroy();
 
         if (options.server) {
-            var stdout_writer = fs.File.stdout().writer(&stdout_buffer);
+            var stdout_writer = Io.File.stdout().writer(&stdout_buffer);
             var server: std.zig.Server = .{
                 .out = &stdout_writer.interface,
                 .in = undefined, // won't be receiving messages
@@ -6156,7 +6159,7 @@ fn cmdAstCheck(arena: Allocator, io: Io, args: []const []const u8) !void {
         const arg = args[i];
         if (mem.startsWith(u8, arg, "-")) {
             if (mem.eql(u8, arg, "-h") or mem.eql(u8, arg, "--help")) {
-                try fs.File.stdout().writeAll(usage_ast_check);
+                try Io.File.stdout().writeAll(usage_ast_check);
                 return cleanExit();
             } else if (mem.eql(u8, arg, "-t")) {
                 want_output_text = true;
@@ -6187,9 +6190,9 @@ fn cmdAstCheck(arena: Allocator, io: Io, args: []const []const u8) !void {
             break :file fs.cwd().openFile(p, .{}) catch |err| {
                 fatal("unable to open file '{s}' for ast-check: {s}", .{ display_path, @errorName(err) });
             };
-        } else fs.File.stdin();
-        defer if (zig_source_path != null) f.close();
-        var file_reader: fs.File.Reader = f.reader(io, &stdin_buffer);
+        } else Io.File.stdin();
+        defer if (zig_source_path != null) f.close(io);
+        var file_reader: Io.File.Reader = f.reader(io, &stdin_buffer);
         break :s std.zig.readSourceFileToEndAlloc(arena, &file_reader) catch |err| {
             fatal("unable to load file '{s}' for ast-check: {s}", .{ display_path, @errorName(err) });
         };
@@ -6207,7 +6210,7 @@ fn cmdAstCheck(arena: Allocator, io: Io, args: []const []const u8) !void {
 
     const tree = try Ast.parse(arena, source, mode);
 
-    var stdout_writer = fs.File.stdout().writerStreaming(&stdout_buffer);
+    var stdout_writer = Io.File.stdout().writerStreaming(&stdout_buffer);
     const stdout_bw = &stdout_writer.interface;
     switch (mode) {
         .zig => {
@@ -6330,7 +6333,7 @@ fn cmdDetectCpu(io: Io, args: []const []const u8) !void {
             const arg = args[i];
             if (mem.startsWith(u8, arg, "-")) {
                 if (mem.eql(u8, arg, "-h") or mem.eql(u8, arg, "--help")) {
-                    try fs.File.stdout().writeAll(detect_cpu_usage);
+                    try Io.File.stdout().writeAll(detect_cpu_usage);
                     return cleanExit();
                 } else if (mem.eql(u8, arg, "--llvm")) {
                     use_llvm = true;
@@ -6422,7 +6425,7 @@ fn detectNativeCpuWithLLVM(
 }
 
 fn printCpu(cpu: std.Target.Cpu) !void {
-    var stdout_writer = fs.File.stdout().writerStreaming(&stdout_buffer);
+    var stdout_writer = Io.File.stdout().writerStreaming(&stdout_buffer);
     const stdout_bw = &stdout_writer.interface;
 
     if (cpu.model.llvm_name) |llvm_name| {
@@ -6471,7 +6474,7 @@ fn cmdDumpLlvmInts(
     const dl = tm.createTargetDataLayout();
     const context = llvm.Context.create();
 
-    var stdout_writer = fs.File.stdout().writerStreaming(&stdout_buffer);
+    var stdout_writer = Io.File.stdout().writerStreaming(&stdout_buffer);
     const stdout_bw = &stdout_writer.interface;
     for ([_]u16{ 1, 8, 16, 32, 64, 128, 256 }) |bits| {
         const int_type = context.intType(bits);
@@ -6494,10 +6497,10 @@ fn cmdDumpZir(arena: Allocator, io: Io, args: []const []const u8) !void {
     var f = fs.cwd().openFile(cache_file, .{}) catch |err| {
         fatal("unable to open zir cache file for dumping '{s}': {s}", .{ cache_file, @errorName(err) });
     };
-    defer f.close();
+    defer f.close(io);
 
     const zir = try Zcu.loadZirCache(arena, io, f);
-    var stdout_writer = fs.File.stdout().writerStreaming(&stdout_buffer);
+    var stdout_writer = Io.File.stdout().writerStreaming(&stdout_buffer);
     const stdout_bw = &stdout_writer.interface;
     {
         const instruction_bytes = zir.instructions.len *
@@ -6540,16 +6543,16 @@ fn cmdChangelist(arena: Allocator, io: Io, args: []const []const u8) !void {
     const old_source = source: {
         var f = fs.cwd().openFile(old_source_path, .{}) catch |err|
             fatal("unable to open old source file '{s}': {s}", .{ old_source_path, @errorName(err) });
-        defer f.close();
-        var file_reader: fs.File.Reader = f.reader(io, &stdin_buffer);
+        defer f.close(io);
+        var file_reader: Io.File.Reader = f.reader(io, &stdin_buffer);
         break :source std.zig.readSourceFileToEndAlloc(arena, &file_reader) catch |err|
             fatal("unable to read old source file '{s}': {s}", .{ old_source_path, @errorName(err) });
     };
     const new_source = source: {
         var f = fs.cwd().openFile(new_source_path, .{}) catch |err|
             fatal("unable to open new source file '{s}': {s}", .{ new_source_path, @errorName(err) });
-        defer f.close();
-        var file_reader: fs.File.Reader = f.reader(io, &stdin_buffer);
+        defer f.close(io);
+        var file_reader: Io.File.Reader = f.reader(io, &stdin_buffer);
         break :source std.zig.readSourceFileToEndAlloc(arena, &file_reader) catch |err|
             fatal("unable to read new source file '{s}': {s}", .{ new_source_path, @errorName(err) });
     };
@@ -6581,7 +6584,7 @@ fn cmdChangelist(arena: Allocator, io: Io, args: []const []const u8) !void {
     var inst_map: std.AutoHashMapUnmanaged(Zir.Inst.Index, Zir.Inst.Index) = .empty;
     try Zcu.mapOldZirToNew(arena, old_zir, new_zir, &inst_map);
 
-    var stdout_writer = fs.File.stdout().writerStreaming(&stdout_buffer);
+    var stdout_writer = Io.File.stdout().writerStreaming(&stdout_buffer);
     const stdout_bw = &stdout_writer.interface;
     {
         try stdout_bw.print("Instruction mappings:\n", .{});
@@ -6912,7 +6915,7 @@ fn cmdFetch(
             const arg = args[i];
             if (mem.startsWith(u8, arg, "-")) {
                 if (mem.eql(u8, arg, "-h") or mem.eql(u8, arg, "--help")) {
-                    try fs.File.stdout().writeAll(usage_fetch);
+                    try Io.File.stdout().writeAll(usage_fetch);
                     return cleanExit();
                 } else if (mem.eql(u8, arg, "--global-cache-dir")) {
                     if (i + 1 >= args.len) fatal("expected argument after '{s}'", .{arg});
@@ -6958,7 +6961,7 @@ fn cmdFetch(
             .path = p,
         };
     };
-    defer global_cache_directory.handle.close();
+    defer global_cache_directory.handle.close(io);
 
     var job_queue: Package.Fetch.JobQueue = .{
         .io = io,
@@ -7021,7 +7024,7 @@ fn cmdFetch(
 
     const name = switch (save) {
         .no => {
-            var stdout = fs.File.stdout().writerStreaming(&stdout_buffer);
+            var stdout = Io.File.stdout().writerStreaming(&stdout_buffer);
             try stdout.interface.print("{s}\n", .{package_hash_slice});
             try stdout.interface.flush();
             return cleanExit();
@@ -7043,7 +7046,7 @@ fn cmdFetch(
 
     // The name to use in case the manifest file needs to be created now.
     const init_root_name = fs.path.basename(build_root.directory.path orelse cwd_path);
-    var manifest, var ast = try loadManifest(gpa, arena, .{
+    var manifest, var ast = try loadManifest(gpa, arena, io, .{
         .root_name = try sanitizeExampleName(arena, init_root_name),
         .dir = build_root.directory.handle,
         .color = color,
@@ -7168,6 +7171,7 @@ fn cmdFetch(
 
 fn createEmptyDependenciesModule(
     arena: Allocator,
+    io: Io,
     main_mod: *Package.Module,
     dirs: Compilation.Directories,
     global_options: Compilation.Config,
@@ -7176,6 +7180,7 @@ fn createEmptyDependenciesModule(
     try Package.Fetch.JobQueue.createEmptyDependenciesSource(&source);
     _ = try createDependenciesModule(
         arena,
+        io,
         source.items,
         main_mod,
         dirs,
@@ -7187,6 +7192,7 @@ fn createEmptyDependenciesModule(
 /// build runner to obtain via `@import("@dependencies")`.
 fn createDependenciesModule(
     arena: Allocator,
+    io: Io,
     source: []const u8,
     main_mod: *Package.Module,
     dirs: Compilation.Directories,
@@ -7198,7 +7204,7 @@ fn createDependenciesModule(
     const tmp_dir_sub_path = "tmp" ++ fs.path.sep_str ++ std.fmt.hex(rand_int);
     {
         var tmp_dir = try dirs.local_cache.handle.makeOpenPath(tmp_dir_sub_path, .{});
-        defer tmp_dir.close();
+        defer tmp_dir.close(io);
         try tmp_dir.writeFile(.{ .sub_path = basename, .data = source });
     }
 
@@ -7232,10 +7238,10 @@ fn createDependenciesModule(
 const BuildRoot = struct {
     directory: Cache.Directory,
     build_zig_basename: []const u8,
-    cleanup_build_dir: ?fs.Dir,
+    cleanup_build_dir: ?Io.Dir,
 
-    fn deinit(br: *BuildRoot) void {
-        if (br.cleanup_build_dir) |*dir| dir.close();
+    fn deinit(br: *BuildRoot, io: Io) void {
+        if (br.cleanup_build_dir) |*dir| dir.close(io);
         br.* = undefined;
     }
 };
@@ -7304,13 +7310,14 @@ fn findBuildRoot(arena: Allocator, options: FindBuildRootOptions) !BuildRoot {
 
 const LoadManifestOptions = struct {
     root_name: []const u8,
-    dir: fs.Dir,
+    dir: Io.Dir,
     color: Color,
 };
 
 fn loadManifest(
     gpa: Allocator,
     arena: Allocator,
+    io: Io,
     options: LoadManifestOptions,
 ) !struct { Package.Manifest, Ast } {
     const manifest_bytes = while (true) {
@@ -7322,7 +7329,7 @@ fn loadManifest(
             0,
         ) catch |err| switch (err) {
             error.FileNotFound => {
-                writeSimpleTemplateFile(Package.Manifest.basename,
+                writeSimpleTemplateFile(io, Package.Manifest.basename,
                     \\.{{
                     \\    .name = .{s},
                     \\    .version = "{s}",
@@ -7374,12 +7381,12 @@ fn loadManifest(
 
 const Templates = struct {
     zig_lib_directory: Cache.Directory,
-    dir: fs.Dir,
+    dir: Io.Dir,
     buffer: std.array_list.Managed(u8),
 
-    fn deinit(templates: *Templates) void {
-        templates.zig_lib_directory.handle.close();
-        templates.dir.close();
+    fn deinit(templates: *Templates, io: Io) void {
+        templates.zig_lib_directory.handle.close(io);
+        templates.dir.close(io);
         templates.buffer.deinit();
         templates.* = undefined;
     }
@@ -7387,7 +7394,7 @@ const Templates = struct {
     fn write(
         templates: *Templates,
         arena: Allocator,
-        out_dir: fs.Dir,
+        out_dir: Io.Dir,
         root_name: []const u8,
         template_path: []const u8,
         fingerprint: Package.Fingerprint,
@@ -7435,23 +7442,23 @@ const Templates = struct {
         });
     }
 };
-fn writeSimpleTemplateFile(file_name: []const u8, comptime fmt: []const u8, args: anytype) !void {
+fn writeSimpleTemplateFile(io: Io, file_name: []const u8, comptime fmt: []const u8, args: anytype) !void {
     const f = try fs.cwd().createFile(file_name, .{ .exclusive = true });
-    defer f.close();
+    defer f.close(io);
     var buf: [4096]u8 = undefined;
     var fw = f.writer(&buf);
     try fw.interface.print(fmt, args);
     try fw.interface.flush();
 }
 
-fn findTemplates(gpa: Allocator, arena: Allocator) Templates {
+fn findTemplates(gpa: Allocator, arena: Allocator, io: Io) Templates {
     const cwd_path = introspect.getResolvedCwd(arena) catch |err| {
         fatal("unable to get cwd: {s}", .{@errorName(err)});
     };
     const self_exe_path = fs.selfExePathAlloc(arena) catch |err| {
         fatal("unable to find self exe path: {s}", .{@errorName(err)});
     };
-    var zig_lib_directory = introspect.findZigLibDirFromSelfExe(arena, cwd_path, self_exe_path) catch |err| {
+    var zig_lib_directory = introspect.findZigLibDirFromSelfExe(arena, io, cwd_path, self_exe_path) catch |err| {
         fatal("unable to find zig installation directory '{s}': {s}", .{ self_exe_path, @errorName(err) });
     };
 

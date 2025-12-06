@@ -1,5 +1,7 @@
-const std = @import("std");
 const builtin = @import("builtin");
+
+const std = @import("std");
+const Io = std.Io;
 
 pub const UncheckedSliceWriter = struct {
     const Self = @This();
@@ -28,11 +30,12 @@ pub const UncheckedSliceWriter = struct {
 /// TODO: Remove once https://github.com/ziglang/zig/issues/5732 is addressed.
 pub fn openFileNotDir(
     cwd: std.fs.Dir,
+    io: Io,
     path: []const u8,
     flags: std.fs.File.OpenFlags,
 ) (std.fs.File.OpenError || std.fs.File.StatError)!std.fs.File {
-    const file = try cwd.openFile(path, flags);
-    errdefer file.close();
+    const file = try cwd.openFile(io, path, flags);
+    errdefer file.close(io);
     // https://github.com/ziglang/zig/issues/5732
     if (builtin.os.tag != .windows) {
         const stat = try file.stat();

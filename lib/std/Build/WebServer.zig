@@ -129,6 +129,7 @@ pub fn init(opts: Options) WebServer {
 }
 pub fn deinit(ws: *WebServer) void {
     const gpa = ws.gpa;
+    const io = ws.graph.io;
 
     gpa.free(ws.step_names_trailing);
     gpa.free(ws.step_status_bits);
@@ -139,7 +140,7 @@ pub fn deinit(ws: *WebServer) void {
     gpa.free(ws.time_report_update_times);
 
     if (ws.serve_thread) |t| {
-        if (ws.tcp_server) |*s| s.stream.close();
+        if (ws.tcp_server) |*s| s.stream.close(io);
         t.join();
     }
     if (ws.tcp_server) |*s| s.deinit();
@@ -507,7 +508,7 @@ pub fn serveTarFile(ws: *WebServer, request: *http.Server.Request, paths: []cons
             log.err("failed to open '{f}': {s}", .{ path, @errorName(err) });
             continue;
         };
-        defer file.close();
+        defer file.close(io);
         const stat = try file.stat();
         var read_buffer: [1024]u8 = undefined;
         var file_reader: Io.File.Reader = .initSize(file.adaptToNewApi(), io, &read_buffer, stat.size);
@@ -634,7 +635,7 @@ fn buildClientWasm(ws: *WebServer, arena: Allocator, optimize: std.builtin.Optim
     }
 
     // Send EOF to stdin.
-    child.stdin.?.close();
+    child.stdin.?.close(io);
     child.stdin = null;
 
     switch (try child.wait()) {

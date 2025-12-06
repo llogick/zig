@@ -1,7 +1,10 @@
 const WindowsSdk = @This();
 const builtin = @import("builtin");
+
 const std = @import("std");
+const Io = std.Io;
 const Writer = std.Io.Writer;
+const Allocator = std.mem.Allocator;
 
 windows10sdk: ?Installation,
 windows81sdk: ?Installation,
@@ -20,7 +23,7 @@ const product_version_max_length = version_major_minor_max_length + ".65535".len
 /// Find path and version of Windows 10 SDK and Windows 8.1 SDK, and find path to MSVC's `lib/` directory.
 /// Caller owns the result's fields.
 /// After finishing work, call `free(allocator)`.
-pub fn find(allocator: std.mem.Allocator, arch: std.Target.Cpu.Arch) error{ OutOfMemory, NotFound, PathTooLong }!WindowsSdk {
+pub fn find(allocator: Allocator, arch: std.Target.Cpu.Arch) error{ OutOfMemory, NotFound, PathTooLong }!WindowsSdk {
     if (builtin.os.tag != .windows) return error.NotFound;
 
     //note(dimenus): If this key doesn't exist, neither the Win 8 SDK nor the Win 10 SDK is installed
@@ -58,7 +61,7 @@ pub fn find(allocator: std.mem.Allocator, arch: std.Target.Cpu.Arch) error{ OutO
     };
 }
 
-pub fn free(sdk: WindowsSdk, allocator: std.mem.Allocator) void {
+pub fn free(sdk: WindowsSdk, allocator: Allocator) void {
     if (sdk.windows10sdk) |*w10sdk| {
         w10sdk.free(allocator);
     }
@@ -75,7 +78,7 @@ pub fn free(sdk: WindowsSdk, allocator: std.mem.Allocator) void {
 /// Caller owns result.
 fn iterateAndFilterByVersion(
     iterator: *std.fs.Dir.Iterator,
-    allocator: std.mem.Allocator,
+    allocator: Allocator,
     prefix: []const u8,
 ) error{OutOfMemory}![][]const u8 {
     const Version = struct {
@@ -174,7 +177,7 @@ const RegistryWtf8 = struct {
 
     /// Get string from registry.
     /// Caller owns result.
-    pub fn getString(reg: RegistryWtf8, allocator: std.mem.Allocator, subkey: []const u8, value_name: []const u8) error{ OutOfMemory, ValueNameNotFound, NotAString, StringNotFound }![]u8 {
+    pub fn getString(reg: RegistryWtf8, allocator: Allocator, subkey: []const u8, value_name: []const u8) error{ OutOfMemory, ValueNameNotFound, NotAString, StringNotFound }![]u8 {
         const subkey_wtf16le: [:0]const u16 = subkey_wtf16le: {
             var subkey_wtf16le_buf: [RegistryWtf16Le.key_name_max_len]u16 = undefined;
             const subkey_wtf16le_len: usize = std.unicode.wtf8ToWtf16Le(subkey_wtf16le_buf[0..], subkey) catch unreachable;
@@ -282,7 +285,7 @@ const RegistryWtf16Le = struct {
     }
 
     /// Get string ([:0]const u16) from registry.
-    fn getString(reg: RegistryWtf16Le, allocator: std.mem.Allocator, subkey_wtf16le: [:0]const u16, value_name_wtf16le: [:0]const u16) error{ OutOfMemory, ValueNameNotFound, NotAString, StringNotFound }![]const u16 {
+    fn getString(reg: RegistryWtf16Le, allocator: Allocator, subkey_wtf16le: [:0]const u16, value_name_wtf16le: [:0]const u16) error{ OutOfMemory, ValueNameNotFound, NotAString, StringNotFound }![]const u16 {
         var actual_type: windows.ULONG = undefined;
 
         // Calculating length to allocate
@@ -416,7 +419,7 @@ pub const Installation = struct {
     /// Caller owns the result's fields.
     /// After finishing work, call `free(allocator)`.
     fn find(
-        allocator: std.mem.Allocator,
+        allocator: Allocator,
         roots_key: RegistryWtf8,
         roots_subkey: []const u8,
         prefix: []const u8,
@@ -437,7 +440,8 @@ pub const Installation = struct {
     }
 
     fn findFromRoot(
-        allocator: std.mem.Allocator,
+        allocator: Allocator,
+        io: Io,
         roots_key: RegistryWtf8,
         roots_subkey: []const u8,
         prefix: []const u8,
@@ -478,7 +482,7 @@ pub const Installation = struct {
                 error.NameTooLong => return error.PathTooLong,
                 else => return error.InstallationNotFound,
             };
-            defer sdk_lib_dir.close();
+            defer sdk_lib_dir.close(io);
 
             var iterator = sdk_lib_dir.iterate();
             const versions = try iterateAndFilterByVersion(&iterator, allocator, prefix);
@@ -495,7 +499,7 @@ pub const Installation = struct {
     }
 
     fn findFromInstallationFolder(
-        allocator: std.mem.Allocator,
+        allocator: Allocator,
         version_key_name: []const u8,
     ) error{ OutOfMemory, InstallationNotFound, PathTooLong, VersionTooLong }!Installation {
         var key_name_buf: [RegistryWtf16Le.key_name_max_len]u8 = undefined;
@@ -597,14 +601,14 @@ pub const Installation = struct {
         return (reg_value == 1);
     }
 
-    fn free(install: Installation, allocator: std.mem.Allocator) void {
+    fn free(install: Installation, allocator: Allocator) void {
         allocator.free(install.path);
         allocator.free(install.version);
     }
 };
 
 const MsvcLibDir = struct {
-    fn findInstancesDirViaSetup(allocator: std.mem.Allocator) error{ OutOfMemory, PathNotFound }!std.fs.Dir {
+    fn findInstancesDirViaSetup(allocator: Allocator) error{ OutOfMemory, PathNotFound }!std.fs.Dir {
         const vs_setup_key_path = "SOFTWARE\\Microsoft\\VisualStudio\\Setup";
         const vs_setup_key = RegistryWtf8.openKey(windows.HKEY_LOCAL_MACHINE, vs_setup_key_path, .{}) catch |err| switch (err) {
             error.KeyNotFound => return error.PathNotFound,
@@ -629,7 +633,7 @@ const MsvcLibDir = struct {
         return std.fs.openDirAbsolute(instances_path, .{ .iterate = true }) catch return error.PathNotFound;
     }
 
-    fn findInstancesDirViaCLSID(allocator: std.mem.Allocator) error{ OutOfMemory, PathNotFound }!std.fs.Dir {
+    fn findInstancesDirViaCLSID(allocator: Allocator) error{ OutOfMemory, PathNotFound }!std.fs.Dir {
         const setup_configuration_clsid = "{177f0c4a-1cd3-4de7-a32c-71dbbb9fa36d}";
         const setup_config_key = RegistryWtf8.openKey(windows.HKEY_CLASSES_ROOT, "CLSID\\" ++ setup_configuration_clsid, .{}) catch |err| switch (err) {
             error.KeyNotFound => return error.PathNotFound,
@@ -665,7 +669,7 @@ const MsvcLibDir = struct {
         return std.fs.openDirAbsolute(instances_path, .{ .iterate = true }) catch return error.PathNotFound;
     }
 
-    fn findInstancesDir(allocator: std.mem.Allocator) error{ OutOfMemory, PathNotFound }!std.fs.Dir {
+    fn findInstancesDir(allocator: Allocator) error{ OutOfMemory, PathNotFound }!std.fs.Dir {
         // First, try getting the packages cache path from the registry.
         // This only seems to exist when the path is different from the default.
         method1: {
@@ -748,13 +752,13 @@ const MsvcLibDir = struct {
     ///
     /// The logic in this function is intended to match what ISetupConfiguration does
     /// under-the-hood, as verified using Procmon.
-    fn findViaCOM(allocator: std.mem.Allocator, arch: std.Target.Cpu.Arch) error{ OutOfMemory, PathNotFound }![]const u8 {
+    fn findViaCOM(allocator: Allocator, io: Io, arch: std.Target.Cpu.Arch) error{ OutOfMemory, PathNotFound }![]const u8 {
         // Typically `%PROGRAMDATA%\Microsoft\VisualStudio\Packages\_Instances`
         // This will contain directories with names of instance IDs like 80a758ca,
         // which will contain `state.json` files that have the version and
         // installation directory.
         var instances_dir = try findInstancesDir(allocator);
-        defer instances_dir.close();
+        defer instances_dir.close(io);
 
         var state_subpath_buf: [std.fs.max_name_bytes + 32]u8 = undefined;
         var latest_version_lib_dir: std.ArrayList(u8) = .empty;
@@ -791,7 +795,7 @@ const MsvcLibDir = struct {
             const installation_path = parsed.value.object.get("installationPath") orelse continue;
             if (installation_path != .string) continue;
 
-            const lib_dir_path = libDirFromInstallationPath(allocator, installation_path.string, arch) catch |err| switch (err) {
+            const lib_dir_path = libDirFromInstallationPath(allocator, io, installation_path.string, arch) catch |err| switch (err) {
                 error.OutOfMemory => |e| return e,
                 error.PathNotFound => continue,
             };
@@ -806,7 +810,12 @@ const MsvcLibDir = struct {
         return latest_version_lib_dir.toOwnedSlice(allocator);
     }
 
-    fn libDirFromInstallationPath(allocator: std.mem.Allocator, installation_path: []const u8, arch: std.Target.Cpu.Arch) error{ OutOfMemory, PathNotFound }![]const u8 {
+    fn libDirFromInstallationPath(
+        allocator: Allocator,
+        io: Io,
+        installation_path: []const u8,
+        arch: std.Target.Cpu.Arch,
+    ) error{ OutOfMemory, PathNotFound }![]const u8 {
         var lib_dir_buf = try std.array_list.Managed(u8).initCapacity(allocator, installation_path.len + 64);
         errdefer lib_dir_buf.deinit();
 
@@ -837,7 +846,7 @@ const MsvcLibDir = struct {
             else => unreachable,
         });
 
-        if (!verifyLibDir(lib_dir_buf.items)) {
+        if (!verifyLibDir(io, lib_dir_buf.items)) {
             return error.PathNotFound;
         }
 
@@ -845,7 +854,7 @@ const MsvcLibDir = struct {
     }
 
     // https://learn.microsoft.com/en-us/visualstudio/install/tools-for-managing-visual-studio-instances?view=vs-2022#editing-the-registry-for-a-visual-studio-instance
-    fn findViaRegistry(allocator: std.mem.Allocator, arch: std.Target.Cpu.Arch) error{ OutOfMemory, PathNotFound }![]const u8 {
+    fn findViaRegistry(allocator: Allocator, io: Io, arch: std.Target.Cpu.Arch) error{ OutOfMemory, PathNotFound }![]const u8 {
 
         // %localappdata%\Microsoft\VisualStudio\
         // %appdata%\Local\Microsoft\VisualStudio\
@@ -859,7 +868,7 @@ const MsvcLibDir = struct {
             var visualstudio_folder = std.fs.openDirAbsolute(visualstudio_folder_path, .{
                 .iterate = true,
             }) catch return error.PathNotFound;
-            defer visualstudio_folder.close();
+            defer visualstudio_folder.close(io);
 
             var iterator = visualstudio_folder.iterate();
             break :vs_versions try iterateAndFilterByVersion(&iterator, allocator, "");
@@ -926,14 +935,14 @@ const MsvcLibDir = struct {
         };
         errdefer allocator.free(msvc_dir);
 
-        if (!verifyLibDir(msvc_dir)) {
+        if (!verifyLibDir(io, msvc_dir)) {
             return error.PathNotFound;
         }
 
         return msvc_dir;
     }
 
-    fn findViaVs7Key(allocator: std.mem.Allocator, arch: std.Target.Cpu.Arch) error{ OutOfMemory, PathNotFound }![]const u8 {
+    fn findViaVs7Key(allocator: Allocator, io: Io, arch: std.Target.Cpu.Arch) error{ OutOfMemory, PathNotFound }![]const u8 {
         var base_path: std.array_list.Managed(u8) = base_path: {
             try_env: {
                 var env_map = std.process.getEnvMap(allocator) catch |err| switch (err) {
@@ -989,7 +998,7 @@ const MsvcLibDir = struct {
             else => unreachable,
         });
 
-        if (!verifyLibDir(base_path.items)) {
+        if (!verifyLibDir(io, base_path.items)) {
             return error.PathNotFound;
         }
 
@@ -997,11 +1006,11 @@ const MsvcLibDir = struct {
         return full_path;
     }
 
-    fn verifyLibDir(lib_dir_path: []const u8) bool {
+    fn verifyLibDir(io: Io, lib_dir_path: []const u8) bool {
         std.debug.assert(std.fs.path.isAbsolute(lib_dir_path)); // should be already handled in `findVia*`
 
         var dir = std.fs.openDirAbsolute(lib_dir_path, .{}) catch return false;
-        defer dir.close();
+        defer dir.close(io);
 
         const stat = dir.statFile("vcruntime.lib") catch return false;
         if (stat.kind != .file)
@@ -1012,12 +1021,12 @@ const MsvcLibDir = struct {
 
     /// Find path to MSVC's `lib/` directory.
     /// Caller owns the result.
-    pub fn find(allocator: std.mem.Allocator, arch: std.Target.Cpu.Arch) error{ OutOfMemory, MsvcLibDirNotFound }![]const u8 {
-        const full_path = MsvcLibDir.findViaCOM(allocator, arch) catch |err1| switch (err1) {
+    pub fn find(allocator: Allocator, io: Io, arch: std.Target.Cpu.Arch) error{ OutOfMemory, MsvcLibDirNotFound }![]const u8 {
+        const full_path = MsvcLibDir.findViaCOM(allocator, io, arch) catch |err1| switch (err1) {
             error.OutOfMemory => return error.OutOfMemory,
-            error.PathNotFound => MsvcLibDir.findViaRegistry(allocator, arch) catch |err2| switch (err2) {
+            error.PathNotFound => MsvcLibDir.findViaRegistry(allocator, io, arch) catch |err2| switch (err2) {
                 error.OutOfMemory => return error.OutOfMemory,
-                error.PathNotFound => MsvcLibDir.findViaVs7Key(allocator, arch) catch |err3| switch (err3) {
+                error.PathNotFound => MsvcLibDir.findViaVs7Key(allocator, io, arch) catch |err3| switch (err3) {
                     error.OutOfMemory => return error.OutOfMemory,
                     error.PathNotFound => return error.MsvcLibDirNotFound,
                 },

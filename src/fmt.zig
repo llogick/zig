@@ -187,7 +187,7 @@ pub fn run(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) !
             // On Windows, statFile does not work for directories
             error.IsDir => dir: {
                 var dir = try fs.cwd().openDir(file_path, .{});
-                defer dir.close();
+                defer dir.close(io);
                 break :dir try dir.stat();
             },
             else => |e| return e,
@@ -222,8 +222,10 @@ fn fmtPathDir(
     parent_dir: fs.Dir,
     parent_sub_path: []const u8,
 ) !void {
+    const io = fmt.io;
+
     var dir = try parent_dir.openDir(parent_sub_path, .{ .iterate = true });
-    defer dir.close();
+    defer dir.close(io);
 
     const stat = try dir.stat();
     if (try fmt.seen.fetchPut(stat.inode, {})) |_| return;
@@ -262,7 +264,7 @@ fn fmtPathFile(
 
     const source_file = try dir.openFile(sub_path, .{});
     var file_closed = false;
-    errdefer if (!file_closed) source_file.close();
+    errdefer if (!file_closed) source_file.close(io);
 
     const stat = try source_file.stat();
 
@@ -280,7 +282,7 @@ fn fmtPathFile(
     };
     defer gpa.free(source_code);
 
-    source_file.close();
+    source_file.close(io);
     file_closed = true;
 
     // Add to set after no longer possible to get error.IsDir.

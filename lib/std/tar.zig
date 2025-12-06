@@ -16,6 +16,7 @@
 //! pax reference: https://pubs.opengroup.org/onlinepubs/9699919799/utilities/pax.html#tag_20_92_13
 
 const std = @import("std");
+const Io = std.Io;
 const assert = std.debug.assert;
 const testing = std.testing;
 
@@ -302,7 +303,7 @@ pub const FileKind = enum {
 
 /// Iterator over entries in the tar file represented by reader.
 pub const Iterator = struct {
-    reader: *std.Io.Reader,
+    reader: *Io.Reader,
     diagnostics: ?*Diagnostics = null,
 
     // buffers for heeader and file attributes
@@ -328,7 +329,7 @@ pub const Iterator = struct {
 
     /// Iterates over files in tar archive.
     /// `next` returns each file in tar archive.
-    pub fn init(reader: *std.Io.Reader, options: Options) Iterator {
+    pub fn init(reader: *Io.Reader, options: Options) Iterator {
         return .{
             .reader = reader,
             .diagnostics = options.diagnostics,
@@ -473,7 +474,7 @@ pub const Iterator = struct {
         return null;
     }
 
-    pub fn streamRemaining(it: *Iterator, file: File, w: *std.Io.Writer) std.Io.Reader.StreamError!void {
+    pub fn streamRemaining(it: *Iterator, file: File, w: *Io.Writer) Io.Reader.StreamError!void {
         try it.reader.streamExact64(w, file.size);
         it.unread_file_bytes = 0;
     }
@@ -499,14 +500,14 @@ const pax_max_size_attr_len = 64;
 
 pub const PaxIterator = struct {
     size: usize, // cumulative size of all pax attributes
-    reader: *std.Io.Reader,
+    reader: *Io.Reader,
 
     const Self = @This();
 
     const Attribute = struct {
         kind: PaxAttributeKind,
         len: usize, // length of the attribute value
-        reader: *std.Io.Reader, // reader positioned at value start
+        reader: *Io.Reader, // reader positioned at value start
 
         // Copies pax attribute value into destination buffer.
         // Must be called with destination buffer of size at least Attribute.len.
@@ -573,13 +574,13 @@ pub const PaxIterator = struct {
     }
 
     // Checks that each record ends with new line.
-    fn validateAttributeEnding(reader: *std.Io.Reader) !void {
+    fn validateAttributeEnding(reader: *Io.Reader) !void {
         if (try reader.takeByte() != '\n') return error.PaxInvalidAttributeEnd;
     }
 };
 
 /// Saves tar file content to the file systems.
-pub fn pipeToFileSystem(dir: std.fs.Dir, reader: *std.Io.Reader, options: PipeOptions) !void {
+pub fn pipeToFileSystem(io: Io, dir: Io.Dir, reader: *Io.Reader, options: PipeOptions) !void {
     var file_name_buffer: [std.fs.max_path_bytes]u8 = undefined;
     var link_name_buffer: [std.fs.max_path_bytes]u8 = undefined;
     var file_contents_buffer: [1024]u8 = undefined;
@@ -610,7 +611,7 @@ pub fn pipeToFileSystem(dir: std.fs.Dir, reader: *std.Io.Reader, options: PipeOp
             },
             .file => {
                 if (createDirAndFile(dir, file_name, fileMode(file.mode, options))) |fs_file| {
-                    defer fs_file.close();
+                    defer fs_file.close(io);
                     var file_writer = fs_file.writer(&file_contents_buffer);
                     try it.streamRemaining(file, &file_writer.interface);
                     try file_writer.interface.flush();
@@ -637,7 +638,7 @@ pub fn pipeToFileSystem(dir: std.fs.Dir, reader: *std.Io.Reader, options: PipeOp
     }
 }
 
-fn createDirAndFile(dir: std.fs.Dir, file_name: []const u8, mode: std.fs.File.Mode) !std.fs.File {
+fn createDirAndFile(dir: Io.Dir, file_name: []const u8, mode: Io.File.Mode) !Io.File {
     const fs_file = dir.createFile(file_name, .{ .exclusive = true, .mode = mode }) catch |err| {
         if (err == error.FileNotFound) {
             if (std.fs.path.dirname(file_name)) |dir_name| {
@@ -651,7 +652,7 @@ fn createDirAndFile(dir: std.fs.Dir, file_name: []const u8, mode: std.fs.File.Mo
 }
 
 // Creates a symbolic link at path `file_name` which points to `link_name`.
-fn createDirAndSymlink(dir: std.fs.Dir, link_name: []const u8, file_name: []const u8) !void {
+fn createDirAndSymlink(dir: Io.Dir, link_name: []const u8, file_name: []const u8) !void {
     dir.symLink(link_name, file_name, .{}) catch |err| {
         if (err == error.FileNotFound) {
             if (std.fs.path.dirname(file_name)) |dir_name| {
@@ -783,7 +784,7 @@ test PaxIterator {
     var buffer: [1024]u8 = undefined;
 
     outer: for (cases) |case| {
-        var reader: std.Io.Reader = .fixed(case.data);
+        var reader: Io.Reader = .fixed(case.data);
         var it: PaxIterator = .{
             .size = case.data.len,
             .reader = &reader,
@@ -874,13 +875,15 @@ test "header parse mode" {
 }
 
 test "create file and symlink" {
+    const io = testing.io;
+
     var root = testing.tmpDir(.{});
     defer root.cleanup();
 
     var file = try createDirAndFile(root.dir, "file1", default_mode);
-    file.close();
+    file.close(io);
     file = try createDirAndFile(root.dir, "a/b/c/file2", default_mode);
-    file.close();
+    file.close(io);
 
     createDirAndSymlink(root.dir, "a/b/c/file2", "symlink1") catch |err| {
         // On Windows when developer mode is not enabled
@@ -892,7 +895,7 @@ test "create file and symlink" {
     // Danglink symlnik, file created later
     try createDirAndSymlink(root.dir, "../../../g/h/i/file4", "j/k/l/symlink3");
     file = try createDirAndFile(root.dir, "g/h/i/file4", default_mode);
-    file.close();
+    file.close(io);
 }
 
 test Iterator {
@@ -916,7 +919,7 @@ test Iterator {
     //    example/empty/
 
     const data = @embedFile("tar/testdata/example.tar");
-    var reader: std.Io.Reader = .fixed(data);
+    var reader: Io.Reader = .fixed(data);
 
     // User provided buffers to the iterator
     var file_name_buffer: [std.fs.max_path_bytes]u8 = undefined;
@@ -942,7 +945,7 @@ test Iterator {
             .file => {
                 try testing.expectEqualStrings("example/a/file", file.name);
                 var buf: [16]u8 = undefined;
-                var w: std.Io.Writer = .fixed(&buf);
+                var w: Io.Writer = .fixed(&buf);
                 try it.streamRemaining(file, &w);
                 try testing.expectEqualStrings("content\n", w.buffered());
             },
@@ -955,6 +958,7 @@ test Iterator {
 }
 
 test pipeToFileSystem {
+    const io = testing.io;
     // Example tar file is created from this tree structure:
     // $ tree example
     //    example
@@ -975,14 +979,14 @@ test pipeToFileSystem {
     //    example/empty/
 
     const data = @embedFile("tar/testdata/example.tar");
-    var reader: std.Io.Reader = .fixed(data);
+    var reader: Io.Reader = .fixed(data);
 
     var tmp = testing.tmpDir(.{ .follow_symlinks = false });
     defer tmp.cleanup();
     const dir = tmp.dir;
 
     // Save tar from reader to the file system `dir`
-    pipeToFileSystem(dir, &reader, .{
+    pipeToFileSystem(io, dir, &reader, .{
         .mode_mode = .ignore,
         .strip_components = 1,
         .exclude_empty_directories = true,
@@ -1005,8 +1009,9 @@ test pipeToFileSystem {
 }
 
 test "pipeToFileSystem root_dir" {
+    const io = testing.io;
     const data = @embedFile("tar/testdata/example.tar");
-    var reader: std.Io.Reader = .fixed(data);
+    var reader: Io.Reader = .fixed(data);
 
     // with strip_components = 1
     {
@@ -1015,7 +1020,7 @@ test "pipeToFileSystem root_dir" {
         var diagnostics: Diagnostics = .{ .allocator = testing.allocator };
         defer diagnostics.deinit();
 
-        pipeToFileSystem(tmp.dir, &reader, .{
+        pipeToFileSystem(io, tmp.dir, &reader, .{
             .strip_components = 1,
             .diagnostics = &diagnostics,
         }) catch |err| {
@@ -1037,7 +1042,7 @@ test "pipeToFileSystem root_dir" {
         var diagnostics: Diagnostics = .{ .allocator = testing.allocator };
         defer diagnostics.deinit();
 
-        pipeToFileSystem(tmp.dir, &reader, .{
+        pipeToFileSystem(io, tmp.dir, &reader, .{
             .strip_components = 0,
             .diagnostics = &diagnostics,
         }) catch |err| {
@@ -1053,43 +1058,46 @@ test "pipeToFileSystem root_dir" {
 }
 
 test "findRoot with single file archive" {
+    const io = testing.io;
     const data = @embedFile("tar/testdata/22752.tar");
-    var reader: std.Io.Reader = .fixed(data);
+    var reader: Io.Reader = .fixed(data);
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
     var diagnostics: Diagnostics = .{ .allocator = testing.allocator };
     defer diagnostics.deinit();
-    try pipeToFileSystem(tmp.dir, &reader, .{ .diagnostics = &diagnostics });
+    try pipeToFileSystem(io, tmp.dir, &reader, .{ .diagnostics = &diagnostics });
 
     try testing.expectEqualStrings("", diagnostics.root_dir);
 }
 
 test "findRoot without explicit root dir" {
+    const io = testing.io;
     const data = @embedFile("tar/testdata/19820.tar");
-    var reader: std.Io.Reader = .fixed(data);
+    var reader: Io.Reader = .fixed(data);
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
     var diagnostics: Diagnostics = .{ .allocator = testing.allocator };
     defer diagnostics.deinit();
-    try pipeToFileSystem(tmp.dir, &reader, .{ .diagnostics = &diagnostics });
+    try pipeToFileSystem(io, tmp.dir, &reader, .{ .diagnostics = &diagnostics });
 
     try testing.expectEqualStrings("root", diagnostics.root_dir);
 }
 
 test "pipeToFileSystem strip_components" {
+    const io = testing.io;
     const data = @embedFile("tar/testdata/example.tar");
-    var reader: std.Io.Reader = .fixed(data);
+    var reader: Io.Reader = .fixed(data);
 
     var tmp = testing.tmpDir(.{ .follow_symlinks = false });
     defer tmp.cleanup();
     var diagnostics: Diagnostics = .{ .allocator = testing.allocator };
     defer diagnostics.deinit();
 
-    pipeToFileSystem(tmp.dir, &reader, .{
+    pipeToFileSystem(io, tmp.dir, &reader, .{
         .strip_components = 3,
         .diagnostics = &diagnostics,
     }) catch |err| {
@@ -1110,10 +1118,10 @@ fn normalizePath(bytes: []u8) []u8 {
     return bytes;
 }
 
-const default_mode = std.fs.File.default_mode;
+const default_mode = Io.File.default_mode;
 
 // File system mode based on tar header mode and mode_mode options.
-fn fileMode(mode: u32, options: PipeOptions) std.fs.File.Mode {
+fn fileMode(mode: u32, options: PipeOptions) Io.File.Mode {
     if (!std.fs.has_executable_bit or options.mode_mode == .ignore)
         return default_mode;
 
@@ -1139,16 +1147,17 @@ test fileMode {
 test "executable bit" {
     if (!std.fs.has_executable_bit) return error.SkipZigTest;
 
+    const io = testing.io;
     const S = std.posix.S;
     const data = @embedFile("tar/testdata/example.tar");
 
     for ([_]PipeOptions.ModeMode{ .ignore, .executable_bit_only }) |opt| {
-        var reader: std.Io.Reader = .fixed(data);
+        var reader: Io.Reader = .fixed(data);
 
         var tmp = testing.tmpDir(.{ .follow_symlinks = false });
         //defer tmp.cleanup();
 
-        pipeToFileSystem(tmp.dir, &reader, .{
+        pipeToFileSystem(io, tmp.dir, &reader, .{
             .strip_components = 1,
             .exclude_empty_directories = true,
             .mode_mode = opt,

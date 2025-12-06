@@ -411,7 +411,7 @@ fn prepareTables(fuzz: *Fuzz, run_step: *Step.Run, coverage_id: u64) error{ OutO
         });
         return error.AlreadyReported;
     };
-    defer coverage_file.close();
+    defer coverage_file.close(io);
 
     const file_size = coverage_file.getEndPos() catch |err| {
         log.err("unable to check len of coverage file '{f}': {t}", .{ coverage_file_path, err });
@@ -533,7 +533,7 @@ pub fn waitAndPrintReport(fuzz: *Fuzz) void {
                 cov.run.step.name, coverage_file_path, err,
             });
         };
-        defer coverage_file.close();
+        defer coverage_file.close(io);
 
         const fuzz_abi = std.Build.abi.fuzz;
         var rbuf: [0x1000]u8 = undefined;

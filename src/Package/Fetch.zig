@@ -513,7 +513,7 @@ fn runResource(
                 break :handle dir;
             },
         };
-        defer tmp_directory.handle.close();
+        defer tmp_directory.handle.close(io);
 
         // Fetch and unpack a resource into a temporary directory.
         var unpack_result = try unpackResource(f, resource, uri_path, tmp_directory);
@@ -523,7 +523,7 @@ fn runResource(
         // Apply btrfs workaround if needed. Reopen tmp_directory.
         if (native_os == .linux and f.job_queue.work_around_btrfs_bug) {
             // https://github.com/ziglang/zig/issues/17095
-            pkg_path.root_dir.handle.close();
+            pkg_path.root_dir.handle.close(io);
             pkg_path.root_dir.handle = cache_root.handle.makeOpenPath(tmp_dir_sub_path, .{
                 .iterate = true,
             }) catch @panic("btrfs workaround failed");
@@ -885,7 +885,7 @@ const Resource = union(enum) {
     file: fs.File.Reader,
     http_request: HttpRequest,
     git: Git,
-    dir: fs.Dir,
+    dir: Io.Dir,
 
     const Git = struct {
         session: git.Session,
@@ -908,7 +908,7 @@ const Resource = union(enum) {
             .git => |*git_resource| {
                 git_resource.fetch_stream.deinit();
             },
-            .dir => |*dir| dir.close(),
+            .dir => |*dir| dir.close(io),
         }
         resource.* = undefined;
     }
@@ -1247,13 +1247,14 @@ fn unpackResource(
     }
 }
 
-fn unpackTarball(f: *Fetch, out_dir: fs.Dir, reader: *Io.Reader) RunError!UnpackResult {
+fn unpackTarball(f: *Fetch, out_dir: Io.Dir, reader: *Io.Reader) RunError!UnpackResult {
     const eb = &f.error_bundle;
     const arena = f.arena.allocator();
+    const io = f.job_queue.io;
 
     var diagnostics: std.tar.Diagnostics = .{ .allocator = arena };
 
-    std.tar.pipeToFileSystem(out_dir, reader, .{
+    std.tar.pipeToFileSystem(io, out_dir, reader, .{
         .diagnostics = &diagnostics,
         .strip_components = 0,
         .mode_mode = .ignore,
@@ -1280,7 +1281,7 @@ fn unpackTarball(f: *Fetch, out_dir: fs.Dir, reader: *Io.Reader) RunError!Unpack
 
 fn unzip(
     f: *Fetch,
-    out_dir: fs.Dir,
+    out_dir: Io.Dir,
     reader: *Io.Reader,
 ) error{ ReadFailed, OutOfMemory, Canceled, FetchFailed }!UnpackResult {
     // We write the entire contents to a file first because zip files
@@ -1314,7 +1315,7 @@ fn unzip(
             ),
         };
     };
-    defer zip_file.close();
+    defer zip_file.close(io);
     var zip_file_buffer: [4096]u8 = undefined;
     var zip_file_reader = b: {
         var zip_file_writer = zip_file.writer(&zip_file_buffer);
@@ -1349,7 +1350,7 @@ fn unzip(
     return .{ .root_dir = diagnostics.root_dir };
 }
 
-fn unpackGitPack(f: *Fetch, out_dir: fs.Dir, resource: *Resource.Git) anyerror!UnpackResult {
+fn unpackGitPack(f: *Fetch, out_dir: Io.Dir, resource: *Resource.Git) anyerror!UnpackResult {
     const io = f.job_queue.io;
     const arena = f.arena.allocator();
     // TODO don't try to get a gpa from an arena. expose this dependency higher up
@@ -1363,9 +1364,9 @@ fn unpackGitPack(f: *Fetch, out_dir: fs.Dir, resource: *Resource.Git) anyerror!U
     // directory, since that isn't relevant for fetching a package.
     {
         var pack_dir = try out_dir.makeOpenPath(".git", .{});
-        defer pack_dir.close();
+        defer pack_dir.close(io);
         var pack_file = try pack_dir.createFile("pkg.pack", .{ .read = true });
-        defer pack_file.close();
+        defer pack_file.close(io);
         var pack_file_buffer: [4096]u8 = undefined;
         var pack_file_reader = b: {
             var pack_file_writer = pack_file.writer(&pack_file_buffer);
@@ -1376,7 +1377,7 @@ fn unpackGitPack(f: *Fetch, out_dir: fs.Dir, resource: *Resource.Git) anyerror!U
         };
 
         var index_file = try pack_dir.createFile("pkg.idx", .{ .read = true });
-        defer index_file.close();
+        defer index_file.close(io);
         var index_file_buffer: [2000]u8 = undefined;
         var index_file_writer = index_file.writer(&index_file_buffer);
         {
@@ -1393,7 +1394,7 @@ fn unpackGitPack(f: *Fetch, out_dir: fs.Dir, resource: *Resource.Git) anyerror!U
             try repository.init(gpa, object_format, &pack_file_reader, &index_file_reader);
             defer repository.deinit();
             var diagnostics: git.Diagnostics = .{ .allocator = arena };
-            try repository.checkout(out_dir, resource.want_oid, &diagnostics);
+            try repository.checkout(io, out_dir, resource.want_oid, &diagnostics);
 
             if (diagnostics.errors.items.len > 0) {
                 try res.allocErrors(arena, diagnostics.errors.items.len, "unable to unpack packfile");
@@ -1411,7 +1412,7 @@ fn unpackGitPack(f: *Fetch, out_dir: fs.Dir, resource: *Resource.Git) anyerror!U
     return res;
 }
 
-fn recursiveDirectoryCopy(f: *Fetch, dir: fs.Dir, tmp_dir: fs.Dir) anyerror!void {
+fn recursiveDirectoryCopy(f: *Fetch, dir: Io.Dir, tmp_dir: Io.Dir) anyerror!void {
     const gpa = f.arena.child_allocator;
     // Recursive directory copy.
     var it = try dir.walk(gpa);
@@ -1451,7 +1452,7 @@ fn recursiveDirectoryCopy(f: *Fetch, dir: fs.Dir, tmp_dir: fs.Dir) anyerror!void
     }
 }
 
-pub fn renameTmpIntoCache(cache_dir: fs.Dir, tmp_dir_sub_path: []const u8, dest_dir_sub_path: []const u8) !void {
+pub fn renameTmpIntoCache(cache_dir: Io.Dir, tmp_dir_sub_path: []const u8, dest_dir_sub_path: []const u8) !void {
     assert(dest_dir_sub_path[1] == fs.path.sep);
     var handled_missing_dir = false;
     while (true) {
@@ -1660,15 +1661,15 @@ fn dumpHashInfo(all_files: []const *const HashedFile) !void {
     try w.flush();
 }
 
-fn workerHashFile(dir: fs.Dir, hashed_file: *HashedFile) void {
+fn workerHashFile(dir: Io.Dir, hashed_file: *HashedFile) void {
     hashed_file.failure = hashFileFallible(dir, hashed_file);
 }
 
-fn workerDeleteFile(dir: fs.Dir, deleted_file: *DeletedFile) void {
+fn workerDeleteFile(dir: Io.Dir, deleted_file: *DeletedFile) void {
     deleted_file.failure = deleteFileFallible(dir, deleted_file);
 }
 
-fn hashFileFallible(dir: fs.Dir, hashed_file: *HashedFile) HashedFile.Error!void {
+fn hashFileFallible(io: Io, dir: Io.Dir, hashed_file: *HashedFile) HashedFile.Error!void {
     var buf: [8000]u8 = undefined;
     var hasher = Package.Hash.Algo.init(.{});
     hasher.update(hashed_file.normalized_path);
@@ -1677,7 +1678,7 @@ fn hashFileFallible(dir: fs.Dir, hashed_file: *HashedFile) HashedFile.Error!void
     switch (hashed_file.kind) {
         .file => {
             var file = try dir.openFile(hashed_file.fs_path, .{});
-            defer file.close();
+            defer file.close(io);
             // Hard-coded false executable bit: https://github.com/ziglang/zig/issues/17463
             hasher.update(&.{ 0, 0 });
             var file_header: FileHeader = .{};
@@ -1707,7 +1708,7 @@ fn hashFileFallible(dir: fs.Dir, hashed_file: *HashedFile) HashedFile.Error!void
     hashed_file.size = file_size;
 }
 
-fn deleteFileFallible(dir: fs.Dir, deleted_file: *DeletedFile) DeletedFile.Error!void {
+fn deleteFileFallible(dir: Io.Dir, deleted_file: *DeletedFile) DeletedFile.Error!void {
     try dir.deleteFile(deleted_file.fs_path);
 }
 
@@ -1724,8 +1725,8 @@ const DeletedFile = struct {
     failure: Error!void,
 
     const Error =
-        fs.Dir.DeleteFileError ||
-        fs.Dir.DeleteDirError;
+        Io.Dir.DeleteFileError ||
+        Io.Dir.DeleteDirError;
 };
 
 const HashedFile = struct {
@@ -1741,7 +1742,7 @@ const HashedFile = struct {
         fs.File.ReadError ||
         fs.File.StatError ||
         fs.File.ChmodError ||
-        fs.Dir.ReadLinkError;
+        Io.Dir.ReadLinkError;
 
     const Kind = enum { file, link };
 
@@ -2074,7 +2075,7 @@ test "tarball with duplicate paths" {
     defer tmp.cleanup();
 
     const tarball_name = "duplicate_paths.tar.gz";
-    try saveEmbedFile(tarball_name, tmp.dir);
+    try saveEmbedFile(io, tarball_name, tmp.dir);
     const tarball_path = try std.fmt.allocPrint(gpa, ".zig-cache/tmp/{s}/{s}", .{ tmp.sub_path, tarball_name });
     defer gpa.free(tarball_path);
 
@@ -2107,7 +2108,7 @@ test "tarball with excluded duplicate paths" {
     defer tmp.cleanup();
 
     const tarball_name = "duplicate_paths_excluded.tar.gz";
-    try saveEmbedFile(tarball_name, tmp.dir);
+    try saveEmbedFile(io, tarball_name, tmp.dir);
     const tarball_path = try std.fmt.allocPrint(gpa, ".zig-cache/tmp/{s}/{s}", .{ tmp.sub_path, tarball_name });
     defer gpa.free(tarball_path);
 
@@ -2153,7 +2154,7 @@ test "tarball without root folder" {
     defer tmp.cleanup();
 
     const tarball_name = "no_root.tar.gz";
-    try saveEmbedFile(tarball_name, tmp.dir);
+    try saveEmbedFile(io, tarball_name, tmp.dir);
     const tarball_path = try std.fmt.allocPrint(gpa, ".zig-cache/tmp/{s}/{s}", .{ tmp.sub_path, tarball_name });
     defer gpa.free(tarball_path);
 
@@ -2186,7 +2187,7 @@ test "set executable bit based on file content" {
     defer tmp.cleanup();
 
     const tarball_name = "executables.tar.gz";
-    try saveEmbedFile(tarball_name, tmp.dir);
+    try saveEmbedFile(io, tarball_name, tmp.dir);
     const tarball_path = try std.fmt.allocPrint(gpa, ".zig-cache/tmp/{s}/{s}", .{ tmp.sub_path, tarball_name });
     defer gpa.free(tarball_path);
 
@@ -2210,7 +2211,7 @@ test "set executable bit based on file content" {
     );
 
     var out = try fb.packageDir();
-    defer out.close();
+    defer out.close(io);
     const S = std.posix.S;
     // expect executable bit not set
     try std.testing.expect((try out.statFile("file1")).mode & S.IXUSR == 0);
@@ -2231,11 +2232,11 @@ test "set executable bit based on file content" {
     // -rwxrwxr-x 1    17 Apr   script_with_shebang_without_exec_bit
 }
 
-fn saveEmbedFile(comptime tarball_name: []const u8, dir: fs.Dir) !void {
+fn saveEmbedFile(io: Io, comptime tarball_name: []const u8, dir: Io.Dir) !void {
     //const tarball_name = "duplicate_paths_excluded.tar.gz";
     const tarball_content = @embedFile("Fetch/testdata/" ++ tarball_name);
     var tmp_file = try dir.createFile(tarball_name, .{});
-    defer tmp_file.close();
+    defer tmp_file.close(io);
     try tmp_file.writeAll(tarball_content);
 }
 
@@ -2250,7 +2251,7 @@ const TestFetchBuilder = struct {
         self: *TestFetchBuilder,
         allocator: std.mem.Allocator,
         io: Io,
-        cache_parent_dir: std.fs.Dir,
+        cache_parent_dir: std.Io.Dir,
         path_or_url: []const u8,
     ) !*Fetch {
         const cache_dir = try cache_parent_dir.makeOpenPath("zig-global-cache", .{});
@@ -2301,14 +2302,15 @@ const TestFetchBuilder = struct {
     }
 
     fn deinit(self: *TestFetchBuilder) void {
+        const io = self.job_queue.io;
         self.fetch.deinit();
         self.job_queue.deinit();
         self.fetch.prog_node.end();
-        self.global_cache_directory.handle.close();
+        self.global_cache_directory.handle.close(io);
         self.http_client.deinit();
     }
 
-    fn packageDir(self: *TestFetchBuilder) !fs.Dir {
+    fn packageDir(self: *TestFetchBuilder) !Io.Dir {
         const root = self.fetch.package_root;
         return try root.root_dir.handle.openDir(root.sub_path, .{ .iterate = true });
     }
@@ -2316,8 +2318,10 @@ const TestFetchBuilder = struct {
     // Test helper, asserts thet package dir constains expected_files.
     // expected_files must be sorted.
     fn expectPackageFiles(self: *TestFetchBuilder, expected_files: []const []const u8) !void {
+        const io = self.job_queue.io;
+
         var package_dir = try self.packageDir();
-        defer package_dir.close();
+        defer package_dir.close(io);
 
         var actual_files: std.ArrayList([]u8) = .empty;
         defer actual_files.deinit(std.testing.allocator);

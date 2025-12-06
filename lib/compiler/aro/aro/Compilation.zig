@@ -1639,8 +1639,10 @@ fn addSourceFromPathExtra(comp: *Compilation, path: []const u8, kind: Source.Kin
         return error.FileNotFound;
     }
 
+    const io = comp.io;
+
     const file = try comp.cwd.openFile(path, .{});
-    defer file.close();
+    defer file.close(io);
     return comp.addSourceFromFile(file, path, kind);
 }
 
@@ -1971,8 +1973,10 @@ fn getPathContents(comp: *Compilation, path: []const u8, limit: Io.Limit) ![]u8 
         return error.FileNotFound;
     }
 
+    const io = comp.io;
+
     const file = try comp.cwd.openFile(path, .{});
-    defer file.close();
+    defer file.close(io);
     return comp.getFileContents(file, limit);
 }
 

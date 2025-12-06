@@ -296,7 +296,7 @@ pub fn main() !void {
                     error.ParseError, error.CompileError => {
                         try error_handler.emitDiagnostics(gpa, std.fs.cwd(), final_input, &diagnostics, mapping_results.mappings);
                         // Delete the output file on error
-                        res_stream.cleanupAfterError();
+                        res_stream.cleanupAfterError(io);
                         std.process.exit(1);
                     },
                     else => |e| return e,
@@ -315,7 +315,7 @@ pub fn main() !void {
                         try error_handler.emitMessage(gpa, .err, "unable to create depfile '{s}': {s}", .{ depfile_path, @errorName(err) });
                         std.process.exit(1);
                     };
-                    defer depfile.close();
+                    defer depfile.close(io);
 
                     var depfile_buffer: [1024]u8 = undefined;
                     var depfile_writer = depfile.writer(&depfile_buffer);
@@ -402,7 +402,7 @@ pub fn main() !void {
             },
         }
         // Delete the output file on error
-        coff_stream.cleanupAfterError();
+        coff_stream.cleanupAfterError(io);
         std.process.exit(1);
     };
 
@@ -434,11 +434,11 @@ const IoStream = struct {
         self.source.deinit(allocator);
     }
 
-    pub fn cleanupAfterError(self: *IoStream) void {
+    pub fn cleanupAfterError(self: *IoStream, io: Io) void {
         switch (self.source) {
             .file => |file| {
                 // Delete the output file on error
-                file.close();
+                file.close(io);
                 // Failing to delete is not really a big deal, so swallow any errors
                 std.fs.cwd().deleteFile(self.name) catch {};
             },
@@ -465,9 +465,9 @@ const IoStream = struct {
             }
         }
 
-        pub fn deinit(self: *Source, allocator: Allocator) void {
+        pub fn deinit(self: *Source, allocator: Allocator, io: Io) void {
             switch (self.*) {
-                .file => |file| file.close(),
+                .file => |file| file.close(io),
                 .stdio => {},
                 .memory => |*list| list.deinit(allocator),
                 .closed => {},

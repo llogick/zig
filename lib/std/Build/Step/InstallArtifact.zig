@@ -119,6 +119,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
     _ = options;
     const install_artifact: *InstallArtifact = @fieldParentPtr("step", step);
     const b = step.owner;
+    const io = b.graph.io;
 
     var all_cached = true;
 
@@ -168,7 +169,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
                         src_dir_path, @errorName(err),
                     });
                 };
-                defer src_dir.close();
+                defer src_dir.close(io);
 
                 var it = try src_dir.walk(b.allocator);
                 next_entry: while (try it.next()) |entry| {

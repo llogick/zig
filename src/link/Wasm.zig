@@ -3032,7 +3032,7 @@ fn parseObject(wasm: *Wasm, obj: link.Input.Object) !void {
     const io = wasm.base.comp.io;
     const gc_sections = wasm.base.gc_sections;
 
-    defer obj.file.close();
+    defer obj.file.close(io);
 
     var file_reader = obj.file.reader(io, &.{});
 
@@ -3060,7 +3060,7 @@ fn parseArchive(wasm: *Wasm, obj: link.Input.Object) !void {
     const io = wasm.base.comp.io;
     const gc_sections = wasm.base.gc_sections;
 
-    defer obj.file.close();
+    defer obj.file.close(io);
 
     var file_reader = obj.file.reader(io, &.{});
 

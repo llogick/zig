@@ -441,6 +441,7 @@ pub fn evalZigProcess(
     assert(argv.len != 0);
     const b = s.owner;
     const arena = b.allocator;
+    const io = b.graph.io;
 
     try handleChildProcUnsupported(s);
     try handleVerbose(s.owner, null, argv);
@@ -474,7 +475,7 @@ pub fn evalZigProcess(
 
     if (!watch) {
         // Send EOF to stdin.
-        zp.child.stdin.?.close();
+        zp.child.stdin.?.close(io);
         zp.child.stdin = null;
 
         const term = zp.child.wait() catch |err| {

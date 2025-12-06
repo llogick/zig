@@ -1,10 +1,12 @@
-const std = @import("std.zig");
 const builtin = @import("builtin");
+const native_os = builtin.os.tag;
+
+const std = @import("std.zig");
+const Io = std.Io;
 const mem = std.mem;
 const testing = std.testing;
 const elf = std.elf;
 const windows = std.os.windows;
-const native_os = builtin.os.tag;
 const posix = std.posix;
 
 /// Cross-platform dynamic library loading and symbol lookup.
@@ -38,8 +40,8 @@ pub const DynLib = struct {
     }
 
     /// Trusts the file.
-    pub fn close(self: *DynLib) void {
-        return self.inner.close();
+    pub fn close(self: *DynLib, io: Io) void {
+        return self.inner.close(io);
     }
 
     pub fn lookup(self: *DynLib, comptime T: type, name: [:0]const u8) ?T {
@@ -155,23 +157,23 @@ pub const ElfDynLib = struct {
         dt_gnu_hash: *elf.gnu_hash.Header,
     };
 
-    fn openPath(path: []const u8) !std.fs.Dir {
+    fn openPath(path: []const u8, io: Io) !std.fs.Dir {
         if (path.len == 0) return error.NotDir;
         var parts = std.mem.tokenizeScalar(u8, path, '/');
         var parent = if (path[0] == '/') try std.fs.cwd().openDir("/", .{}) else std.fs.cwd();
         while (parts.next()) |part| {
             const child = try parent.openDir(part, .{});
-            parent.close();
+            parent.close(io);
             parent = child;
         }
         return parent;
     }
 
-    fn resolveFromSearchPath(search_path: []const u8, file_name: []const u8, delim: u8) ?posix.fd_t {
+    fn resolveFromSearchPath(io: Io, search_path: []const u8, file_name: []const u8, delim: u8) ?posix.fd_t {
         var paths = std.mem.tokenizeScalar(u8, search_path, delim);
         while (paths.next()) |p| {
             var dir = openPath(p) catch continue;
-            defer dir.close();
+            defer dir.close(io);
             const fd = posix.openat(dir.fd, file_name, .{
                 .ACCMODE = .RDONLY,
                 .CLOEXEC = true,
@@ -181,9 +183,9 @@ pub const ElfDynLib = struct {
         return null;
     }
 
-    fn resolveFromParent(dir_path: []const u8, file_name: []const u8) ?posix.fd_t {
+    fn resolveFromParent(io: Io, dir_path: []const u8, file_name: []const u8) ?posix.fd_t {
         var dir = std.fs.cwd().openDir(dir_path, .{}) catch return null;
-        defer dir.close();
+        defer dir.close(io);
         return posix.openat(dir.fd, file_name, .{
             .ACCMODE = .RDONLY,
             .CLOEXEC = true,
@@ -195,7 +197,7 @@ pub const ElfDynLib = struct {
     // - DT_RPATH of the calling binary is not used as a search path
     // - DT_RUNPATH of the calling binary is not used as a search path
     // - /etc/ld.so.cache is not read
-    fn resolveFromName(path_or_name: []const u8) !posix.fd_t {
+    fn resolveFromName(io: Io, path_or_name: []const u8) !posix.fd_t {
         // If filename contains a slash ("/"), then it is interpreted as a (relative or absolute) pathname
         if (std.mem.findScalarPos(u8, path_or_name, 0, '/')) |_| {
             return posix.open(path_or_name, .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, 0);
@@ -206,21 +208,21 @@ pub const ElfDynLib = struct {
             std.os.linux.getegid() == std.os.linux.getgid())
         {
             if (posix.getenvZ("LD_LIBRARY_PATH")) |ld_library_path| {
-                if (resolveFromSearchPath(ld_library_path, path_or_name, ':')) |fd| {
+                if (resolveFromSearchPath(io, ld_library_path, path_or_name, ':')) |fd| {
                     return fd;
                 }
             }
         }
 
         // Lastly the directories /lib and /usr/lib are searched (in this exact order)
-        if (resolveFromParent("/lib", path_or_name)) |fd| return fd;
-        if (resolveFromParent("/usr/lib", path_or_name)) |fd| return fd;
+        if (resolveFromParent(io, "/lib", path_or_name)) |fd| return fd;
+        if (resolveFromParent(io, "/usr/lib", path_or_name)) |fd| return fd;
         return error.FileNotFound;
     }
 
     /// Trusts the file. Malicious file will be able to execute arbitrary code.
-    pub fn open(path: []const u8) Error!ElfDynLib {
-        const fd = try resolveFromName(path);
+    pub fn open(io: Io, path: []const u8) Error!ElfDynLib {
+        const fd = try resolveFromName(io, path);
         defer posix.close(fd);
 
         const file: std.fs.File = .{ .handle = fd };

@@ -148,6 +148,8 @@ test "linkat with different directories" {
         else => return error.SkipZigTest,
     }
 
+    const io = testing.io;
+
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
@@ -163,10 +165,10 @@ test "linkat with different directories" {
     try posix.linkat(tmp.dir.fd, target_name, subdir.fd, link_name, 0);
 
     const efd = try tmp.dir.openFile(target_name, .{});
-    defer efd.close();
+    defer efd.close(io);
 
     const nfd = try subdir.openFile(link_name, .{});
-    defer nfd.close();
+    defer nfd.close(io);
 
     {
         const eino, _ = try getLinkInfo(efd.handle);
@@ -381,6 +383,8 @@ test "mmap" {
     if (native_os == .windows or native_os == .wasi)
         return error.SkipZigTest;
 
+    const io = testing.io;
+
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
@@ -413,7 +417,7 @@ test "mmap" {
     // Create a file used for testing mmap() calls with a file descriptor
     {
         const file = try tmp.dir.createFile(test_out_file, .{});
-        defer file.close();
+        defer file.close(io);
 
         var stream = file.writer(&.{});
 
@@ -426,7 +430,7 @@ test "mmap" {
     // Map the whole file
     {
         const file = try tmp.dir.openFile(test_out_file, .{});
-        defer file.close();
+        defer file.close(io);
 
         const data = try posix.mmap(
             null,
@@ -451,7 +455,7 @@ test "mmap" {
     // Map the upper half of the file
     {
         const file = try tmp.dir.openFile(test_out_file, .{});
-        defer file.close();
+        defer file.close(io);
 
         const data = try posix.mmap(
             null,
@@ -476,13 +480,15 @@ test "fcntl" {
     if (native_os == .windows or native_os == .wasi)
         return error.SkipZigTest;
 
+    const io = testing.io;
+
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
     const test_out_file = "os_tmp_test";
 
     const file = try tmp.dir.createFile(test_out_file, .{});
-    defer file.close();
+    defer file.close(io);
 
     // Note: The test assumes createFile opens the file with CLOEXEC
     {
@@ -526,12 +532,14 @@ test "fsync" {
         else => return error.SkipZigTest,
     }
 
+    const io = testing.io;
+
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
     const test_out_file = "os_tmp_test";
     const file = try tmp.dir.createFile(test_out_file, .{});
-    defer file.close();
+    defer file.close(io);
 
     try posix.fsync(file.handle);
     try posix.fdatasync(file.handle);
@@ -646,22 +654,24 @@ test "dup & dup2" {
         else => return error.SkipZigTest,
     }
 
+    const io = testing.io;
+
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
     {
         var file = try tmp.dir.createFile("os_dup_test", .{});
-        defer file.close();
+        defer file.close(io);
 
         var duped = std.fs.File{ .handle = try posix.dup(file.handle) };
-        defer duped.close();
+        defer duped.close(io);
         try duped.writeAll("dup");
 
         // Tests aren't run in parallel so using the next fd shouldn't be an issue.
         const new_fd = duped.handle + 1;
         try posix.dup2(file.handle, new_fd);
         var dup2ed = std.fs.File{ .handle = new_fd };
-        defer dup2ed.close();
+        defer dup2ed.close(io);
         try dup2ed.writeAll("dup2");
     }
 
@@ -687,11 +697,13 @@ test "getppid" {
 test "writev longer than IOV_MAX" {
     if (native_os == .windows or native_os == .wasi) return error.SkipZigTest;
 
+    const io = testing.io;
+
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
     var file = try tmp.dir.createFile("pwritev", .{});
-    defer file.close();
+    defer file.close(io);
 
     const iovecs = [_]posix.iovec_const{.{ .base = "a", .len = 1 }} ** (posix.IOV_MAX + 1);
     const amt = try file.writev(&iovecs);
@@ -709,12 +721,14 @@ test "POSIX file locking with fcntl" {
         return error.SkipZigTest;
     }
 
+    const io = testing.io;
+
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
     // Create a temporary lock file
     var file = try tmp.dir.createFile("lock", .{ .read = true });
-    defer file.close();
+    defer file.close(io);
     try file.setEndPos(2);
     const fd = file.handle;
 
@@ -905,21 +919,25 @@ test "timerfd" {
 }
 
 test "isatty" {
+    const io = testing.io;
+
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
     var file = try tmp.dir.createFile("foo", .{});
-    defer file.close();
+    defer file.close(io);
 
     try expectEqual(posix.isatty(file.handle), false);
 }
 
 test "pread with empty buffer" {
+    const io = testing.io;
+
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
     var file = try tmp.dir.createFile("pread_empty", .{ .read = true });
-    defer file.close();
+    defer file.close(io);
 
     const bytes = try a.alloc(u8, 0);
     defer a.free(bytes);
@@ -929,11 +947,13 @@ test "pread with empty buffer" {
 }
 
 test "write with empty buffer" {
+    const io = testing.io;
+
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
     var file = try tmp.dir.createFile("write_empty", .{});
-    defer file.close();
+    defer file.close(io);
 
     const bytes = try a.alloc(u8, 0);
     defer a.free(bytes);
@@ -943,11 +963,13 @@ test "write with empty buffer" {
 }
 
 test "pwrite with empty buffer" {
+    const io = testing.io;
+
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
     var file = try tmp.dir.createFile("pwrite_empty", .{});
-    defer file.close();
+    defer file.close(io);
 
     const bytes = try a.alloc(u8, 0);
     defer a.free(bytes);

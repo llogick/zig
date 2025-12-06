@@ -2835,7 +2835,7 @@ test "discarding sendFile" {
     defer tmp_dir.cleanup();
 
     const file = try tmp_dir.dir.createFile("input.txt", .{ .read = true });
-    defer file.close();
+    defer file.close(io);
     var r_buffer: [256]u8 = undefined;
     var file_writer: std.fs.File.Writer = .init(file, &r_buffer);
     try file_writer.interface.writeByte('h');
@@ -2857,7 +2857,7 @@ test "allocating sendFile" {
     defer tmp_dir.cleanup();
 
     const file = try tmp_dir.dir.createFile("input.txt", .{ .read = true });
-    defer file.close();
+    defer file.close(io);
     var r_buffer: [2]u8 = undefined;
     var file_writer: std.fs.File.Writer = .init(file, &r_buffer);
     try file_writer.interface.writeAll("abcd");
@@ -2881,7 +2881,7 @@ test sendFileReading {
     defer tmp_dir.cleanup();
 
     const file = try tmp_dir.dir.createFile("input.txt", .{ .read = true });
-    defer file.close();
+    defer file.close(io);
     var r_buffer: [2]u8 = undefined;
     var file_writer: std.fs.File.Writer = .init(file, &r_buffer);
     try file_writer.interface.writeAll("abcd");

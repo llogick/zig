@@ -207,11 +207,11 @@ const Module = struct {
             file: fs.File,
             section_handle: windows.HANDLE,
             section_view: []const u8,
-            fn deinit(mf: *const MappedFile) void {
+            fn deinit(mf: *const MappedFile, io: Io) void {
                 const process_handle = windows.GetCurrentProcess();
                 assert(windows.ntdll.NtUnmapViewOfSection(process_handle, @constCast(mf.section_view.ptr)) == .SUCCESS);
                 windows.CloseHandle(mf.section_handle);
-                mf.file.close();
+                mf.file.close(io);
             }
         };
 
@@ -447,7 +447,7 @@ const Module = struct {
                 error.FileNotFound, error.IsDir => break :pdb null,
                 else => return error.ReadFailed,
             };
-            errdefer pdb_file.close();
+            errdefer pdb_file.close(io);
 
             const pdb_reader = try arena.create(Io.File.Reader);
             pdb_reader.* = pdb_file.reader(io, try arena.alloc(u8, 4096));

@@ -75,6 +75,6 @@ test AllTypes {
     // Use this to update test file.
     // const dir = try std.fs.cwd().openDir("lib/std/crypto/asn1", .{});
     // var file = try dir.createFile(path, .{});
-    // defer file.close();
+    // defer file.close(io);
     // try file.writeAll(buf);
 }

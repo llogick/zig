@@ -7,6 +7,7 @@ const target = builtin.target;
 const native_os = builtin.os.tag;
 
 const std = @import("std.zig");
+const Io = std.Io;
 const math = std.math;
 const assert = std.debug.assert;
 const posix = std.posix;
@@ -176,7 +177,7 @@ pub const SetNameError = error{
     InvalidWtf8,
 } || posix.PrctlError || posix.WriteError || std.fs.File.OpenError || std.fmt.BufPrintError;
 
-pub fn setName(self: Thread, name: []const u8) SetNameError!void {
+pub fn setName(self: Thread, io: Io, name: []const u8) SetNameError!void {
     if (name.len > max_name_len) return error.NameTooLong;
 
     const name_with_terminator = blk: {
@@ -208,7 +209,7 @@ pub fn setName(self: Thread, name: []const u8) SetNameError!void {
             const path = try std.fmt.bufPrint(&buf, "/proc/self/task/{d}/comm", .{self.getHandle()});
 
             const file = try std.fs.cwd().openFile(path, .{ .mode = .write_only });
-            defer file.close();
+            defer file.close(io);
 
             try file.writeAll(name);
             return;
@@ -325,7 +326,7 @@ pub fn getName(self: Thread, buffer_ptr: *[max_name_len:0]u8) GetNameError!?[]co
             const io = threaded.ioBasic();
 
             const file = try std.fs.cwd().openFile(path, .{});
-            defer file.close();
+            defer file.close(io);
 
             var file_reader = file.readerStreaming(io, &.{});
             const data_len = file_reader.interface.readSliceShort(buffer_ptr[0 .. max_name_len + 1]) catch |err| switch (err) {

@@ -1078,7 +1078,7 @@ pub const File = struct {
             const dir, const sub_path = file.path.openInfo(zcu.comp.dirs);
             break :f try dir.openFile(sub_path, .{});
         };
-        defer f.close();
+        defer f.close(io);
 
         const stat = f.stat() catch |err| switch (err) {
             error.Streaming => {
@@ -2813,8 +2813,8 @@ pub fn init(zcu: *Zcu, gpa: Allocator, io: Io, thread_count: usize) !void {
 
 pub fn deinit(zcu: *Zcu) void {
     const comp = zcu.comp;
-    const gpa = comp.gpa;
     const io = comp.io;
+    const gpa = zcu.gpa;
     {
         const pt: Zcu.PerThread = .activate(zcu, .main);
         defer pt.deactivate();
@@ -2835,8 +2835,8 @@ pub fn deinit(zcu: *Zcu) void {
         }
         zcu.embed_table.deinit(gpa);
 
-        zcu.local_zir_cache.handle.close();
-        zcu.global_zir_cache.handle.close();
+        zcu.local_zir_cache.handle.close(io);
+        zcu.global_zir_cache.handle.close(io);
 
         for (zcu.failed_analysis.values()) |value| value.destroy(gpa);
         for (zcu.failed_codegen.values()) |value| value.destroy(gpa);
@@ -2900,7 +2900,7 @@ pub fn deinit(zcu: *Zcu) void {
 
         if (zcu.resolved_references) |*r| r.deinit(gpa);
 
-        if (zcu.comp.debugIncremental()) {
+        if (comp.debugIncremental()) {
             zcu.incremental_debug_state.deinit(gpa);
         }
     }

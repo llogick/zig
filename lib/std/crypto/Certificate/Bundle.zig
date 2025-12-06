@@ -181,7 +181,7 @@ pub fn addCertsFromDirPath(
     sub_dir_path: []const u8,
 ) AddCertsFromDirPathError!void {
     var iterable_dir = try dir.openDir(sub_dir_path, .{ .iterate = true });
-    defer iterable_dir.close();
+    defer iterable_dir.close(io);
     return addCertsFromDir(cb, gpa, io, iterable_dir);
 }
 
@@ -194,7 +194,7 @@ pub fn addCertsFromDirPathAbsolute(
 ) AddCertsFromDirPathError!void {
     assert(fs.path.isAbsolute(abs_dir_path));
     var iterable_dir = try fs.openDirAbsolute(abs_dir_path, .{ .iterate = true });
-    defer iterable_dir.close();
+    defer iterable_dir.close(io);
     return addCertsFromDir(cb, gpa, io, now, iterable_dir);
 }
 
@@ -222,7 +222,7 @@ pub fn addCertsFromFilePathAbsolute(
     abs_file_path: []const u8,
 ) AddCertsFromFilePathError!void {
     var file = try fs.openFileAbsolute(abs_file_path, .{});
-    defer file.close();
+    defer file.close(io);
     var file_reader = file.reader(io, &.{});
     return addCertsFromFile(cb, gpa, &file_reader, now.toSeconds());
 }

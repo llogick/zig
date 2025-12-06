@@ -12,6 +12,7 @@ const introspect = @import("introspect.zig");
 
 pub fn cmdTargets(
     allocator: Allocator,
+    io: Io,
     args: []const []const u8,
     out: *std.Io.Writer,
     native_target: *const Target,
@@ -20,7 +21,7 @@ pub fn cmdTargets(
     var zig_lib_directory = introspect.findZigLibDir(allocator) catch |err| {
         fatal("unable to find zig installation directory: {s}\n", .{@errorName(err)});
     };
-    defer zig_lib_directory.handle.close();
+    defer zig_lib_directory.handle.close(io);
     defer allocator.free(zig_lib_directory.path.?);
 
     const abilists_contents = zig_lib_directory.handle.readFileAlloc(

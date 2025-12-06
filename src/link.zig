@@ -687,7 +687,7 @@ pub const File = struct {
             .lld => assert(base.file == null),
             .elf => if (base.file) |f| {
                 dev.check(.elf_linker);
-                f.close();
+                f.close(io);
                 base.file = null;
 
                 if (base.child_pid) |pid| {
@@ -701,7 +701,7 @@ pub const File = struct {
             },
             .macho, .wasm => if (base.file) |f| {
                 dev.checkAny(&.{ .coff_linker, .macho_linker, .plan9_linker, .wasm_linker });
-                f.close();
+                f.close(io);
                 base.file = null;
 
                 if (base.child_pid) |pid| {
@@ -866,8 +866,9 @@ pub const File = struct {
     }
 
     pub fn destroy(base: *File) void {
+        const io = base.comp.io;
         base.releaseLock();
-        if (base.file) |f| f.close();
+        if (base.file) |f| f.close(io);
         switch (base.tag) {
             .plan9 => unreachable,
             inline else => |tag| {
@@ -1060,9 +1061,10 @@ pub const File = struct {
     /// Opens a path as an object file and parses it into the linker.
     fn openLoadObject(base: *File, path: Path) anyerror!void {
         if (base.tag == .lld) return;
+        const io = base.comp.io;
         const diags = &base.comp.link_diags;
-        const input = try openObjectInput(diags, path);
-        errdefer input.object.file.close();
+        const input = try openObjectInput(io, diags, path);
+        errdefer input.object.file.close(io);
         try loadInput(base, input);
     }
 
@@ -1070,21 +1072,22 @@ pub const File = struct {
     /// If `query` is non-null, allows GNU ld scripts.
     fn openLoadArchive(base: *File, path: Path, opt_query: ?UnresolvedInput.Query) anyerror!void {
         if (base.tag == .lld) return;
+        const io = base.comp.io;
         if (opt_query) |query| {
-            const archive = try openObject(path, query.must_link, query.hidden);
-            errdefer archive.file.close();
+            const archive = try openObject(io, path, query.must_link, query.hidden);
+            errdefer archive.file.close(io);
             loadInput(base, .{ .archive = archive }) catch |err| switch (err) {
                 error.BadMagic, error.UnexpectedEndOfFile => {
                     if (base.tag != .elf and base.tag != .elf2) return err;
                     try loadGnuLdScript(base, path, query, archive.file);
-                    archive.file.close();
+                    archive.file.close(io);
                     return;
                 },
                 else => return err,
             };
         } else {
-            const archive = try openObject(path, false, false);
-            errdefer archive.file.close();
+            const archive = try openObject(io, path, false, false);
+            errdefer archive.file.close(io);
             try loadInput(base, .{ .archive = archive });
         }
     }
@@ -1093,13 +1096,14 @@ pub const File = struct {
     /// Handles GNU ld scripts.
     fn openLoadDso(base: *File, path: Path, query: UnresolvedInput.Query) anyerror!void {
         if (base.tag == .lld) return;
-        const dso = try openDso(path, query.needed, query.weak, query.reexport);
-        errdefer dso.file.close();
+        const io = base.comp.io;
+        const dso = try openDso(io, path, query.needed, query.weak, query.reexport);
+        errdefer dso.file.close(io);
         loadInput(base, .{ .dso = dso }) catch |err| switch (err) {
             error.BadMagic, error.UnexpectedEndOfFile => {
                 if (base.tag != .elf and base.tag != .elf2) return err;
                 try loadGnuLdScript(base, path, query, dso.file);
-                dso.file.close();
+                dso.file.close(io);
                 return;
             },
             else => return err,
@@ -1735,6 +1739,7 @@ pub fn hashInputs(man: *Cache.Manifest, link_inputs: []const Input) !void {
 pub fn resolveInputs(
     gpa: Allocator,
     arena: Allocator,
+    io: Io,
     target: *const std.Target,
     /// This function mutates this array but does not take ownership.
     /// Allocated with `gpa`.
@@ -1784,6 +1789,7 @@ pub fn resolveInputs(
                         for (lib_directories) |lib_directory| switch (try resolveLibInput(
                             gpa,
                             arena,
+                            io,
                             unresolved_inputs,
                             resolved_inputs,
                             &checked_paths,
@@ -1810,6 +1816,7 @@ pub fn resolveInputs(
                         for (lib_directories) |lib_directory| switch (try resolveLibInput(
                             gpa,
                             arena,
+                            io,
                             unresolved_inputs,
                             resolved_inputs,
                             &checked_paths,
@@ -1837,6 +1844,7 @@ pub fn resolveInputs(
                             switch (try resolveLibInput(
                                 gpa,
                                 arena,
+                                io,
                                 unresolved_inputs,
                                 resolved_inputs,
                                 &checked_paths,
@@ -1855,6 +1863,7 @@ pub fn resolveInputs(
                             switch (try resolveLibInput(
                                 gpa,
                                 arena,
+                                io,
                                 unresolved_inputs,
                                 resolved_inputs,
                                 &checked_paths,
@@ -1886,6 +1895,7 @@ pub fn resolveInputs(
                 if (try resolvePathInput(
                     gpa,
                     arena,
+                    io,
                     unresolved_inputs,
                     resolved_inputs,
                     &ld_script_bytes,
@@ -1903,6 +1913,7 @@ pub fn resolveInputs(
                                 switch ((try resolvePathInput(
                                     gpa,
                                     arena,
+                                    io,
                                     unresolved_inputs,
                                     resolved_inputs,
                                     &ld_script_bytes,
@@ -1930,6 +1941,7 @@ pub fn resolveInputs(
                 if (try resolvePathInput(
                     gpa,
                     arena,
+                    io,
                     unresolved_inputs,
                     resolved_inputs,
                     &ld_script_bytes,
@@ -1969,6 +1981,7 @@ const fatal = std.process.fatal;
 fn resolveLibInput(
     gpa: Allocator,
     arena: Allocator,
+    io: Io,
     /// Allocated via `gpa`.
     unresolved_inputs: *std.ArrayList(UnresolvedInput),
     /// Allocated via `gpa`.
@@ -1998,7 +2011,7 @@ fn resolveLibInput(
             error.FileNotFound => break :tbd,
             else => |e| fatal("unable to search for tbd library '{f}': {s}", .{ test_path, @errorName(e) }),
         };
-        errdefer file.close();
+        errdefer file.close(io);
         return finishResolveLibInput(resolved_inputs, test_path, file, link_mode, name_query.query);
     }
 
@@ -2013,7 +2026,7 @@ fn resolveLibInput(
             }),
         };
         try checked_paths.print(gpa, "\n  {f}", .{test_path});
-        switch (try resolvePathInputLib(gpa, arena, unresolved_inputs, resolved_inputs, ld_script_bytes, target, .{
+        switch (try resolvePathInputLib(gpa, arena, io, unresolved_inputs, resolved_inputs, ld_script_bytes, target, .{
             .path = test_path,
             .query = name_query.query,
         }, link_mode, color)) {
@@ -2036,7 +2049,7 @@ fn resolveLibInput(
                 test_path, @errorName(e),
             }),
         };
-        errdefer file.close();
+        errdefer file.close(io);
         return finishResolveLibInput(resolved_inputs, test_path, file, link_mode, name_query.query);
     }
 
@@ -2052,7 +2065,7 @@ fn resolveLibInput(
             error.FileNotFound => break :mingw,
             else => |e| fatal("unable to search for static library '{f}': {s}", .{ test_path, @errorName(e) }),
         };
-        errdefer file.close();
+        errdefer file.close(io);
         return finishResolveLibInput(resolved_inputs, test_path, file, link_mode, name_query.query);
     }
 
@@ -2087,6 +2100,7 @@ fn finishResolveLibInput(
 fn resolvePathInput(
     gpa: Allocator,
     arena: Allocator,
+    io: Io,
     /// Allocated with `gpa`.
     unresolved_inputs: *std.ArrayList(UnresolvedInput),
     /// Allocated with `gpa`.
@@ -2098,12 +2112,12 @@ fn resolvePathInput(
     color: std.zig.Color,
 ) Allocator.Error!?ResolveLibInputResult {
     switch (Compilation.classifyFileExt(pq.path.sub_path)) {
-        .static_library => return try resolvePathInputLib(gpa, arena, unresolved_inputs, resolved_inputs, ld_script_bytes, target, pq, .static, color),
-        .shared_library => return try resolvePathInputLib(gpa, arena, unresolved_inputs, resolved_inputs, ld_script_bytes, target, pq, .dynamic, color),
+        .static_library => return try resolvePathInputLib(gpa, arena, io, unresolved_inputs, resolved_inputs, ld_script_bytes, target, pq, .static, color),
+        .shared_library => return try resolvePathInputLib(gpa, arena, io, unresolved_inputs, resolved_inputs, ld_script_bytes, target, pq, .dynamic, color),
         .object => {
             var file = pq.path.root_dir.handle.openFile(pq.path.sub_path, .{}) catch |err|
                 fatal("failed to open object {f}: {s}", .{ pq.path, @errorName(err) });
-            errdefer file.close();
+            errdefer file.close(io);
             try resolved_inputs.append(gpa, .{ .object = .{
                 .path = pq.path,
                 .file = file,
@@ -2115,7 +2129,7 @@ fn resolvePathInput(
         .res => {
             var file = pq.path.root_dir.handle.openFile(pq.path.sub_path, .{}) catch |err|
                 fatal("failed to open windows resource {f}: {s}", .{ pq.path, @errorName(err) });
-            errdefer file.close();
+            errdefer file.close(io);
             try resolved_inputs.append(gpa, .{ .res = .{
                 .path = pq.path,
                 .file = file,
@@ -2129,6 +2143,7 @@ fn resolvePathInput(
 fn resolvePathInputLib(
     gpa: Allocator,
     arena: Allocator,
+    io: Io,
     /// Allocated with `gpa`.
     unresolved_inputs: *std.ArrayList(UnresolvedInput),
     /// Allocated with `gpa`.
@@ -2155,7 +2170,7 @@ fn resolvePathInputLib(
                 @tagName(link_mode), std.fmt.alt(test_path, .formatEscapeChar), @errorName(e),
             }),
         };
-        errdefer file.close();
+        errdefer file.close(io);
         try ld_script_bytes.resize(gpa, @max(std.elf.MAGIC.len, std.elf.ARMAG.len));
         const n = file.preadAll(ld_script_bytes.items, 0) catch |err| fatal("failed to read '{f}': {s}", .{
             std.fmt.alt(test_path, .formatEscapeChar), @errorName(err),
@@ -2223,7 +2238,7 @@ fn resolvePathInputLib(
                 } });
             }
         }
-        file.close();
+        file.close(io);
         return .ok;
     }
 
@@ -2233,13 +2248,13 @@ fn resolvePathInputLib(
             @tagName(link_mode), test_path, @errorName(e),
         }),
     };
-    errdefer file.close();
+    errdefer file.close(io);
     return finishResolveLibInput(resolved_inputs, test_path, file, link_mode, pq.query);
 }
 
-pub fn openObject(path: Path, must_link: bool, hidden: bool) !Input.Object {
+pub fn openObject(io: Io, path: Path, must_link: bool, hidden: bool) !Input.Object {
     var file = try path.root_dir.handle.openFile(path.sub_path, .{});
-    errdefer file.close();
+    errdefer file.close(io);
     return .{
         .path = path,
         .file = file,
@@ -2248,9 +2263,9 @@ pub fn openObject(path: Path, must_link: bool, hidden: bool) !Input.Object {
     };
 }
 
-pub fn openDso(path: Path, needed: bool, weak: bool, reexport: bool) !Input.Dso {
+pub fn openDso(io: Io, path: Path, needed: bool, weak: bool, reexport: bool) !Input.Dso {
     var file = try path.root_dir.handle.openFile(path.sub_path, .{});
-    errdefer file.close();
+    errdefer file.close(io);
     return .{
         .path = path,
         .file = file,
@@ -2260,20 +2275,20 @@ pub fn openDso(path: Path, needed: bool, weak: bool, reexport: bool) !Input.Dso 
     };
 }
 
-pub fn openObjectInput(diags: *Diags, path: Path) error{LinkFailure}!Input {
-    return .{ .object = openObject(path, false, false) catch |err| {
+pub fn openObjectInput(io: Io, diags: *Diags, path: Path) error{LinkFailure}!Input {
+    return .{ .object = openObject(io, path, false, false) catch |err| {
         return diags.failParse(path, "failed to open {f}: {s}", .{ path, @errorName(err) });
     } };
 }
 
-pub fn openArchiveInput(diags: *Diags, path: Path, must_link: bool, hidden: bool) error{LinkFailure}!Input {
-    return .{ .archive = openObject(path, must_link, hidden) catch |err| {
+pub fn openArchiveInput(io: Io, diags: *Diags, path: Path, must_link: bool, hidden: bool) error{LinkFailure}!Input {
+    return .{ .archive = openObject(io, path, must_link, hidden) catch |err| {
         return diags.failParse(path, "failed to open {f}: {s}", .{ path, @errorName(err) });
     } };
 }
 
-pub fn openDsoInput(diags: *Diags, path: Path, needed: bool, weak: bool, reexport: bool) error{LinkFailure}!Input {
-    return .{ .dso = openDso(path, needed, weak, reexport) catch |err| {
+pub fn openDsoInput(io: Io, diags: *Diags, path: Path, needed: bool, weak: bool, reexport: bool) error{LinkFailure}!Input {
+    return .{ .dso = openDso(io, path, needed, weak, reexport) catch |err| {
         return diags.failParse(path, "failed to open {f}: {s}", .{ path, @errorName(err) });
     } };
 }

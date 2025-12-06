@@ -1473,6 +1473,8 @@ pub const ConnectUnixError = Allocator.Error || std.posix.SocketError || error{N
 ///
 /// This function is threadsafe.
 pub fn connectUnix(client: *Client, path: []const u8) ConnectUnixError!*Connection {
+    const io = client.io;
+
     if (client.connection_pool.findConnection(.{
         .host = path,
         .port = 0,
@@ -1485,7 +1487,7 @@ pub fn connectUnix(client: *Client, path: []const u8) ConnectUnixError!*Connecti
     conn.* = .{ .data = undefined };
 
     const stream = try Io.net.connectUnixSocket(path);
-    errdefer stream.close();
+    errdefer stream.close(io);
 
     conn.data = .{
         .stream = stream,

@@ -1,4 +1,18 @@
 //! See the render function implementation for documentation of the fields.
+const LibCInstallation = @This();
+
+const builtin = @import("builtin");
+const is_darwin = builtin.target.os.tag.isDarwin();
+const is_windows = builtin.target.os.tag == .windows;
+const is_haiku = builtin.target.os.tag == .haiku;
+
+const std = @import("std");
+const Io = std.Io;
+const Target = std.Target;
+const fs = std.fs;
+const Allocator = std.mem.Allocator;
+const Path = std.Build.Cache.Path;
+const log = std.log.scoped(.libc_installation);
 
 include_dir: ?[]const u8 = null,
 sys_include_dir: ?[]const u8 = null,
@@ -157,6 +171,7 @@ pub fn render(self: LibCInstallation, out: *std.Io.Writer) !void {
 
 pub const FindNativeOptions = struct {
     allocator: Allocator,
+    io: Io,
     target: *const std.Target,
 
     /// If enabled, will print human-friendly errors to stderr.
@@ -165,29 +180,32 @@ pub const FindNativeOptions = struct {
 
 /// Finds the default, native libc.
 pub fn findNative(args: FindNativeOptions) FindError!LibCInstallation {
+    const gpa = args.allocator;
+    const io = args.io;
+
     var self: LibCInstallation = .{};
 
     if (is_darwin and args.target.os.tag.isDarwin()) {
-        if (!std.zig.system.darwin.isSdkInstalled(args.allocator))
+        if (!std.zig.system.darwin.isSdkInstalled(gpa))
             return error.DarwinSdkNotFound;
-        const sdk = std.zig.system.darwin.getSdk(args.allocator, args.target) orelse
+        const sdk = std.zig.system.darwin.getSdk(gpa, args.target) orelse
             return error.DarwinSdkNotFound;
-        defer args.allocator.free(sdk);
+        defer gpa.free(sdk);
 
-        self.include_dir = try fs.path.join(args.allocator, &.{
+        self.include_dir = try fs.path.join(gpa, &.{
             sdk, "usr/include",
         });
-        self.sys_include_dir = try fs.path.join(args.allocator, &.{
+        self.sys_include_dir = try fs.path.join(gpa, &.{
             sdk, "usr/include",
         });
         return self;
     } else if (is_windows) {
-        const sdk = std.zig.WindowsSdk.find(args.allocator, args.target.cpu.arch) catch |err| switch (err) {
+        const sdk = std.zig.WindowsSdk.find(gpa, io, args.target.cpu.arch) catch |err| switch (err) {
             error.NotFound => return error.WindowsSdkNotFound,
             error.PathTooLong => return error.WindowsSdkNotFound,
             error.OutOfMemory => return error.OutOfMemory,
         };
-        defer sdk.free(args.allocator);
+        defer sdk.free(gpa);
 
         try self.findNativeMsvcIncludeDir(args, sdk);
         try self.findNativeMsvcLibDir(args, sdk);
@@ -197,16 +215,16 @@ pub fn findNative(args: FindNativeOptions) FindError!LibCInstallation {
     } else if (is_haiku) {
         try self.findNativeIncludeDirPosix(args);
         try self.findNativeGccDirHaiku(args);
-        self.crt_dir = try args.allocator.dupeZ(u8, "/system/develop/lib");
+        self.crt_dir = try gpa.dupeZ(u8, "/system/develop/lib");
     } else if (builtin.target.os.tag == .illumos) {
         // There is only one libc, and its headers/libraries are always in the same spot.
-        self.include_dir = try args.allocator.dupeZ(u8, "/usr/include");
-        self.sys_include_dir = try args.allocator.dupeZ(u8, "/usr/include");
-        self.crt_dir = try args.allocator.dupeZ(u8, "/usr/lib/64");
+        self.include_dir = try gpa.dupeZ(u8, "/usr/include");
+        self.sys_include_dir = try gpa.dupeZ(u8, "/usr/include");
+        self.crt_dir = try gpa.dupeZ(u8, "/usr/lib/64");
     } else if (std.process.can_spawn) {
         try self.findNativeIncludeDirPosix(args);
         switch (builtin.target.os.tag) {
-            .freebsd, .netbsd, .openbsd, .dragonfly => self.crt_dir = try args.allocator.dupeZ(u8, "/usr/lib"),
+            .freebsd, .netbsd, .openbsd, .dragonfly => self.crt_dir = try gpa.dupeZ(u8, "/usr/lib"),
             .linux => try self.findNativeCrtDirPosix(args),
             else => {},
         }
@@ -229,6 +247,7 @@ pub fn deinit(self: *LibCInstallation, allocator: Allocator) void {
 
 fn findNativeIncludeDirPosix(self: *LibCInstallation, args: FindNativeOptions) FindError!void {
     const allocator = args.allocator;
+    const io = args.io;
 
     // Detect infinite loops.
     var env_map = std.process.getEnvMap(allocator) catch |err| switch (err) {
@@ -326,7 +345,7 @@ fn findNativeIncludeDirPosix(self: *LibCInstallation, args: FindNativeOptions) F
 
             else => return error.FileSystem,
         };
-        defer search_dir.close();
+        defer search_dir.close(io);
 
         if (self.include_dir == null) {
             if (search_dir.access(include_dir_example_file, .{})) |_| {
@@ -361,6 +380,7 @@ fn findNativeIncludeDirWindows(
     sdk: std.zig.WindowsSdk,
 ) FindError!void {
     const allocator = args.allocator;
+    const io = args.io;
 
     var install_buf: [2]std.zig.WindowsSdk.Installation = undefined;
     const installs = fillInstallations(&install_buf, sdk);
@@ -380,7 +400,7 @@ fn findNativeIncludeDirWindows(
 
             else => return error.FileSystem,
         };
-        defer dir.close();
+        defer dir.close(io);
 
         dir.access("stdlib.h", .{}) catch |err| switch (err) {
             error.FileNotFound => continue,
@@ -400,6 +420,7 @@ fn findNativeCrtDirWindows(
     sdk: std.zig.WindowsSdk,
 ) FindError!void {
     const allocator = args.allocator;
+    const io = args.io;
 
     var install_buf: [2]std.zig.WindowsSdk.Installation = undefined;
     const installs = fillInstallations(&install_buf, sdk);
@@ -427,7 +448,7 @@ fn findNativeCrtDirWindows(
 
             else => return error.FileSystem,
         };
-        defer dir.close();
+        defer dir.close(io);
 
         dir.access("ucrt.lib", .{}) catch |err| switch (err) {
             error.FileNotFound => continue,
@@ -467,6 +488,7 @@ fn findNativeKernel32LibDir(
     sdk: std.zig.WindowsSdk,
 ) FindError!void {
     const allocator = args.allocator;
+    const io = args.io;
 
     var install_buf: [2]std.zig.WindowsSdk.Installation = undefined;
     const installs = fillInstallations(&install_buf, sdk);
@@ -494,7 +516,7 @@ fn findNativeKernel32LibDir(
 
             else => return error.FileSystem,
         };
-        defer dir.close();
+        defer dir.close(io);
 
         dir.access("kernel32.lib", .{}) catch |err| switch (err) {
             error.FileNotFound => continue,
@@ -513,6 +535,7 @@ fn findNativeMsvcIncludeDir(
     sdk: std.zig.WindowsSdk,
 ) FindError!void {
     const allocator = args.allocator;
+    const io = args.io;
 
     const msvc_lib_dir = sdk.msvc_lib_dir orelse return error.LibCStdLibHeaderNotFound;
     const up1 = fs.path.dirname(msvc_lib_dir) orelse return error.LibCStdLibHeaderNotFound;
@@ -529,7 +552,7 @@ fn findNativeMsvcIncludeDir(
 
         else => return error.FileSystem,
     };
-    defer dir.close();
+    defer dir.close(io);
 
     dir.access("vcruntime.h", .{}) catch |err| switch (err) {
         error.FileNotFound => return error.LibCStdLibHeaderNotFound,
@@ -1015,17 +1038,3 @@ pub fn resolveCrtPaths(
         },
     }
 }
-
-const LibCInstallation = @This();
-const std = @import("std");
-const builtin = @import("builtin");
-const Target = std.Target;
-const fs = std.fs;
-const Allocator = std.mem.Allocator;
-const Path = std.Build.Cache.Path;
-
-const is_darwin = builtin.target.os.tag.isDarwin();
-const is_windows = builtin.target.os.tag == .windows;
-const is_haiku = builtin.target.os.tag == .haiku;
-
-const log = std.log.scoped(.libc_installation);

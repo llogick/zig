@@ -262,7 +262,7 @@ pub fn buildImportLib(comp: *Compilation, lib_name: []const u8) !void {
     cache.addPrefix(.{ .path = null, .handle = std.fs.cwd() });
     cache.addPrefix(comp.dirs.zig_lib);
     cache.addPrefix(comp.dirs.global_cache);
-    defer cache.manifest_dir.close();
+    defer cache.manifest_dir.close(io);
 
     cache.hash.addBytes(build_options.version);
     cache.hash.addOptionalBytes(comp.dirs.zig_lib.path);
@@ -297,7 +297,7 @@ pub fn buildImportLib(comp: *Compilation, lib_name: []const u8) !void {
     const digest = man.final();
     const o_sub_path = try std.fs.path.join(arena, &[_][]const u8{ "o", &digest });
     var o_dir = try comp.dirs.global_cache.handle.makeOpenPath(o_sub_path, .{});
-    defer o_dir.close();
+    defer o_dir.close(io);
 
     const aro = @import("aro");
     var diagnostics: aro.Diagnostics = .{
@@ -377,7 +377,7 @@ pub fn buildImportLib(comp: *Compilation, lib_name: []const u8) !void {
 
     {
         const lib_final_file = try o_dir.createFile(final_lib_basename, .{ .truncate = true });
-        defer lib_final_file.close();
+        defer lib_final_file.close(io);
         var buffer: [1024]u8 = undefined;
         var file_writer = lib_final_file.writer(&buffer);
         try implib.writeCoffArchive(gpa, &file_writer.interface, members);

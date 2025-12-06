@@ -1991,6 +1991,8 @@ test "parse: input and output formats" {
 }
 
 test "maybeAppendRC" {
+    const io = std.testing.io;
+
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
@@ -2001,7 +2003,7 @@ test "maybeAppendRC" {
     // Create the file so that it's found. In this scenario, .rc should not get
     // appended.
     var file = try tmp.dir.createFile("foo", .{});
-    file.close();
+    file.close(io);
     try options.maybeAppendRC(tmp.dir);
     try std.testing.expectEqualStrings("foo", options.input_source.filename);
 

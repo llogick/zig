@@ -206,7 +206,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
         }
     }
 
-    const open_dir_cache = try arena.alloc(fs.Dir, write_file.directories.items.len);
+    const open_dir_cache = try arena.alloc(Io.Dir, write_file.directories.items.len);
     var open_dirs_count: usize = 0;
     defer closeDirs(open_dir_cache[0..open_dirs_count]);
 
@@ -264,7 +264,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
             b.cache_root, cache_path, @errorName(err),
         });
     };
-    defer cache_dir.close();
+    defer cache_dir.close(io);
 
     for (write_file.files.items) |file| {
         if (fs.path.dirname(file.sub_path)) |dirname| {
@@ -342,6 +342,8 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
     try step.writeManifest(&man);
 }
 
-fn closeDirs(dirs: []fs.Dir) void {
-    for (dirs) |*d| d.close();
+fn closeDirs(io: Io, dirs: []Io.Dir) void {
+    var group: Io.Group = .init;
+    defer group.wait();
+    for (dirs) |d| group.async(Io.Dir.close, .{ d, io });
 }

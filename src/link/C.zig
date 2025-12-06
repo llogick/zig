@@ -124,6 +124,7 @@ pub fn createEmpty(
     emit: Path,
     options: link.File.OpenOptions,
 ) !*C {
+    const io = comp.io;
     const target = &comp.root_mod.resolved_target.result;
     assert(target.ofmt == .c);
     const optimize_mode = comp.root_mod.optimize_mode;
@@ -139,7 +140,7 @@ pub fn createEmpty(
         // Truncation is done on `flush`.
         .truncate = false,
     });
-    errdefer file.close();
+    errdefer file.close(io);
 
     const c_file = try arena.create(C);
 
@@ -763,6 +764,7 @@ pub fn flushEmitH(zcu: *Zcu) !void {
     if (true) return; // emit-h is regressed
 
     const emit_h = zcu.emit_h orelse return;
+    const io = zcu.comp.io;
 
     // We collect a list of buffers to write, and write them all at once with pwritev 😎
     const num_buffers = emit_h.decl_table.count() + 1;
@@ -795,7 +797,7 @@ pub fn flushEmitH(zcu: *Zcu) !void {
         // make it easier on the file system by doing 1 reallocation instead of two.
         .truncate = false,
     });
-    defer file.close();
+    defer file.close(io);
 
     try file.setEndPos(file_size);
     try file.pwritevAll(all_buffers.items, 0);

@@ -447,7 +447,7 @@ pub fn detectNativeCpuAndFeatures(io: Io) ?Target.Cpu {
     var file = fs.openFileAbsolute("/proc/cpuinfo", .{}) catch |err| switch (err) {
         else => return null,
     };
-    defer file.close();
+    defer file.close(io);
 
     var buffer: [4096]u8 = undefined; // "flags" lines can get pretty long.
     var file_reader = file.reader(io, &buffer);

@@ -406,10 +406,12 @@ pub fn open(
 }
 
 pub fn deinit(self: *Elf) void {
-    const gpa = self.base.comp.gpa;
+    const comp = self.base.comp;
+    const gpa = comp.gpa;
+    const io = comp.io;
 
     for (self.file_handles.items) |fh| {
-        fh.close();
+        fh.close(io);
     }
     self.file_handles.deinit(gpa);
 

@@ -613,9 +613,9 @@ pub const TmpDir = struct {
     const sub_path_len = std.fs.base64_encoder.calcSize(random_bytes_count);
 
     pub fn cleanup(self: *TmpDir) void {
-        self.dir.close();
+        self.dir.close(io);
         self.parent_dir.deleteTree(&self.sub_path) catch {};
-        self.parent_dir.close();
+        self.parent_dir.close(io);
         self.* = undefined;
     }
 };
@@ -629,7 +629,7 @@ pub fn tmpDir(opts: std.fs.Dir.OpenOptions) TmpDir {
     const cwd = std.fs.cwd();
     var cache_dir = cwd.makeOpenPath(".zig-cache", .{}) catch
         @panic("unable to make tmp dir for testing: unable to make and open .zig-cache dir");
-    defer cache_dir.close();
+    defer cache_dir.close(io);
     const parent_dir = cache_dir.makeOpenPath("tmp", .{}) catch
         @panic("unable to make tmp dir for testing: unable to make and open .zig-cache/tmp dir");
     const dir = parent_dir.makeOpenPath(&sub_path, opts) catch

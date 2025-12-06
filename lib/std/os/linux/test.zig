@@ -12,12 +12,14 @@ const fs = std.fs;
 test "fallocate" {
     if (builtin.cpu.arch.isMIPS64() and (builtin.abi == .gnuabin32 or builtin.abi == .muslabin32)) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/30220
 
+    const io = std.testing.io;
+
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
     const path = "test_fallocate";
     const file = try tmp.dir.createFile(path, .{ .truncate = true, .mode = 0o666 });
-    defer file.close();
+    defer file.close(io);
 
     try expect((try file.stat()).size == 0);
 
@@ -77,12 +79,14 @@ test "timer" {
 }
 
 test "statx" {
+    const io = std.testing.io;
+
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
     const tmp_file_name = "just_a_temporary_file.txt";
     var file = try tmp.dir.createFile(tmp_file_name, .{});
-    defer file.close();
+    defer file.close(io);
 
     var buf: linux.Statx = undefined;
     switch (linux.errno(linux.statx(file.handle, "", linux.AT.EMPTY_PATH, .BASIC_STATS, &buf))) {
@@ -111,12 +115,14 @@ test "user and group ids" {
 }
 
 test "fadvise" {
+    const io = std.testing.io;
+
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
     const tmp_file_name = "temp_posix_fadvise.txt";
     var file = try tmp.dir.createFile(tmp_file_name, .{});
-    defer file.close();
+    defer file.close(io);
 
     var buf: [2048]u8 = undefined;
     try file.writeAll(&buf);

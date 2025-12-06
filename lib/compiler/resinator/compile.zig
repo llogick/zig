@@ -34,7 +34,7 @@ const code_pages = @import("code_pages.zig");
 const errors = @import("errors.zig");
 
 pub const CompileOptions = struct {
-    cwd: std.fs.Dir,
+    cwd: std.Io.Dir,
     diagnostics: *Diagnostics,
     source_mappings: ?*SourceMappings = null,
     /// List of paths (absolute or relative to `cwd`) for every file that the resources within the .rc file depend on.
@@ -107,7 +107,7 @@ pub fn compile(allocator: Allocator, io: Io, source: []const u8, writer: *std.Io
         // the cwd so we don't need to add it as a distinct search path.
         if (std.fs.path.dirname(root_path)) |root_dir_path| {
             var root_dir = try options.cwd.openDir(root_dir_path, .{});
-            errdefer root_dir.close();
+            errdefer root_dir.close(io);
             try search_dirs.append(allocator, .{ .dir = root_dir, .path = try allocator.dupe(u8, root_dir_path) });
         }
     }
@@ -136,7 +136,7 @@ pub fn compile(allocator: Allocator, io: Io, source: []const u8, writer: *std.Io
             // TODO: maybe a warning that the search path is skipped?
             continue;
         };
-        errdefer dir.close();
+        errdefer dir.close(io);
         try search_dirs.append(allocator, .{ .dir = dir, .path = try allocator.dupe(u8, extra_include_path) });
     }
     for (options.system_include_paths) |system_include_path| {
@@ -144,7 +144,7 @@ pub fn compile(allocator: Allocator, io: Io, source: []const u8, writer: *std.Io
             // TODO: maybe a warning that the search path is skipped?
             continue;
         };
-        errdefer dir.close();
+        errdefer dir.close(io);
         try search_dirs.append(allocator, .{ .dir = dir, .path = try allocator.dupe(u8, system_include_path) });
     }
     if (!options.ignore_include_env_var) {
@@ -160,7 +160,7 @@ pub fn compile(allocator: Allocator, io: Io, source: []const u8, writer: *std.Io
         var it = std.mem.tokenizeScalar(u8, INCLUDE, delimiter);
         while (it.next()) |search_path| {
             var dir = openSearchPathDir(options.cwd, search_path) catch continue;
-            errdefer dir.close();
+            errdefer dir.close(io);
             try search_dirs.append(allocator, .{ .dir = dir, .path = try allocator.dupe(u8, search_path) });
         }
     }
@@ -196,7 +196,7 @@ pub const Compiler = struct {
     arena: Allocator,
     allocator: Allocator,
     io: Io,
-    cwd: std.fs.Dir,
+    cwd: std.Io.Dir,
     state: State = .{},
     diagnostics: *Diagnostics,
     dependencies: ?*Dependencies,
@@ -388,7 +388,9 @@ pub const Compiler = struct {
     ///       matching file is invalid. That is, it does not do the `cmd` PATH searching
     ///       thing of continuing to look for matching files until it finds a valid
     ///       one if a matching file is invalid.
-    fn searchForFile(self: *Compiler, path: []const u8) !std.fs.File {
+    fn searchForFile(self: *Compiler, path: []const u8) !std.Io.File {
+        const io = self.io;
+
         // If the path is absolute, then it is not resolved relative to any search
         // paths, so there's no point in checking them.
         //
@@ -405,7 +407,7 @@ pub const Compiler = struct {
         // an absolute path.
         if (std.fs.path.isAbsolute(path)) {
             const file = try utils.openFileNotDir(std.fs.cwd(), path, .{});
-            errdefer file.close();
+            errdefer file.close(io);
 
             if (self.dependencies) |dependencies| {
                 const duped_path = try dependencies.allocator.dupe(u8, path);
@@ -414,10 +416,10 @@ pub const Compiler = struct {
             }
         }
 
-        var first_error: ?(std.fs.File.OpenError || std.fs.File.StatError) = null;
+        var first_error: ?(std.Io.File.OpenError || std.Io.File.StatError) = null;
         for (self.search_dirs) |search_dir| {
             if (utils.openFileNotDir(search_dir.dir, path, .{})) |file| {
-                errdefer file.close();
+                errdefer file.close(io);
 
                 if (self.dependencies) |dependencies| {
                     const searched_file_path = try std.fs.path.join(dependencies.allocator, &.{
@@ -587,7 +589,7 @@ pub const Compiler = struct {
                 });
             },
         };
-        defer file_handle.close();
+        defer file_handle.close(io);
         var file_buffer: [2048]u8 = undefined;
         var file_reader = file_handle.reader(io, &file_buffer);
 
@@ -2892,9 +2894,9 @@ pub const Compiler = struct {
     }
 };
 
-pub const OpenSearchPathError = std.fs.Dir.OpenError;
+pub const OpenSearchPathError = std.Io.Dir.OpenError;
 
-fn openSearchPathDir(dir: std.fs.Dir, path: []const u8) OpenSearchPathError!std.fs.Dir {
+fn openSearchPathDir(dir: std.Io.Dir, path: []const u8) OpenSearchPathError!std.Io.Dir {
     // Validate the search path to avoid possible unreachable on invalid paths,
     // see https://github.com/ziglang/zig/issues/15607 for why this is currently necessary.
     try validateSearchPath(path);
@@ -2927,11 +2929,11 @@ fn validateSearchPath(path: []const u8) error{BadPathName}!void {
 }
 
 pub const SearchDir = struct {
-    dir: std.fs.Dir,
+    dir: std.Io.Dir,
     path: ?[]const u8,
 
-    pub fn deinit(self: *SearchDir, allocator: Allocator) void {
-        self.dir.close();
+    pub fn deinit(self: *SearchDir, allocator: Allocator, io: Io) void {
+        self.dir.close(io);
         if (self.path) |path| {
             allocator.free(path);
         }

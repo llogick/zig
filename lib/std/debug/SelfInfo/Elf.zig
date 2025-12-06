@@ -319,14 +319,14 @@ const Module = struct {
     }
 
     /// Assumes we already hold an exclusive lock.
-    fn getLoadedElf(mod: *Module, gpa: Allocator) Error!*LoadedElf {
-        if (mod.loaded_elf == null) mod.loaded_elf = loadElf(mod, gpa);
+    fn getLoadedElf(mod: *Module, gpa: Allocator, io: Io) Error!*LoadedElf {
+        if (mod.loaded_elf == null) mod.loaded_elf = loadElf(mod, gpa, io);
         return if (mod.loaded_elf.?) |*elf| elf else |err| err;
     }
-    fn loadElf(mod: *Module, gpa: Allocator) Error!LoadedElf {
+    fn loadElf(mod: *Module, gpa: Allocator, io: Io) Error!LoadedElf {
         const load_result = if (mod.name.len > 0) res: {
             var file = std.fs.cwd().openFile(mod.name, .{}) catch return error.MissingDebugInfo;
-            defer file.close();
+            defer file.close(io);
             break :res std.debug.ElfFile.load(gpa, file, mod.build_id, &.native(mod.name));
         } else res: {
             const path = std.fs.selfExePathAlloc(gpa) catch |err| switch (err) {
@@ -335,7 +335,7 @@ const Module = struct {
             };
             defer gpa.free(path);
             var file = std.fs.cwd().openFile(path, .{}) catch return error.MissingDebugInfo;
-            defer file.close();
+            defer file.close(io);
             break :res std.debug.ElfFile.load(gpa, file, mod.build_id, &.native(path));
         };
 

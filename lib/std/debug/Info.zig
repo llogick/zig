@@ -5,18 +5,17 @@
 //! Unlike `std.debug.SelfInfo`, this API does not assume the debug information
 //! in question happens to match the host CPU architecture, OS, or other target
 //! properties.
+const Info = @This();
 
 const std = @import("../std.zig");
+const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const Path = std.Build.Cache.Path;
 const assert = std.debug.assert;
 const Coverage = std.debug.Coverage;
 const SourceLocation = std.debug.Coverage.SourceLocation;
-
 const ElfFile = std.debug.ElfFile;
 const MachOFile = std.debug.MachOFile;
-
-const Info = @This();
 
 impl: union(enum) {
     elf: ElfFile,
@@ -25,13 +24,23 @@ impl: union(enum) {
 /// Externally managed, outlives this `Info` instance.
 coverage: *Coverage,
 
-pub const LoadError = std.fs.File.OpenError || ElfFile.LoadError || MachOFile.Error || std.debug.Dwarf.ScanError || error{ MissingDebugInfo, UnsupportedDebugInfo };
+pub const LoadError = error{
+    MissingDebugInfo,
+    UnsupportedDebugInfo,
+} || std.fs.File.OpenError || ElfFile.LoadError || MachOFile.Error || std.debug.Dwarf.ScanError;
 
-pub fn load(gpa: Allocator, path: Path, coverage: *Coverage, format: std.Target.ObjectFormat, arch: std.Target.Cpu.Arch) LoadError!Info {
+pub fn load(
+    gpa: Allocator,
+    io: Io,
+    path: Path,
+    coverage: *Coverage,
+    format: std.Target.ObjectFormat,
+    arch: std.Target.Cpu.Arch,
+) LoadError!Info {
     switch (format) {
         .elf => {
             var file = try path.root_dir.handle.openFile(path.sub_path, .{});
-            defer file.close();
+            defer file.close(io);
 
             var elf_file: ElfFile = try .load(gpa, file, null, &.none);
             errdefer elf_file.deinit(gpa);

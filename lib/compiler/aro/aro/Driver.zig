@@ -1286,6 +1286,8 @@ fn processSource(
     d.comp.generated_buf.items.len = 0;
     const prev_total = d.diagnostics.errors;
 
+    const io = d.comp.io;
+
     var pp = try Preprocessor.initDefault(d.comp);
     defer pp.deinit();
 
@@ -1328,7 +1330,7 @@ fn processSource(
                 return d.fatal("unable to create dependency file '{s}': {s}", .{ path, errorDescription(er) })
         else
             std.fs.File.stdout();
-        defer if (dep_file_name != null) file.close();
+        defer if (dep_file_name != null) file.close(io);
 
         var file_writer = file.writer(&writer_buf);
         dep_file.write(&file_writer.interface) catch
@@ -1353,7 +1355,7 @@ fn processSource(
                 return d.fatal("unable to create output file '{s}': {s}", .{ some, errorDescription(er) })
         else
             std.fs.File.stdout();
-        defer if (d.output_name != null) file.close();
+        defer if (d.output_name != null) file.close(io);
 
         var file_writer = file.writer(&writer_buf);
         pp.prettyPrintTokens(&file_writer.interface, dump_mode) catch
@@ -1404,7 +1406,7 @@ fn processSource(
         if (d.only_preprocess_and_compile) {
             const out_file = d.comp.cwd.createFile(out_file_name, .{}) catch |er|
                 return d.fatal("unable to create output file '{s}': {s}", .{ out_file_name, errorDescription(er) });
-            defer out_file.close();
+            defer out_file.close(io);
 
             assembly.writeToFile(out_file) catch |er|
                 return d.fatal("unable to write to output file '{s}': {s}", .{ out_file_name, errorDescription(er) });
@@ -1418,7 +1420,7 @@ fn processSource(
         const assembly_out_file_name = try d.getRandomFilename(&assembly_name_buf, ".s");
         const out_file = d.comp.cwd.createFile(assembly_out_file_name, .{}) catch |er|
             return d.fatal("unable to create output file '{s}': {s}", .{ assembly_out_file_name, errorDescription(er) });
-        defer out_file.close();
+        defer out_file.close(io);
         assembly.writeToFile(out_file) catch |er|
             return d.fatal("unable to write to output file '{s}': {s}", .{ assembly_out_file_name, errorDescription(er) });
         try d.invokeAssembler(tc, assembly_out_file_name, out_file_name);
@@ -1454,7 +1456,7 @@ fn processSource(
 
         const out_file = d.comp.cwd.createFile(out_file_name, .{}) catch |er|
             return d.fatal("unable to create output file '{s}': {s}", .{ out_file_name, errorDescription(er) });
-        defer out_file.close();
+        defer out_file.close(io);
 
         var file_writer = out_file.writer(&writer_buf);
         obj.finish(&file_writer.interface) catch

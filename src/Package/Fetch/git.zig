@@ -213,6 +213,7 @@ pub const Repository = struct {
     /// Checks out the repository at `commit_oid` to `worktree`.
     pub fn checkout(
         repository: *Repository,
+        io: Io,
         worktree: std.fs.Dir,
         commit_oid: Oid,
         diagnostics: *Diagnostics,
@@ -223,12 +224,13 @@ pub const Repository = struct {
             if (commit_object.type != .commit) return error.NotACommit;
             break :tree_oid try getCommitTree(repository.odb.format, commit_object.data);
         };
-        try repository.checkoutTree(worktree, tree_oid, "", diagnostics);
+        try repository.checkoutTree(io, worktree, tree_oid, "", diagnostics);
     }
 
     /// Checks out the tree at `tree_oid` to `worktree`.
     fn checkoutTree(
         repository: *Repository,
+        io: Io,
         dir: std.fs.Dir,
         tree_oid: Oid,
         current_path: []const u8,
@@ -253,10 +255,10 @@ pub const Repository = struct {
                 .directory => {
                     try dir.makeDir(entry.name);
                     var subdir = try dir.openDir(entry.name, .{});
-                    defer subdir.close();
+                    defer subdir.close(io);
                     const sub_path = try std.fs.path.join(repository.odb.allocator, &.{ current_path, entry.name });
                     defer repository.odb.allocator.free(sub_path);
-                    try repository.checkoutTree(subdir, entry.oid, sub_path, diagnostics);
+                    try repository.checkoutTree(io, subdir, entry.oid, sub_path, diagnostics);
                 },
                 .file => {
                     try repository.odb.seekOid(entry.oid);
@@ -271,7 +273,7 @@ pub const Repository = struct {
                         } });
                         continue;
                     };
-                    defer file.close();
+                    defer file.close(io);
                     try file.writeAll(file_object.data);
                 },
                 .symlink => {
@@ -1583,14 +1585,14 @@ fn runRepositoryTest(io: Io, comptime format: Oid.Format, head_commit: []const u
     var git_dir = testing.tmpDir(.{});
     defer git_dir.cleanup();
     var pack_file = try git_dir.dir.createFile("testrepo.pack", .{ .read = true });
-    defer pack_file.close();
+    defer pack_file.close(io);
     try pack_file.writeAll(testrepo_pack);
 
     var pack_file_buffer: [2000]u8 = undefined;
     var pack_file_reader = pack_file.reader(io, &pack_file_buffer);
 
     var index_file = try git_dir.dir.createFile("testrepo.idx", .{ .read = true });
-    defer index_file.close();
+    defer index_file.close(io);
     var index_file_buffer: [2000]u8 = undefined;
     var index_file_writer = index_file.writer(&index_file_buffer);
     try indexPack(testing.allocator, format, &pack_file_reader, &index_file_writer);
@@ -1621,7 +1623,7 @@ fn runRepositoryTest(io: Io, comptime format: Oid.Format, head_commit: []const u
 
     var diagnostics: Diagnostics = .{ .allocator = testing.allocator };
     defer diagnostics.deinit();
-    try repository.checkout(worktree.dir, commit_id, &diagnostics);
+    try repository.checkout(io, worktree.dir, commit_id, &diagnostics);
     try testing.expect(diagnostics.errors.items.len == 0);
 
     const expected_files: []const []const u8 = &.{
@@ -1713,20 +1715,20 @@ pub fn main() !void {
     const format = std.meta.stringToEnum(Oid.Format, args[1]) orelse return error.InvalidFormat;
 
     var pack_file = try std.fs.cwd().openFile(args[2], .{});
-    defer pack_file.close();
+    defer pack_file.close(io);
     var pack_file_buffer: [4096]u8 = undefined;
     var pack_file_reader = pack_file.reader(io, &pack_file_buffer);
 
     const commit = try Oid.parse(format, args[3]);
     var worktree = try std.fs.cwd().makeOpenPath(args[4], .{});
-    defer worktree.close();
+    defer worktree.close(io);
 
     var git_dir = try worktree.makeOpenPath(".git", .{});
-    defer git_dir.close();
+    defer git_dir.close(io);
 
     std.debug.print("Starting index...\n", .{});
     var index_file = try git_dir.createFile("idx", .{ .read = true });
-    defer index_file.close();
+    defer index_file.close(io);
     var index_file_buffer: [4096]u8 = undefined;
     var index_file_writer = index_file.writer(&index_file_buffer);
     try indexPack(allocator, format, &pack_file_reader, &index_file_writer);
@@ -1738,7 +1740,7 @@ pub fn main() !void {
     defer repository.deinit();
     var diagnostics: Diagnostics = .{ .allocator = allocator };
     defer diagnostics.deinit();
-    try repository.checkout(worktree, commit, &diagnostics);
+    try repository.checkout(io, worktree, commit, &diagnostics);
 
     for (diagnostics.errors.items) |err| {
         std.debug.print("Diagnostic: {}\n", .{err});

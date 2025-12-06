@@ -1,12 +1,14 @@
-const std = @import("std.zig");
 const builtin = @import("builtin");
+const native_os = builtin.os.tag;
+
+const std = @import("std.zig");
+const Io = std.Io;
 const fs = std.fs;
 const mem = std.mem;
 const math = std.math;
-const Allocator = mem.Allocator;
+const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 const testing = std.testing;
-const native_os = builtin.os.tag;
 const posix = std.posix;
 const windows = std.os.windows;
 const unicode = std.unicode;
@@ -1571,9 +1573,9 @@ pub fn getUserInfo(name: []const u8) !UserInfo {
 
 /// TODO this reads /etc/passwd. But sometimes the user/id mapping is in something else
 /// like NIS, AD, etc. See `man nss` or look at an strace for `id myuser`.
-pub fn posixGetUserInfo(name: []const u8) !UserInfo {
+pub fn posixGetUserInfo(io: Io, name: []const u8) !UserInfo {
     const file = try std.fs.openFileAbsolute("/etc/passwd", .{});
-    defer file.close();
+    defer file.close(io);
     var buffer: [4096]u8 = undefined;
     var file_reader = file.reader(&buffer);
     return posixGetUserInfoPasswdStream(name, &file_reader.interface) catch |err| switch (err) {

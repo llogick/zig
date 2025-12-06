@@ -1628,7 +1628,7 @@ fn spawnLld(comp: *Compilation, arena: Allocator, argv: []const []const u8) !voi
                 defer comp.dirs.local_cache.handle.deleteFileZ(rsp_path) catch |err|
                     log.warn("failed to delete response file {s}: {s}", .{ rsp_path, @errorName(err) });
                 {
-                    defer rsp_file.close();
+                    defer rsp_file.close(io);
                     var rsp_file_buffer: [1024]u8 = undefined;
                     var rsp_file_writer = rsp_file.writer(&rsp_file_buffer);
                     const rsp_writer = &rsp_file_writer.interface;

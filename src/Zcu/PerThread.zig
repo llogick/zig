@@ -96,7 +96,7 @@ pub fn updateFile(
         const dir, const sub_path = file.path.openInfo(comp.dirs);
         break :f try dir.openFile(sub_path, .{});
     };
-    defer source_file.close();
+    defer source_file.close(io);
 
     const stat = try source_file.stat();
 
@@ -215,7 +215,7 @@ pub fn updateFile(
             else => |e| return e, // Retryable errors are handled at callsite.
         };
     };
-    defer cache_file.close();
+    defer cache_file.close(io);
 
     // Under `--time-report`, ignore cache hits; do the work anyway for those juicy numbers.
     const ignore_hit = comp.time_report != null;
@@ -2468,7 +2468,7 @@ fn updateEmbedFileInner(
         const dir, const sub_path = ef.path.openInfo(zcu.comp.dirs);
         break :f try dir.openFile(sub_path, .{});
     };
-    defer file.close();
+    defer file.close(io);
 
     const stat: Cache.File.Stat = .fromFs(try file.stat());
 

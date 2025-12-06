@@ -1,13 +1,16 @@
 const IoUring = @This();
-const std = @import("std");
+
 const builtin = @import("builtin");
+const is_linux = builtin.os.tag == .linux;
+
+const std = @import("std");
+const Io = std.Io;
 const assert = std.debug.assert;
 const mem = std.mem;
 const net = std.Io.net;
 const posix = std.posix;
 const linux = std.os.linux;
 const testing = std.testing;
-const is_linux = builtin.os.tag == .linux;
 const page_size_min = std.heap.page_size_min;
 
 fd: linux.fd_t = -1,
@@ -1975,6 +1978,8 @@ test "readv" {
 test "writev/fsync/readv" {
     if (!is_linux) return error.SkipZigTest;
 
+    const io = testing.io;
+
     var ring = IoUring.init(4, 0) catch |err| switch (err) {
         error.SystemOutdated => return error.SkipZigTest,
         error.PermissionDenied => return error.SkipZigTest,
@@ -1987,7 +1992,7 @@ test "writev/fsync/readv" {
 
     const path = "test_io_uring_writev_fsync_readv";
     const file = try tmp.dir.createFile(path, .{ .read = true, .truncate = true });
-    defer file.close();
+    defer file.close(io);
     const fd = file.handle;
 
     const buffer_write = [_]u8{42} ** 128;
@@ -2045,6 +2050,8 @@ test "writev/fsync/readv" {
 test "write/read" {
     if (!is_linux) return error.SkipZigTest;
 
+    const io = testing.io;
+
     var ring = IoUring.init(2, 0) catch |err| switch (err) {
         error.SystemOutdated => return error.SkipZigTest,
         error.PermissionDenied => return error.SkipZigTest,
@@ -2056,7 +2063,7 @@ test "write/read" {
     defer tmp.cleanup();
     const path = "test_io_uring_write_read";
     const file = try tmp.dir.createFile(path, .{ .read = true, .truncate = true });
-    defer file.close();
+    defer file.close(io);
     const fd = file.handle;
 
     const buffer_write = [_]u8{97} ** 20;
@@ -2092,6 +2099,8 @@ test "write/read" {
 test "splice/read" {
     if (!is_linux) return error.SkipZigTest;
 
+    const io = testing.io;
+
     var ring = IoUring.init(4, 0) catch |err| switch (err) {
         error.SystemOutdated => return error.SkipZigTest,
         error.PermissionDenied => return error.SkipZigTest,
@@ -2102,12 +2111,12 @@ test "splice/read" {
     var tmp = std.testing.tmpDir(.{});
     const path_src = "test_io_uring_splice_src";
     const file_src = try tmp.dir.createFile(path_src, .{ .read = true, .truncate = true });
-    defer file_src.close();
+    defer file_src.close(io);
     const fd_src = file_src.handle;
 
     const path_dst = "test_io_uring_splice_dst";
     const file_dst = try tmp.dir.createFile(path_dst, .{ .read = true, .truncate = true });
-    defer file_dst.close();
+    defer file_dst.close(io);
     const fd_dst = file_dst.handle;
 
     const buffer_write = [_]u8{97} ** 20;
@@ -2163,6 +2172,8 @@ test "splice/read" {
 test "write_fixed/read_fixed" {
     if (!is_linux) return error.SkipZigTest;
 
+    const io = testing.io;
+
     var ring = IoUring.init(2, 0) catch |err| switch (err) {
         error.SystemOutdated => return error.SkipZigTest,
         error.PermissionDenied => return error.SkipZigTest,
@@ -2175,7 +2186,7 @@ test "write_fixed/read_fixed" {
 
     const path = "test_io_uring_write_read_fixed";
     const file = try tmp.dir.createFile(path, .{ .read = true, .truncate = true });
-    defer file.close();
+    defer file.close(io);
     const fd = file.handle;
 
     var raw_buffers: [2][11]u8 = undefined;
@@ -2282,6 +2293,8 @@ test "openat" {
 test "close" {
     if (!is_linux) return error.SkipZigTest;
 
+    const io = testing.io;
+
     var ring = IoUring.init(1, 0) catch |err| switch (err) {
         error.SystemOutdated => return error.SkipZigTest,
         error.PermissionDenied => return error.SkipZigTest,
@@ -2294,7 +2307,7 @@ test "close" {
 
     const path = "test_io_uring_close";
     const file = try tmp.dir.createFile(path, .{});
-    errdefer file.close();
+    errdefer file.close(io);
 
     const sqe_close = try ring.close(0x44444444, file.handle);
     try testing.expectEqual(linux.IORING_OP.CLOSE, sqe_close.opcode);
@@ -2313,6 +2326,8 @@ test "close" {
 test "accept/connect/send/recv" {
     if (!is_linux) return error.SkipZigTest;
 
+    const io = testing.io;
+
     var ring = IoUring.init(16, 0) catch |err| switch (err) {
         error.SystemOutdated => return error.SkipZigTest,
         error.PermissionDenied => return error.SkipZigTest,
@@ -2321,7 +2336,7 @@ test "accept/connect/send/recv" {
     defer ring.deinit();
 
     const socket_test_harness = try createSocketTestHarness(&ring);
-    defer socket_test_harness.close();
+    defer socket_test_harness.close(io);
 
     const buffer_send = [_]u8{ 1, 0, 1, 0, 1, 0, 1, 0, 1, 0 };
     var buffer_recv = [_]u8{ 0, 1, 0, 1, 0 };
@@ -2573,6 +2588,8 @@ test "timeout_remove" {
 test "accept/connect/recv/link_timeout" {
     if (!is_linux) return error.SkipZigTest;
 
+    const io = testing.io;
+
     var ring = IoUring.init(16, 0) catch |err| switch (err) {
         error.SystemOutdated => return error.SkipZigTest,
         error.PermissionDenied => return error.SkipZigTest,
@@ -2581,7 +2598,7 @@ test "accept/connect/recv/link_timeout" {
     defer ring.deinit();
 
     const socket_test_harness = try createSocketTestHarness(&ring);
-    defer socket_test_harness.close();
+    defer socket_test_harness.close(io);
 
     var buffer_recv = [_]u8{ 0, 1, 0, 1, 0 };
 
@@ -2622,6 +2639,8 @@ test "accept/connect/recv/link_timeout" {
 test "fallocate" {
     if (!is_linux) return error.SkipZigTest;
 
+    const io = testing.io;
+
     var ring = IoUring.init(1, 0) catch |err| switch (err) {
         error.SystemOutdated => return error.SkipZigTest,
         error.PermissionDenied => return error.SkipZigTest,
@@ -2634,7 +2653,7 @@ test "fallocate" {
 
     const path = "test_io_uring_fallocate";
     const file = try tmp.dir.createFile(path, .{ .truncate = true, .mode = 0o666 });
-    defer file.close();
+    defer file.close(io);
 
     try testing.expectEqual(@as(u64, 0), (try file.stat()).size);
 
@@ -2668,6 +2687,8 @@ test "fallocate" {
 test "statx" {
     if (!is_linux) return error.SkipZigTest;
 
+    const io = testing.io;
+
     var ring = IoUring.init(1, 0) catch |err| switch (err) {
         error.SystemOutdated => return error.SkipZigTest,
         error.PermissionDenied => return error.SkipZigTest,
@@ -2679,7 +2700,7 @@ test "statx" {
     defer tmp.cleanup();
     const path = "test_io_uring_statx";
     const file = try tmp.dir.createFile(path, .{ .truncate = true, .mode = 0o666 });
-    defer file.close();
+    defer file.close(io);
 
     try testing.expectEqual(@as(u64, 0), (try file.stat()).size);
 
@@ -2725,6 +2746,8 @@ test "statx" {
 test "accept/connect/recv/cancel" {
     if (!is_linux) return error.SkipZigTest;
 
+    const io = testing.io;
+
     var ring = IoUring.init(16, 0) catch |err| switch (err) {
         error.SystemOutdated => return error.SkipZigTest,
         error.PermissionDenied => return error.SkipZigTest,
@@ -2733,7 +2756,7 @@ test "accept/connect/recv/cancel" {
     defer ring.deinit();
 
     const socket_test_harness = try createSocketTestHarness(&ring);
-    defer socket_test_harness.close();
+    defer socket_test_harness.close(io);
 
     var buffer_recv = [_]u8{ 0, 1, 0, 1, 0 };
 
@@ -2929,6 +2952,8 @@ test "shutdown" {
 test "renameat" {
     if (!is_linux) return error.SkipZigTest;
 
+    const io = testing.io;
+
     var ring = IoUring.init(1, 0) catch |err| switch (err) {
         error.SystemOutdated => return error.SkipZigTest,
         error.PermissionDenied => return error.SkipZigTest,
@@ -2945,7 +2970,7 @@ test "renameat" {
     // Write old file with data
 
     const old_file = try tmp.dir.createFile(old_path, .{ .truncate = true, .mode = 0o666 });
-    defer old_file.close();
+    defer old_file.close(io);
     try old_file.writeAll("hello");
 
     // Submit renameat
@@ -2987,6 +3012,8 @@ test "renameat" {
 test "unlinkat" {
     if (!is_linux) return error.SkipZigTest;
 
+    const io = testing.io;
+
     var ring = IoUring.init(1, 0) catch |err| switch (err) {
         error.SystemOutdated => return error.SkipZigTest,
         error.PermissionDenied => return error.SkipZigTest,
@@ -3002,7 +3029,7 @@ test "unlinkat" {
     // Write old file with data
 
     const file = try tmp.dir.createFile(path, .{ .truncate = true, .mode = 0o666 });
-    defer file.close();
+    defer file.close(io);
 
     // Submit unlinkat
 
@@ -3083,6 +3110,8 @@ test "mkdirat" {
 test "symlinkat" {
     if (!is_linux) return error.SkipZigTest;
 
+    const io = testing.io;
+
     var ring = IoUring.init(1, 0) catch |err| switch (err) {
         error.SystemOutdated => return error.SkipZigTest,
         error.PermissionDenied => return error.SkipZigTest,
@@ -3097,7 +3126,7 @@ test "symlinkat" {
     const link_path = "test_io_uring_symlinkat_link";
 
     const file = try tmp.dir.createFile(path, .{ .truncate = true, .mode = 0o666 });
-    defer file.close();
+    defer file.close(io);
 
     // Submit symlinkat
 
@@ -3131,6 +3160,8 @@ test "symlinkat" {
 test "linkat" {
     if (!is_linux) return error.SkipZigTest;
 
+    const io = testing.io;
+
     var ring = IoUring.init(1, 0) catch |err| switch (err) {
         error.SystemOutdated => return error.SkipZigTest,
         error.PermissionDenied => return error.SkipZigTest,
@@ -3147,7 +3178,7 @@ test "linkat" {
     // Write file with data
 
     const first_file = try tmp.dir.createFile(first_path, .{ .truncate = true, .mode = 0o666 });
-    defer first_file.close();
+    defer first_file.close(io);
     try first_file.writeAll("hello");
 
     // Submit linkat
@@ -3407,6 +3438,8 @@ test "remove_buffers" {
 test "provide_buffers: accept/connect/send/recv" {
     if (!is_linux) return error.SkipZigTest;
 
+    const io = testing.io;
+
     var ring = IoUring.init(16, 0) catch |err| switch (err) {
         error.SystemOutdated => return error.SkipZigTest,
         error.PermissionDenied => return error.SkipZigTest,
@@ -3443,7 +3476,7 @@ test "provide_buffers: accept/connect/send/recv" {
     }
 
     const socket_test_harness = try createSocketTestHarness(&ring);
-    defer socket_test_harness.close();
+    defer socket_test_harness.close(io);
 
     // Do 4 send on the socket
 
@@ -3696,6 +3729,8 @@ test "accept multishot" {
 test "accept/connect/send_zc/recv" {
     try skipKernelLessThan(.{ .major = 6, .minor = 0, .patch = 0 });
 
+    const io = testing.io;
+
     var ring = IoUring.init(16, 0) catch |err| switch (err) {
         error.SystemOutdated => return error.SkipZigTest,
         error.PermissionDenied => return error.SkipZigTest,
@@ -3704,7 +3739,7 @@ test "accept/connect/send_zc/recv" {
     defer ring.deinit();
 
     const socket_test_harness = try createSocketTestHarness(&ring);
-    defer socket_test_harness.close();
+    defer socket_test_harness.close(io);
 
     const buffer_send = [_]u8{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0xa, 0xb, 0xc, 0xd, 0xe };
     var buffer_recv = [_]u8{0} ** 10;
@@ -4105,6 +4140,8 @@ inline fn skipKernelLessThan(required: std.SemanticVersion) !void {
 test BufferGroup {
     if (!is_linux) return error.SkipZigTest;
 
+    const io = testing.io;
+
     // Init IoUring
     var ring = IoUring.init(16, 0) catch |err| switch (err) {
         error.SystemOutdated => return error.SkipZigTest,
@@ -4132,7 +4169,7 @@ test BufferGroup {
 
     // Create client/server fds
     const fds = try createSocketTestHarness(&ring);
-    defer fds.close();
+    defer fds.close(io);
     const data = [_]u8{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0xa, 0xb, 0xc, 0xd, 0xe };
 
     // Client sends data
@@ -4170,6 +4207,8 @@ test BufferGroup {
 test "ring mapped buffers recv" {
     if (!is_linux) return error.SkipZigTest;
 
+    const io = testing.io;
+
     var ring = IoUring.init(16, 0) catch |err| switch (err) {
         error.SystemOutdated => return error.SkipZigTest,
         error.PermissionDenied => return error.SkipZigTest,
@@ -4196,7 +4235,7 @@ test "ring mapped buffers recv" {
 
     // create client/server fds
     const fds = try createSocketTestHarness(&ring);
-    defer fds.close();
+    defer fds.close(io);
 
     // for random user_data in sqe/cqe
     var Rnd = std.Random.DefaultPrng.init(std.testing.random_seed);
@@ -4259,6 +4298,8 @@ test "ring mapped buffers recv" {
 test "ring mapped buffers multishot recv" {
     if (!is_linux) return error.SkipZigTest;
 
+    const io = testing.io;
+
     var ring = IoUring.init(16, 0) catch |err| switch (err) {
         error.SystemOutdated => return error.SkipZigTest,
         error.PermissionDenied => return error.SkipZigTest,
@@ -4285,7 +4326,7 @@ test "ring mapped buffers multishot recv" {
 
     // create client/server fds
     const fds = try createSocketTestHarness(&ring);
-    defer fds.close();
+    defer fds.close(io);
 
     // for random user_data in sqe/cqe
     var Rnd = std.Random.DefaultPrng.init(std.testing.random_seed);

@@ -267,14 +267,16 @@ pub fn open(
 }
 
 pub fn deinit(self: *MachO) void {
-    const gpa = self.base.comp.gpa;
+    const comp = self.base.comp;
+    const gpa = comp.gpa;
+    const io = comp.io;
 
     if (self.d_sym) |*d_sym| {
         d_sym.deinit();
     }
 
     for (self.file_handles.items) |handle| {
-        handle.close();
+        handle.close(io);
     }
     self.file_handles.deinit(gpa);
 
@@ -3257,8 +3259,10 @@ const InitMetadataOptions = struct {
 };
 
 pub fn closeDebugInfo(self: *MachO) bool {
+    const comp = self.base.comp;
+    const io = comp.io;
     const d_sym = &(self.d_sym orelse return false);
-    d_sym.file.?.close();
+    d_sym.file.?.close(io);
     d_sym.file = null;
     return true;
 }
@@ -3269,7 +3273,9 @@ pub fn reopenDebugInfo(self: *MachO) !void {
     assert(!self.base.comp.config.use_llvm);
     assert(self.base.comp.config.debug_format == .dwarf);
 
-    const gpa = self.base.comp.gpa;
+    const comp = self.base.comp;
+    const io = comp.io;
+    const gpa = comp.gpa;
     const sep = fs.path.sep_str;
     const d_sym_path = try std.fmt.allocPrint(
         gpa,
@@ -3279,7 +3285,7 @@ pub fn reopenDebugInfo(self: *MachO) !void {
     defer gpa.free(d_sym_path);
 
     var d_sym_bundle = try self.base.emit.root_dir.handle.makeOpenPath(d_sym_path, .{});
-    defer d_sym_bundle.close();
+    defer d_sym_bundle.close(io);
 
     self.d_sym.?.file = try d_sym_bundle.createFile(fs.path.basename(self.base.emit.sub_path), .{
         .truncate = false,

@@ -847,7 +847,7 @@ fn glibcVerFromRPath(io: Io, rpath: []const u8) !std.SemanticVersion {
         error.Unexpected => |e| return e,
         error.Canceled => |e| return e,
     };
-    defer file.close();
+    defer file.close(io);
 
     // Empirically, glibc 2.34 libc.so .dynstr section is 32441 bytes on my system.
     var buffer: [8000]u8 = undefined;
@@ -1051,7 +1051,7 @@ fn detectAbiAndDynamicLinker(io: Io, cpu: Target.Cpu, os: Target.Os, query: Targ
                 else => |e| return e,
             };
             var is_elf_file = false;
-            defer if (!is_elf_file) file.close();
+            defer if (!is_elf_file) file.close(io);
 
             file_reader = .initAdapted(file, io, &file_reader_buffer);
             file_name = undefined; // it aliases file_reader_buffer

@@ -152,7 +152,7 @@ fn cmdObjCopy(gpa: Allocator, arena: Allocator, args: []const []const u8) !void 
     const io = threaded.io();
 
     const input_file = fs.cwd().openFile(input, .{}) catch |err| fatal("failed to open {s}: {t}", .{ input, err });
-    defer input_file.close();
+    defer input_file.close(io);
 
     const stat = input_file.stat() catch |err| fatal("failed to stat {s}: {t}", .{ input, err });
 
@@ -180,7 +180,7 @@ fn cmdObjCopy(gpa: Allocator, arena: Allocator, args: []const []const u8) !void 
     const mode = if (out_fmt != .elf or only_keep_debug) fs.File.default_mode else stat.mode;
 
     var output_file = try fs.cwd().createFile(output, .{ .mode = mode });
-    defer output_file.close();
+    defer output_file.close(io);
 
     var out = output_file.writer(&output_buffer);
 

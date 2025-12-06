@@ -1221,8 +1221,8 @@ const CorrespondingLines = struct {
         };
     }
 
-    pub fn deinit(self: *CorrespondingLines) void {
-        self.file.close();
+    pub fn deinit(self: *CorrespondingLines, io: Io) void {
+        self.file.close(io);
     }
 };
 

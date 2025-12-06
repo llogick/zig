@@ -1,12 +1,14 @@
 const builtin = @import("builtin");
+
 const std = @import("std");
+const Io = std.Io;
 const mem = std.mem;
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 const Cache = std.Build.Cache;
 
 fn usage() noreturn {
-    std.fs.File.stdout().writeAll(
+    std.Io.File.stdout().writeAll(
         \\Usage: zig std [options]
         \\
         \\Options:
@@ -27,6 +29,10 @@ pub fn main() !void {
     var general_purpose_allocator: std.heap.GeneralPurposeAllocator(.{}) = .init;
     const gpa = general_purpose_allocator.allocator();
 
+    var threaded: std.Io.Threaded = .init(gpa);
+    defer threaded.deinit();
+    const io = threaded.io();
+
     var argv = try std.process.argsWithAllocator(arena);
     defer argv.deinit();
     assert(argv.skip());
@@ -35,7 +41,7 @@ pub fn main() !void {
     const global_cache_path = argv.next().?;
 
     var lib_dir = try std.fs.cwd().openDir(zig_lib_directory, .{});
-    defer lib_dir.close();
+    defer lib_dir.close(io);
 
     var listen_port: u16 = 0;
     var force_open_browser: ?bool = null;
@@ -64,7 +70,7 @@ pub fn main() !void {
     });
     const port = http_server.listen_address.in.getPort();
     const url_with_newline = try std.fmt.allocPrint(arena, "http://127.0.0.1:{d}/\n", .{port});
-    std.fs.File.stdout().writeAll(url_with_newline) catch {};
+    std.Io.File.stdout().writeAll(url_with_newline) catch {};
     if (should_open_browser) {
         openBrowserTab(gpa, url_with_newline[0 .. url_with_newline.len - 1 :'\n']) catch |err| {
             std.log.err("unable to open browser: {s}", .{@errorName(err)});
@@ -73,6 +79,7 @@ pub fn main() !void {
 
     var context: Context = .{
         .gpa = gpa,
+        .io = io,
         .zig_exe_path = zig_exe_path,
         .global_cache_path = global_cache_path,
         .lib_dir = lib_dir,
@@ -83,14 +90,15 @@ pub fn main() !void {
         const connection = try http_server.accept();
         _ = std.Thread.spawn(.{}, accept, .{ &context, connection }) catch |err| {
             std.log.err("unable to accept connection: {s}", .{@errorName(err)});
-            connection.stream.close();
+            connection.stream.close(io);
             continue;
         };
     }
 }
 
 fn accept(context: *Context, connection: std.net.Server.Connection) void {
-    defer connection.stream.close();
+    const io = context.io;
+    defer connection.stream.close(io);
 
     var recv_buffer: [4000]u8 = undefined;
     var send_buffer: [4000]u8 = undefined;
@@ -124,6 +132,7 @@ fn accept(context: *Context, connection: std.net.Server.Connection) void {
 
 const Context = struct {
     gpa: Allocator,
+    io: Io,
     lib_dir: std.fs.Dir,
     zig_lib_directory: []const u8,
     zig_exe_path: []const u8,
@@ -185,6 +194,7 @@ fn serveDocsFile(
 
 fn serveSourcesTar(request: *std.http.Server.Request, context: *Context) !void {
     const gpa = context.gpa;
+    const io = context.io;
 
     var send_buffer: [0x4000]u8 = undefined;
     var response = try request.respondStreaming(&send_buffer, .{
@@ -197,7 +207,7 @@ fn serveSourcesTar(request: *std.http.Server.Request, context: *Context) !void {
     });
 
     var std_dir = try context.lib_dir.openDir("std", .{ .iterate = true });
-    defer std_dir.close();
+    defer std_dir.close(io);
 
     var walker = try std_dir.walk(gpa);
     defer walker.deinit();
@@ -216,11 +226,11 @@ fn serveSourcesTar(request: *std.http.Server.Request, context: *Context) !void {
             else => continue,
         }
         var file = try entry.dir.openFile(entry.basename, .{});
-        defer file.close();
+        defer file.close(io);
         const stat = try file.stat();
-        var file_reader: std.fs.File.Reader = .{
+        var file_reader: std.Io.File.Reader = .{
             .file = file,
-            .interface = std.fs.File.Reader.initInterface(&.{}),
+            .interface = std.Io.File.Reader.initInterface(&.{}),
             .size = stat.size,
         };
         try archiver.writeFile(entry.path, &file_reader, stat.mtime);
@@ -283,6 +293,7 @@ fn buildWasmBinary(
     optimize_mode: std.builtin.OptimizeMode,
 ) !Cache.Path {
     const gpa = context.gpa;
+    const io = context.io;
 
     var argv: std.ArrayList([]const u8) = .empty;
 
@@ -371,7 +382,7 @@ fn buildWasmBinary(
     }
 
     // Send EOF to stdin.
-    child.stdin.?.close();
+    child.stdin.?.close(io);
     child.stdin = null;
 
     switch (try child.wait()) {
@@ -410,7 +421,7 @@ fn buildWasmBinary(
     };
 }
 
-fn sendMessage(file: std.fs.File, tag: std.zig.Client.Message.Tag) !void {
+fn sendMessage(file: std.Io.File, tag: std.zig.Client.Message.Tag) !void {
     const header: std.zig.Client.Message.Header = .{
         .tag = tag,
         .bytes_len = 0,

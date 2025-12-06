@@ -1604,12 +1604,12 @@ fn generateLangRef(b: *std.Build) std.Build.LazyPath {
             b.build_root, @errorName(err),
         });
     };
-    defer dir.close();
+    defer dir.close(io);
 
     var wf = b.addWriteFiles();
 
     var it = dir.iterateAssumeFirstIteration();
-    while (it.next() catch @panic("failed to read dir")) |entry| {
+    while (it.next(io) catch @panic("failed to read dir")) |entry| {
         if (std.mem.startsWith(u8, entry.name, ".") or entry.kind != .file)
             continue;
 

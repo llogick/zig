@@ -1,13 +1,16 @@
+const builtin = @import("builtin");
+const Builder = @This();
+
 const std = @import("../../std.zig");
+const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
-const bitcode_writer = @import("bitcode_writer.zig");
-const Builder = @This();
-const builtin = @import("builtin");
 const DW = std.dwarf;
-const ir = @import("ir.zig");
 const log = std.log.scoped(.llvm);
 const Writer = std.Io.Writer;
+
+const bitcode_writer = @import("bitcode_writer.zig");
+const ir = @import("ir.zig");
 
 gpa: Allocator,
 strip: bool,
@@ -9579,11 +9582,11 @@ pub fn dump(b: *Builder) void {
     b.printToFile(stderr, &buffer) catch {};
 }
 
-pub fn printToFilePath(b: *Builder, dir: std.fs.Dir, path: []const u8) !void {
+pub fn printToFilePath(b: *Builder, io: Io, dir: std.fs.Dir, path: []const u8) !void {
     var buffer: [4000]u8 = undefined;
-    const file = try dir.createFile(path, .{});
-    defer file.close();
-    try b.printToFile(file, &buffer);
+    const file = try dir.createFile(io, path, .{});
+    defer file.close(io);
+    try b.printToFile(io, file, &buffer);
 }
 
 pub fn printToFile(b: *Builder, file: std.fs.File, buffer: []u8) !void {

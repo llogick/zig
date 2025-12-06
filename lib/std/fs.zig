@@ -227,7 +227,7 @@ pub fn deleteFileAbsolute(absolute_path: []const u8) Dir.DeleteFileError!void {
 /// On Windows, `absolute_path` should be encoded as [WTF-8](https://wtf-8.codeberg.page/).
 /// On WASI, `absolute_path` should be encoded as valid UTF-8.
 /// On other platforms, `absolute_path` is an opaque sequence of bytes with no particular encoding.
-pub fn deleteTreeAbsolute(absolute_path: []const u8) !void {
+pub fn deleteTreeAbsolute(io: Io, absolute_path: []const u8) !void {
     assert(path.isAbsolute(absolute_path));
     const dirname = path.dirname(absolute_path) orelse return error{
         /// Attempt to remove the root file system path.
@@ -236,7 +236,7 @@ pub fn deleteTreeAbsolute(absolute_path: []const u8) !void {
     }.CannotDeleteRootDirectory;
 
     var dir = try cwd().openDir(dirname, .{});
-    defer dir.close();
+    defer dir.close(io);
 
     return dir.deleteTree(path.basename(absolute_path));
 }
