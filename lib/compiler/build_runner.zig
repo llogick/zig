@@ -1186,7 +1186,6 @@ fn printTreeStep(
     if (skip) return;
     try printPrefix(parent_node, stderr, ttyconf);
 
-    if (!first) try ttyconf.setColor(stderr, .dim);
     if (parent_node.parent != null) {
         if (parent_node.last) {
             try printChildNodePrefix(stderr, ttyconf);
@@ -1197,6 +1196,8 @@ fn printTreeStep(
             });
         }
     }
+
+    if (!first) try ttyconf.setColor(stderr, .dim);
 
     // dep_prefix omitted here because it is redundant with the tree.
     try stderr.writeAll(s.name);
