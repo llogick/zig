@@ -3231,6 +3231,7 @@ pub fn update(comp: *Compilation, main_progress_node: std.Progress.Node) UpdateE
     }
 }
 
+/// Thread-safe. Assumes that `comp.mutex` is *not* already held by the caller.
 pub fn appendFileSystemInput(comp: *Compilation, path: Compilation.Path) Allocator.Error!void {
     const gpa = comp.gpa;
     const fsi = comp.file_system_inputs orelse return;
@@ -3250,6 +3251,10 @@ pub fn appendFileSystemInput(comp: *Compilation, path: Compilation.Path) Allocat
         "missing prefix directory '{s}' ('{f}') for '{s}'",
         .{ @tagName(path.root), want_prefix_dir, path.sub_path },
     );
+
+    // There may be concurrent calls to this function from C object workers and/or the main thread.
+    comp.mutex.lock();
+    defer comp.mutex.unlock();
 
     try fsi.ensureUnusedCapacity(gpa, path.sub_path.len + 3);
     if (fsi.items.len > 0) fsi.appendAssumeCapacity(0);
@@ -6443,10 +6448,6 @@ fn updateCObject(comp: *Compilation, c_object: *CObject, c_obj_prog_node: std.Pr
                             return error.InvalidDepFile;
                         },
                     };
-
-                    // There may be concurrent calls to `appendFileSystemInput` from other C objects.
-                    comp.mutex.lock();
-                    defer comp.mutex.unlock();
                     try comp.appendFileSystemInput(input_path);
                 }
             }
