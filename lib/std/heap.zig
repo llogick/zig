@@ -146,9 +146,6 @@ test defaultQueryPageSize {
 /// possible, but large requested alignments may require larger buffers in order to
 /// satisfy the request. As well as `malloc`, `realloc`, and `free`, the extension
 /// functions `malloc_usable_size` and `posix_memalign` are used when available.
-///
-/// For an allocator that directly calls `malloc`/`realloc`/`free`, with no padding
-/// or special handling, see `raw_c_allocator`.
 pub const c_allocator: Allocator = .{
     .ptr = undefined,
     .vtable = &c_allocator_impl.vtable,
@@ -228,8 +225,19 @@ const c_allocator_impl = struct {
         assert(len > 0);
         switch (allocStrat(alignment)) {
             .raw => {
-                // C only needs to respect `max_align_t` up to the allocation size due to object
-                // alignment rules. If necessary, extend the allocation size.
+                // `std.c.max_align_t` isn't the whole story, because if `len` is smaller than
+                // every C type with alignment `max_align_t`, the allocation can be less-aligned.
+                // The implementation need only guarantee that any type of length `len` would be
+                // suitably aligned.
+                //
+                // For instance, if `len == 8` and `alignment == .@"16"`, then `malloc` may not
+                // fulfil this request, because there is necessarily no C type with 8-byte size
+                // but 16-byte alignment.
+                //
+                // In theory, the resulting rule here would be target-specific, but in practice,
+                // the smallest type with an alignment of `max_align_t` has the same size (it's
+                // usually `c_longdouble`), so we can just extend the allocation size up to the
+                // alignment of `max_align_t` if necessary.
                 const actual_len = @max(len, @alignOf(std.c.max_align_t));
                 const ptr = c.malloc(actual_len) orelse return null;
                 assert(alignment.check(@intFromPtr(ptr)));
@@ -333,89 +341,6 @@ const c_allocator_impl = struct {
         }
     }
 };
-
-/// Asserts that allocations have alignments which `malloc` can satisfy. This means that
-/// the requested alignment is no greater than `@min(@alignOf(std.c.max_align_t), size)`.
-///
-/// This allocator is rarely appropriate to use. In general, prefer `c_allocator`, which
-/// does not have any special requirements of its input, but is still highly efficient for
-/// allocation requests which obey `malloc` alignment rules.
-pub const raw_c_allocator: Allocator = .{
-    .ptr = undefined,
-    .vtable = &raw_c_allocator_vtable,
-};
-const raw_c_allocator_vtable: Allocator.VTable = .{
-    .alloc = rawCAlloc,
-    .resize = rawCResize,
-    .remap = rawCRemap,
-    .free = rawCFree,
-};
-
-fn rawCAlloc(
-    context: *anyopaque,
-    len: usize,
-    alignment: Alignment,
-    return_address: usize,
-) ?[*]u8 {
-    _ = context;
-    _ = return_address;
-    // `std.c.max_align_t` isn't the whole story, because if `len` is smaller than
-    // every C type with alignment `max_align_t`, the allocation can be less-aligned.
-    // The implementation need only guarantee that any type of length `len` would be
-    // suitably aligned.
-    //
-    // For instance, if `len == 8` and `alignment == .@"16"`, then `malloc` may not
-    // fulfil this request, because there is necessarily no C type with 8-byte size
-    // but 16-byte alignment.
-    //
-    // In theory, the resulting rule here would be target-specific, but in practice,
-    // the smallest type with an alignment of `max_align_t` has the same size (it's
-    // usually `c_longdouble`), so we can just check that `alignment <= len`.
-    assert(alignment.toByteUnits() <= len);
-    assert(Alignment.compare(alignment, .lte, .of(std.c.max_align_t)));
-    return @ptrCast(c.malloc(len));
-}
-
-fn rawCResize(
-    context: *anyopaque,
-    memory: []u8,
-    alignment: Alignment,
-    new_len: usize,
-    return_address: usize,
-) bool {
-    _ = context;
-    _ = memory;
-    _ = alignment;
-    _ = new_len;
-    _ = return_address;
-    return false;
-}
-
-fn rawCRemap(
-    context: *anyopaque,
-    memory: []u8,
-    alignment: Alignment,
-    new_len: usize,
-    return_address: usize,
-) ?[*]u8 {
-    _ = context;
-    _ = return_address;
-    // See `rawCMalloc` for an explanation of this `assert` call.
-    assert(alignment.toByteUnits() <= new_len);
-    return @ptrCast(c.realloc(memory.ptr, new_len));
-}
-
-fn rawCFree(
-    context: *anyopaque,
-    memory: []u8,
-    alignment: Alignment,
-    return_address: usize,
-) void {
-    _ = context;
-    _ = alignment;
-    _ = return_address;
-    c.free(memory.ptr);
-}
 
 /// On operating systems that support memory mapping, this allocator makes a
 /// syscall directly for every allocation and free.
@@ -566,12 +491,6 @@ test c_allocator {
         try testAllocatorAligned(c_allocator);
         try testAllocatorLargeAlignment(c_allocator);
         try testAllocatorAlignedShrink(c_allocator);
-    }
-}
-
-test raw_c_allocator {
-    if (builtin.link_libc) {
-        try testAllocator(raw_c_allocator);
     }
 }
 
