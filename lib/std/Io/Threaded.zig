@@ -6581,6 +6581,22 @@ fn fileWriteFileStreaming(
     return error.Unimplemented;
 }
 
+fn netWriteFile(
+    userdata: ?*anyopaque,
+    socket_handle: net.Socket.Handle,
+    header: []const u8,
+    file_reader: *Io.File.Reader,
+    limit: Io.Limit,
+) net.Stream.WriteFileError!usize {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    _ = t;
+    _ = socket_handle;
+    _ = header;
+    _ = file_reader;
+    _ = limit;
+    return error.Unimplemented; // TODO
+}
+
 fn fileWriteFilePositional(
     userdata: ?*anyopaque,
     file: Io.File,

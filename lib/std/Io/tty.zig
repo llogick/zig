@@ -50,7 +50,9 @@ pub const Config = union(enum) {
 
         if (force_color == false) return .no_color;
 
-        if (file.getOrEnableAnsiEscapeSupport()) return .escape_codes;
+        if (file.enableAnsiEscapeCodes()) |_| {
+            return .escape_codes;
+        } else |_| {}
 
         if (native_os == .windows and file.isTty()) {
             var info: windows.CONSOLE_SCREEN_BUFFER_INFO = undefined;

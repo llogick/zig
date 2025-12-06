@@ -274,7 +274,7 @@ pub fn sync(file: File, io: Io) SyncError!void {
 /// Test whether the file refers to a terminal.
 ///
 /// See also:
-/// * `getOrEnableAnsiEscapeSupport`
+/// * `enableAnsiEscapeCodes`
 /// * `supportsAnsiEscapeCodes`.
 pub fn isTty(file: File, io: Io) bool {
     return io.vtable.fileIsTty(io.userdata, file);
@@ -282,7 +282,7 @@ pub fn isTty(file: File, io: Io) bool {
 
 pub const EnableAnsiEscapeCodesError = error{} || Io.Cancelable || Io.UnexpectedError;
 
-pub fn enableAnsiEscapeCodes(file: File, io: Io) EnableAnsiEscapeCodesError {
+pub fn enableAnsiEscapeCodes(file: File, io: Io) EnableAnsiEscapeCodesError!void {
     return io.vtable.fileEnableAnsiEscapeCodes(io.userdata, file);
 }
 

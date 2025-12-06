@@ -474,9 +474,9 @@ pub fn start(options: Options) Node {
             }
             const stderr: std.fs.File = .stderr();
             global_progress.terminal = stderr;
-            if (stderr.getOrEnableAnsiEscapeSupport()) {
+            if (stderr.enableAnsiEscapeCodes()) |_| {
                 global_progress.terminal_mode = .ansi_escape_codes;
-            } else if (is_windows and stderr.isTty()) {
+            } else |_| if (is_windows and stderr.isTty()) {
                 global_progress.terminal_mode = TerminalMode{ .windows_api = .{
                     .code_page = windows.kernel32.GetConsoleOutputCP(),
                 } };

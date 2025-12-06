@@ -1256,6 +1256,7 @@ pub const Stream = struct {
         interface: Io.Writer,
         stream: Stream,
         err: ?Error = null,
+        write_file_err: ?WriteFileError = null,
 
         pub const Error = error{
             /// Another TCP Fast Open is already in progress.
@@ -1285,12 +1286,17 @@ pub const Stream = struct {
             SocketNotBound,
         } || Io.UnexpectedError || Io.Cancelable;
 
+        pub const WriteFileError = error{} || Io.Cancelable || Io.UnexpectedError;
+
         pub fn init(stream: Stream, io: Io, buffer: []u8) Writer {
             return .{
                 .io = io,
                 .stream = stream,
                 .interface = .{
-                    .vtable = &.{ .drain = drain },
+                    .vtable = &.{
+                        .drain = drain,
+                        .sendFile = sendFile,
+                    },
                     .buffer = buffer,
                 },
             };
@@ -1306,6 +1312,13 @@ pub const Stream = struct {
                 return error.WriteFailed;
             };
             return io_w.consume(n);
+        }
+
+        fn sendFile(io_w: *Io.Writer, file_reader: *Io.File.Reader, limit: Io.Limit) Io.Writer.FileError!usize {
+            _ = io_w;
+            _ = file_reader;
+            _ = limit;
+            return error.Unimplemented; // TODO
         }
     };
 

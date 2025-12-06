@@ -7,7 +7,7 @@ const assert = std.debug.assert;
 
 io: Io,
 file: File,
-err: ?File.WriteError = null,
+err: ?Error = null,
 mode: Mode = .positional,
 /// Tracks the true seek position in the file. To obtain the logical
 /// position, add the buffer size to this value.
@@ -17,6 +17,29 @@ seek_err: ?SeekError = null,
 interface: Io.Writer,
 
 pub const Mode = File.Reader.Mode;
+
+pub const Error = error{
+    DiskQuota,
+    FileTooBig,
+    InputOutput,
+    NoSpaceLeft,
+    DeviceBusy,
+    InvalidArgument,
+    /// File descriptor does not hold the required rights to write to it.
+    AccessDenied,
+    PermissionDenied,
+    BrokenPipe,
+    SystemResources,
+    NotOpenForWriting,
+    /// The process cannot access the file because another process has locked
+    /// a portion of the file. Windows-only.
+    LockViolation,
+    /// Non-blocking has been enabled and this operation would block.
+    WouldBlock,
+    /// This error occurs when a device gets disconnected before or mid-flush
+    /// while it's being written to - errno(6): No such device or address.
+    NoDevice,
+} || Io.Cancelable || Io.UnexpectedError;
 
 pub const WriteFileError = error{
     /// `out_fd` is an unconnected socket, or out_fd closed its read end.
