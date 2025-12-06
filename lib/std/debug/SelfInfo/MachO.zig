@@ -78,9 +78,14 @@ pub fn getSymbol(si: *SelfInfo, gpa: Allocator, io: Io, address: usize) Error!st
     };
 }
 pub fn getModuleName(si: *SelfInfo, gpa: Allocator, address: usize) Error![]const u8 {
-    const module = try si.findModule(gpa, address);
-    defer si.mutex.unlock();
-    return module.name;
+    _ = si;
+    _ = gpa;
+    // This function is marked as deprecated; however, it is significantly more
+    // performant than `dladdr` (since the latter also does a very slow symbol
+    // lookup), so let's use it since it's still available.
+    return std.mem.span(std.c.dyld_image_path_containing_address(
+        @ptrFromInt(address),
+    ) orelse return error.MissingDebugInfo);
 }
 pub fn getModuleSlide(si: *SelfInfo, gpa: Allocator, address: usize) Error!usize {
     const module = try si.findModule(gpa, address);
@@ -426,28 +431,26 @@ fn unwindFrameInner(si: *SelfInfo, gpa: Allocator, context: *UnwindContext) !usi
 
 /// Acquires the mutex on success.
 fn findModule(si: *SelfInfo, gpa: Allocator, address: usize) Error!*Module {
-    var info: std.c.dl_info = undefined;
-    if (std.c.dladdr(@ptrFromInt(address), &info) == 0) {
-        return error.MissingDebugInfo;
-    }
+    // This function is marked as deprecated; however, it is significantly more
+    // performant than `dladdr` (since the latter also does a very slow symbol
+    // lookup), so let's use it since it's still available.
+    const text_base = std.c._dyld_get_image_header_containing_address(
+        @ptrFromInt(address),
+    ) orelse return error.MissingDebugInfo;
     si.mutex.lock();
     errdefer si.mutex.unlock();
-    const gop = try si.modules.getOrPutAdapted(gpa, @intFromPtr(info.fbase), Module.Adapter{});
+    const gop = try si.modules.getOrPutAdapted(gpa, @intFromPtr(text_base), Module.Adapter{});
     errdefer comptime unreachable;
-    if (!gop.found_existing) {
-        gop.key_ptr.* = .{
-            .text_base = @intFromPtr(info.fbase),
-            .name = std.mem.span(info.fname),
-            .unwind = null,
-            .file = null,
-        };
-    }
+    if (!gop.found_existing) gop.key_ptr.* = .{
+        .text_base = @intFromPtr(text_base),
+        .unwind = null,
+        .file = null,
+    };
     return gop.key_ptr;
 }
 
 const Module = struct {
     text_base: usize,
-    name: []const u8,
     unwind: ?(Error!Unwind),
     file: ?(Error!MachOFile),
 
@@ -544,10 +547,15 @@ const Module = struct {
     }
 
     fn getFile(module: *Module, gpa: Allocator) Error!*MachOFile {
-        if (module.file == null) module.file = MachOFile.load(gpa, module.name, builtin.cpu.arch) catch |err| switch (err) {
-            error.InvalidMachO, error.InvalidDwarf => error.InvalidDebugInfo,
-            error.MissingDebugInfo, error.OutOfMemory, error.UnsupportedDebugInfo, error.ReadFailed => |e| e,
-        };
+        if (module.file == null) {
+            const path = std.mem.span(
+                std.c.dyld_image_path_containing_address(@ptrFromInt(module.text_base)).?,
+            );
+            module.file = MachOFile.load(gpa, path, builtin.cpu.arch) catch |err| switch (err) {
+                error.InvalidMachO, error.InvalidDwarf => error.InvalidDebugInfo,
+                error.MissingDebugInfo, error.OutOfMemory, error.UnsupportedDebugInfo, error.ReadFailed => |e| e,
+            };
+        }
         return if (module.file.?) |*f| f else |err| err;
     }
 };
