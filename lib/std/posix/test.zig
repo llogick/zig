@@ -111,20 +111,6 @@ test "open smoke test" {
     }
 }
 
-test "readlink on Windows" {
-    if (native_os != .windows) return error.SkipZigTest;
-
-    try testReadlink("C:\\ProgramData", "C:\\Users\\All Users");
-    try testReadlink("C:\\Users\\Default", "C:\\Users\\Default User");
-    try testReadlink("C:\\Users", "C:\\Documents and Settings");
-}
-
-fn testReadlink(target_path: []const u8, symlink_path: []const u8) !void {
-    var buffer: [fs.max_path_bytes]u8 = undefined;
-    const given = try posix.readlink(symlink_path, buffer[0..]);
-    try expect(mem.eql(u8, target_path, given));
-}
-
 fn getLinkInfo(fd: posix.fd_t) !struct { posix.ino_t, posix.nlink_t } {
     if (native_os == .linux) {
         const stx = try linux.wrapped.statx(
@@ -214,35 +200,6 @@ test "fstatat" {
     // The stat.blocks/statat.blocks count is managed by the filesystem and may
     // change if the file is stored in a journal or "inline".
     // try expectEqual(stat.blocks, statat.blocks);
-}
-
-test "readlinkat" {
-    var tmp = tmpDir(.{});
-    defer tmp.cleanup();
-
-    // create file
-    try tmp.dir.writeFile(.{ .sub_path = "file.txt", .data = "nonsense" });
-
-    // create a symbolic link
-    if (native_os == .windows) {
-        std.os.windows.CreateSymbolicLink(
-            tmp.dir.fd,
-            &[_]u16{ 'l', 'i', 'n', 'k' },
-            &[_:0]u16{ 'f', 'i', 'l', 'e', '.', 't', 'x', 't' },
-            false,
-        ) catch |err| switch (err) {
-            // Symlink requires admin privileges on windows, so this test can legitimately fail.
-            error.AccessDenied => return error.SkipZigTest,
-            else => return err,
-        };
-    } else {
-        try posix.symlinkat("file.txt", tmp.dir.fd, "link");
-    }
-
-    // read the link
-    var buffer: [fs.max_path_bytes]u8 = undefined;
-    const read_link = try posix.readlinkat(tmp.dir.fd, "link", buffer[0..]);
-    try expect(mem.eql(u8, "file.txt", read_link));
 }
 
 test "getrandom" {

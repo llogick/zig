@@ -717,7 +717,6 @@ pub fn io(t: *Threaded) Io {
             .fileReadPositional = fileReadPositional,
             .fileSeekBy = fileSeekBy,
             .fileSeekTo = fileSeekTo,
-            .openSelfExe = openSelfExe,
             .fileSync = fileSync,
             .fileIsTty = fileIsTty,
             .fileEnableAnsiEscapeCodes = fileEnableAnsiEscapeCodes,
@@ -731,6 +730,9 @@ pub fn io(t: *Threaded) Io {
             .fileTryLock = fileTryLock,
             .fileUnlock = fileUnlock,
             .fileDowngradeLock = fileDowngradeLock,
+
+            .processExecutableOpen = processExecutableOpen,
+            .processExecutablePath = processExecutablePath,
 
             .now = now,
             .sleep = sleep,
@@ -839,7 +841,6 @@ pub fn ioBasic(t: *Threaded) Io {
             .fileReadPositional = fileReadPositional,
             .fileSeekBy = fileSeekBy,
             .fileSeekTo = fileSeekTo,
-            .openSelfExe = openSelfExe,
             .fileSync = fileSync,
             .fileIsTty = fileIsTty,
             .fileEnableAnsiEscapeCodes = fileEnableAnsiEscapeCodes,
@@ -853,6 +854,9 @@ pub fn ioBasic(t: *Threaded) Io {
             .fileTryLock = fileTryLock,
             .fileUnlock = fileUnlock,
             .fileDowngradeLock = fileDowngradeLock,
+
+            .processExecutableOpen = processExecutableOpen,
+            .processExecutablePath = processExecutablePath,
 
             .now = now,
             .sleep = sleep,
@@ -5932,7 +5936,7 @@ fn fileSeekTo(userdata: ?*anyopaque, file: File, offset: u64) File.SeekError!voi
     }
 }
 
-fn openSelfExe(userdata: ?*anyopaque, flags: File.OpenFlags) File.OpenSelfExeError!File {
+fn processExecutableOpen(userdata: ?*anyopaque, flags: File.OpenFlags) std.process.OpenExecutableError!File {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     switch (native_os) {
         .linux, .serenity => return dirOpenFilePosix(t, .{ .handle = posix.AT.FDCWD }, "/proc/self/exe", flags),
@@ -5945,7 +5949,147 @@ fn openSelfExe(userdata: ?*anyopaque, flags: File.OpenFlags) File.OpenSelfExeErr
             const prefixed_path_w = try windows.wToPrefixedFileW(null, image_path_name);
             return dirOpenFileWtf16(t, null, prefixed_path_w.span(), flags);
         },
-        else => @panic("TODO implement openSelfExe"),
+        else => @panic("TODO implement processExecutableOpen"),
+    }
+}
+
+fn processExecutablePath(userdata: ?*anyopaque, out_buffer: []u8) std.process.ExecutablePathError!usize {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const max_path_bytes = std.fs.max_path_bytes;
+
+    switch (native_os) {
+        .driverkit,
+        .ios,
+        .maccatalyst,
+        .macos,
+        .tvos,
+        .visionos,
+        .watchos,
+        => {
+            // Note that _NSGetExecutablePath() will return "a path" to
+            // the executable not a "real path" to the executable.
+            var symlink_path_buf: [max_path_bytes:0]u8 = undefined;
+            var u32_len: u32 = max_path_bytes + 1; // include the sentinel
+            const rc = std.c._NSGetExecutablePath(&symlink_path_buf, &u32_len);
+            if (rc != 0) return error.NameTooLong;
+
+            var real_path_buf: [max_path_bytes]u8 = undefined;
+            const real_path = Io.Dir.realPathAbsolute(ioBasic(t), &symlink_path_buf, &real_path_buf) catch |err| switch (err) {
+                error.NetworkNotFound => unreachable, // Windows-only
+                else => |e| return e,
+            };
+            if (real_path.len > out_buffer.len) return error.NameTooLong;
+            const result = out_buffer[0..real_path.len];
+            @memcpy(result, real_path);
+            return result.len;
+        },
+        .linux, .serenity => return Io.Dir.readLinkAbsolute(ioBasic(t), "/proc/self/exe", out_buffer) catch |err| switch (err) {
+            error.UnsupportedReparsePointType => unreachable, // Windows-only
+            error.NetworkNotFound => unreachable, // Windows-only
+            else => |e| return e,
+        },
+        .illumos => return Io.Dir.readLinkAbsolute(ioBasic(t), "/proc/self/path/a.out", out_buffer) catch |err| switch (err) {
+            error.UnsupportedReparsePointType => unreachable, // Windows-only
+            error.NetworkNotFound => unreachable, // Windows-only
+            else => |e| return e,
+        },
+        .freebsd, .dragonfly => {
+            const current_thread = Thread.getCurrent(t);
+            try current_thread.checkCancel();
+            var mib: [4]c_int = .{ posix.CTL.KERN, posix.KERN.PROC, posix.KERN.PROC_PATHNAME, -1 };
+            var out_len: usize = out_buffer.len;
+            try posix.sysctl(&mib, out_buffer.ptr, &out_len, null, 0);
+            return out_len;
+        },
+        .netbsd => {
+            const current_thread = Thread.getCurrent(t);
+            try current_thread.checkCancel();
+            var mib = [4]c_int{ posix.CTL.KERN, posix.KERN.PROC_ARGS, -1, posix.KERN.PROC_PATHNAME };
+            var out_len: usize = out_buffer.len;
+            try posix.sysctl(&mib, out_buffer.ptr, &out_len, null, 0);
+            return out_len;
+        },
+        .openbsd, .haiku => {
+            // OpenBSD doesn't support getting the path of a running process, so try to guess it
+            if (std.os.argv.len == 0)
+                return error.FileNotFound;
+
+            const argv0 = std.mem.span(std.os.argv[0]);
+            if (std.mem.indexOf(u8, argv0, "/") != null) {
+                // argv[0] is a path (relative or absolute): use realpath(3) directly
+                var real_path_buf: [max_path_bytes]u8 = undefined;
+                const real_path = Io.Dir.realPathAbsolute(ioBasic(t), std.os.argv[0], &real_path_buf) catch |err| switch (err) {
+                    error.NetworkNotFound => unreachable, // Windows-only
+                    else => |e| return e,
+                };
+                if (real_path.len > out_buffer.len)
+                    return error.NameTooLong;
+                const result = out_buffer[0..real_path.len];
+                @memcpy(result, real_path);
+                return result.len;
+            } else if (argv0.len != 0) {
+                // argv[0] is not empty (and not a path): search it inside PATH
+                const PATH = posix.getenvZ("PATH") orelse return error.FileNotFound;
+                var path_it = std.mem.tokenizeScalar(u8, PATH, std.fs.path.delimiter);
+                while (path_it.next()) |a_path| {
+                    var resolved_path_buf: [max_path_bytes - 1:0]u8 = undefined;
+                    const resolved_path = std.fmt.bufPrintSentinel(&resolved_path_buf, "{s}/{s}", .{
+                        a_path, std.os.argv[0],
+                    }, 0) catch continue;
+
+                    var real_path_buf: [max_path_bytes]u8 = undefined;
+                    if (Io.Dir.realPathAbsolute(ioBasic(t), resolved_path, &real_path_buf)) |real_path| {
+                        // found a file, and hope it is the right file
+                        if (real_path.len > out_buffer.len)
+                            return error.NameTooLong;
+                        const result = out_buffer[0..real_path.len];
+                        @memcpy(result, real_path);
+                        return result.len;
+                    } else |_| continue;
+                }
+            }
+            return error.FileNotFound;
+        },
+        .windows => {
+            const current_thread = Thread.getCurrent(t);
+            try current_thread.checkCancel();
+            const w = windows;
+            const image_path_unicode_string = &w.peb().ProcessParameters.ImagePathName;
+            const image_path_name = image_path_unicode_string.Buffer.?[0 .. image_path_unicode_string.Length / 2 :0];
+
+            // If ImagePathName is a symlink, then it will contain the path of the
+            // symlink, not the path that the symlink points to. We want the path
+            // that the symlink points to, though, so we need to get the realpath.
+            var path_name_w = try w.wToPrefixedFileW(null, image_path_name);
+
+            const access_mask = w.GENERIC_READ | w.SYNCHRONIZE;
+            const share_access = w.FILE_SHARE_READ | w.FILE_SHARE_WRITE | w.FILE_SHARE_DELETE;
+            const creation = w.FILE_OPEN;
+            const h_file = blk: {
+                const res = w.OpenFile(path_name_w.span(), .{
+                    .dir = null,
+                    .access_mask = access_mask,
+                    .share_access = share_access,
+                    .creation = creation,
+                    .filter = .any,
+                }) catch |err| switch (err) {
+                    error.WouldBlock => unreachable,
+                    else => |e| return e,
+                };
+                break :blk res;
+            };
+            defer w.CloseHandle(h_file);
+
+            const wide_slice = w.GetFinalPathNameByHandle(h_file, .{}, out_buffer);
+
+            const len = std.unicode.calcWtf8Len(wide_slice);
+            if (len > out_buffer.len)
+                return error.NameTooLong;
+
+            const end_index = std.unicode.wtf16LeToWtf8(out_buffer, wide_slice);
+            return end_index;
+        },
+        else => @compileError("unsupported OS"),
     }
 }
 

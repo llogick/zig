@@ -464,12 +464,6 @@ pub fn setTimestampsNow(file: File, io: Io) SetTimestampsError!void {
     return io.vtable.fileSetTimestampsNow(io.userdata, file);
 }
 
-pub const OpenSelfExeError = OpenError || std.fs.SelfExePathError || LockError;
-
-pub fn openSelfExe(io: Io, flags: OpenFlags) OpenSelfExeError!File {
-    return io.vtable.openSelfExe(io.userdata, flags);
-}
-
 pub const ReadPositionalError = Reader.Error || error{Unseekable};
 
 pub fn readPositional(file: File, io: Io, buffer: [][]u8, offset: u64) ReadPositionalError!usize {

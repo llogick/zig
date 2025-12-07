@@ -434,7 +434,7 @@ const Module = struct {
             const pdb_file_open_result = if (fs.path.isAbsolute(path)) res: {
                 break :res std.fs.cwd().openFile(io, path, .{});
             } else res: {
-                const self_dir = fs.selfExeDirPathAlloc(gpa) catch |err| switch (err) {
+                const self_dir = std.process.executableDirPathAlloc(io, gpa) catch |err| switch (err) {
                     error.OutOfMemory, error.Unexpected => |e| return e,
                     else => return error.ReadFailed,
                 };

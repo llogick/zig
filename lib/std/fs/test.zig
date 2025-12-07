@@ -4,6 +4,7 @@ const native_os = builtin.os.tag;
 const std = @import("../std.zig");
 const Io = std.Io;
 const testing = std.testing;
+const expect = std.testing.expect;
 const fs = std.fs;
 const mem = std.mem;
 const wasi = std.os.wasi;
@@ -1177,21 +1178,22 @@ test "renameAbsolute" {
     dir.close(io);
 }
 
-test "openSelfExe" {
+test "openExecutable" {
     if (native_os == .wasi) return error.SkipZigTest;
 
     const io = testing.io;
 
-    const self_exe_file = try std.fs.openSelfExe(.{});
+    const self_exe_file = try std.fs.openExecutable(.{});
     self_exe_file.close(io);
 }
 
-test "selfExePath" {
+test "executablePath" {
     if (native_os == .wasi) return error.SkipZigTest;
 
+    const io = testing.io;
     var buf: [fs.max_path_bytes]u8 = undefined;
-    const buf_self_exe_path = try std.fs.selfExePath(&buf);
-    const alloc_self_exe_path = try std.fs.selfExePathAlloc(testing.allocator);
+    const buf_self_exe_path = try std.process.executablePath(io, &buf);
+    const alloc_self_exe_path = try std.process.executablePathAlloc(io, testing.allocator);
     defer testing.allocator.free(alloc_self_exe_path);
     try testing.expectEqualSlices(u8, buf_self_exe_path, alloc_self_exe_path);
 }
@@ -2370,4 +2372,47 @@ test "File.Writer sendfile with buffered contents" {
     var check_r = check.reader(io, &check_buf);
     try testing.expectEqualStrings("abcd", try check_r.interface.take(4));
     try testing.expectError(error.EndOfStream, check_r.interface.takeByte());
+}
+
+test "readlink on Windows" {
+    if (native_os != .windows) return error.SkipZigTest;
+
+    try testReadlink("C:\\ProgramData", "C:\\Users\\All Users");
+    try testReadlink("C:\\Users\\Default", "C:\\Users\\Default User");
+    try testReadlink("C:\\Users", "C:\\Documents and Settings");
+}
+
+fn testReadlink(target_path: []const u8, symlink_path: []const u8) !void {
+    var buffer: [fs.max_path_bytes]u8 = undefined;
+    const given = try Dir.readLinkAbsolute(symlink_path, buffer[0..]);
+    try expect(mem.eql(u8, target_path, given));
+}
+
+test "readlinkat" {
+    var tmp = tmpDir(.{});
+    defer tmp.cleanup();
+
+    // create file
+    try tmp.dir.writeFile(.{ .sub_path = "file.txt", .data = "nonsense" });
+
+    // create a symbolic link
+    if (native_os == .windows) {
+        std.os.windows.CreateSymbolicLink(
+            tmp.dir.fd,
+            &[_]u16{ 'l', 'i', 'n', 'k' },
+            &[_:0]u16{ 'f', 'i', 'l', 'e', '.', 't', 'x', 't' },
+            false,
+        ) catch |err| switch (err) {
+            // Symlink requires admin privileges on windows, so this test can legitimately fail.
+            error.AccessDenied => return error.SkipZigTest,
+            else => return err,
+        };
+    } else {
+        try posix.symlinkat("file.txt", tmp.dir.fd, "link");
+    }
+
+    // read the link
+    var buffer: [fs.max_path_bytes]u8 = undefined;
+    const read_link = try tmp.dir.readLink("link", &buffer);
+    try expect(mem.eql(u8, "file.txt", read_link));
 }

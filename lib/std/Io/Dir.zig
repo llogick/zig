@@ -694,24 +694,29 @@ pub const RealPathError = error{
 /// supported hosts are: Linux, macOS, and Windows.
 ///
 /// See also:
-/// * `realpathAlloc`.
+/// * `realPathAlloc`.
 pub fn realPath(dir: Dir, io: Io, sub_path: []const u8, out_buffer: []u8) RealPathError!usize {
     return io.vtable.dirRealPath(io.userdata, dir, sub_path, out_buffer);
 }
 
 pub const RealPathAllocError = RealPathError || Allocator.Error;
 
-/// Same as `Dir.realpath` except caller must free the returned memory.
-/// See also `Dir.realpath`.
-pub fn realpathAlloc(self: Dir, allocator: Allocator, pathname: []const u8) RealPathAllocError![]u8 {
-    // Use of max_path_bytes here is valid as the realpath function does not
-    // have a variant that takes an arbitrary-size buffer.
-    // TODO(#4812): Consider reimplementing realpath or using the POSIX.1-2008
-    // NULL out parameter (GNU's canonicalize_file_name) to handle overelong
-    // paths. musl supports passing NULL but restricts the output to PATH_MAX
-    // anyway.
-    var buf: [std.fs.max_path_bytes]u8 = undefined;
-    return allocator.dupe(u8, try self.realpath(pathname, &buf));
+/// Same as `realPath` except allocates result.
+pub fn realPathAlloc(dir: Dir, io: Io, sub_path: []const u8, allocator: Allocator) RealPathAllocError![:0]u8 {
+    var buffer: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try realPath(dir, io, sub_path, &buffer);
+    return allocator.dupeZ(u8, buffer[0..n]);
+}
+
+pub fn realPathAbsolute(io: Io, path: []const u8, out_buffer: []u8) RealPathError!usize {
+    return io.vtable.dirRealPath(io.userdata, .cwd(), path, out_buffer);
+}
+
+/// Same as `realPathAbsolute` except allocates result.
+pub fn realPathAbsoluteAlloc(io: Io, path: []const u8, allocator: Allocator) RealPathAllocError![:0]u8 {
+    var buffer: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try realPathAbsolute(io, path, &buffer);
+    return allocator.dupeZ(u8, buffer[0..n]);
 }
 
 pub const DeleteFileError = error{
@@ -973,6 +978,16 @@ pub const ReadLinkError = error{
 /// On other platforms, `sub_path` is an opaque sequence of bytes with no particular encoding.
 pub fn readLink(dir: Dir, io: Io, sub_path: []const u8, buffer: []u8) ReadLinkError!usize {
     return io.vtable.dirReadLink(io.userdata, dir, sub_path, buffer);
+}
+
+/// Same as `readLink`, except it asserts the path is absolute.
+///
+/// On Windows, `path` should be encoded as [WTF-8](https://wtf-8.codeberg.page/).
+/// On WASI, `path` should be encoded as valid UTF-8.
+/// On other platforms, `path` is an opaque sequence of bytes with no particular encoding.
+pub fn readLinkAbsolute(io: Io, path: []const u8, buffer: []u8) ReadLinkError!usize {
+    assert(std.fs.path.isAbsolute(path));
+    return io.vtable.dirReadLink(io.userdata, .cwd(), path, buffer);
 }
 
 pub const ReadFileAllocError = File.OpenError || File.ReadError || Allocator.Error || error{

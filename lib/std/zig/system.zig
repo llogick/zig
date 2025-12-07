@@ -209,7 +209,6 @@ pub const DetectError = error{
     DeviceBusy,
     OSVersionDetectionFail,
     Unexpected,
-    ProcessNotFound,
 } || Io.Cancelable;
 
 /// Given a `Target.Query`, which specifies in detail which parts of the
@@ -422,7 +421,6 @@ pub fn resolveTargetQuery(io: Io, query: Target.Query) DetectError!Target {
         error.SocketUnconnected => return error.Unexpected,
 
         error.AccessDenied,
-        error.ProcessNotFound,
         error.SymLinkLoop,
         error.ProcessFdQuotaExceeded,
         error.SystemFdQuotaExceeded,
@@ -553,7 +551,6 @@ pub const AbiAndDynamicLinkerFromFileError = error{
     SystemResources,
     ProcessFdQuotaExceeded,
     SystemFdQuotaExceeded,
-    ProcessNotFound,
     IsDir,
     WouldBlock,
     InputOutput,
@@ -693,8 +690,10 @@ fn abiAndDynamicLinkerFromFile(
 
             // So far, no luck. Next we try to see if the information is
             // present in the symlink data for the dynamic linker path.
-            var link_buf: [posix.PATH_MAX]u8 = undefined;
-            const link_name = posix.readlink(dl_path, &link_buf) catch |err| switch (err) {
+            var link_buffer: [posix.PATH_MAX]u8 = undefined;
+            const link_name = if (Io.Dir.readLinkAbsolute(io, dl_path, &link_buffer)) |n|
+                link_buffer[0..n]
+            else |err| switch (err) {
                 error.NameTooLong => unreachable,
                 error.BadPathName => unreachable, // Windows only
                 error.UnsupportedReparsePointType => unreachable, // Windows only
@@ -839,7 +838,6 @@ fn glibcVerFromRPath(io: Io, rpath: []const u8) !std.SemanticVersion {
         error.NotDir => return error.GLibCNotFound,
         error.IsDir => return error.GLibCNotFound,
 
-        error.ProcessNotFound => |e| return e,
         error.ProcessFdQuotaExceeded => |e| return e,
         error.SystemFdQuotaExceeded => |e| return e,
         error.SystemResources => |e| return e,
@@ -1103,7 +1101,6 @@ fn detectAbiAndDynamicLinker(io: Io, cpu: Target.Cpu, os: Target.Os, query: Targ
         error.SymLinkLoop,
         error.ProcessFdQuotaExceeded,
         error.SystemFdQuotaExceeded,
-        error.ProcessNotFound,
         error.Canceled,
         => |e| return e,
 

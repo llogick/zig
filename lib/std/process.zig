@@ -3,6 +3,7 @@ const native_os = builtin.os.tag;
 
 const std = @import("std.zig");
 const Io = std.Io;
+const File = std.Io.File;
 const fs = std.fs;
 const mem = std.mem;
 const math = std.math;
@@ -12,6 +13,7 @@ const testing = std.testing;
 const posix = std.posix;
 const windows = std.os.windows;
 const unicode = std.unicode;
+const max_path_bytes = std.fs.max_path_bytes;
 
 pub const Child = @import("process/Child.zig");
 pub const abort = posix.abort;
@@ -37,7 +39,7 @@ pub const GetCwdAllocError = Allocator.Error || error{CurrentWorkingDirectoryUnl
 pub fn getCwdAlloc(allocator: Allocator) GetCwdAllocError![]u8 {
     // The use of max_path_bytes here is just a heuristic: most paths will fit
     // in stack_buf, avoiding an extra allocation in the common case.
-    var stack_buf: [fs.max_path_bytes]u8 = undefined;
+    var stack_buf: [max_path_bytes]u8 = undefined;
     var heap_buf: ?[]u8 = null;
     defer if (heap_buf) |buf| allocator.free(buf);
 
@@ -2111,4 +2113,98 @@ pub fn createWindowsEnvBlock(allocator: mem.Allocator, env_map: *const EnvMap) !
 pub fn fatal(comptime format: []const u8, format_arguments: anytype) noreturn {
     std.log.err(format, format_arguments);
     exit(1);
+}
+
+pub const ExecutablePathBaseError = error{
+    FileNotFound,
+    AccessDenied,
+    NotSupported,
+    NotDir,
+    SymLinkLoop,
+    InputOutput,
+    FileTooBig,
+    IsDir,
+    ProcessFdQuotaExceeded,
+    SystemFdQuotaExceeded,
+    NoDevice,
+    SystemResources,
+    NoSpaceLeft,
+    FileSystem,
+    BadPathName,
+    DeviceBusy,
+    SharingViolation,
+    PipeBusy,
+    NotLink,
+    PathAlreadyExists,
+    /// On Windows, `\\server` or `\\server\share` was not found.
+    NetworkNotFound,
+    ProcessNotFound,
+    /// On Windows, antivirus software is enabled by default. It can be
+    /// disabled, but Windows Update sometimes ignores the user's preference
+    /// and re-enables it. When enabled, antivirus software on Windows
+    /// intercepts file system operations and makes them significantly slower
+    /// in addition to possibly failing with this error code.
+    AntivirusInterference,
+    /// On Windows, the volume does not contain a recognized file system. File
+    /// system drivers might not be loaded, or the volume may be corrupt.
+    UnrecognizedVolume,
+    PermissionDenied,
+} || Io.Cancelable || Io.UnexpectedError;
+
+pub const ExecutablePathAllocError = ExecutablePathBaseError || Allocator.Error;
+
+pub fn executablePathAlloc(io: Io, allocator: Allocator) ExecutablePathAllocError![:0]u8 {
+    var buffer: [max_path_bytes]u8 = undefined;
+    const n = executablePath(io, &buffer) catch |err| switch (err) {
+        error.NameTooLong => unreachable,
+        else => |e| return e,
+    };
+    return allocator.dupeZ(u8, buffer[0..n]);
+}
+
+pub const ExecutablePathError = ExecutablePathBaseError || error{NameTooLong};
+
+/// Get the path to the current executable, following symlinks.
+///
+/// This function may return an error if the current executable
+/// was deleted after spawning.
+///
+/// Returned value is a slice of out_buffer.
+///
+/// On Windows, the result is encoded as [WTF-8](https://wtf-8.codeberg.page/).
+/// On other platforms, the result is an opaque sequence of bytes with no particular encoding.
+///
+/// On Linux, depends on procfs being mounted. If the currently executing binary has
+/// been deleted, the file path looks something like "/a/b/c/exe (deleted)".
+///
+/// See also:
+/// * `executableDirPath` - to obtain only the directory
+/// * `openExecutable` - to obtain only an open file handle
+pub fn executablePath(io: Io, out_buffer: []u8) ExecutablePathError!usize {
+    return io.vtable.processExecutablePath(io.userdata, out_buffer);
+}
+
+/// Get the directory path that contains the current executable.
+///
+/// Returns index into `out_buffer`.
+///
+/// On Windows, the result is encoded as [WTF-8](https://wtf-8.codeberg.page/).
+/// On other platforms, the result is an opaque sequence of bytes with no particular encoding.
+pub fn executableDirPath(out_buffer: []u8) ExecutablePathError!usize {
+    const n = try executablePath(out_buffer);
+    // Assert that the OS APIs return absolute paths, and therefore dirname
+    // will not return null.
+    return std.fs.path.dirname(out_buffer[0..n]).?;
+}
+
+/// Same as `executableDirPath` except allocates the result.
+pub fn executableDirPathAlloc(allocator: Allocator) ![]u8 {
+    var buffer: [max_path_bytes]u8 = undefined;
+    return allocator.dupe(u8, try executableDirPath(&buffer));
+}
+
+pub const OpenExecutableError = File.OpenError || ExecutablePathError || File.LockError;
+
+pub fn openExecutable(io: Io, flags: File.OpenFlags) OpenExecutableError!File {
+    return io.vtable.processExecutableOpen(io.userdata, flags);
 }

@@ -697,7 +697,6 @@ pub const VTable = struct {
     fileReadPositional: *const fn (?*anyopaque, File, data: [][]u8, offset: u64) File.ReadPositionalError!usize,
     fileSeekBy: *const fn (?*anyopaque, File, relative_offset: i64) File.SeekError!void,
     fileSeekTo: *const fn (?*anyopaque, File, absolute_offset: u64) File.SeekError!void,
-    openSelfExe: *const fn (?*anyopaque, File.OpenFlags) File.OpenSelfExeError!File,
     fileSync: *const fn (?*anyopaque, File) File.SyncError!void,
     fileIsTty: *const fn (?*anyopaque, File) Cancelable!bool,
     fileEnableAnsiEscapeCodes: *const fn (?*anyopaque, File) File.EnableAnsiEscapeCodesError!void,
@@ -711,6 +710,9 @@ pub const VTable = struct {
     fileTryLock: *const fn (?*anyopaque, File, File.Lock) File.LockError!bool,
     fileUnlock: *const fn (?*anyopaque, File) void,
     fileDowngradeLock: *const fn (?*anyopaque, File) File.DowngradeLockError!void,
+
+    processExecutableOpen: *const fn (?*anyopaque, File.OpenFlags) std.process.OpenExecutableError!File,
+    processExecutablePath: *const fn (?*anyopaque, buffer: []u8) std.process.ExecutablePathError!usize,
 
     now: *const fn (?*anyopaque, Clock) Clock.Error!Timestamp,
     sleep: *const fn (?*anyopaque, Timeout) SleepError!void,

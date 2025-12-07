@@ -329,7 +329,7 @@ const Module = struct {
             defer file.close(io);
             break :res std.debug.ElfFile.load(gpa, file, mod.build_id, &.native(mod.name));
         } else res: {
-            const path = std.fs.selfExePathAlloc(gpa) catch |err| switch (err) {
+            const path = std.process.executablePathAlloc(io, gpa) catch |err| switch (err) {
                 error.OutOfMemory => |e| return e,
                 else => return error.ReadFailed,
             };

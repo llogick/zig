@@ -888,7 +888,7 @@ pub fn io(k: *Kqueue) Io {
             .fileReadPositional = fileReadPositional,
             .fileSeekBy = fileSeekBy,
             .fileSeekTo = fileSeekTo,
-            .openSelfExe = openSelfExe,
+            .openExecutable = openExecutable,
 
             .now = now,
             .sleep = sleep,
@@ -1246,7 +1246,7 @@ fn fileSeekTo(userdata: ?*anyopaque, file: File, absolute_offset: u64) File.Seek
     _ = absolute_offset;
     @panic("TODO");
 }
-fn openSelfExe(userdata: ?*anyopaque, file: File.OpenFlags) File.OpenSelfExeError!File {
+fn openExecutable(userdata: ?*anyopaque, file: File.OpenFlags) File.OpenExecutableError!File {
     const k: *Kqueue = @ptrCast(@alignCast(userdata));
     _ = k;
     _ = file;
