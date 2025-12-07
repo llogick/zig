@@ -72,3 +72,8 @@ pub fn fstat_wasi(fd: posix.fd_t) FstatError!wasi.filestat_t {
         else => |err| return posix.unexpectedErrno(err),
     }
 }
+
+pub fn defaultWasiCwd() std.os.wasi.fd_t {
+    // Expect the first preopen to be current working directory.
+    return 3;
+}

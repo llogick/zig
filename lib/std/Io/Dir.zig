@@ -1,4 +1,5 @@
 const Dir = @This();
+const root = @import("root");
 
 const builtin = @import("builtin");
 const native_os = builtin.os.tag;
@@ -10,6 +11,61 @@ const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 
 handle: Handle,
+
+pub const path = std.fs.path;
+
+/// The maximum length of a file path that the operating system will accept.
+///
+/// Paths, including those returned from file system operations, may be longer
+/// than this length, but such paths cannot be successfully passed back in
+/// other file system operations. However, all path components returned by file
+/// system operations are assumed to fit into a `u8` array of this length.
+///
+/// The byte count includes room for a null sentinel byte.
+///
+/// * On Windows, `[]u8` file paths are encoded as
+///   [WTF-8](https://wtf-8.codeberg.page/).
+/// * On WASI, `[]u8` file paths are encoded as valid UTF-8.
+/// * On other platforms, `[]u8` file paths are opaque sequences of bytes with
+///   no particular encoding.
+pub const max_path_bytes = switch (native_os) {
+    .linux, .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos, .freebsd, .openbsd, .netbsd, .dragonfly, .haiku, .illumos, .plan9, .emscripten, .wasi, .serenity => std.posix.PATH_MAX,
+    // Each WTF-16LE code unit may be expanded to 3 WTF-8 bytes.
+    // If it would require 4 WTF-8 bytes, then there would be a surrogate
+    // pair in the WTF-16LE, and we (over)account 3 bytes for it that way.
+    // +1 for the null byte at the end, which can be encoded in 1 byte.
+    .windows => std.os.windows.PATH_MAX_WIDE * 3 + 1,
+    else => if (@hasDecl(root, "os") and @hasDecl(root.os, "PATH_MAX"))
+        root.os.PATH_MAX
+    else
+        @compileError("PATH_MAX not implemented for " ++ @tagName(native_os)),
+};
+
+/// This represents the maximum size of a `[]u8` file name component that
+/// the platform's common file systems support. File name components returned by file system
+/// operations are likely to fit into a `u8` array of this length, but
+/// (depending on the platform) this assumption may not hold for every configuration.
+/// The byte count does not include a null sentinel byte.
+/// On Windows, `[]u8` file name components are encoded as [WTF-8](https://wtf-8.codeberg.page/).
+/// On WASI, file name components are encoded as valid UTF-8.
+/// On other platforms, `[]u8` components are an opaque sequence of bytes with no particular encoding.
+pub const max_name_bytes = switch (native_os) {
+    .linux, .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos, .freebsd, .openbsd, .netbsd, .dragonfly, .illumos, .serenity => std.posix.NAME_MAX,
+    // Haiku's NAME_MAX includes the null terminator, so subtract one.
+    .haiku => std.posix.NAME_MAX - 1,
+    // Each WTF-16LE character may be expanded to 3 WTF-8 bytes.
+    // If it would require 4 WTF-8 bytes, then there would be a surrogate
+    // pair in the WTF-16LE, and we (over)account 3 bytes for it that way.
+    .windows => std.os.windows.NAME_MAX * 3,
+    // For WASI, the MAX_NAME will depend on the host OS, so it needs to be
+    // as large as the largest max_name_bytes (Windows) in order to work on any host OS.
+    // TODO determine if this is a reasonable approach
+    .wasi => std.os.windows.NAME_MAX * 3,
+    else => if (@hasDecl(root, "os") and @hasDecl(root.os, "NAME_MAX"))
+        root.os.NAME_MAX
+    else
+        @compileError("NAME_MAX not implemented for " ++ @tagName(native_os)),
+};
 
 pub const Entry = struct {
     name: []const u8,
@@ -148,7 +204,7 @@ pub const SelectiveWalker = struct {
             }) |entry| {
                 self.name_buffer.shrinkRetainingCapacity(dirname_len);
                 if (self.name_buffer.items.len != 0) {
-                    try self.name_buffer.append(self.allocator, std.fs.path.sep);
+                    try self.name_buffer.append(self.allocator, path.sep);
                     dirname_len += 1;
                 }
                 try self.name_buffer.ensureUnusedCapacity(self.allocator, entry.name.len + 1);
@@ -252,7 +308,7 @@ pub const Walker = struct {
         /// Returns 1 for a direct child of the initial directory, 2 for an entry
         /// within a direct child of the initial directory, etc.
         pub fn depth(self: Walker.Entry) usize {
-            return std.mem.countScalar(u8, self.path, std.fs.path.sep) + 1;
+            return std.mem.countScalar(u8, self.path, path.sep) + 1;
         }
     };
 
@@ -340,6 +396,11 @@ pub fn access(dir: Dir, io: Io, sub_path: []const u8, options: AccessOptions) Ac
     return io.vtable.dirAccess(io.userdata, dir, sub_path, options);
 }
 
+pub fn accessAbsolute(io: Io, absolute_path: []const u8, options: AccessOptions) AccessError!void {
+    assert(path.isAbsolute(absolute_path));
+    return access(.cwd(), io, absolute_path, options);
+}
+
 pub const OpenError = error{
     FileNotFound,
     NotDir,
@@ -379,6 +440,11 @@ pub fn openDir(dir: Dir, io: Io, sub_path: []const u8, options: OpenOptions) Ope
     return io.vtable.dirOpenDir(io.userdata, dir, sub_path, options);
 }
 
+pub fn openDirAbsolute(io: Io, absolute_path: []const u8, options: OpenOptions) OpenError!Dir {
+    assert(path.isAbsolute(absolute_path));
+    return openDir(.cwd(), io, absolute_path, options);
+}
+
 pub fn close(dir: Dir, io: Io) void {
     return io.vtable.dirClose(io.userdata, dir);
 }
@@ -396,6 +462,11 @@ pub fn openFile(dir: Dir, io: Io, sub_path: []const u8, flags: File.OpenFlags) F
     return io.vtable.dirOpenFile(io.userdata, dir, sub_path, flags);
 }
 
+pub fn openFileAbsolute(io: Io, absolute_path: []const u8, flags: File.OpenFlags) File.OpenError!File {
+    assert(path.isAbsolute(absolute_path));
+    return openFile(.cwd(), io, absolute_path, flags);
+}
+
 /// Creates, opens, or overwrites a file with write access.
 ///
 /// Allocates a resource to be dellocated with `File.close`.
@@ -405,6 +476,10 @@ pub fn openFile(dir: Dir, io: Io, sub_path: []const u8, flags: File.OpenFlags) F
 /// On other platforms, `sub_path` is an opaque sequence of bytes with no particular encoding.
 pub fn createFile(dir: Dir, io: Io, sub_path: []const u8, flags: File.CreateFlags) File.OpenError!File {
     return io.vtable.dirCreateFile(io.userdata, dir, sub_path, flags);
+}
+
+pub fn createFileAbsolute(io: Io, absolute_path: []const u8, flags: File.CreateFlags) File.OpenError!File {
+    return createFile(.cwd(), io, absolute_path, flags);
 }
 
 pub const WriteFileOptions = struct {
@@ -476,7 +551,7 @@ pub fn updateFile(
         }
     }
 
-    if (std.fs.path.dirname(dest_path)) |dirname| {
+    if (path.dirname(dest_path)) |dirname| {
         try dest_dir.makePath(io, dirname, .default_dir);
     }
 
@@ -555,6 +630,21 @@ pub const MakeError = error{
 pub fn makeDir(dir: Dir, io: Io, sub_path: []const u8, permissions: Permissions) MakeError!void {
     return io.vtable.dirMake(io.userdata, dir, sub_path, permissions);
 }
+
+/// Create a new directory, based on an absolute path.
+///
+/// Asserts that the path is absolute. See `makeDir` for a function that
+/// operates on both absolute and relative paths.
+///
+/// On Windows, `absolute_path` should be encoded as [WTF-8](https://wtf-8.codeberg.page/).
+/// On WASI, `absolute_path` should be encoded as valid UTF-8.
+/// On other platforms, `absolute_path` is an opaque sequence of bytes with no particular encoding.
+pub fn makeDirAbsolute(io: Io, absolute_path: []const u8, permissions: Permissions) MakeError!void {
+    assert(path.isAbsolute(absolute_path));
+    return makeDir(.cwd(), io, absolute_path, permissions);
+}
+
+test makeDirAbsolute {}
 
 pub const MakePathError = MakeError || StatPathError;
 
@@ -703,19 +793,20 @@ pub const RealPathAllocError = RealPathError || Allocator.Error;
 
 /// Same as `realPath` except allocates result.
 pub fn realPathAlloc(dir: Dir, io: Io, sub_path: []const u8, allocator: Allocator) RealPathAllocError![:0]u8 {
-    var buffer: [std.fs.max_path_bytes]u8 = undefined;
+    var buffer: [max_path_bytes]u8 = undefined;
     const n = try realPath(dir, io, sub_path, &buffer);
     return allocator.dupeZ(u8, buffer[0..n]);
 }
 
-pub fn realPathAbsolute(io: Io, path: []const u8, out_buffer: []u8) RealPathError!usize {
-    return io.vtable.dirRealPath(io.userdata, .cwd(), path, out_buffer);
+pub fn realPathAbsolute(io: Io, absolute_path: []const u8, out_buffer: []u8) RealPathError!usize {
+    assert(path.isAbsolute(absolute_path));
+    return io.vtable.dirRealPath(io.userdata, .cwd(), absolute_path, out_buffer);
 }
 
 /// Same as `realPathAbsolute` except allocates result.
-pub fn realPathAbsoluteAlloc(io: Io, path: []const u8, allocator: Allocator) RealPathAllocError![:0]u8 {
-    var buffer: [std.fs.max_path_bytes]u8 = undefined;
-    const n = try realPathAbsolute(io, path, &buffer);
+pub fn realPathAbsoluteAlloc(io: Io, absolute_path: []const u8, allocator: Allocator) RealPathAllocError![:0]u8 {
+    var buffer: [max_path_bytes]u8 = undefined;
+    const n = try realPathAbsolute(io, absolute_path, &buffer);
     return allocator.dupeZ(u8, buffer[0..n]);
 }
 
@@ -754,6 +845,13 @@ pub fn deleteFile(dir: Dir, io: Io, sub_path: []const u8) DeleteFileError!void {
     return io.vtable.dirDeleteFile(io.userdata, dir, sub_path);
 }
 
+pub fn deleteFileAbsolute(io: Io, absolute_path: []const u8) DeleteFileError!void {
+    assert(path.isAbsolute(absolute_path));
+    return deleteFile(.cwd(), io, absolute_path);
+}
+
+test deleteFileAbsolute {}
+
 pub const DeleteDirError = error{
     DirNotEmpty,
     FileNotFound,
@@ -783,6 +881,16 @@ pub const DeleteDirError = error{
 /// On other platforms, `sub_path` is an opaque sequence of bytes with no particular encoding.
 pub fn deleteDir(dir: Dir, io: Io, sub_path: []const u8) DeleteDirError!void {
     return io.vtable.dirDeleteDir(io.userdata, dir, sub_path);
+}
+
+/// Same as `deleteDir` except the path is absolute.
+///
+/// On Windows, `dir_path` should be encoded as [WTF-8](https://wtf-8.codeberg.page/).
+/// On WASI, `dir_path` should be encoded as valid UTF-8.
+/// On other platforms, `dir_path` is an opaque sequence of bytes with no particular encoding.
+pub fn deleteDirAbsolute(io: Io, absolute_path: []const u8) DeleteDirError!void {
+    assert(path.isAbsolute(absolute_path));
+    return deleteDir(.cwd(), io, absolute_path);
 }
 
 pub const RenameError = error{
@@ -893,6 +1001,17 @@ pub fn symLink(
     return io.vtable.dirSymLink(io.userdata, dir, target_path, sym_link_path, flags);
 }
 
+pub fn symLinkAbsolute(
+    io: Io,
+    target_path: []const u8,
+    sym_link_path: []const u8,
+    flags: SymLinkFlags,
+) SymLinkError!void {
+    assert(path.isAbsolute(target_path));
+    assert(path.isAbsolute(sym_link_path));
+    return symLink(.cwd(), io, target_path, sym_link_path, flags);
+}
+
 /// Same as `symLink`, except tries to create the symbolic link until it
 /// succeeds or encounters an error other than `error.PathAlreadyExists`.
 ///
@@ -913,15 +1032,15 @@ pub fn symLinkAtomic(
         else => |e| return e,
     }
 
-    const dirname = std.fs.path.dirname(sym_link_path) orelse ".";
+    const dirname = path.dirname(sym_link_path) orelse ".";
 
     const rand_len = @sizeOf(u64) * 2;
     const temp_path_len = dirname.len + 1 + rand_len;
-    var temp_path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var temp_path_buf: [max_path_bytes]u8 = undefined;
 
     if (temp_path_len > temp_path_buf.len) return error.NameTooLong;
     @memcpy(temp_path_buf[0..dirname.len], dirname);
-    temp_path_buf[dirname.len] = std.fs.path.sep;
+    temp_path_buf[dirname.len] = path.sep;
 
     const temp_path = temp_path_buf[0..temp_path_len];
 
@@ -985,8 +1104,8 @@ pub fn readLink(dir: Dir, io: Io, sub_path: []const u8, buffer: []u8) ReadLinkEr
 /// On Windows, `path` should be encoded as [WTF-8](https://wtf-8.codeberg.page/).
 /// On WASI, `path` should be encoded as valid UTF-8.
 /// On other platforms, `path` is an opaque sequence of bytes with no particular encoding.
-pub fn readLinkAbsolute(io: Io, path: []const u8, buffer: []u8) ReadLinkError!usize {
-    assert(std.fs.path.isAbsolute(path));
+pub fn readLinkAbsolute(io: Io, absolute_path: []const u8, buffer: []u8) ReadLinkError!usize {
+    assert(path.isAbsolute(absolute_path));
     return io.vtable.dirReadLink(io.userdata, .cwd(), path, buffer);
 }
 
@@ -1298,7 +1417,7 @@ fn deleteTreeMinStackSizeWithKindHint(parent: Dir, io: Io, sub_path: []const u8,
         // Valid use of max_path_bytes because dir_name_buf will only
         // ever store a single path component that was returned from the
         // filesystem.
-        var dir_name_buf: [std.fs.max_path_bytes]u8 = undefined;
+        var dir_name_buf: [max_path_bytes]u8 = undefined;
         var dir_name: []const u8 = sub_path;
 
         // Here we must avoid recursion, in order to provide O(1) memory guarantee of this function.
@@ -1521,6 +1640,26 @@ pub fn copyFile(
     try atomic_file.finish();
 }
 
+/// Same as `copyFile`, except asserts that both `source_path` and `dest_path`
+/// are absolute.
+///
+/// On Windows, both paths should be encoded as [WTF-8](https://wtf-8.codeberg.page/).
+/// On WASI, both paths should be encoded as valid UTF-8.
+/// On other platforms, both paths are an opaque sequence of bytes with no particular encoding.
+pub fn copyFileAbsolute(
+    source_path: []const u8,
+    dest_path: []const u8,
+    io: Io,
+    options: CopyFileOptions,
+) !void {
+    assert(path.isAbsolute(source_path));
+    assert(path.isAbsolute(dest_path));
+    const my_cwd = cwd();
+    return copyFile(my_cwd, source_path, my_cwd, dest_path, io, options);
+}
+
+test copyFileAbsolute {}
+
 pub const AtomicFileOptions = struct {
     permissions: File.Permissions = .default_file,
     make_path: bool = false,
@@ -1538,13 +1677,13 @@ pub const AtomicFileOptions = struct {
 /// On WASI, `dest_path` should be encoded as valid UTF-8.
 /// On other platforms, `dest_path` is an opaque sequence of bytes with no particular encoding.
 pub fn atomicFile(parent: Dir, io: Io, dest_path: []const u8, options: AtomicFileOptions) !File.Atomic {
-    if (std.fs.path.dirname(dest_path)) |dirname| {
+    if (path.dirname(dest_path)) |dirname| {
         const dir = if (options.make_path)
             try parent.makeOpenPath(io, dirname, .{})
         else
             try parent.openDir(io, dirname, .{});
 
-        return .init(std.fs.path.basename(dest_path), options.permissions, dir, true, options.write_buffer);
+        return .init(path.basename(dest_path), options.permissions, dir, true, options.write_buffer);
     } else {
         return .init(dest_path, options.permissions, parent, false, options.write_buffer);
     }

@@ -1576,7 +1576,7 @@ pub fn getUserInfo(name: []const u8) !UserInfo {
 /// TODO this reads /etc/passwd. But sometimes the user/id mapping is in something else
 /// like NIS, AD, etc. See `man nss` or look at an strace for `id myuser`.
 pub fn posixGetUserInfo(io: Io, name: []const u8) !UserInfo {
-    const file = try std.fs.openFileAbsolute("/etc/passwd", .{});
+    const file = try Io.Dir.openFileAbsolute(io, "/etc/passwd", .{});
     defer file.close(io);
     var buffer: [4096]u8 = undefined;
     var file_reader = file.reader(&buffer);

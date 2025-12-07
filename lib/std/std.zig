@@ -115,7 +115,7 @@ pub const Options = struct {
     enable_segfault_handler: bool = debug.default_enable_segfault_handler,
 
     /// Function used to implement `std.fs.cwd` for WASI.
-    wasiCwd: fn () os.wasi.fd_t = fs.defaultWasiCwd,
+    wasiCwd: fn () os.wasi.fd_t = os.defaultWasiCwd,
 
     /// The current log level.
     log_level: log.Level = log.default_level,

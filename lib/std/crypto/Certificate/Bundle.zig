@@ -221,7 +221,7 @@ pub fn addCertsFromFilePathAbsolute(
     now: Io.Timestamp,
     abs_file_path: []const u8,
 ) AddCertsFromFilePathError!void {
-    var file = try fs.openFileAbsolute(abs_file_path, .{});
+    var file = try Io.Dir.openFileAbsolute(io, abs_file_path, .{});
     defer file.close(io);
     var file_reader = file.reader(io, &.{});
     return addCertsFromFile(cb, gpa, &file_reader, now.toSeconds());

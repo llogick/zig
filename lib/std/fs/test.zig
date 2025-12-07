@@ -2087,7 +2087,7 @@ test "'.' and '..' in absolute functions" {
     try fs.copyFileAbsolute(created_file_path, copied_file_path, .{});
     const renamed_file_path = try fs.path.join(allocator, &.{ subdir_path, "../rename" });
     try fs.renameAbsolute(copied_file_path, renamed_file_path);
-    const renamed_file = try fs.openFileAbsolute(renamed_file_path, .{});
+    const renamed_file = try Dir.openFileAbsolute(renamed_file_path, .{});
     renamed_file.close(io);
     try fs.deleteFileAbsolute(renamed_file_path);
 
@@ -2202,20 +2202,19 @@ test "invalid UTF-8/WTF-8 paths" {
             try testing.expectError(expected_err, fs.rename(ctx.dir, invalid_path, ctx.dir, invalid_path));
 
             if (native_os != .wasi and ctx.path_type != .relative) {
-                try testing.expectError(expected_err, fs.copyFileAbsolute(invalid_path, invalid_path, .{}));
-                try testing.expectError(expected_err, fs.makeDirAbsolute(invalid_path));
-                try testing.expectError(expected_err, fs.deleteDirAbsolute(invalid_path));
-                try testing.expectError(expected_err, fs.renameAbsolute(invalid_path, invalid_path));
-                try testing.expectError(expected_err, fs.openDirAbsolute(invalid_path, .{}));
-                try testing.expectError(expected_err, fs.openFileAbsolute(invalid_path, .{}));
-                try testing.expectError(expected_err, fs.accessAbsolute(invalid_path, .{}));
-                try testing.expectError(expected_err, fs.createFileAbsolute(invalid_path, .{}));
-                try testing.expectError(expected_err, fs.deleteFileAbsolute(invalid_path));
-                try testing.expectError(expected_err, fs.deleteTreeAbsolute(invalid_path));
-                var readlink_buf: [fs.max_path_bytes]u8 = undefined;
-                try testing.expectError(expected_err, fs.readLinkAbsolute(invalid_path, &readlink_buf));
-                try testing.expectError(expected_err, fs.symLinkAbsolute(invalid_path, invalid_path, .{}));
-                try testing.expectError(expected_err, fs.realpathAlloc(testing.allocator, invalid_path));
+                try testing.expectError(expected_err, Dir.copyFileAbsolute(invalid_path, invalid_path, .{}));
+                try testing.expectError(expected_err, Dir.makeDirAbsolute(invalid_path));
+                try testing.expectError(expected_err, Dir.deleteDirAbsolute(invalid_path));
+                try testing.expectError(expected_err, Dir.renameAbsolute(invalid_path, invalid_path));
+                try testing.expectError(expected_err, Dir.openDirAbsolute(invalid_path, .{}));
+                try testing.expectError(expected_err, Dir.openFileAbsolute(invalid_path, .{}));
+                try testing.expectError(expected_err, Dir.accessAbsolute(invalid_path, .{}));
+                try testing.expectError(expected_err, Dir.createFileAbsolute(invalid_path, .{}));
+                try testing.expectError(expected_err, Dir.deleteFileAbsolute(invalid_path));
+                var readlink_buf: [Dir.max_path_bytes]u8 = undefined;
+                try testing.expectError(expected_err, Dir.readLinkAbsolute(invalid_path, &readlink_buf));
+                try testing.expectError(expected_err, Dir.symLinkAbsolute(invalid_path, invalid_path, .{}));
+                try testing.expectError(expected_err, Dir.realpathAlloc(testing.allocator, invalid_path));
             }
         }
     }.impl);

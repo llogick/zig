@@ -489,22 +489,6 @@ pub const WriteFileStreamingError = error{
     SystemResources,
 } || Io.Cancelable || Io.UnexpectedError;
 
-/// Opens a file for reading or writing, without attempting to create a new
-/// file, based on an absolute path.
-///
-/// Returns an open resource to be released with `close`.
-///
-/// Asserts that the path is absolute. See `Dir.openFile` for a function that
-/// operates on both absolute and relative paths.
-///
-/// On Windows, `absolute_path` should be encoded as [WTF-8](https://wtf-8.codeberg.page/).
-/// On WASI, `absolute_path` should be encoded as valid UTF-8.
-/// On other platforms, `absolute_path` is an opaque sequence of bytes with no particular encoding.
-pub fn openAbsolute(io: Io, absolute_path: []const u8, flags: OpenFlags) OpenError!File {
-    assert(std.fs.path.isAbsolute(absolute_path));
-    return Io.Dir.cwd().openFile(io, absolute_path, flags);
-}
-
 pub const SeekError = error{
     Unseekable,
     /// The file descriptor does not hold the required rights to seek on it.
@@ -578,4 +562,10 @@ pub const DowngradeLockError = Io.Cancelable || Io.UnexpectedError;
 /// Atomically modifies the lock to be in shared mode, without releasing it.
 pub fn downgradeLock(file: File, io: Io) LockError!void {
     return io.vtable.fileDowngradeLock(io.userdata, file);
+}
+
+test {
+    _ = Reader;
+    _ = Writer;
+    _ = Atomic;
 }

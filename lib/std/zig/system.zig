@@ -1024,7 +1024,7 @@ fn detectAbiAndDynamicLinker(io: Io, cpu: Target.Cpu, os: Target.Os, query: Targ
         };
 
         while (true) {
-            const file = fs.openFileAbsolute(file_name, .{}) catch |err| switch (err) {
+            const file = Io.Dir.openFileAbsolute(io, file_name, .{}) catch |err| switch (err) {
                 error.NoSpaceLeft => return error.Unexpected,
                 error.NameTooLong => return error.Unexpected,
                 error.PathAlreadyExists => return error.Unexpected,
