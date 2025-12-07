@@ -510,7 +510,7 @@ pub const Os = struct {
 
                             break :blk default_min;
                         },
-                        .max = .{ .major = 14, .minor = 3, .patch = 0 },
+                        .max = .{ .major = 15, .minor = 0, .patch = 0 },
                     },
                 },
                 .netbsd => .{
