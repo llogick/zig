@@ -8,7 +8,7 @@ const posix = std.posix;
 const fs = std.fs;
 const testing = std.testing;
 const Allocator = mem.Allocator;
-const File = std.fs.File;
+const File = std.Io.File;
 const windows = std.os.windows;
 
 const builtin = @import("builtin");
@@ -575,7 +575,7 @@ pub fn defaultPanic(
             // A panic happened while trying to print a previous panic message.
             // We're still holding the mutex but that's fine as we're going to
             // call abort().
-            fs.File.stderr().writeAll("aborting due to recursive panic\n") catch {};
+            File.stderr().writeAll("aborting due to recursive panic\n") catch {};
         },
         else => {}, // Panicked while printing the recursive panic message.
     }
@@ -1596,7 +1596,7 @@ pub fn defaultHandleSegfault(addr: ?usize, name: []const u8, opt_ctx: ?CpuContex
             // A segfault happened while trying to print a previous panic message.
             // We're still holding the mutex but that's fine as we're going to
             // call abort().
-            fs.File.stderr().writeAll("aborting due to recursive panic\n") catch {};
+            File.stderr().writeAll("aborting due to recursive panic\n") catch {};
         },
         else => {}, // Panicked while printing the recursive panic message.
     }

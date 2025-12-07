@@ -1,4 +1,5 @@
 const std = @import("std");
+const Io = std.Io;
 const mem = std.mem;
 const Tokenizer = std.zig.Tokenizer;
 const fmtIntSizeBin = std.fmt.fmtIntSizeBin;
@@ -22,7 +23,7 @@ pub fn main() !void {
     const bytes_per_sec = @as(u64, @intFromFloat(@floor(bytes_per_sec_float)));
 
     var stdout_buffer: [1024]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    var stdout_writer = Io.File.stdout().writer(&stdout_buffer);
     const stdout = &stdout_writer.interface;
     try stdout.print("parsing speed: {Bi:.2}/s, {Bi:.2} used \n", .{ bytes_per_sec, memory_used });
     try stdout.flush();

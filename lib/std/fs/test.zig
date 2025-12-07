@@ -12,7 +12,7 @@ const posix = std.posix;
 
 const ArenaAllocator = std.heap.ArenaAllocator;
 const Dir = std.fs.Dir;
-const File = std.fs.File;
+const File = std.Io.File;
 const tmpDir = testing.tmpDir;
 const SymLinkFlags = std.fs.Dir.SymLinkFlags;
 
@@ -2231,7 +2231,7 @@ test "read file non vectored" {
     const file = try tmp_dir.dir.createFile("input.txt", .{ .read = true });
     defer file.close(io);
     {
-        var file_writer: std.fs.File.Writer = .init(file, &.{});
+        var file_writer: File.Writer = .init(file, &.{});
         try file_writer.interface.writeAll(contents);
         try file_writer.interface.flush();
     }
@@ -2263,7 +2263,7 @@ test "seek keeping partial buffer" {
     const file = try tmp_dir.dir.createFile("input.txt", .{ .read = true });
     defer file.close(io);
     {
-        var file_writer: std.fs.File.Writer = .init(file, &.{});
+        var file_writer: File.Writer = .init(file, &.{});
         try file_writer.interface.writeAll(contents);
         try file_writer.interface.flush();
     }
@@ -2325,7 +2325,7 @@ test "seekTo flushes buffered data" {
     defer file.close(io);
     {
         var buf: [16]u8 = undefined;
-        var file_writer = std.fs.File.writer(file, &buf);
+        var file_writer = File.writer(file, &buf);
 
         try file_writer.interface.writeAll(contents);
         try file_writer.seekTo(8);

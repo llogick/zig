@@ -1,3 +1,30 @@
+const Object = @This();
+
+const std = @import("std");
+const Io = std.Io;
+const assert = std.debug.assert;
+const eh_frame = @import("eh_frame.zig");
+const elf = std.elf;
+const fs = std.fs;
+const log = std.log.scoped(.link);
+const math = std.math;
+const mem = std.mem;
+const Path = std.Build.Cache.Path;
+const Allocator = std.mem.Allocator;
+
+const Diags = @import("../../link.zig").Diags;
+const Archive = @import("Archive.zig");
+const Atom = @import("Atom.zig");
+const AtomList = @import("AtomList.zig");
+const Cie = eh_frame.Cie;
+const Elf = @import("../Elf.zig");
+const Fde = eh_frame.Fde;
+const File = @import("file.zig").File;
+const Merge = @import("Merge.zig");
+const Symbol = @import("Symbol.zig");
+const Alignment = Atom.Alignment;
+const riscv = @import("../riscv.zig");
+
 archive: ?InArchive = null,
 /// Archive files cannot contain subdirectories, so only the basename is needed
 /// for output. However, the full path is kept for error reporting.
@@ -68,7 +95,7 @@ pub fn parse(
     diags: *Diags,
     /// For error reporting purposes only.
     path: Path,
-    handle: fs.File,
+    handle: Io.File,
     target: *const std.Target,
     debug_fmt_strip: bool,
     default_sym_version: elf.Versym,
@@ -97,7 +124,7 @@ pub fn parseCommon(
     gpa: Allocator,
     diags: *Diags,
     path: Path,
-    handle: fs.File,
+    handle: Io.File,
     target: *const std.Target,
 ) !void {
     const offset = if (self.archive) |ar| ar.offset else 0;
@@ -264,7 +291,7 @@ fn initAtoms(
     gpa: Allocator,
     diags: *Diags,
     path: Path,
-    handle: fs.File,
+    handle: Io.File,
     debug_fmt_strip: bool,
     target: *const std.Target,
 ) !void {
@@ -421,7 +448,7 @@ fn initSymbols(
 fn parseEhFrame(
     self: *Object,
     gpa: Allocator,
-    handle: fs.File,
+    handle: Io.File,
     shndx: u32,
     target: *const std.Target,
 ) !void {
@@ -1310,7 +1337,7 @@ fn addString(self: *Object, gpa: Allocator, str: []const u8) !u32 {
 }
 
 /// Caller owns the memory.
-fn preadShdrContentsAlloc(self: Object, gpa: Allocator, handle: fs.File, index: u32) ![]u8 {
+fn preadShdrContentsAlloc(self: Object, gpa: Allocator, handle: Io.File, index: u32) ![]u8 {
     assert(index < self.shdrs.items.len);
     const offset = if (self.archive) |ar| ar.offset else 0;
     const shdr = self.shdrs.items[index];
@@ -1320,7 +1347,7 @@ fn preadShdrContentsAlloc(self: Object, gpa: Allocator, handle: fs.File, index: 
 }
 
 /// Caller owns the memory.
-fn preadRelocsAlloc(self: Object, gpa: Allocator, handle: fs.File, shndx: u32) ![]align(1) const elf.Elf64_Rela {
+fn preadRelocsAlloc(self: Object, gpa: Allocator, handle: Io.File, shndx: u32) ![]align(1) const elf.Elf64_Rela {
     const raw = try self.preadShdrContentsAlloc(gpa, handle, shndx);
     const num = @divExact(raw.len, @sizeOf(elf.Elf64_Rela));
     return @as([*]align(1) const elf.Elf64_Rela, @ptrCast(raw.ptr))[0..num];
@@ -1552,29 +1579,3 @@ const InArchive = struct {
     offset: u64,
     size: u32,
 };
-
-const Object = @This();
-
-const std = @import("std");
-const assert = std.debug.assert;
-const eh_frame = @import("eh_frame.zig");
-const elf = std.elf;
-const fs = std.fs;
-const log = std.log.scoped(.link);
-const math = std.math;
-const mem = std.mem;
-const Path = std.Build.Cache.Path;
-const Allocator = std.mem.Allocator;
-
-const Diags = @import("../../link.zig").Diags;
-const Archive = @import("Archive.zig");
-const Atom = @import("Atom.zig");
-const AtomList = @import("AtomList.zig");
-const Cie = eh_frame.Cie;
-const Elf = @import("../Elf.zig");
-const Fde = eh_frame.Fde;
-const File = @import("file.zig").File;
-const Merge = @import("Merge.zig");
-const Symbol = @import("Symbol.zig");
-const Alignment = Atom.Alignment;
-const riscv = @import("../riscv.zig");

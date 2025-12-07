@@ -1,19 +1,21 @@
 //! This API is non-allocating, non-fallible, thread-safe, and lock-free.
+const Progress = @This();
+
+const builtin = @import("builtin");
+const is_big_endian = builtin.cpu.arch.endian() == .big;
+const is_windows = builtin.os.tag == .windows;
 
 const std = @import("std");
-const builtin = @import("builtin");
+const Io = std.Io;
 const windows = std.os.windows;
 const testing = std.testing;
 const assert = std.debug.assert;
-const Progress = @This();
 const posix = std.posix;
-const is_big_endian = builtin.cpu.arch.endian() == .big;
-const is_windows = builtin.os.tag == .windows;
 const Writer = std.Io.Writer;
 
 /// `null` if the current node (and its children) should
 /// not print on update()
-terminal: std.fs.File,
+terminal: Io.File,
 
 terminal_mode: TerminalMode,
 
@@ -472,7 +474,7 @@ pub fn start(options: Options) Node {
             if (options.disable_printing) {
                 return Node.none;
             }
-            const stderr: std.fs.File = .stderr();
+            const stderr: Io.File = .stderr();
             global_progress.terminal = stderr;
             if (stderr.enableAnsiEscapeCodes()) |_| {
                 global_progress.terminal_mode = .ansi_escape_codes;
@@ -633,8 +635,8 @@ pub fn unlockStdErr() void {
 /// Protected by `stderr_mutex`.
 const stderr_writer: *Writer = &stderr_file_writer.interface;
 /// Protected by `stderr_mutex`.
-var stderr_file_writer: std.fs.File.Writer = .{
-    .interface = std.fs.File.Writer.initInterface(&.{}),
+var stderr_file_writer: Io.File.Writer = .{
+    .interface = Io.File.Writer.initInterface(&.{}),
     .file = if (is_windows) undefined else .stderr(),
     .mode = .streaming,
 };

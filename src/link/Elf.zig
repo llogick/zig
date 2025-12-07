@@ -3651,7 +3651,7 @@ fn fileLookup(files: std.MultiArrayList(File.Entry), index: File.Index, zig_obje
 pub fn addFileHandle(
     gpa: Allocator,
     file_handles: *std.ArrayList(File.Handle),
-    handle: fs.File,
+    handle: Io.File,
 ) Allocator.Error!File.HandleIndex {
     try file_handles.append(gpa, handle);
     return @intCast(file_handles.items.len - 1);
@@ -4068,7 +4068,7 @@ fn fmtDumpState(self: *Elf, writer: *std.Io.Writer) std.Io.Writer.Error!void {
 }
 
 /// Caller owns the memory.
-pub fn preadAllAlloc(allocator: Allocator, handle: fs.File, offset: u64, size: u64) ![]u8 {
+pub fn preadAllAlloc(allocator: Allocator, handle: Io.File, offset: u64, size: u64) ![]u8 {
     const buffer = try allocator.alloc(u8, math.cast(usize, size) orelse return error.Overflow);
     errdefer allocator.free(buffer);
     const amt = try handle.preadAll(buffer, offset);
@@ -4460,6 +4460,7 @@ pub fn cast(elf_file: *Elf, comptime T: type, x: anytype) error{LinkFailure}!T {
 }
 
 const std = @import("std");
+const Io = std.Io;
 const build_options = @import("build_options");
 const builtin = @import("builtin");
 const assert = std.debug.assert;

@@ -1,3 +1,24 @@
+const Dwarf = @This();
+
+const std = @import("std");
+const Io = std.Io;
+const Allocator = std.mem.Allocator;
+const DW = std.dwarf;
+const Zir = std.zig.Zir;
+const assert = std.debug.assert;
+const log = std.log.scoped(.dwarf);
+const Writer = std.Io.Writer;
+
+const InternPool = @import("../InternPool.zig");
+const Module = @import("../Package.zig").Module;
+const Type = @import("../Type.zig");
+const Value = @import("../Value.zig");
+const Zcu = @import("../Zcu.zig");
+const codegen = @import("../codegen.zig");
+const dev = @import("../dev.zig");
+const link = @import("../link.zig");
+const target_info = @import("../target.zig");
+
 gpa: Allocator,
 bin_file: *link.File,
 format: DW.Format,
@@ -29,16 +50,16 @@ pub const UpdateError = error{
     UnexpectedEndOfFile,
 } ||
     codegen.GenerateSymbolError ||
-    std.fs.File.OpenError ||
-    std.fs.File.SetEndPosError ||
-    std.fs.File.CopyRangeError ||
-    std.fs.File.PReadError ||
-    std.fs.File.PWriteError;
+    Io.File.OpenError ||
+    Io.File.SetEndPosError ||
+    Io.File.CopyRangeError ||
+    Io.File.PReadError ||
+    Io.File.PWriteError;
 
 pub const FlushError = UpdateError;
 
 pub const RelocError =
-    std.fs.File.PWriteError;
+    Io.File.PWriteError;
 
 pub const AddressSize = enum(u8) {
     @"32" = 4,
@@ -6350,7 +6371,7 @@ const AbbrevCode = enum {
     });
 };
 
-fn getFile(dwarf: *Dwarf) ?std.fs.File {
+fn getFile(dwarf: *Dwarf) ?Io.File {
     if (dwarf.bin_file.cast(.macho)) |macho_file| if (macho_file.d_sym) |*d_sym| return d_sym.file;
     return dwarf.bin_file.file;
 }
@@ -6429,21 +6450,3 @@ const force_incremental = false;
 inline fn incremental(dwarf: Dwarf) bool {
     return force_incremental or dwarf.bin_file.comp.config.incremental;
 }
-
-const Allocator = std.mem.Allocator;
-const DW = std.dwarf;
-const Dwarf = @This();
-const InternPool = @import("../InternPool.zig");
-const Module = @import("../Package.zig").Module;
-const Type = @import("../Type.zig");
-const Value = @import("../Value.zig");
-const Zcu = @import("../Zcu.zig");
-const Zir = std.zig.Zir;
-const assert = std.debug.assert;
-const codegen = @import("../codegen.zig");
-const dev = @import("../dev.zig");
-const link = @import("../link.zig");
-const log = std.log.scoped(.dwarf);
-const std = @import("std");
-const target_info = @import("../target.zig");
-const Writer = std.Io.Writer;

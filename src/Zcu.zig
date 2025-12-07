@@ -1200,7 +1200,7 @@ pub const EmbedFile = struct {
     /// `.none` means the file was not loaded, so `stat` is undefined.
     val: InternPool.Index,
     /// If this is `null` and `val` is `.none`, the file has never been loaded.
-    err: ?(std.fs.File.OpenError || std.fs.File.StatError || std.fs.File.ReadError || error{UnexpectedEof}),
+    err: ?(Io.File.OpenError || Io.File.StatError || Io.File.ReadError || error{UnexpectedEof}),
     stat: Cache.File.Stat,
 
     pub const Index = enum(u32) {
@@ -2927,7 +2927,7 @@ comptime {
     }
 }
 
-pub fn loadZirCache(gpa: Allocator, io: Io, cache_file: std.fs.File) !Zir {
+pub fn loadZirCache(gpa: Allocator, io: Io, cache_file: Io.File) !Zir {
     var buffer: [2000]u8 = undefined;
     var file_reader = cache_file.reader(io, &buffer);
     return result: {
@@ -2986,7 +2986,7 @@ pub fn loadZirCacheBody(gpa: Allocator, header: Zir.Header, cache_br: *Io.Reader
     return zir;
 }
 
-pub fn saveZirCache(gpa: Allocator, cache_file: std.fs.File, stat: std.fs.File.Stat, zir: Zir) (std.fs.File.WriteError || Allocator.Error)!void {
+pub fn saveZirCache(gpa: Allocator, cache_file: Io.File, stat: Io.File.Stat, zir: Zir) (Io.File.WriteError || Allocator.Error)!void {
     const safety_buffer = if (data_has_safety_tag)
         try gpa.alloc([8]u8, zir.instructions.len)
     else
@@ -3026,7 +3026,7 @@ pub fn saveZirCache(gpa: Allocator, cache_file: std.fs.File, stat: std.fs.File.S
     };
 }
 
-pub fn saveZoirCache(cache_file: std.fs.File, stat: std.fs.File.Stat, zoir: Zoir) std.fs.File.WriteError!void {
+pub fn saveZoirCache(cache_file: Io.File, stat: Io.File.Stat, zoir: Zoir) Io.File.WriteError!void {
     const header: Zoir.Header = .{
         .nodes_len = @intCast(zoir.nodes.len),
         .extra_len = @intCast(zoir.extra.len),

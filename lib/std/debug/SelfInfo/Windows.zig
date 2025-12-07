@@ -204,7 +204,7 @@ const Module = struct {
         coff_section_headers: []coff.SectionHeader,
 
         const MappedFile = struct {
-            file: fs.File,
+            file: Io.File,
             section_handle: windows.HANDLE,
             section_view: []const u8,
             fn deinit(mf: *const MappedFile, io: Io) void {

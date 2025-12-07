@@ -123,7 +123,7 @@ pub const LoadError = error{
 
 pub fn load(
     gpa: Allocator,
-    elf_file: std.fs.File,
+    elf_file: Io.File,
     opt_build_id: ?[]const u8,
     di_search_paths: *const DebugInfoSearchPaths,
 ) LoadError!ElfFile {
@@ -423,7 +423,7 @@ const LoadInnerResult = struct {
 };
 fn loadInner(
     arena: Allocator,
-    elf_file: std.fs.File,
+    elf_file: Io.File,
     opt_crc: ?u32,
 ) (LoadError || error{ CrcMismatch, Streaming, Canceled })!LoadInnerResult {
     const mapped_mem: []align(std.heap.page_size_min) const u8 = mapped: {

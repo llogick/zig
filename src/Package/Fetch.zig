@@ -882,7 +882,7 @@ fn fail(f: *Fetch, msg_tok: std.zig.Ast.TokenIndex, msg_str: u32) RunError {
 }
 
 const Resource = union(enum) {
-    file: fs.File.Reader,
+    file: Io.File.Reader,
     http_request: HttpRequest,
     git: Git,
     dir: Io.Dir,
@@ -1653,7 +1653,7 @@ fn computeHash(f: *Fetch, pkg_path: Cache.Path, filter: Filter) RunError!Compute
 
 fn dumpHashInfo(all_files: []const *const HashedFile) !void {
     var stdout_buffer: [1024]u8 = undefined;
-    var stdout_writer: fs.File.Writer = .initStreaming(.stdout(), &stdout_buffer);
+    var stdout_writer: Io.File.Writer = .initStreaming(.stdout(), &stdout_buffer);
     const w = &stdout_writer.interface;
     for (all_files) |hashed_file| {
         try w.print("{t}: {x}: {s}\n", .{ hashed_file.kind, &hashed_file.hash, hashed_file.normalized_path });
@@ -1712,11 +1712,11 @@ fn deleteFileFallible(dir: Io.Dir, deleted_file: *DeletedFile) DeletedFile.Error
     try dir.deleteFile(deleted_file.fs_path);
 }
 
-fn setExecutable(file: fs.File) !void {
+fn setExecutable(file: Io.File) !void {
     if (!std.fs.has_executable_bit) return;
 
     const S = std.posix.S;
-    const mode = fs.File.default_mode | S.IXUSR | S.IXGRP | S.IXOTH;
+    const mode = Io.File.default_mode | S.IXUSR | S.IXGRP | S.IXOTH;
     try file.chmod(mode);
 }
 
@@ -1738,10 +1738,10 @@ const HashedFile = struct {
     size: u64,
 
     const Error =
-        fs.File.OpenError ||
-        fs.File.ReadError ||
-        fs.File.StatError ||
-        fs.File.ChmodError ||
+        Io.File.OpenError ||
+        Io.File.ReadError ||
+        Io.File.StatError ||
+        Io.File.ChmodError ||
         Io.Dir.ReadLinkError;
 
     const Kind = enum { file, link };

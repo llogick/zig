@@ -9578,7 +9578,7 @@ pub fn asmValue(
 
 pub fn dump(b: *Builder) void {
     var buffer: [4000]u8 = undefined;
-    const stderr: std.fs.File = .stderr();
+    const stderr: Io.File = .stderr();
     b.printToFile(stderr, &buffer) catch {};
 }
 
@@ -9589,7 +9589,7 @@ pub fn printToFilePath(b: *Builder, io: Io, dir: std.fs.Dir, path: []const u8) !
     try b.printToFile(io, file, &buffer);
 }
 
-pub fn printToFile(b: *Builder, file: std.fs.File, buffer: []u8) !void {
+pub fn printToFile(b: *Builder, file: Io.File, buffer: []u8) !void {
     var fw = file.writer(buffer);
     try print(b, &fw.interface);
     try fw.interface.flush();

@@ -1,4 +1,5 @@
 const std = @import("std");
+const Io = std.Io;
 const assert = std.debug.assert;
 const mem = std.mem;
 const process = std.process;
@@ -34,7 +35,7 @@ pub fn main() u8 {
     }
 
     var stderr_buf: [1024]u8 = undefined;
-    var stderr = std.fs.File.stderr().writer(&stderr_buf);
+    var stderr = Io.File.stderr().writer(&stderr_buf);
     var diagnostics: aro.Diagnostics = switch (zig_integration) {
         false => .{ .output = .{ .to_writer = .{
             .color = .detect(stderr.file),
@@ -99,7 +100,7 @@ fn serveErrorBundle(arena: std.mem.Allocator, diagnostics: *const aro.Diagnostic
         "translation failure",
     );
     var stdout_buffer: [1024]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    var stdout_writer = Io.File.stdout().writer(&stdout_buffer);
     var server: std.zig.Server = .{
         .out = &stdout_writer.interface,
         .in = undefined,
@@ -129,13 +130,13 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8, zig_integration
             args[i] = arg;
             if (mem.eql(u8, arg, "--help")) {
                 var stdout_buf: [512]u8 = undefined;
-                var stdout = std.fs.File.stdout().writer(&stdout_buf);
+                var stdout = Io.File.stdout().writer(&stdout_buf);
                 try stdout.interface.print(usage, .{args[0]});
                 try stdout.interface.flush();
                 return;
             } else if (mem.eql(u8, arg, "--version")) {
                 var stdout_buf: [512]u8 = undefined;
-                var stdout = std.fs.File.stdout().writer(&stdout_buf);
+                var stdout = Io.File.stdout().writer(&stdout_buf);
                 // TODO add version
                 try stdout.interface.writeAll("0.0.0-dev\n");
                 try stdout.interface.flush();
@@ -228,7 +229,7 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8, zig_integration
             d.comp.cwd.createFile(path, .{}) catch |er|
                 return d.fatal("unable to create dependency file '{s}': {s}", .{ path, aro.Driver.errorDescription(er) })
         else
-            std.fs.File.stdout();
+            Io.File.stdout();
         defer if (dep_file_name != null) file.close(io);
 
         var file_writer = file.writer(&out_buf);
@@ -246,7 +247,7 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8, zig_integration
 
     var close_out_file = false;
     var out_file_path: []const u8 = "<stdout>";
-    var out_file: std.fs.File = .stdout();
+    var out_file: Io.File = .stdout();
     defer if (close_out_file) out_file.close(io);
 
     if (d.output_name) |path| blk: {

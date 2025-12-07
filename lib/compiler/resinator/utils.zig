@@ -32,8 +32,8 @@ pub fn openFileNotDir(
     cwd: std.fs.Dir,
     io: Io,
     path: []const u8,
-    flags: std.fs.File.OpenFlags,
-) (std.fs.File.OpenError || std.fs.File.StatError)!std.fs.File {
+    flags: Io.File.OpenFlags,
+) (Io.File.OpenError || Io.File.StatError)!Io.File {
     const file = try cwd.openFile(io, path, flags);
     errdefer file.close(io);
     // https://github.com/ziglang/zig/issues/5732

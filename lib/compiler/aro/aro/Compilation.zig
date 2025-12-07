@@ -1646,7 +1646,7 @@ fn addSourceFromPathExtra(comp: *Compilation, path: []const u8, kind: Source.Kin
     return comp.addSourceFromFile(file, path, kind);
 }
 
-pub fn addSourceFromFile(comp: *Compilation, file: std.fs.File, path: []const u8, kind: Source.Kind) !Source {
+pub fn addSourceFromFile(comp: *Compilation, file: Io.File, path: []const u8, kind: Source.Kind) !Source {
     const contents = try comp.getFileContents(file, .unlimited);
     errdefer comp.gpa.free(contents);
     return comp.addSourceFromOwnedBuffer(path, contents, kind);
@@ -1980,7 +1980,7 @@ fn getPathContents(comp: *Compilation, path: []const u8, limit: Io.Limit) ![]u8 
     return comp.getFileContents(file, limit);
 }
 
-fn getFileContents(comp: *Compilation, file: std.fs.File, limit: Io.Limit) ![]u8 {
+fn getFileContents(comp: *Compilation, file: Io.File, limit: Io.Limit) ![]u8 {
     var file_buf: [4096]u8 = undefined;
     var file_reader = file.reader(comp.io, &file_buf);
 

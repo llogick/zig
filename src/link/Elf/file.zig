@@ -1,3 +1,20 @@
+const std = @import("std");
+const Io = std.Io;
+const elf = std.elf;
+const log = std.log.scoped(.link);
+const Path = std.Build.Cache.Path;
+const Allocator = std.mem.Allocator;
+
+const Archive = @import("Archive.zig");
+const Atom = @import("Atom.zig");
+const Cie = @import("eh_frame.zig").Cie;
+const Elf = @import("../Elf.zig");
+const LinkerDefined = @import("LinkerDefined.zig");
+const Object = @import("Object.zig");
+const SharedObject = @import("SharedObject.zig");
+const Symbol = @import("Symbol.zig");
+const ZigObject = @import("ZigObject.zig");
+
 pub const File = union(enum) {
     zig_object: *ZigObject,
     linker_defined: *LinkerDefined,
@@ -279,22 +296,6 @@ pub const File = union(enum) {
         shared_object: SharedObject,
     };
 
-    pub const Handle = std.fs.File;
+    pub const Handle = Io.File;
     pub const HandleIndex = Index;
 };
-
-const std = @import("std");
-const elf = std.elf;
-const log = std.log.scoped(.link);
-const Path = std.Build.Cache.Path;
-const Allocator = std.mem.Allocator;
-
-const Archive = @import("Archive.zig");
-const Atom = @import("Atom.zig");
-const Cie = @import("eh_frame.zig").Cie;
-const Elf = @import("../Elf.zig");
-const LinkerDefined = @import("LinkerDefined.zig");
-const Object = @import("Object.zig");
-const SharedObject = @import("SharedObject.zig");
-const Symbol = @import("Symbol.zig");
-const ZigObject = @import("ZigObject.zig");

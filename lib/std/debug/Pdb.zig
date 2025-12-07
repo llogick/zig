@@ -1,5 +1,5 @@
 const std = @import("../std.zig");
-const File = std.fs.File;
+const File = std.Io.File;
 const Allocator = std.mem.Allocator;
 const pdb = std.pdb;
 const assert = std.debug.assert;

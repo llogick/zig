@@ -27,7 +27,7 @@ coverage: *Coverage,
 pub const LoadError = error{
     MissingDebugInfo,
     UnsupportedDebugInfo,
-} || std.fs.File.OpenError || ElfFile.LoadError || MachOFile.Error || std.debug.Dwarf.ScanError;
+} || Io.File.OpenError || ElfFile.LoadError || MachOFile.Error || std.debug.Dwarf.ScanError;
 
 pub fn load(
     gpa: Allocator,

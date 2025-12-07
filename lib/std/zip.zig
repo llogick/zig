@@ -4,9 +4,10 @@
 //! Note that this file uses the abbreviation "cd" for "central directory"
 
 const builtin = @import("builtin");
-const std = @import("std");
-const File = std.fs.File;
 const is_le = builtin.target.cpu.arch.endian() == .little;
+
+const std = @import("std");
+const File = std.Io.File;
 const Writer = std.Io.Writer;
 const Reader = std.Io.Reader;
 const flate = std.compress.flate;

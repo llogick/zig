@@ -225,7 +225,7 @@ pub const ElfDynLib = struct {
         const fd = try resolveFromName(io, path);
         defer posix.close(fd);
 
-        const file: std.fs.File = .{ .handle = fd };
+        const file: Io.File = .{ .handle = fd };
         const stat = try file.stat();
         const size = std.math.cast(usize, stat.size) orelse return error.FileTooBig;
 

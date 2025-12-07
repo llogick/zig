@@ -1,12 +1,13 @@
 const builtin = @import("builtin");
+
 const std = @import("std");
+const Io = std.Io;
 const mem = std.mem;
 const fs = std.fs;
 const elf = std.elf;
 const Allocator = std.mem.Allocator;
-const File = std.fs.File;
+const File = std.Io.File;
 const assert = std.debug.assert;
-
 const fatal = std.process.fatal;
 const Server = std.zig.Server;
 
@@ -56,7 +57,7 @@ fn cmdObjCopy(gpa: Allocator, arena: Allocator, args: []const []const u8) !void 
                 fatal("unexpected positional argument: '{s}'", .{arg});
             }
         } else if (mem.eql(u8, arg, "-h") or mem.eql(u8, arg, "--help")) {
-            return std.fs.File.stdout().writeAll(usage);
+            return Io.File.stdout().writeAll(usage);
         } else if (mem.eql(u8, arg, "-O") or mem.eql(u8, arg, "--output-target")) {
             i += 1;
             if (i >= args.len) fatal("expected another argument after '{s}'", .{arg});
@@ -177,7 +178,7 @@ fn cmdObjCopy(gpa: Allocator, arena: Allocator, args: []const []const u8) !void 
         }
     };
 
-    const mode = if (out_fmt != .elf or only_keep_debug) fs.File.default_mode else stat.mode;
+    const mode = if (out_fmt != .elf or only_keep_debug) Io.File.default_mode else stat.mode;
 
     var output_file = try fs.cwd().createFile(output, .{ .mode = mode });
     defer output_file.close(io);
@@ -221,8 +222,8 @@ fn cmdObjCopy(gpa: Allocator, arena: Allocator, args: []const []const u8) !void 
     try out.end();
 
     if (listen) {
-        var stdin_reader = fs.File.stdin().reader(io, &stdin_buffer);
-        var stdout_writer = fs.File.stdout().writer(&stdout_buffer);
+        var stdin_reader = Io.File.stdin().reader(io, &stdin_buffer);
+        var stdout_writer = Io.File.stdout().writer(&stdout_buffer);
         var server = try Server.init(.{
             .in = &stdin_reader.interface,
             .out = &stdout_writer.interface,

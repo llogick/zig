@@ -1,7 +1,8 @@
 // zig run -O ReleaseFast --zig-lib-dir ../.. benchmark.zig
+const builtin = @import("builtin");
 
 const std = @import("std");
-const builtin = @import("builtin");
+const Io = std.Io;
 const time = std.time;
 const Timer = time.Timer;
 const hash = std.hash;
@@ -354,7 +355,7 @@ fn mode(comptime x: comptime_int) comptime_int {
 
 pub fn main() !void {
     var stdout_buffer: [0x100]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    var stdout_writer = Io.File.stdout().writer(&stdout_buffer);
     const stdout = &stdout_writer.interface;
 
     var buffer: [1024]u8 = undefined;

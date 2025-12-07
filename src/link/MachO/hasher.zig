@@ -1,3 +1,9 @@
+const std = @import("std");
+const Io = std.Io;
+const Allocator = std.mem.Allocator;
+
+const trace = @import("../../tracy.zig").trace;
+
 pub fn ParallelHasher(comptime Hasher: type) type {
     const hash_size = Hasher.digest_length;
 
@@ -5,7 +11,7 @@ pub fn ParallelHasher(comptime Hasher: type) type {
         allocator: Allocator,
         io: std.Io,
 
-        pub fn hash(self: Self, file: fs.File, out: [][hash_size]u8, opts: struct {
+        pub fn hash(self: Self, file: Io.File, out: [][hash_size]u8, opts: struct {
             chunk_size: u64 = 0x4000,
             max_file_size: ?u64 = null,
         }) !void {
@@ -23,7 +29,7 @@ pub fn ParallelHasher(comptime Hasher: type) type {
             const buffer = try self.allocator.alloc(u8, chunk_size * out.len);
             defer self.allocator.free(buffer);
 
-            const results = try self.allocator.alloc(fs.File.PReadError!usize, out.len);
+            const results = try self.allocator.alloc(Io.File.PReadError!usize, out.len);
             defer self.allocator.free(results);
 
             {
@@ -51,11 +57,11 @@ pub fn ParallelHasher(comptime Hasher: type) type {
         }
 
         fn worker(
-            file: fs.File,
+            file: Io.File,
             fstart: usize,
             buffer: []u8,
             out: *[hash_size]u8,
-            err: *fs.File.PReadError!usize,
+            err: *Io.File.PReadError!usize,
         ) void {
             const tracy = trace(@src());
             defer tracy.end();
@@ -66,11 +72,3 @@ pub fn ParallelHasher(comptime Hasher: type) type {
         const Self = @This();
     };
 }
-
-const assert = std.debug.assert;
-const fs = std.fs;
-const mem = std.mem;
-const std = @import("std");
-const trace = @import("../../tracy.zig").trace;
-
-const Allocator = mem.Allocator;

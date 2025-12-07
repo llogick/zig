@@ -1,10 +1,18 @@
+const std = @import("std");
+const Io = std.Io;
+const Md5 = std.crypto.hash.Md5;
+
+const trace = @import("../../tracy.zig").trace;
+const Compilation = @import("../../Compilation.zig");
+const Hasher = @import("hasher.zig").ParallelHasher;
+
 /// Calculates Md5 hash of each chunk in parallel and then hashes all Md5 hashes to produce
 /// the final digest.
 /// While this is NOT a correct MD5 hash of the contents, this methodology is used by LLVM/LLD
 /// and we will use it too as it seems accepted by Apple OSes.
 /// TODO LLD also hashes the output filename to disambiguate between same builds with different
 /// output files. Should we also do that?
-pub fn calcUuid(comp: *const Compilation, file: fs.File, file_size: u64, out: *[Md5.digest_length]u8) !void {
+pub fn calcUuid(comp: *const Compilation, file: Io.File, file_size: u64, out: *[Md5.digest_length]u8) !void {
     const tracy = trace(@src());
     defer tracy.end();
 
@@ -37,12 +45,3 @@ inline fn conform(out: *[Md5.digest_length]u8) void {
     out[6] = (out[6] & 0x0F) | (3 << 4);
     out[8] = (out[8] & 0x3F) | 0x80;
 }
-
-const fs = std.fs;
-const mem = std.mem;
-const std = @import("std");
-const trace = @import("../../tracy.zig").trace;
-
-const Compilation = @import("../../Compilation.zig");
-const Md5 = std.crypto.hash.Md5;
-const Hasher = @import("hasher.zig").ParallelHasher;

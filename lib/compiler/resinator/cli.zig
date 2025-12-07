@@ -1,4 +1,5 @@
 const std = @import("std");
+const Io = std.Io;
 const code_pages = @import("code_pages.zig");
 const SupportedCodePage = code_pages.SupportedCodePage;
 const lang = @import("lang.zig");
@@ -169,7 +170,7 @@ pub const Options = struct {
     coff_options: cvtres.CoffOptions = .{},
 
     pub const IoSource = union(enum) {
-        stdio: std.fs.File,
+        stdio: Io.File,
         filename: []const u8,
     };
     pub const AutoIncludes = enum { any, msvc, gnu, none };

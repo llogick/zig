@@ -198,8 +198,8 @@ pub const Repository = struct {
         repo: *Repository,
         allocator: Allocator,
         format: Oid.Format,
-        pack_file: *std.fs.File.Reader,
-        index_file: *std.fs.File.Reader,
+        pack_file: *Io.File.Reader,
+        index_file: *Io.File.Reader,
     ) !void {
         repo.* = .{ .odb = undefined };
         try repo.odb.init(allocator, format, pack_file, index_file);
@@ -372,9 +372,9 @@ pub const Repository = struct {
 /// [pack-format](https://git-scm.com/docs/pack-format).
 const Odb = struct {
     format: Oid.Format,
-    pack_file: *std.fs.File.Reader,
+    pack_file: *Io.File.Reader,
     index_header: IndexHeader,
-    index_file: *std.fs.File.Reader,
+    index_file: *Io.File.Reader,
     cache: ObjectCache = .{},
     allocator: Allocator,
 
@@ -383,8 +383,8 @@ const Odb = struct {
         odb: *Odb,
         allocator: Allocator,
         format: Oid.Format,
-        pack_file: *std.fs.File.Reader,
-        index_file: *std.fs.File.Reader,
+        pack_file: *Io.File.Reader,
+        index_file: *Io.File.Reader,
     ) !void {
         try pack_file.seekTo(0);
         try index_file.seekTo(0);
@@ -1272,8 +1272,8 @@ const IndexEntry = struct {
 pub fn indexPack(
     allocator: Allocator,
     format: Oid.Format,
-    pack: *std.fs.File.Reader,
-    index_writer: *std.fs.File.Writer,
+    pack: *Io.File.Reader,
+    index_writer: *Io.File.Writer,
 ) !void {
     try pack.seekTo(0);
 
@@ -1372,7 +1372,7 @@ pub fn indexPack(
 fn indexPackFirstPass(
     allocator: Allocator,
     format: Oid.Format,
-    pack: *std.fs.File.Reader,
+    pack: *Io.File.Reader,
     index_entries: *std.AutoHashMapUnmanaged(Oid, IndexEntry),
     pending_deltas: *std.ArrayList(IndexEntry),
 ) !Oid {
@@ -1425,7 +1425,7 @@ fn indexPackFirstPass(
 fn indexPackHashDelta(
     allocator: Allocator,
     format: Oid.Format,
-    pack: *std.fs.File.Reader,
+    pack: *Io.File.Reader,
     delta: IndexEntry,
     index_entries: std.AutoHashMapUnmanaged(Oid, IndexEntry),
     cache: *ObjectCache,
@@ -1477,7 +1477,7 @@ fn indexPackHashDelta(
 fn resolveDeltaChain(
     allocator: Allocator,
     format: Oid.Format,
-    pack: *std.fs.File.Reader,
+    pack: *Io.File.Reader,
     base_object: Object,
     delta_offsets: []const u64,
     cache: *ObjectCache,

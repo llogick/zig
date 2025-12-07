@@ -45,7 +45,7 @@ pub fn main() !void {
     }
 
     var stdout_buffer: [1024]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    var stdout_writer = Io.File.stdout().writer(&stdout_buffer);
     const stdout = &stdout_writer.interface;
     var error_handler: ErrorHandler = switch (zig_integration) {
         true => .{
@@ -447,8 +447,8 @@ const IoStream = struct {
     }
 
     pub const Source = union(enum) {
-        file: std.fs.File,
-        stdio: std.fs.File,
+        file: Io.File,
+        stdio: Io.File,
         memory: std.ArrayList(u8),
         /// The source has been closed and any usage of the Source in this state is illegal (except deinit).
         closed: void,
@@ -500,10 +500,10 @@ const IoStream = struct {
         }
 
         pub const Writer = union(enum) {
-            file: std.fs.File.Writer,
+            file: Io.File.Writer,
             allocating: std.Io.Writer.Allocating,
 
-            pub const Error = Allocator.Error || std.fs.File.WriteError;
+            pub const Error = Allocator.Error || Io.File.WriteError;
 
             pub fn interface(this: *@This()) *std.Io.Writer {
                 return switch (this.*) {

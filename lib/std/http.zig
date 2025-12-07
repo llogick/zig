@@ -2,7 +2,7 @@ const builtin = @import("builtin");
 const std = @import("std.zig");
 const assert = std.debug.assert;
 const Writer = std.Io.Writer;
-const File = std.fs.File;
+const File = std.Io.File;
 
 pub const Client = @import("http/Client.zig");
 pub const Server = @import("http/Server.zig");

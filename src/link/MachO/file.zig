@@ -355,11 +355,12 @@ pub const File = union(enum) {
         dylib: Dylib,
     };
 
-    pub const Handle = std.fs.File;
+    pub const Handle = Io.File;
     pub const HandleIndex = Index;
 };
 
 const std = @import("std");
+const Io = std.Io;
 const assert = std.debug.assert;
 const log = std.log.scoped(.link);
 const macho = std.macho;

@@ -8,7 +8,7 @@ const Io = std.Io;
 const unicode = std.unicode;
 const fs = std.fs;
 const process = std.process;
-const File = std.fs.File;
+const File = std.Io.File;
 const windows = std.os.windows;
 const linux = std.os.linux;
 const posix = std.posix;
@@ -1055,7 +1055,7 @@ fn forkChildErrReport(fd: i32, err: ChildProcess.SpawnError) noreturn {
 
 fn writeIntFd(fd: i32, value: ErrInt) !void {
     var buffer: [8]u8 = undefined;
-    var fw: std.fs.File.Writer = .initStreaming(.{ .handle = fd }, &buffer);
+    var fw: File.Writer = .initStreaming(.{ .handle = fd }, &buffer);
     fw.interface.writeInt(u64, value, .little) catch unreachable;
     fw.interface.flush() catch return error.SystemResources;
 }

@@ -74,8 +74,8 @@ pub fn main() void {
 
 fn mainServer() !void {
     @disableInstrumentation();
-    var stdin_reader = std.fs.File.stdin().readerStreaming(runner_threaded_io.io(), &stdin_buffer);
-    var stdout_writer = std.fs.File.stdout().writerStreaming(&stdout_buffer);
+    var stdin_reader = Io.File.stdin().readerStreaming(runner_threaded_io.io(), &stdin_buffer);
+    var stdout_writer = Io.File.stdout().writerStreaming(&stdout_buffer);
     var server = try std.zig.Server.init(.{
         .in = &stdin_reader.interface,
         .out = &stdout_writer.interface,
@@ -228,7 +228,7 @@ fn mainTerminal() void {
         .root_name = "Test",
         .estimated_total_items = test_fn_list.len,
     });
-    const have_tty = std.fs.File.stderr().isTty();
+    const have_tty = Io.File.stderr().isTty();
 
     var leaks: usize = 0;
     for (test_fn_list, 0..) |test_fn, i| {
@@ -318,7 +318,7 @@ pub fn log(
 /// work-in-progress backends can handle it.
 pub fn mainSimple() anyerror!void {
     @disableInstrumentation();
-    // is the backend capable of calling `std.fs.File.writeAll`?
+    // is the backend capable of calling `Io.File.writeAll`?
     const enable_write = switch (builtin.zig_backend) {
         .stage2_aarch64, .stage2_riscv64 => true,
         else => false,
@@ -334,7 +334,7 @@ pub fn mainSimple() anyerror!void {
     var failed: u64 = 0;
 
     // we don't want to bring in File and Writer if the backend doesn't support it
-    const stdout = if (enable_write) std.fs.File.stdout() else {};
+    const stdout = if (enable_write) Io.File.stdout() else {};
 
     for (builtin.test_functions) |test_fn| {
         if (enable_write) {

@@ -5325,7 +5325,7 @@ fn docsCopyModule(
     comp: *Compilation,
     module: *Package.Module,
     name: []const u8,
-    tar_file_writer: *fs.File.Writer,
+    tar_file_writer: *Io.File.Writer,
 ) !void {
     const io = comp.io;
     const root = module.root;
@@ -5361,7 +5361,7 @@ fn docsCopyModule(
         };
         defer file.close(io);
         const stat = try file.stat();
-        var file_reader: fs.File.Reader = .initSize(file.adaptToNewApi(), io, &buffer, stat.size);
+        var file_reader: Io.File.Reader = .initSize(file.adaptToNewApi(), io, &buffer, stat.size);
 
         archiver.writeFileTimestamp(entry.path, &file_reader, stat.mtime) catch |err| {
             return comp.lockAndSetMiscFailure(.docs_copy, "unable to archive {f}{s}: {t}", .{

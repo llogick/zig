@@ -20,6 +20,7 @@ const native_endian = builtin.cpu.arch.endian();
 const build_options = @import("build_options");
 
 const std = @import("std");
+const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const Cache = std.Build.Cache;
 const Path = Cache.Path;
@@ -3001,9 +3002,9 @@ pub fn createEmpty(
         .read = true,
         .mode = if (fs.has_executable_bit)
             if (target.os.tag == .wasi and output_mode == .Exe)
-                fs.File.default_mode | 0b001_000_000
+                Io.File.default_mode | 0b001_000_000
             else
-                fs.File.default_mode
+                Io.File.default_mode
         else
             0,
     });

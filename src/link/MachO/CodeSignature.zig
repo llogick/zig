@@ -1,17 +1,19 @@
 const CodeSignature = @This();
 
 const std = @import("std");
+const Io = std.Io;
 const assert = std.debug.assert;
 const fs = std.fs;
 const log = std.log.scoped(.link);
 const macho = std.macho;
 const mem = std.mem;
 const testing = std.testing;
+const Sha256 = std.crypto.hash.sha2.Sha256;
+const Allocator = std.mem.Allocator;
+
 const trace = @import("../../tracy.zig").trace;
-const Allocator = mem.Allocator;
 const Hasher = @import("hasher.zig").ParallelHasher;
 const MachO = @import("../MachO.zig");
-const Sha256 = std.crypto.hash.sha2.Sha256;
 
 const hash_size = Sha256.digest_length;
 
@@ -250,7 +252,7 @@ pub fn addEntitlements(self: *CodeSignature, allocator: Allocator, path: []const
 }
 
 pub const WriteOpts = struct {
-    file: fs.File,
+    file: Io.File,
     exec_seg_base: u64,
     exec_seg_limit: u64,
     file_size: u32,

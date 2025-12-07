@@ -1,4 +1,5 @@
 const std = @import("std");
+const Io = std.Io;
 const mem = std.mem;
 const Allocator = mem.Allocator;
 const process = std.process;
@@ -1061,7 +1062,7 @@ pub fn printDiagnosticsStats(d: *Driver) void {
     }
 }
 
-pub fn detectConfig(d: *Driver, file: std.fs.File) std.Io.tty.Config {
+pub fn detectConfig(d: *Driver, file: Io.File) std.Io.tty.Config {
     if (d.diagnostics.color == false) return .no_color;
     const force_color = d.diagnostics.color == true;
 
@@ -1109,7 +1110,7 @@ pub fn main(d: *Driver, tc: *Toolchain, args: []const []const u8, comptime fast_
         defer macro_buf.deinit(d.comp.gpa);
 
         var stdout_buf: [256]u8 = undefined;
-        var stdout = std.fs.File.stdout().writer(&stdout_buf);
+        var stdout = Io.File.stdout().writer(&stdout_buf);
         if (parseArgs(d, &stdout.interface, &macro_buf, args) catch |er| switch (er) {
             error.WriteFailed => return d.fatal("failed to write to stdout: {s}", .{errorDescription(er)}),
             error.OutOfMemory => return error.OutOfMemory,
@@ -1329,7 +1330,7 @@ fn processSource(
             d.comp.cwd.createFile(path, .{}) catch |er|
                 return d.fatal("unable to create dependency file '{s}': {s}", .{ path, errorDescription(er) })
         else
-            std.fs.File.stdout();
+            Io.File.stdout();
         defer if (dep_file_name != null) file.close(io);
 
         var file_writer = file.writer(&writer_buf);
@@ -1354,7 +1355,7 @@ fn processSource(
             d.comp.cwd.createFile(some, .{}) catch |er|
                 return d.fatal("unable to create output file '{s}': {s}", .{ some, errorDescription(er) })
         else
-            std.fs.File.stdout();
+            Io.File.stdout();
         defer if (d.output_name != null) file.close(io);
 
         var file_writer = file.writer(&writer_buf);
@@ -1369,7 +1370,7 @@ fn processSource(
     defer tree.deinit();
 
     if (d.verbose_ast) {
-        var stdout = std.fs.File.stdout().writer(&writer_buf);
+        var stdout = Io.File.stdout().writer(&writer_buf);
         tree.dump(d.detectConfig(stdout.file), &stdout.interface) catch {};
     }
 
@@ -1433,7 +1434,7 @@ fn processSource(
         defer ir.deinit(gpa);
 
         if (d.verbose_ir) {
-            var stdout = std.fs.File.stdout().writer(&writer_buf);
+            var stdout = Io.File.stdout().writer(&writer_buf);
             ir.dump(gpa, d.detectConfig(stdout.file), &stdout.interface) catch {};
         }
 
@@ -1499,7 +1500,7 @@ pub fn invokeLinker(d: *Driver, tc: *Toolchain, comptime fast_exit: bool) Compil
 
     if (d.verbose_linker_args) {
         var stdout_buf: [4096]u8 = undefined;
-        var stdout = std.fs.File.stdout().writer(&stdout_buf);
+        var stdout = Io.File.stdout().writer(&stdout_buf);
         dumpLinkerArgs(&stdout.interface, argv.items) catch {
             return d.fatal("unable to dump linker args: {s}", .{errorDescription(stdout.err.?)});
         };

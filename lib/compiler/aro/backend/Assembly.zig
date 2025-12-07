@@ -1,4 +1,5 @@
 const std = @import("std");
+const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
 data: []const u8,
@@ -11,7 +12,7 @@ pub fn deinit(self: *const Assembly, gpa: Allocator) void {
     gpa.free(self.text);
 }
 
-pub fn writeToFile(self: Assembly, file: std.fs.File) !void {
+pub fn writeToFile(self: Assembly, file: Io.File) !void {
     var file_writer = file.writer(&.{});
 
     var buffers = [_][]const u8{ self.data, self.text };

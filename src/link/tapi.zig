@@ -1,10 +1,10 @@
 const std = @import("std");
-const fs = std.fs;
+const Io = std.Io;
 const mem = std.mem;
 const log = std.log.scoped(.tapi);
-const yaml = @import("tapi/yaml.zig");
+const Allocator = std.mem.Allocator;
 
-const Allocator = mem.Allocator;
+const yaml = @import("tapi/yaml.zig");
 const Yaml = yaml.Yaml;
 
 const VersionField = union(enum) {
@@ -130,7 +130,7 @@ pub const Tbd = union(enum) {
 pub const TapiError = error{
     NotLibStub,
     InputOutput,
-} || yaml.YamlError || std.fs.File.PReadError;
+} || yaml.YamlError || Io.File.PReadError;
 
 pub const LibStub = struct {
     /// Underlying memory for stub's contents.
@@ -139,7 +139,7 @@ pub const LibStub = struct {
     /// Typed contents of the tbd file.
     inner: []Tbd,
 
-    pub fn loadFromFile(allocator: Allocator, file: fs.File) TapiError!LibStub {
+    pub fn loadFromFile(allocator: Allocator, file: Io.File) TapiError!LibStub {
         const filesize = blk: {
             const stat = file.stat() catch break :blk std.math.maxInt(u32);
             break :blk @min(stat.size, std.math.maxInt(u32));

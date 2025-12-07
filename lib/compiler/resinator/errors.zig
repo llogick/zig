@@ -169,9 +169,9 @@ pub const ErrorDetails = struct {
         filename_string_index: FilenameStringIndex,
 
         pub const FilenameStringIndex = std.meta.Int(.unsigned, 32 - @bitSizeOf(FileOpenErrorEnum));
-        pub const FileOpenErrorEnum = std.meta.FieldEnum(std.fs.File.OpenError || std.fs.File.StatError);
+        pub const FileOpenErrorEnum = std.meta.FieldEnum(Io.File.OpenError || Io.File.StatError);
 
-        pub fn enumFromError(err: (std.fs.File.OpenError || std.fs.File.StatError)) FileOpenErrorEnum {
+        pub fn enumFromError(err: (Io.File.OpenError || Io.File.StatError)) FileOpenErrorEnum {
             return switch (err) {
                 inline else => |e| @field(ErrorDetails.FileOpenError.FileOpenErrorEnum, @errorName(e)),
             };
@@ -1094,8 +1094,8 @@ const CorrespondingLines = struct {
     last_byte: u8 = 0,
     at_eof: bool = false,
     span: SourceMappings.CorrespondingSpan,
-    file: std.fs.File,
-    file_reader: std.fs.File.Reader,
+    file: Io.File,
+    file_reader: Io.File.Reader,
     code_page: SupportedCodePage,
 
     pub fn init(

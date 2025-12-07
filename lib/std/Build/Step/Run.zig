@@ -1,15 +1,16 @@
-const std = @import("std");
+const Run = @This();
 const builtin = @import("builtin");
+
+const std = @import("std");
+const Io = std.Io;
 const Build = std.Build;
-const Step = Build.Step;
+const Step = std.Build.Step;
 const fs = std.fs;
 const mem = std.mem;
 const process = std.process;
-const EnvMap = process.EnvMap;
+const EnvMap = std.process.EnvMap;
 const assert = std.debug.assert;
-const Path = Build.Cache.Path;
-
-const Run = @This();
+const Path = std.Build.Cache.Path;
 
 pub const base_id: Step.Id = .run;
 
@@ -2095,7 +2096,7 @@ pub const CachedTestMetadata = struct {
     }
 };
 
-fn requestNextTest(in: fs.File, metadata: *TestMetadata, sub_prog_node: *?std.Progress.Node) !void {
+fn requestNextTest(in: Io.File, metadata: *TestMetadata, sub_prog_node: *?std.Progress.Node) !void {
     while (metadata.next_index < metadata.names.len) {
         const i = metadata.next_index;
         metadata.next_index += 1;
@@ -2114,7 +2115,7 @@ fn requestNextTest(in: fs.File, metadata: *TestMetadata, sub_prog_node: *?std.Pr
     }
 }
 
-fn sendMessage(file: std.fs.File, tag: std.zig.Client.Message.Tag) !void {
+fn sendMessage(file: Io.File, tag: std.zig.Client.Message.Tag) !void {
     const header: std.zig.Client.Message.Header = .{
         .tag = tag,
         .bytes_len = 0,
@@ -2125,7 +2126,7 @@ fn sendMessage(file: std.fs.File, tag: std.zig.Client.Message.Tag) !void {
     };
 }
 
-fn sendRunTestMessage(file: std.fs.File, tag: std.zig.Client.Message.Tag, index: u32) !void {
+fn sendRunTestMessage(file: Io.File, tag: std.zig.Client.Message.Tag, index: u32) !void {
     const header: std.zig.Client.Message.Header = .{
         .tag = tag,
         .bytes_len = 4,
@@ -2140,7 +2141,7 @@ fn sendRunTestMessage(file: std.fs.File, tag: std.zig.Client.Message.Tag, index:
 }
 
 fn sendRunFuzzTestMessage(
-    file: std.fs.File,
+    file: Io.File,
     index: u32,
     kind: std.Build.abi.fuzz.LimitKind,
     amount_or_instance: u64,

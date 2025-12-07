@@ -393,7 +393,7 @@ pub const File = struct {
     comp: *Compilation,
     emit: Path,
 
-    file: ?fs.File,
+    file: ?Io.File,
     /// When using the LLVM backend, the emitted object is written to a file with this name. This
     /// object file then becomes a normal link input to LLD or a self-hosted linker.
     ///
@@ -1110,7 +1110,7 @@ pub const File = struct {
         };
     }
 
-    fn loadGnuLdScript(base: *File, path: Path, parent_query: UnresolvedInput.Query, file: fs.File) anyerror!void {
+    fn loadGnuLdScript(base: *File, path: Path, parent_query: UnresolvedInput.Query, file: Io.File) anyerror!void {
         const comp = base.comp;
         const diags = &comp.link_diags;
         const gpa = comp.gpa;
@@ -1238,7 +1238,7 @@ pub const File = struct {
     pub fn determineMode(
         output_mode: std.builtin.OutputMode,
         link_mode: std.builtin.LinkMode,
-    ) fs.File.Mode {
+    ) Io.File.Mode {
         // On common systems with a 0o022 umask, 0o777 will still result in a file created
         // with 0o755 permissions, but it works appropriately if the system is configured
         // more leniently. As another data point, C's fopen seems to open files with the
@@ -1247,10 +1247,10 @@ pub const File = struct {
         switch (output_mode) {
             .Lib => return switch (link_mode) {
                 .dynamic => executable_mode,
-                .static => fs.File.default_mode,
+                .static => Io.File.default_mode,
             },
             .Exe => return executable_mode,
-            .Obj => return fs.File.default_mode,
+            .Obj => return Io.File.default_mode,
         }
     }
 
@@ -1660,19 +1660,19 @@ pub const Input = union(enum) {
 
     pub const Object = struct {
         path: Path,
-        file: fs.File,
+        file: Io.File,
         must_link: bool,
         hidden: bool,
     };
 
     pub const Res = struct {
         path: Path,
-        file: fs.File,
+        file: Io.File,
     };
 
     pub const Dso = struct {
         path: Path,
-        file: fs.File,
+        file: Io.File,
         needed: bool,
         weak: bool,
         reexport: bool,
@@ -1694,7 +1694,7 @@ pub const Input = union(enum) {
     }
 
     /// Returns `null` in the case of `dso_exact`.
-    pub fn pathAndFile(input: Input) ?struct { Path, fs.File } {
+    pub fn pathAndFile(input: Input) ?struct { Path, Io.File } {
         return switch (input) {
             .object, .archive => |obj| .{ obj.path, obj.file },
             inline .res, .dso => |x| .{ x.path, x.file },
@@ -2075,7 +2075,7 @@ fn resolveLibInput(
 fn finishResolveLibInput(
     resolved_inputs: *std.ArrayList(Input),
     path: Path,
-    file: std.fs.File,
+    file: Io.File,
     link_mode: std.builtin.LinkMode,
     query: UnresolvedInput.Query,
 ) ResolveLibInputResult {

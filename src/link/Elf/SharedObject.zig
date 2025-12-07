@@ -1,3 +1,20 @@
+const SharedObject = @This();
+
+const std = @import("std");
+const Io = std.Io;
+const assert = std.debug.assert;
+const elf = std.elf;
+const log = std.log.scoped(.elf);
+const mem = std.mem;
+const Path = std.Build.Cache.Path;
+const Stat = std.Build.Cache.File.Stat;
+const Allocator = mem.Allocator;
+
+const Elf = @import("../Elf.zig");
+const File = @import("file.zig").File;
+const Symbol = @import("Symbol.zig");
+const Diags = @import("../../link.zig").Diags;
+
 path: Path,
 index: File.Index,
 
@@ -94,7 +111,7 @@ pub fn parseHeader(
     gpa: Allocator,
     diags: *Diags,
     file_path: Path,
-    fs_file: std.fs.File,
+    fs_file: Io.File,
     stat: Stat,
     target: *const std.Target,
 ) !Header {
@@ -192,7 +209,7 @@ pub fn parse(
     gpa: Allocator,
     /// Moves resources from header. Caller may unconditionally deinit.
     header: *Header,
-    fs_file: std.fs.File,
+    fs_file: Io.File,
 ) !Parsed {
     const symtab = if (header.dynsym_sect_index) |index| st: {
         const shdr = header.sections[index];
@@ -534,19 +551,3 @@ const Format = struct {
         }
     }
 };
-
-const SharedObject = @This();
-
-const std = @import("std");
-const assert = std.debug.assert;
-const elf = std.elf;
-const log = std.log.scoped(.elf);
-const mem = std.mem;
-const Path = std.Build.Cache.Path;
-const Stat = std.Build.Cache.File.Stat;
-const Allocator = mem.Allocator;
-
-const Elf = @import("../Elf.zig");
-const File = @import("file.zig").File;
-const Symbol = @import("Symbol.zig");
-const Diags = @import("../../link.zig").Diags;

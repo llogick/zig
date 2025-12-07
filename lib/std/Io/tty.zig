@@ -1,9 +1,10 @@
-const std = @import("std");
 const builtin = @import("builtin");
-const File = std.fs.File;
+const native_os = builtin.os.tag;
+
+const std = @import("std");
+const File = std.Io.File;
 const process = std.process;
 const windows = std.os.windows;
-const native_os = builtin.os.tag;
 
 pub const Color = enum {
     black,

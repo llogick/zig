@@ -890,7 +890,7 @@ pub fn classifyInputFile(self: *MachO, input: link.Input) !void {
     _ = try self.addTbd(.fromLinkInput(input), true, fh);
 }
 
-fn parseFatFile(self: *MachO, file: std.fs.File, path: Path) !?fat.Arch {
+fn parseFatFile(self: *MachO, file: Io.File, path: Path) !?fat.Arch {
     const diags = &self.base.comp.link_diags;
     const fat_h = fat.readFatHeader(file) catch return null;
     if (fat_h.magic != macho.FAT_MAGIC and fat_h.magic != macho.FAT_MAGIC_64) return null;
@@ -903,7 +903,7 @@ fn parseFatFile(self: *MachO, file: std.fs.File, path: Path) !?fat.Arch {
     return diags.failParse(path, "missing arch in universal file: expected {s}", .{@tagName(cpu_arch)});
 }
 
-pub fn readMachHeader(file: std.fs.File, offset: usize) !macho.mach_header_64 {
+pub fn readMachHeader(file: Io.File, offset: usize) !macho.mach_header_64 {
     var buffer: [@sizeOf(macho.mach_header_64)]u8 = undefined;
     const nread = try file.preadAll(&buffer, offset);
     if (nread != buffer.len) return error.InputOutput;
@@ -911,7 +911,7 @@ pub fn readMachHeader(file: std.fs.File, offset: usize) !macho.mach_header_64 {
     return hdr;
 }
 
-pub fn readArMagic(file: std.fs.File, offset: usize, buffer: *[Archive.SARMAG]u8) ![]const u8 {
+pub fn readArMagic(file: Io.File, offset: usize, buffer: *[Archive.SARMAG]u8) ![]const u8 {
     const nread = try file.preadAll(buffer, offset);
     if (nread != buffer.len) return error.InputOutput;
     return buffer[0..Archive.SARMAG];
@@ -3768,7 +3768,7 @@ pub fn getInternalObject(self: *MachO) ?*InternalObject {
     return self.getFile(index).?.internal;
 }
 
-pub fn addFileHandle(self: *MachO, file: fs.File) !File.HandleIndex {
+pub fn addFileHandle(self: *MachO, file: Io.File) !File.HandleIndex {
     const gpa = self.base.comp.gpa;
     const index: File.HandleIndex = @intCast(self.file_handles.items.len);
     const fh = try self.file_handles.addOne(gpa);
@@ -5373,10 +5373,11 @@ const max_distance = (1 << (jump_bits - 1));
 const max_allowed_distance = max_distance - 0x500_000;
 
 const MachO = @This();
-
-const std = @import("std");
 const build_options = @import("build_options");
 const builtin = @import("builtin");
+
+const std = @import("std");
+const Io = std.Io;
 const assert = std.debug.assert;
 const fs = std.fs;
 const log = std.log.scoped(.link);
@@ -5386,6 +5387,11 @@ const math = std.math;
 const mem = std.mem;
 const meta = std.meta;
 const Writer = std.Io.Writer;
+const AtomicBool = std.atomic.Value(bool);
+const Cache = std.Build.Cache;
+const Hash = std.hash.Wyhash;
+const Md5 = std.crypto.hash.Md5;
+const Allocator = std.mem.Allocator;
 
 const aarch64 = codegen.aarch64.encoding;
 const bind = @import("MachO/dyld_info/bind.zig");
@@ -5403,11 +5409,8 @@ const trace = @import("../tracy.zig").trace;
 const synthetic = @import("MachO/synthetic.zig");
 
 const Alignment = Atom.Alignment;
-const Allocator = mem.Allocator;
 const Archive = @import("MachO/Archive.zig");
-const AtomicBool = std.atomic.Value(bool);
 const Bind = bind.Bind;
-const Cache = std.Build.Cache;
 const CodeSignature = @import("MachO/CodeSignature.zig");
 const Compilation = @import("../Compilation.zig");
 const DataInCode = synthetic.DataInCode;
@@ -5417,14 +5420,12 @@ const ExportTrie = @import("MachO/dyld_info/Trie.zig");
 const Path = Cache.Path;
 const File = @import("MachO/file.zig").File;
 const GotSection = synthetic.GotSection;
-const Hash = std.hash.Wyhash;
 const Indsymtab = synthetic.Indsymtab;
 const InternalObject = @import("MachO/InternalObject.zig");
 const ObjcStubsSection = synthetic.ObjcStubsSection;
 const Object = @import("MachO/Object.zig");
 const LazyBind = bind.LazyBind;
 const LaSymbolPtrSection = synthetic.LaSymbolPtrSection;
-const Md5 = std.crypto.hash.Md5;
 const Zcu = @import("../Zcu.zig");
 const InternPool = @import("../InternPool.zig");
 const Rebase = @import("MachO/dyld_info/Rebase.zig");

@@ -1,4 +1,5 @@
 const std = @import("std");
+const Io = std.Io;
 const Allocator = mem.Allocator;
 const mem = std.mem;
 const process = std.process;
@@ -50,7 +51,7 @@ pub fn main() u8 {
     defer gpa.free(aro_name);
 
     var stderr_buf: [1024]u8 = undefined;
-    var stderr = std.fs.File.stderr().writer(&stderr_buf);
+    var stderr = Io.File.stderr().writer(&stderr_buf);
     var diagnostics: Diagnostics = .{
         .output = .{ .to_writer = .{
             .color = .detect(stderr.file),

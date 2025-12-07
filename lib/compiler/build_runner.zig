@@ -7,7 +7,7 @@ const assert = std.debug.assert;
 const fmt = std.fmt;
 const mem = std.mem;
 const process = std.process;
-const File = std.fs.File;
+const File = std.Io.File;
 const Step = std.Build.Step;
 const Watch = std.Build.Watch;
 const WebServer = std.Build.WebServer;
@@ -1845,9 +1845,9 @@ fn createModuleDependenciesForStep(step: *Step) Allocator.Error!void {
 }
 
 var stdio_buffer_allocation: [256]u8 = undefined;
-var stdout_writer_allocation: std.fs.File.Writer = undefined;
+var stdout_writer_allocation: Io.File.Writer = undefined;
 
 fn initStdoutWriter() *Writer {
-    stdout_writer_allocation = std.fs.File.stdout().writerStreaming(&stdio_buffer_allocation);
+    stdout_writer_allocation = Io.File.stdout().writerStreaming(&stdio_buffer_allocation);
     return &stdout_writer_allocation.interface;
 }

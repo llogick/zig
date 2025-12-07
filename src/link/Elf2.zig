@@ -1,3 +1,23 @@
+const Elf = @This();
+
+const builtin = @import("builtin");
+const native_endian = builtin.cpu.arch.endian();
+
+const std = @import("std");
+const Io = std.Io;
+const assert = std.debug.assert;
+const log = std.log.scoped(.link);
+
+const codegen = @import("../codegen.zig");
+const Compilation = @import("../Compilation.zig");
+const InternPool = @import("../InternPool.zig");
+const link = @import("../link.zig");
+const MappedFile = @import("MappedFile.zig");
+const target_util = @import("../target.zig");
+const Type = @import("../Type.zig");
+const Value = @import("../Value.zig");
+const Zcu = @import("../Zcu.zig");
+
 base: link.File,
 options: link.File.OpenOptions,
 mf: MappedFile,
@@ -1973,8 +1993,8 @@ pub fn lazySymbol(elf: *Elf, lazy: link.File.LazySymbol) !Symbol.Index {
     return lazy_gop.value_ptr.*;
 }
 
-pub fn loadInput(elf: *Elf, input: link.Input) (std.fs.File.Reader.SizeError ||
-    std.Io.File.Reader.Error || MappedFile.Error || error{ EndOfStream, BadMagic, LinkFailure })!void {
+pub fn loadInput(elf: *Elf, input: link.Input) (Io.File.Reader.SizeError ||
+    Io.File.Reader.Error || MappedFile.Error || error{ EndOfStream, BadMagic, LinkFailure })!void {
     const io = elf.base.comp.io;
     var buf: [4096]u8 = undefined;
     switch (input) {
@@ -2007,7 +2027,7 @@ pub fn loadInput(elf: *Elf, input: link.Input) (std.fs.File.Reader.SizeError ||
         .dso_exact => |dso_exact| try elf.loadDsoExact(dso_exact.name),
     }
 }
-fn loadArchive(elf: *Elf, path: std.Build.Cache.Path, fr: *std.Io.File.Reader) !void {
+fn loadArchive(elf: *Elf, path: std.Build.Cache.Path, fr: *Io.File.Reader) !void {
     const comp = elf.base.comp;
     const gpa = comp.gpa;
     const diags = &comp.link_diags;
@@ -2067,7 +2087,7 @@ fn loadObject(
     elf: *Elf,
     path: std.Build.Cache.Path,
     member: ?[]const u8,
-    fr: *std.Io.File.Reader,
+    fr: *Io.File.Reader,
     fl: MappedFile.Node.FileLocation,
 ) !void {
     const comp = elf.base.comp;
@@ -2310,7 +2330,7 @@ fn loadObject(
         },
     }
 }
-fn loadDso(elf: *Elf, path: std.Build.Cache.Path, fr: *std.Io.File.Reader) !void {
+fn loadDso(elf: *Elf, path: std.Build.Cache.Path, fr: *Io.File.Reader) !void {
     const comp = elf.base.comp;
     const diags = &comp.link_diags;
     const r = &fr.interface;
@@ -3822,19 +3842,3 @@ pub fn printNode(
         try w.writeByte('\n');
     }
 }
-
-const assert = std.debug.assert;
-const builtin = @import("builtin");
-const codegen = @import("../codegen.zig");
-const Compilation = @import("../Compilation.zig");
-const Elf = @This();
-const InternPool = @import("../InternPool.zig");
-const link = @import("../link.zig");
-const log = std.log.scoped(.link);
-const MappedFile = @import("MappedFile.zig");
-const native_endian = builtin.cpu.arch.endian();
-const std = @import("std");
-const target_util = @import("../target.zig");
-const Type = @import("../Type.zig");
-const Value = @import("../Value.zig");
-const Zcu = @import("../Zcu.zig");

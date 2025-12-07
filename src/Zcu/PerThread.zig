@@ -118,7 +118,7 @@ pub fn updateFile(
     const zir_dir = cache_directory.handle;
 
     // Determine whether we need to reload the file from disk and redo parsing and AstGen.
-    var lock: std.fs.File.Lock = switch (file.status) {
+    var lock: Io.File.Lock = switch (file.status) {
         .never_loaded, .retryable_failure => lock: {
             // First, load the cached ZIR code, if any.
             log.debug("AstGen checking cache: {f} (local={}, digest={s})", .{
@@ -346,8 +346,8 @@ pub fn updateFile(
 
 fn loadZirZoirCache(
     zcu: *Zcu,
-    cache_file: std.fs.File,
-    stat: std.fs.File.Stat,
+    cache_file: Io.File,
+    stat: Io.File.Stat,
     file: *Zcu.File,
     comptime mode: Ast.Mode,
 ) !enum { success, invalid, truncated, stale } {

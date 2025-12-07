@@ -171,7 +171,7 @@ fn rescanWindows(cb: *Bundle, gpa: Allocator, io: Io, now: Io.Timestamp) RescanW
     cb.bytes.shrinkAndFree(gpa, cb.bytes.items.len);
 }
 
-pub const AddCertsFromDirPathError = fs.File.OpenError || AddCertsFromDirError;
+pub const AddCertsFromDirPathError = Io.File.OpenError || AddCertsFromDirError;
 
 pub fn addCertsFromDirPath(
     cb: *Bundle,
@@ -212,7 +212,7 @@ pub fn addCertsFromDir(cb: *Bundle, gpa: Allocator, io: Io, now: Io.Timestamp, i
     }
 }
 
-pub const AddCertsFromFilePathError = fs.File.OpenError || AddCertsFromFileError || Io.Clock.Error;
+pub const AddCertsFromFilePathError = Io.File.OpenError || AddCertsFromFileError || Io.Clock.Error;
 
 pub fn addCertsFromFilePathAbsolute(
     cb: *Bundle,
@@ -242,8 +242,8 @@ pub fn addCertsFromFilePath(
 }
 
 pub const AddCertsFromFileError = Allocator.Error ||
-    fs.File.GetSeekPosError ||
-    fs.File.ReadError ||
+    Io.File.GetSeekPosError ||
+    Io.File.ReadError ||
     ParseCertError ||
     std.base64.Error ||
     error{ CertificateAuthorityBundleTooBig, MissingEndCertificateMarker, Streaming };

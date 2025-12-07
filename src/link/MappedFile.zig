@@ -1,3 +1,15 @@
+const MappedFile = @This();
+
+const builtin = @import("builtin");
+const is_linux = builtin.os.tag == .linux;
+const is_windows = builtin.os.tag == .windows;
+
+const std = @import("std");
+const Io = std.Io;
+const assert = std.debug.assert;
+const linux = std.os.linux;
+const windows = std.os.windows;
+
 file: std.Io.File,
 flags: packed struct {
     block_size: std.mem.Alignment,
@@ -16,7 +28,7 @@ writers: std.SinglyLinkedList,
 
 pub const growth_factor = 4;
 
-pub const Error = std.posix.MMapError || std.posix.MRemapError || std.fs.File.SetEndPosError || error{
+pub const Error = std.posix.MMapError || std.posix.MRemapError || Io.File.SetEndPosError || error{
     NotFile,
     SystemResources,
     IsDir,
@@ -618,7 +630,7 @@ fn resizeNode(mf: *MappedFile, gpa: std.mem.Allocator, ni: Node.Index, requested
     // Resize the entire file
     if (ni == Node.Index.root) {
         try mf.ensureCapacityForSetLocation(gpa);
-        try std.fs.File.adaptFromNewApi(mf.file).setEndPos(new_size);
+        try Io.File.adaptFromNewApi(mf.file).setEndPos(new_size);
         try mf.ensureTotalCapacity(@intCast(new_size));
         ni.setLocationAssumeCapacity(mf, old_offset, new_size);
         return;
@@ -1059,12 +1071,3 @@ fn verifyNode(mf: *MappedFile, parent_ni: Node.Index) void {
         ni = node.next;
     }
 }
-
-const assert = std.debug.assert;
-const builtin = @import("builtin");
-const is_linux = builtin.os.tag == .linux;
-const is_windows = builtin.os.tag == .windows;
-const linux = std.os.linux;
-const MappedFile = @This();
-const std = @import("std");
-const windows = std.os.windows;

@@ -1,18 +1,20 @@
-const std = @import("std");
-const assert = std.debug.assert;
 const builtin = @import("builtin");
+const native_endian = builtin.target.cpu.arch.endian();
+
+const std = @import("std");
+const Io = std.Io;
+const assert = std.debug.assert;
 const log = std.log.scoped(.macho);
 const macho = std.macho;
 const mem = std.mem;
-const native_endian = builtin.target.cpu.arch.endian();
 
 const MachO = @import("../MachO.zig");
 
-pub fn readFatHeader(file: std.fs.File) !macho.fat_header {
+pub fn readFatHeader(file: Io.File) !macho.fat_header {
     return readFatHeaderGeneric(macho.fat_header, file, 0);
 }
 
-fn readFatHeaderGeneric(comptime Hdr: type, file: std.fs.File, offset: usize) !Hdr {
+fn readFatHeaderGeneric(comptime Hdr: type, file: Io.File, offset: usize) !Hdr {
     var buffer: [@sizeOf(Hdr)]u8 = undefined;
     const nread = try file.preadAll(&buffer, offset);
     if (nread != buffer.len) return error.InputOutput;
@@ -27,7 +29,7 @@ pub const Arch = struct {
     size: u32,
 };
 
-pub fn parseArchs(file: std.fs.File, fat_header: macho.fat_header, out: *[2]Arch) ![]const Arch {
+pub fn parseArchs(file: Io.File, fat_header: macho.fat_header, out: *[2]Arch) ![]const Arch {
     var count: usize = 0;
     var fat_arch_index: u32 = 0;
     while (fat_arch_index < fat_header.nfat_arch and count < out.len) : (fat_arch_index += 1) {

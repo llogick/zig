@@ -1,3 +1,4 @@
+const Build = @This();
 const builtin = @import("builtin");
 
 const std = @import("std.zig");
@@ -9,13 +10,12 @@ const panic = std.debug.panic;
 const assert = debug.assert;
 const log = std.log;
 const StringHashMap = std.StringHashMap;
-const Allocator = mem.Allocator;
+const Allocator = std.mem.Allocator;
 const Target = std.Target;
 const process = std.process;
 const EnvMap = std.process.EnvMap;
-const File = fs.File;
+const File = std.Io.File;
 const Sha256 = std.crypto.hash.sha2.Sha256;
-const Build = @This();
 const ArrayList = std.ArrayList;
 
 pub const Cache = @import("Build/Cache.zig");

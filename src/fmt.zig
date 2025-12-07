@@ -37,9 +37,9 @@ const Fmt = struct {
     arena: Allocator,
     io: Io,
     out_buffer: std.Io.Writer.Allocating,
-    stdout_writer: *fs.File.Writer,
+    stdout_writer: *Io.File.Writer,
 
-    const SeenMap = std.AutoHashMap(fs.File.INode, void);
+    const SeenMap = std.AutoHashMap(Io.File.INode, void);
 };
 
 pub fn run(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) !void {
@@ -59,7 +59,7 @@ pub fn run(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) !
             const arg = args[i];
             if (mem.startsWith(u8, arg, "-")) {
                 if (mem.eql(u8, arg, "-h") or mem.eql(u8, arg, "--help")) {
-                    try fs.File.stdout().writeAll(usage_fmt);
+                    try Io.File.stdout().writeAll(usage_fmt);
                     return process.cleanExit();
                 } else if (mem.eql(u8, arg, "--color")) {
                     if (i + 1 >= args.len) {
@@ -99,9 +99,9 @@ pub fn run(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) !
             fatal("cannot use --stdin with positional arguments", .{});
         }
 
-        const stdin: fs.File = .stdin();
+        const stdin: Io.File = .stdin();
         var stdio_buffer: [1024]u8 = undefined;
-        var file_reader: fs.File.Reader = stdin.reader(io, &stdio_buffer);
+        var file_reader: Io.File.Reader = stdin.reader(io, &stdio_buffer);
         const source_code = std.zig.readSourceFileToEndAlloc(gpa, &file_reader) catch |err| {
             fatal("unable to read stdin: {}", .{err});
         };
@@ -154,7 +154,7 @@ pub fn run(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) !
             process.exit(code);
         }
 
-        return fs.File.stdout().writeAll(formatted);
+        return Io.File.stdout().writeAll(formatted);
     }
 
     if (input_files.items.len == 0) {
@@ -162,7 +162,7 @@ pub fn run(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) !
     }
 
     var stdout_buffer: [4096]u8 = undefined;
-    var stdout_writer = fs.File.stdout().writer(&stdout_buffer);
+    var stdout_writer = Io.File.stdout().writer(&stdout_buffer);
 
     var fmt: Fmt = .{
         .gpa = gpa,
@@ -272,7 +272,7 @@ fn fmtPathFile(
         return error.IsDir;
 
     var read_buffer: [1024]u8 = undefined;
-    var file_reader: fs.File.Reader = source_file.reader(io, &read_buffer);
+    var file_reader: Io.File.Reader = source_file.reader(io, &read_buffer);
     file_reader.size = stat.size;
 
     const gpa = fmt.gpa;

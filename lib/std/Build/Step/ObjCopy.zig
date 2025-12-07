@@ -3,7 +3,7 @@ const ObjCopy = @This();
 
 const Allocator = std.mem.Allocator;
 const ArenaAllocator = std.heap.ArenaAllocator;
-const File = std.fs.File;
+const File = std.Io.File;
 const InstallDir = std.Build.InstallDir;
 const Step = std.Build.Step;
 const elf = std.elf;

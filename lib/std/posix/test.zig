@@ -1,20 +1,20 @@
+const builtin = @import("builtin");
+const native_os = builtin.target.os.tag;
+
 const std = @import("../std.zig");
+const Io = std.Io;
 const posix = std.posix;
 const testing = std.testing;
-const expect = testing.expect;
-const expectEqual = testing.expectEqual;
-const expectError = testing.expectError;
+const expect = std.testing.expect;
+const expectEqual = std.testing.expectEqual;
+const expectError = std.testing.expectError;
 const fs = std.fs;
 const mem = std.mem;
 const elf = std.elf;
 const linux = std.os.linux;
-
 const a = std.testing.allocator;
-
-const builtin = @import("builtin");
 const AtomicRmwOp = std.builtin.AtomicRmwOp;
 const AtomicOrder = std.builtin.AtomicOrder;
-const native_os = builtin.target.os.tag;
 const tmpDir = std.testing.tmpDir;
 const AT = posix.AT;
 
@@ -663,14 +663,14 @@ test "dup & dup2" {
         var file = try tmp.dir.createFile("os_dup_test", .{});
         defer file.close(io);
 
-        var duped = std.fs.File{ .handle = try posix.dup(file.handle) };
+        var duped = Io.File{ .handle = try posix.dup(file.handle) };
         defer duped.close(io);
         try duped.writeAll("dup");
 
         // Tests aren't run in parallel so using the next fd shouldn't be an issue.
         const new_fd = duped.handle + 1;
         try posix.dup2(file.handle, new_fd);
-        var dup2ed = std.fs.File{ .handle = new_fd };
+        var dup2ed = Io.File{ .handle = new_fd };
         defer dup2ed.close(io);
         try dup2ed.writeAll("dup2");
     }

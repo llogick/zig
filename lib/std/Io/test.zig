@@ -10,7 +10,7 @@ const expectError = std.testing.expectError;
 const DefaultPrng = std.Random.DefaultPrng;
 const mem = std.mem;
 const fs = std.fs;
-const File = std.fs.File;
+const File = std.Io.File;
 const assert = std.debug.assert;
 
 const tmpDir = std.testing.tmpDir;
