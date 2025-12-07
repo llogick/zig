@@ -32,7 +32,6 @@
 
 const std = @import("../std.zig");
 const Tls = @This();
-const net = std.net;
 const mem = std.mem;
 const crypto = std.crypto;
 const assert = std.debug.assert;
