@@ -522,8 +522,8 @@ pub fn build(b: *std.Build) !void {
                 .loongarch64 => 598_884_352,
                 .riscv64 => 636_429_516,
                 .s390x => 574_166_630,
-                .x86_64 => 764_861_644,
-                else => 800_000_000,
+                .x86_64 => 868_445_388,
+                else => 900_000_000,
             },
             .macos => switch (b.graph.host.result.cpu.arch) {
                 .aarch64 => 701_413_785,
@@ -533,7 +533,7 @@ pub fn build(b: *std.Build) !void {
                 .x86_64 => 536_414_208,
                 else => 600_000_000,
             },
-            else => 800_000_000,
+            else => 900_000_000,
         },
     }));
 
