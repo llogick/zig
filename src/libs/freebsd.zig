@@ -140,10 +140,6 @@ pub fn buildCrtFile(comp: *Compilation, crt_file: CrtFile, prog_node: std.Progre
                     .flags = acflags.items,
                 },
                 .{
-                    .path = "common" ++ path.sep_str ++ "crtend.c",
-                    .flags = cflags.items,
-                },
-                .{
                     .path = "common" ++ path.sep_str ++ "feature_note.S",
                     .flags = acflags.items,
                 },
