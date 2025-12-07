@@ -208,7 +208,7 @@ pub fn addCertsFromDir(cb: *Bundle, gpa: Allocator, io: Io, now: Io.Timestamp, i
             else => continue,
         }
 
-        try addCertsFromFilePath(cb, gpa, io, now, iterable_dir.adaptToNewApi(), entry.name);
+        try addCertsFromFilePath(cb, gpa, io, now, iterable_dir, entry.name);
     }
 }
 

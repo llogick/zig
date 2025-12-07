@@ -502,6 +502,8 @@ pub const Manifest = struct {
         @memcpy(manifest_file_path[0..self.hex_digest.len], &self.hex_digest);
         manifest_file_path[hex_digest_len..][0..ext.len].* = ext.*;
 
+        const io = self.cache.io;
+
         // We'll try to open the cache with an exclusive lock, but if that would block
         // and `want_shared_lock` is set, a shared lock might be sufficient, so we'll
         // open with a shared lock instead.
@@ -517,7 +519,7 @@ pub const Manifest = struct {
                 break;
             } else |err| switch (err) {
                 error.WouldBlock => {
-                    self.manifest_file = self.cache.manifest_dir.openFile(&manifest_file_path, .{
+                    self.manifest_file = self.cache.manifest_dir.openFile(io, &manifest_file_path, .{
                         .mode = .read_write,
                         .lock = .shared,
                     }) catch |e| {
@@ -757,7 +759,7 @@ pub const Manifest = struct {
 
             const pp = cache_hash_file.prefixed_path;
             const dir = self.cache.prefixes()[pp.prefix].handle;
-            const this_file = dir.openFile(pp.sub_path, .{ .mode = .read_only }) catch |err| switch (err) {
+            const this_file = dir.openFile(io, pp.sub_path, .{ .mode = .read_only }) catch |err| switch (err) {
                 error.FileNotFound => {
                     // Every digest before this one has been populated successfully.
                     return .{ .miss = .{ .file_digests_populated = idx } };
@@ -900,7 +902,7 @@ pub const Manifest = struct {
         } else {
             const pp = ch_file.prefixed_path;
             const dir = self.cache.prefixes()[pp.prefix].handle;
-            const handle = try dir.openFile(pp.sub_path, .{});
+            const handle = try dir.openFile(io, pp.sub_path, .{});
             defer handle.close(io);
             return populateFileHashHandle(self, ch_file, handle);
         }

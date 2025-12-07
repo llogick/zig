@@ -846,7 +846,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
                 errdefer result.deinit();
                 result.writer.writeAll(file_plp.prefix) catch return error.OutOfMemory;
 
-                const file = file_path.root_dir.handle.openFile(file_path.subPathOrDot(), .{}) catch |err| {
+                const file = file_path.root_dir.handle.openFile(io, file_path.subPathOrDot(), .{}) catch |err| {
                     return step.fail(
                         "unable to open input file '{f}': {t}",
                         .{ file_path, err },
@@ -1111,7 +1111,7 @@ pub fn rerunInFuzzMode(
                 errdefer result.deinit();
                 result.writer.writeAll(file_plp.prefix) catch return error.OutOfMemory;
 
-                const file = try file_path.root_dir.handle.openFile(file_path.subPathOrDot(), .{});
+                const file = try file_path.root_dir.handle.openFile(io, file_path.subPathOrDot(), .{});
                 defer file.close(io);
 
                 var buf: [1024]u8 = undefined;
@@ -2185,7 +2185,7 @@ fn evalGeneric(run: *Run, child: *std.process.Child) !EvalGenericResult {
         },
         .lazy_path => |lazy_path| {
             const path = lazy_path.getPath3(b, &run.step);
-            const file = path.root_dir.handle.openFile(path.subPathOrDot(), .{}) catch |err| {
+            const file = path.root_dir.handle.openFile(io, path.subPathOrDot(), .{}) catch |err| {
                 return run.step.fail("unable to open stdin file: {s}", .{@errorName(err)});
             };
             defer file.close(io);

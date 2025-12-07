@@ -390,7 +390,7 @@ pub fn run(f: *Fetch) RunError!void {
                 var server_header_buffer: [init_resource_buffer_size]u8 = undefined;
 
                 const file_err = if (dir_err == error.NotDir) e: {
-                    if (fs.cwd().openFile(path_or_url, .{})) |file| {
+                    if (fs.cwd().openFile(io, path_or_url, .{})) |file| {
                         var resource: Resource = .{ .file = file.reader(io, &server_header_buffer) };
                         return f.runResource(path_or_url, &resource, null);
                     } else |err| break :e err;
@@ -995,7 +995,7 @@ fn initResource(f: *Fetch, uri: std.Uri, resource: *Resource, reader_buffer: []u
 
     if (ascii.eqlIgnoreCase(uri.scheme, "file")) {
         const path = try uri.path.toRawMaybeAlloc(arena);
-        const file = f.parent_package_root.openFile(path, .{}) catch |err| {
+        const file = f.parent_package_root.openFile(io, path, .{}) catch |err| {
             return f.fail(f.location_tok, try eb.printString("unable to open '{f}{s}': {t}", .{
                 f.parent_package_root, path, err,
             }));
@@ -1677,7 +1677,7 @@ fn hashFileFallible(io: Io, dir: Io.Dir, hashed_file: *HashedFile) HashedFile.Er
 
     switch (hashed_file.kind) {
         .file => {
-            var file = try dir.openFile(hashed_file.fs_path, .{});
+            var file = try dir.openFile(io, hashed_file.fs_path, .{});
             defer file.close(io);
             // Hard-coded false executable bit: https://github.com/ziglang/zig/issues/17463
             hasher.update(&.{ 0, 0 });

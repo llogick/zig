@@ -405,7 +405,7 @@ fn prepareTables(fuzz: *Fuzz, run_step: *Step.Run, coverage_id: u64) error{ OutO
         .root_dir = run_step.step.owner.cache_root,
         .sub_path = "v/" ++ std.fmt.hex(coverage_id),
     };
-    var coverage_file = coverage_file_path.root_dir.handle.openFile(coverage_file_path.sub_path, .{}) catch |err| {
+    var coverage_file = coverage_file_path.root_dir.handle.openFile(io, coverage_file_path.sub_path, .{}) catch |err| {
         log.err("step '{s}': failed to load coverage file '{f}': {t}", .{
             run_step.step.name, coverage_file_path, err,
         });
@@ -528,7 +528,7 @@ pub fn waitAndPrintReport(fuzz: *Fuzz) void {
             .root_dir = cov.run.step.owner.cache_root,
             .sub_path = "v/" ++ std.fmt.hex(cov.id),
         };
-        var coverage_file = coverage_file_path.root_dir.handle.openFile(coverage_file_path.sub_path, .{}) catch |err| {
+        var coverage_file = coverage_file_path.root_dir.handle.openFile(io, coverage_file_path.sub_path, .{}) catch |err| {
             fatal("step '{s}': failed to load coverage file '{f}': {t}", .{
                 cov.run.step.name, coverage_file_path, err,
             });

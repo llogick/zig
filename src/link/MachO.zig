@@ -1126,7 +1126,9 @@ fn parseDependentDylibs(self: *MachO) !void {
 
     if (self.dylibs.items.len == 0) return;
 
-    const gpa = self.base.comp.gpa;
+    const comp = self.base.comp;
+    const gpa = comp.gpa;
+    const io = comp.io;
     const framework_dirs = self.framework_dirs;
 
     // TODO delete this, directories must instead be resolved by the frontend
@@ -1183,7 +1185,7 @@ fn parseDependentDylibs(self: *MachO) !void {
                     const path = if (existing_ext.len > 0) id.name[0 .. id.name.len - existing_ext.len] else id.name;
                     for (&[_][]const u8{ ".tbd", ".dylib", "" }) |ext| {
                         test_path.clearRetainingCapacity();
-                        if (self.base.comp.sysroot) |root| {
+                        if (comp.sysroot) |root| {
                             try test_path.print("{s}" ++ fs.path.sep_str ++ "{s}{s}", .{ root, path, ext });
                         } else {
                             try test_path.print("{s}{s}", .{ path, ext });
@@ -1235,7 +1237,7 @@ fn parseDependentDylibs(self: *MachO) !void {
                 .path = Path.initCwd(full_path),
                 .weak = is_weak,
             };
-            const file = try lib.path.root_dir.handle.openFile(lib.path.sub_path, .{});
+            const file = try lib.path.root_dir.handle.openFile(io, lib.path.sub_path, .{});
             const fh = try self.addFileHandle(file);
             const fat_arch = try self.parseFatFile(file, lib.path);
             const offset = if (fat_arch) |fa| fa.offset else 0;

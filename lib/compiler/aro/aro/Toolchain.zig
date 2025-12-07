@@ -524,12 +524,12 @@ pub fn addBuiltinIncludeDir(tc: *const Toolchain) !void {
 /// Otherwise returns a slice of `buf`. If the file is larger than `buf` partial contents are returned
 pub fn readFile(tc: *const Toolchain, path: []const u8, buf: []u8) ?[]const u8 {
     const comp = tc.driver.comp;
-    return comp.cwd.adaptToNewApi().readFile(comp.io, path, buf) catch null;
+    return comp.cwd.readFile(comp.io, path, buf) catch null;
 }
 
 pub fn exists(tc: *const Toolchain, path: []const u8) bool {
     const comp = tc.driver.comp;
-    comp.cwd.adaptToNewApi().access(comp.io, path, .{}) catch return false;
+    comp.cwd.access(comp.io, path, .{}) catch return false;
     return true;
 }
 
@@ -547,7 +547,7 @@ pub fn canExecute(tc: *const Toolchain, path: []const u8) bool {
     }
 
     const comp = tc.driver.comp;
-    comp.cwd.adaptToNewApi().access(comp.io, path, .{ .execute = true }) catch return false;
+    comp.cwd.access(comp.io, path, .{ .execute = true }) catch return false;
     // Todo: ensure path is not a directory
     return true;
 }

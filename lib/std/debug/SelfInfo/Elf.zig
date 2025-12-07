@@ -325,7 +325,7 @@ const Module = struct {
     }
     fn loadElf(mod: *Module, gpa: Allocator, io: Io) Error!LoadedElf {
         const load_result = if (mod.name.len > 0) res: {
-            var file = std.fs.cwd().openFile(mod.name, .{}) catch return error.MissingDebugInfo;
+            var file = std.fs.cwd().openFile(io, mod.name, .{}) catch return error.MissingDebugInfo;
             defer file.close(io);
             break :res std.debug.ElfFile.load(gpa, file, mod.build_id, &.native(mod.name));
         } else res: {
@@ -334,7 +334,7 @@ const Module = struct {
                 else => return error.ReadFailed,
             };
             defer gpa.free(path);
-            var file = std.fs.cwd().openFile(path, .{}) catch return error.MissingDebugInfo;
+            var file = std.fs.cwd().openFile(io, path, .{}) catch return error.MissingDebugInfo;
             defer file.close(io);
             break :res std.debug.ElfFile.load(gpa, file, mod.build_id, &.native(path));
         };

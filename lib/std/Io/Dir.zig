@@ -481,7 +481,7 @@ pub fn updateFile(
     }
 
     var buffer: [1000]u8 = undefined; // Used only when direct fd-to-fd is not available.
-    var atomic_file = try Dir.atomicFile(.adaptFromNewApi(dest_dir), dest_path, .{
+    var atomic_file = try Dir.atomicFile(dest_dir, dest_path, .{
         .permissions = actual_permissions,
         .write_buffer = &buffer,
     });

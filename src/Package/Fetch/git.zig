@@ -1714,7 +1714,7 @@ pub fn main() !void {
 
     const format = std.meta.stringToEnum(Oid.Format, args[1]) orelse return error.InvalidFormat;
 
-    var pack_file = try std.fs.cwd().openFile(args[2], .{});
+    var pack_file = try std.fs.cwd().openFile(io, args[2], .{});
     defer pack_file.close(io);
     var pack_file_buffer: [4096]u8 = undefined;
     var pack_file_reader = pack_file.reader(io, &pack_file_buffer);

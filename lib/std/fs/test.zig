@@ -855,7 +855,7 @@ test "directory operations on files" {
             }
 
             // ensure the file still exists and is a file as a sanity check
-            file = try ctx.dir.openFile(test_file_name, .{});
+            file = try ctx.dir.openFile(io, test_file_name, .{});
             const stat = try file.stat();
             try testing.expectEqual(File.Kind.file, stat.kind);
             file.close(io);
@@ -895,12 +895,12 @@ test "file operations on directories" {
 
             if (native_os == .wasi and builtin.link_libc) {
                 // wasmtime unexpectedly succeeds here, see https://github.com/ziglang/zig/issues/20747
-                const handle = try ctx.dir.openFile(test_dir_name, .{ .mode = .read_write });
+                const handle = try ctx.dir.openFile(io, test_dir_name, .{ .mode = .read_write });
                 handle.close(io);
             } else {
                 // Note: The `.mode = .read_write` is necessary to ensure the error occurs on all platforms.
                 // TODO: Add a read-only test as well, see https://github.com/ziglang/zig/issues/5732
-                try testing.expectError(error.IsDir, ctx.dir.openFile(test_dir_name, .{ .mode = .read_write }));
+                try testing.expectError(error.IsDir, ctx.dir.openFile(io, test_dir_name, .{ .mode = .read_write }));
             }
 
             if (ctx.path_type == .absolute and comptime PathType.absolute.isSupported(builtin.os)) {
@@ -973,8 +973,8 @@ test "Dir.rename files" {
             try ctx.dir.rename(test_file_name, renamed_test_file_name);
 
             // Ensure the file was renamed
-            try testing.expectError(error.FileNotFound, ctx.dir.openFile(test_file_name, .{}));
-            file = try ctx.dir.openFile(renamed_test_file_name, .{});
+            try testing.expectError(error.FileNotFound, ctx.dir.openFile(io, test_file_name, .{}));
+            file = try ctx.dir.openFile(io, renamed_test_file_name, .{});
             file.close(io);
 
             // Rename to self succeeds
@@ -986,8 +986,8 @@ test "Dir.rename files" {
             existing_file.close(io);
             try ctx.dir.rename(renamed_test_file_name, existing_file_path);
 
-            try testing.expectError(error.FileNotFound, ctx.dir.openFile(renamed_test_file_name, .{}));
-            file = try ctx.dir.openFile(existing_file_path, .{});
+            try testing.expectError(error.FileNotFound, ctx.dir.openFile(io, renamed_test_file_name, .{}));
+            file = try ctx.dir.openFile(io, existing_file_path, .{});
             file.close(io);
         }
     }.impl);
@@ -1026,7 +1026,7 @@ test "Dir.rename directories" {
             // Ensure the directory was renamed and the file still exists in it
             try testing.expectError(error.FileNotFound, ctx.dir.openDir(test_dir_renamed_path, .{}));
             dir = try ctx.dir.openDir(test_dir_renamed_again_path, .{});
-            file = try dir.openFile("test_file", .{});
+            file = try dir.openFile(io, "test_file", .{});
             file.close(io);
             dir.close(io);
         }
@@ -1119,8 +1119,8 @@ test "rename" {
     try fs.rename(tmp_dir1.dir, test_file_name, tmp_dir2.dir, renamed_test_file_name);
 
     // ensure the file was renamed
-    try testing.expectError(error.FileNotFound, tmp_dir1.dir.openFile(test_file_name, .{}));
-    file = try tmp_dir2.dir.openFile(renamed_test_file_name, .{});
+    try testing.expectError(error.FileNotFound, tmp_dir1.dir.openFile(io, test_file_name, .{}));
+    file = try tmp_dir2.dir.openFile(io, renamed_test_file_name, .{});
     file.close(io);
 }
 
@@ -1156,8 +1156,8 @@ test "renameAbsolute" {
     );
 
     // ensure the file was renamed
-    try testing.expectError(error.FileNotFound, tmp_dir.dir.openFile(test_file_name, .{}));
-    file = try tmp_dir.dir.openFile(renamed_test_file_name, .{});
+    try testing.expectError(error.FileNotFound, tmp_dir.dir.openFile(io, test_file_name, .{}));
+    file = try tmp_dir.dir.openFile(io, renamed_test_file_name, .{});
     const stat = try file.stat();
     try testing.expectEqual(File.Kind.file, stat.kind);
     file.close(io);
@@ -1512,7 +1512,7 @@ test "setEndPos" {
 
     const file_name = "afile.txt";
     try tmp.dir.writeFile(.{ .sub_path = file_name, .data = "ninebytes" });
-    const f = try tmp.dir.openFile(file_name, .{ .mode = .read_write });
+    const f = try tmp.dir.openFile(io, file_name, .{ .mode = .read_write });
     defer f.close(io);
 
     const initial_size = try f.getEndPos();
@@ -1856,7 +1856,7 @@ test "read from locked file" {
                     .lock = .exclusive,
                 });
                 defer f.close(io);
-                const f2 = try ctx.dir.openFile(filename, .{});
+                const f2 = try ctx.dir.openFile(io, filename, .{});
                 defer f2.close(io);
                 var buffer: [1]u8 = undefined;
                 if (builtin.os.tag == .windows) {
@@ -2041,12 +2041,12 @@ test "'.' and '..' in Io.Dir functions" {
 
             try ctx.dir.copyFile(file_path, ctx.dir, copy_path, .{});
             try ctx.dir.rename(copy_path, rename_path);
-            const renamed_file = try ctx.dir.openFile(rename_path, .{});
+            const renamed_file = try ctx.dir.openFile(io, rename_path, .{});
             renamed_file.close(io);
             try ctx.dir.deleteFile(rename_path);
 
             try ctx.dir.writeFile(.{ .sub_path = update_path, .data = "something" });
-            var dir = ctx.dir.adaptToNewApi();
+            var dir = ctx.dir;
             const prev_status = try dir.updateFile(io, file_path, dir, update_path, .{});
             try testing.expectEqual(Io.Dir.PrevStatus.stale, prev_status);
 
@@ -2186,7 +2186,7 @@ test "invalid UTF-8/WTF-8 paths" {
 
             try testing.expectError(expected_err, ctx.dir.access(invalid_path, .{}));
 
-            var dir = ctx.dir.adaptToNewApi();
+            var dir = ctx.dir;
             try testing.expectError(expected_err, dir.updateFile(io, invalid_path, dir, invalid_path, .{}));
             try testing.expectError(expected_err, ctx.dir.copyFile(invalid_path, ctx.dir, invalid_path, .{}));
 
@@ -2235,7 +2235,7 @@ test "read file non vectored" {
         try file_writer.interface.flush();
     }
 
-    var file_reader: std.Io.File.Reader = .initAdapted(file, io, &.{});
+    var file_reader: std.Io.File.Reader = .init(file, io, &.{});
 
     var write_buffer: [100]u8 = undefined;
     var w: std.Io.Writer = .fixed(&write_buffer);
@@ -2268,7 +2268,7 @@ test "seek keeping partial buffer" {
     }
 
     var read_buffer: [3]u8 = undefined;
-    var file_reader: Io.File.Reader = .initAdapted(file, io, &read_buffer);
+    var file_reader: Io.File.Reader = .init(file, io, &read_buffer);
 
     try testing.expectEqual(0, file_reader.logicalPos());
 
@@ -2301,7 +2301,7 @@ test "seekBy" {
     defer tmp_dir.cleanup();
 
     try tmp_dir.dir.writeFile(.{ .sub_path = "blah.txt", .data = "let's test seekBy" });
-    const f = try tmp_dir.dir.openFile("blah.txt", .{ .mode = .read_only });
+    const f = try tmp_dir.dir.openFile(io, "blah.txt", .{ .mode = .read_only });
     defer f.close(io);
     var reader = f.readerStreaming(io, &.{});
     try reader.seekBy(2);
@@ -2332,7 +2332,7 @@ test "seekTo flushes buffered data" {
     }
 
     var read_buffer: [16]u8 = undefined;
-    var file_reader: std.Io.File.Reader = .initAdapted(file, io, &read_buffer);
+    var file_reader: std.Io.File.Reader = .init(file, io, &read_buffer);
 
     var buf: [4]u8 = undefined;
     try file_reader.interface.readSliceAll(&buf);
@@ -2347,7 +2347,7 @@ test "File.Writer sendfile with buffered contents" {
 
     {
         try tmp_dir.dir.writeFile(.{ .sub_path = "a", .data = "bcd" });
-        const in = try tmp_dir.dir.openFile("a", .{});
+        const in = try tmp_dir.dir.openFile(io, "a", .{});
         defer in.close(io);
         const out = try tmp_dir.dir.createFile("b", .{});
         defer out.close(io);
@@ -2364,7 +2364,7 @@ test "File.Writer sendfile with buffered contents" {
         try out_w.interface.flush();
     }
 
-    var check = try tmp_dir.dir.openFile("b", .{});
+    var check = try tmp_dir.dir.openFile(io, "b", .{});
     defer check.close(io);
     var check_buf: [4]u8 = undefined;
     var check_r = check.reader(io, &check_buf);

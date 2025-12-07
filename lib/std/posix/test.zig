@@ -164,10 +164,10 @@ test "linkat with different directories" {
     // Test 1: link from file in subdir back up to target in parent directory
     try posix.linkat(tmp.dir.fd, target_name, subdir.fd, link_name, 0);
 
-    const efd = try tmp.dir.openFile(target_name, .{});
+    const efd = try tmp.dir.openFile(io, target_name, .{});
     defer efd.close(io);
 
-    const nfd = try subdir.openFile(link_name, .{});
+    const nfd = try subdir.openFile(io, link_name, .{});
     defer nfd.close(io);
 
     {
@@ -429,7 +429,7 @@ test "mmap" {
 
     // Map the whole file
     {
-        const file = try tmp.dir.openFile(test_out_file, .{});
+        const file = try tmp.dir.openFile(io, test_out_file, .{});
         defer file.close(io);
 
         const data = try posix.mmap(
@@ -454,7 +454,7 @@ test "mmap" {
 
     // Map the upper half of the file
     {
-        const file = try tmp.dir.openFile(test_out_file, .{});
+        const file = try tmp.dir.openFile(io, test_out_file, .{});
         defer file.close(io);
 
         const data = try posix.mmap(

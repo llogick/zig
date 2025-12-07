@@ -213,7 +213,7 @@ pub const Filesystem = union(enum) {
     pub fn readFile(fs: Filesystem, io: Io, path: []const u8, buf: []u8) ?[]const u8 {
         return switch (fs) {
             .real => |cwd| {
-                const file = cwd.openFile(path, .{}) catch return null;
+                const file = cwd.openFile(io, path, .{}) catch return null;
                 defer file.close(io);
 
                 const bytes_read = file.readAll(buf) catch return null;

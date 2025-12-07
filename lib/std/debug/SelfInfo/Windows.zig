@@ -387,7 +387,7 @@ const Module = struct {
             const section_view = section_view_ptr.?[0..coff_len];
             coff_obj = coff.Coff.init(section_view, false) catch return error.InvalidDebugInfo;
             break :mapped .{
-                .file = .adaptFromNewApi(coff_file),
+                .file = coff_file,
                 .section_handle = section_handle,
                 .section_view = section_view,
             };
@@ -432,7 +432,7 @@ const Module = struct {
                 break :pdb null;
             };
             const pdb_file_open_result = if (fs.path.isAbsolute(path)) res: {
-                break :res std.fs.cwd().openFile(path, .{});
+                break :res std.fs.cwd().openFile(io, path, .{});
             } else res: {
                 const self_dir = fs.selfExeDirPathAlloc(gpa) catch |err| switch (err) {
                     error.OutOfMemory, error.Unexpected => |e| return e,
@@ -441,7 +441,7 @@ const Module = struct {
                 defer gpa.free(self_dir);
                 const abs_path = try fs.path.join(gpa, &.{ self_dir, path });
                 defer gpa.free(abs_path);
-                break :res std.fs.cwd().openFile(abs_path, .{});
+                break :res std.fs.cwd().openFile(io, abs_path, .{});
             };
             const pdb_file = pdb_file_open_result catch |err| switch (err) {
                 error.FileNotFound, error.IsDir => break :pdb null,

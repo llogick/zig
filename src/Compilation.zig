@@ -1104,7 +1104,7 @@ pub const CObject = struct {
             const source_line = source_line: {
                 if (diag.src_loc.offset == 0 or diag.src_loc.column == 0) break :source_line 0;
 
-                const file = fs.cwd().openFile(file_name, .{}) catch break :source_line 0;
+                const file = fs.cwd().openFile(io, file_name, .{}) catch break :source_line 0;
                 defer file.close(io);
                 var buffer: [1024]u8 = undefined;
                 var file_reader = file.reader(io, &buffer);
@@ -1179,7 +1179,7 @@ pub const CObject = struct {
                 };
 
                 var buffer: [1024]u8 = undefined;
-                const file = try fs.cwd().openFile(path, .{});
+                const file = try fs.cwd().openFile(io, path, .{});
                 defer file.close(io);
                 var file_reader = file.reader(io, &buffer);
                 var bc = std.zig.llvm.BitcodeReader.init(gpa, .{ .reader = &file_reader.interface });
@@ -5354,14 +5354,14 @@ fn docsCopyModule(
             },
             else => continue,
         }
-        var file = mod_dir.openFile(entry.path, .{}) catch |err| {
+        var file = mod_dir.openFile(io, entry.path, .{}) catch |err| {
             return comp.lockAndSetMiscFailure(.docs_copy, "unable to open {f}{s}: {t}", .{
                 root.fmt(comp), entry.path, err,
             });
         };
         defer file.close(io);
         const stat = try file.stat();
-        var file_reader: Io.File.Reader = .initSize(file.adaptToNewApi(), io, &buffer, stat.size);
+        var file_reader: Io.File.Reader = .initSize(file, io, &buffer, stat.size);
 
         archiver.writeFileTimestamp(entry.path, &file_reader, stat.mtime) catch |err| {
             return comp.lockAndSetMiscFailure(.docs_copy, "unable to archive {f}{s}: {t}", .{

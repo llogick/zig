@@ -4681,7 +4681,7 @@ fn cmdTranslateC(
     } else {
         const hex_digest = Cache.binToHex(result.digest);
         const out_zig_path = try fs.path.join(arena, &.{ "o", &hex_digest, translated_basename });
-        const zig_file = comp.dirs.local_cache.handle.openFile(out_zig_path, .{}) catch |err| {
+        const zig_file = comp.dirs.local_cache.handle.openFile(io, out_zig_path, .{}) catch |err| {
             const path = comp.dirs.local_cache.path orelse ".";
             fatal("unable to open cached translated zig file '{s}{s}{s}': {s}", .{
                 path,
@@ -6187,7 +6187,7 @@ fn cmdAstCheck(arena: Allocator, io: Io, args: []const []const u8) !void {
     const display_path = zig_source_path orelse "<stdin>";
     const source: [:0]const u8 = s: {
         var f = if (zig_source_path) |p| file: {
-            break :file fs.cwd().openFile(p, .{}) catch |err| {
+            break :file fs.cwd().openFile(io, p, .{}) catch |err| {
                 fatal("unable to open file '{s}' for ast-check: {s}", .{ display_path, @errorName(err) });
             };
         } else Io.File.stdin();
@@ -6494,7 +6494,7 @@ fn cmdDumpZir(arena: Allocator, io: Io, args: []const []const u8) !void {
 
     const cache_file = args[0];
 
-    var f = fs.cwd().openFile(cache_file, .{}) catch |err| {
+    var f = fs.cwd().openFile(io, cache_file, .{}) catch |err| {
         fatal("unable to open zir cache file for dumping '{s}': {s}", .{ cache_file, @errorName(err) });
     };
     defer f.close(io);
@@ -6541,7 +6541,7 @@ fn cmdChangelist(arena: Allocator, io: Io, args: []const []const u8) !void {
     const new_source_path = args[1];
 
     const old_source = source: {
-        var f = fs.cwd().openFile(old_source_path, .{}) catch |err|
+        var f = fs.cwd().openFile(io, old_source_path, .{}) catch |err|
             fatal("unable to open old source file '{s}': {s}", .{ old_source_path, @errorName(err) });
         defer f.close(io);
         var file_reader: Io.File.Reader = f.reader(io, &stdin_buffer);
@@ -6549,7 +6549,7 @@ fn cmdChangelist(arena: Allocator, io: Io, args: []const []const u8) !void {
             fatal("unable to read old source file '{s}': {s}", .{ old_source_path, @errorName(err) });
     };
     const new_source = source: {
-        var f = fs.cwd().openFile(new_source_path, .{}) catch |err|
+        var f = fs.cwd().openFile(io, new_source_path, .{}) catch |err|
             fatal("unable to open new source file '{s}': {s}", .{ new_source_path, @errorName(err) });
         defer f.close(io);
         var file_reader: Io.File.Reader = f.reader(io, &stdin_buffer);

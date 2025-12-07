@@ -630,7 +630,7 @@ fn resizeNode(mf: *MappedFile, gpa: std.mem.Allocator, ni: Node.Index, requested
     // Resize the entire file
     if (ni == Node.Index.root) {
         try mf.ensureCapacityForSetLocation(gpa);
-        try Io.File.adaptFromNewApi(mf.file).setEndPos(new_size);
+        try mf.file.setEndPos(new_size);
         try mf.ensureTotalCapacity(@intCast(new_size));
         ni.setLocationAssumeCapacity(mf, old_offset, new_size);
         return;

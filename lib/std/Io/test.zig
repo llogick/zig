@@ -44,7 +44,7 @@ test "write a file, read it, then delete it" {
     }
 
     {
-        var file = try tmp.dir.openFile(tmp_file_name, .{});
+        var file = try tmp.dir.openFile(io, tmp_file_name, .{});
         defer file.close(io);
 
         const file_size = try file.getEndPos();

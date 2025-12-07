@@ -1076,7 +1076,7 @@ pub const File = struct {
 
         var f = f: {
             const dir, const sub_path = file.path.openInfo(zcu.comp.dirs);
-            break :f try dir.openFile(sub_path, .{});
+            break :f try dir.openFile(io, sub_path, .{});
         };
         defer f.close(io);
 

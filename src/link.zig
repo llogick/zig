@@ -637,7 +637,7 @@ pub const File = struct {
                         }
                     }
                 }
-                base.file = try emit.root_dir.handle.openFile(emit.sub_path, .{ .mode = .read_write });
+                base.file = try emit.root_dir.handle.openFile(io, emit.sub_path, .{ .mode = .read_write });
             },
             .elf2, .coff2 => if (base.file == null) {
                 const mf = if (base.cast(.elf2)) |elf|
@@ -646,10 +646,10 @@ pub const File = struct {
                     &coff.mf
                 else
                     unreachable;
-                mf.file = try base.emit.root_dir.handle.adaptToNewApi().openFile(io, base.emit.sub_path, .{
+                mf.file = try base.emit.root_dir.handle.openFile(io, base.emit.sub_path, .{
                     .mode = .read_write,
                 });
-                base.file = .adaptFromNewApi(mf.file);
+                base.file = mf.file;
                 try mf.ensureTotalCapacity(@intCast(mf.nodes.items[0].location().resolve(mf)[1]));
             },
             .c, .spirv => dev.checkAny(&.{ .c_linker, .spirv_linker }),
@@ -2007,7 +2007,7 @@ fn resolveLibInput(
             .sub_path = try std.fmt.allocPrint(arena, "lib{s}.tbd", .{lib_name}),
         };
         try checked_paths.print(gpa, "\n  {f}", .{test_path});
-        var file = test_path.root_dir.handle.openFile(test_path.sub_path, .{}) catch |err| switch (err) {
+        var file = test_path.root_dir.handle.openFile(io, test_path.sub_path, .{}) catch |err| switch (err) {
             error.FileNotFound => break :tbd,
             else => |e| fatal("unable to search for tbd library '{f}': {s}", .{ test_path, @errorName(e) }),
         };
@@ -2043,7 +2043,7 @@ fn resolveLibInput(
             .sub_path = try std.fmt.allocPrint(arena, "lib{s}.so", .{lib_name}),
         };
         try checked_paths.print(gpa, "\n  {f}", .{test_path});
-        var file = test_path.root_dir.handle.openFile(test_path.sub_path, .{}) catch |err| switch (err) {
+        var file = test_path.root_dir.handle.openFile(io, test_path.sub_path, .{}) catch |err| switch (err) {
             error.FileNotFound => break :so,
             else => |e| fatal("unable to search for so library '{f}': {s}", .{
                 test_path, @errorName(e),
@@ -2061,7 +2061,7 @@ fn resolveLibInput(
             .sub_path = try std.fmt.allocPrint(arena, "lib{s}.a", .{lib_name}),
         };
         try checked_paths.print(gpa, "\n  {f}", .{test_path});
-        var file = test_path.root_dir.handle.openFile(test_path.sub_path, .{}) catch |err| switch (err) {
+        var file = test_path.root_dir.handle.openFile(io, test_path.sub_path, .{}) catch |err| switch (err) {
             error.FileNotFound => break :mingw,
             else => |e| fatal("unable to search for static library '{f}': {s}", .{ test_path, @errorName(e) }),
         };
@@ -2115,7 +2115,7 @@ fn resolvePathInput(
         .static_library => return try resolvePathInputLib(gpa, arena, io, unresolved_inputs, resolved_inputs, ld_script_bytes, target, pq, .static, color),
         .shared_library => return try resolvePathInputLib(gpa, arena, io, unresolved_inputs, resolved_inputs, ld_script_bytes, target, pq, .dynamic, color),
         .object => {
-            var file = pq.path.root_dir.handle.openFile(pq.path.sub_path, .{}) catch |err|
+            var file = pq.path.root_dir.handle.openFile(io, pq.path.sub_path, .{}) catch |err|
                 fatal("failed to open object {f}: {s}", .{ pq.path, @errorName(err) });
             errdefer file.close(io);
             try resolved_inputs.append(gpa, .{ .object = .{
@@ -2127,7 +2127,7 @@ fn resolvePathInput(
             return null;
         },
         .res => {
-            var file = pq.path.root_dir.handle.openFile(pq.path.sub_path, .{}) catch |err|
+            var file = pq.path.root_dir.handle.openFile(io, pq.path.sub_path, .{}) catch |err|
                 fatal("failed to open windows resource {f}: {s}", .{ pq.path, @errorName(err) });
             errdefer file.close(io);
             try resolved_inputs.append(gpa, .{ .res = .{
@@ -2164,7 +2164,7 @@ fn resolvePathInputLib(
         .static_library, .shared_library => true,
         else => false,
     }) {
-        var file = test_path.root_dir.handle.openFile(test_path.sub_path, .{}) catch |err| switch (err) {
+        var file = test_path.root_dir.handle.openFile(io, test_path.sub_path, .{}) catch |err| switch (err) {
             error.FileNotFound => return .no_match,
             else => |e| fatal("unable to search for {s} library '{f}': {s}", .{
                 @tagName(link_mode), std.fmt.alt(test_path, .formatEscapeChar), @errorName(e),
@@ -2242,7 +2242,7 @@ fn resolvePathInputLib(
         return .ok;
     }
 
-    var file = test_path.root_dir.handle.openFile(test_path.sub_path, .{}) catch |err| switch (err) {
+    var file = test_path.root_dir.handle.openFile(io, test_path.sub_path, .{}) catch |err| switch (err) {
         error.FileNotFound => return .no_match,
         else => |e| fatal("unable to search for {s} library {f}: {s}", .{
             @tagName(link_mode), test_path, @errorName(e),
@@ -2253,7 +2253,7 @@ fn resolvePathInputLib(
 }
 
 pub fn openObject(io: Io, path: Path, must_link: bool, hidden: bool) !Input.Object {
-    var file = try path.root_dir.handle.openFile(path.sub_path, .{});
+    var file = try path.root_dir.handle.openFile(io, path.sub_path, .{});
     errdefer file.close(io);
     return .{
         .path = path,
@@ -2264,7 +2264,7 @@ pub fn openObject(io: Io, path: Path, must_link: bool, hidden: bool) !Input.Obje
 }
 
 pub fn openDso(io: Io, path: Path, needed: bool, weak: bool, reexport: bool) !Input.Dso {
-    var file = try path.root_dir.handle.openFile(path.sub_path, .{});
+    var file = try path.root_dir.handle.openFile(io, path.sub_path, .{});
     errdefer file.close(io);
     return .{
         .path = path,

@@ -94,7 +94,7 @@ pub fn updateFile(
     // In any case we need to examine the stat of the file to determine the course of action.
     var source_file = f: {
         const dir, const sub_path = file.path.openInfo(comp.dirs);
-        break :f try dir.openFile(sub_path, .{});
+        break :f try dir.openFile(io, sub_path, .{});
     };
     defer source_file.close(io);
 
@@ -2466,7 +2466,7 @@ fn updateEmbedFileInner(
 
     var file = f: {
         const dir, const sub_path = ef.path.openInfo(zcu.comp.dirs);
-        break :f try dir.openFile(sub_path, .{});
+        break :f try dir.openFile(io, sub_path, .{});
     };
     defer file.close(io);
 

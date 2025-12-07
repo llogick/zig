@@ -1641,7 +1641,7 @@ fn addSourceFromPathExtra(comp: *Compilation, path: []const u8, kind: Source.Kin
 
     const io = comp.io;
 
-    const file = try comp.cwd.openFile(path, .{});
+    const file = try comp.cwd.openFile(io, path, .{});
     defer file.close(io);
     return comp.addSourceFromFile(file, path, kind);
 }
@@ -1975,7 +1975,7 @@ fn getPathContents(comp: *Compilation, path: []const u8, limit: Io.Limit) ![]u8 
 
     const io = comp.io;
 
-    const file = try comp.cwd.openFile(path, .{});
+    const file = try comp.cwd.openFile(io, path, .{});
     defer file.close(io);
     return comp.getFileContents(file, limit);
 }

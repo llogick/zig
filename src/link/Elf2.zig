@@ -928,6 +928,7 @@ fn create(
     path: std.Build.Cache.Path,
     options: link.File.OpenOptions,
 ) !*Elf {
+    const io = comp.io;
     const target = &comp.root_mod.resolved_target.result;
     assert(target.ofmt == .elf);
     const class: std.elf.CLASS = switch (target.ptrBitWidth()) {
@@ -973,11 +974,11 @@ fn create(
     };
 
     const elf = try arena.create(Elf);
-    const file = try path.root_dir.handle.adaptToNewApi().createFile(comp.io, path.sub_path, .{
+    const file = try path.root_dir.handle.createFile(io, path.sub_path, .{
         .read = true,
         .mode = link.File.determineMode(comp.config.output_mode, comp.config.link_mode),
     });
-    errdefer file.close(comp.io);
+    errdefer file.close(io);
     elf.* = .{
         .base = .{
             .tag = .elf2,
@@ -985,7 +986,7 @@ fn create(
             .comp = comp,
             .emit = path,
 
-            .file = .adaptFromNewApi(file),
+            .file = file,
             .gc_sections = false,
             .print_gc_sections = false,
             .build_id = .none,
@@ -3325,12 +3326,13 @@ fn flushInputSection(elf: *Elf, isi: Node.InputSectionIndex) !void {
     const file_loc = isi.fileLocation(elf);
     if (file_loc.size == 0) return;
     const comp = elf.base.comp;
+    const io = comp.io;
     const gpa = comp.gpa;
     const ii = isi.input(elf);
     const path = ii.path(elf);
-    const file = try path.root_dir.handle.adaptToNewApi().openFile(comp.io, path.sub_path, .{});
-    defer file.close(comp.io);
-    var fr = file.reader(comp.io, &.{});
+    const file = try path.root_dir.handle.openFile(io, path.sub_path, .{});
+    defer file.close(io);
+    var fr = file.reader(io, &.{});
     try fr.seekTo(file_loc.offset);
     var nw: MappedFile.Node.Writer = undefined;
     const si = isi.symbol(elf);

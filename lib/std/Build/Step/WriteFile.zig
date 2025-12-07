@@ -284,7 +284,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
             },
             .copy => |file_source| {
                 const source_path = file_source.getPath2(b, step);
-                const prev_status = Io.Dir.updateFile(.cwd(), io, source_path, cache_dir.adaptToNewApi(), file.sub_path, .{}) catch |err| {
+                const prev_status = Io.Dir.updateFile(.cwd(), io, source_path, cache_dir, file.sub_path, .{}) catch |err| {
                     return step.fail("unable to update file from '{s}' to '{f}{s}{c}{s}': {t}", .{
                         source_path, b.cache_root, cache_path, fs.path.sep, file.sub_path, err,
                     });
@@ -321,10 +321,10 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
                 .directory => try cache_dir.makePath(dest_path),
                 .file => {
                     const prev_status = Io.Dir.updateFile(
-                        src_entry_path.root_dir.handle.adaptToNewApi(),
+                        src_entry_path.root_dir.handle,
                         io,
                         src_entry_path.sub_path,
-                        cache_dir.adaptToNewApi(),
+                        cache_dir,
                         dest_path,
                         .{},
                     ) catch |err| {

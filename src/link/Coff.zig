@@ -632,7 +632,7 @@ fn create(
     };
 
     const coff = try arena.create(Coff);
-    const file = try path.root_dir.handle.adaptToNewApi().createFile(comp.io, path.sub_path, .{
+    const file = try path.root_dir.handle.createFile(comp.io, path.sub_path, .{
         .read = true,
         .mode = link.File.determineMode(comp.config.output_mode, comp.config.link_mode),
     });
@@ -644,7 +644,7 @@ fn create(
             .comp = comp,
             .emit = path,
 
-            .file = .adaptFromNewApi(file),
+            .file = file,
             .gc_sections = false,
             .print_gc_sections = false,
             .build_id = .none,

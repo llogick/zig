@@ -39,7 +39,7 @@ pub fn load(
 ) LoadError!Info {
     switch (format) {
         .elf => {
-            var file = try path.root_dir.handle.openFile(path.sub_path, .{});
+            var file = try path.root_dir.handle.openFile(io, path.sub_path, .{});
             defer file.close(io);
 
             var elf_file: ElfFile = try .load(gpa, file, null, &.none);

@@ -1,6 +1,7 @@
 pub fn flushObject(macho_file: *MachO, comp: *Compilation, module_obj_path: ?Path) link.File.FlushError!void {
-    const gpa = macho_file.base.comp.gpa;
-    const diags = &macho_file.base.comp.link_diags;
+    const gpa = comp.gpa;
+    const io = comp.io;
+    const diags = &comp.link_diags;
 
     // TODO: "positional arguments" is a CLI concept, not a linker concept. Delete this unnecessary array list.
     var positionals = std.array_list.Managed(link.Input).init(gpa);
@@ -19,7 +20,7 @@ pub fn flushObject(macho_file: *MachO, comp: *Compilation, module_obj_path: ?Pat
         // debug info segments/sections (this is apparently by design by Apple), we copy
         // the *only* input file over.
         const path = positionals.items[0].path().?;
-        const in_file = path.root_dir.handle.openFile(path.sub_path, .{}) catch |err|
+        const in_file = path.root_dir.handle.openFile(io, path.sub_path, .{}) catch |err|
             return diags.fail("failed to open {f}: {s}", .{ path, @errorName(err) });
         const stat = in_file.stat() catch |err|
             return diags.fail("failed to stat {f}: {s}", .{ path, @errorName(err) });

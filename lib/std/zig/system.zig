@@ -817,7 +817,7 @@ fn glibcVerFromRPath(io: Io, rpath: []const u8) !std.SemanticVersion {
     // .dynstr section, and finding the max version number of symbols
     // that start with "GLIBC_2.".
     const glibc_so_basename = "libc.so.6";
-    var file = dir.openFile(glibc_so_basename, .{}) catch |err| switch (err) {
+    var file = dir.openFile(io, glibc_so_basename, .{}) catch |err| switch (err) {
         error.NameTooLong => return error.Unexpected,
         error.BadPathName => return error.Unexpected,
         error.PipeBusy => return error.Unexpected, // Windows-only
@@ -851,7 +851,7 @@ fn glibcVerFromRPath(io: Io, rpath: []const u8) !std.SemanticVersion {
 
     // Empirically, glibc 2.34 libc.so .dynstr section is 32441 bytes on my system.
     var buffer: [8000]u8 = undefined;
-    var file_reader: Io.File.Reader = .initAdapted(file, io, &buffer);
+    var file_reader: Io.File.Reader = .init(file, io, &buffer);
 
     return glibcVerFromSoFile(&file_reader) catch |err| switch (err) {
         error.InvalidElfMagic,
@@ -1053,7 +1053,7 @@ fn detectAbiAndDynamicLinker(io: Io, cpu: Target.Cpu, os: Target.Os, query: Targ
             var is_elf_file = false;
             defer if (!is_elf_file) file.close(io);
 
-            file_reader = .initAdapted(file, io, &file_reader_buffer);
+            file_reader = .init(file, io, &file_reader_buffer);
             file_name = undefined; // it aliases file_reader_buffer
 
             const header = elf.Header.read(&file_reader.interface) catch |hdr_err| switch (hdr_err) {

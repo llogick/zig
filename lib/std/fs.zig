@@ -287,23 +287,6 @@ pub fn symLinkAbsoluteW(
     return windows.CreateSymbolicLink(null, mem.span(sym_link_path_w), mem.span(target_path_w), flags.is_directory);
 }
 
-pub const OpenSelfExeError = Io.File.OpenSelfExeError;
-
-/// Deprecated in favor of `Io.File.openSelfExe`.
-pub fn openSelfExe(flags: File.OpenFlags) OpenSelfExeError!File {
-    if (native_os == .linux or native_os == .serenity or native_os == .windows) {
-        var threaded: Io.Threaded = .init_single_threaded;
-        const io = threaded.ioBasic();
-        return .adaptFromNewApi(try Io.File.openSelfExe(io, flags));
-    }
-    // Use of max_path_bytes here is valid as the resulting path is immediately
-    // opened with no modification.
-    var buf: [max_path_bytes]u8 = undefined;
-    const self_exe_path = try selfExePath(&buf);
-    buf[self_exe_path.len] = 0;
-    return openFileAbsolute(buf[0..self_exe_path.len :0], flags);
-}
-
 // This is `posix.ReadLinkError || posix.RealPathError` with impossible errors excluded
 pub const SelfExePathError = error{
     FileNotFound,

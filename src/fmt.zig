@@ -262,7 +262,7 @@ fn fmtPathFile(
 ) !void {
     const io = fmt.io;
 
-    const source_file = try dir.openFile(sub_path, .{});
+    const source_file = try dir.openFile(io, sub_path, .{});
     var file_closed = false;
     errdefer if (!file_closed) source_file.close(io);
 

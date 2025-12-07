@@ -99,7 +99,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
                     .cwd(),
                     io,
                     source_path,
-                    b.build_root.handle.adaptToNewApi(),
+                    b.build_root.handle,
                     output_source_file.sub_path,
                     .{},
                 ) catch |err| {

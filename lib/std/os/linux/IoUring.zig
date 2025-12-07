@@ -3002,7 +3002,7 @@ test "renameat" {
     }, cqe);
 
     // Validate that the old file doesn't exist anymore
-    try testing.expectError(error.FileNotFound, tmp.dir.openFile(old_path, .{}));
+    try testing.expectError(error.FileNotFound, tmp.dir.openFile(io, old_path, .{}));
 
     // Validate that the new file exists with the proper content
     var new_file_data: [16]u8 = undefined;
@@ -3057,7 +3057,7 @@ test "unlinkat" {
     }, cqe);
 
     // Validate that the file doesn't exist anymore
-    _ = tmp.dir.openFile(path, .{}) catch |err| switch (err) {
+    _ = tmp.dir.openFile(io, path, .{}) catch |err| switch (err) {
         error.FileNotFound => {},
         else => std.debug.panic("unexpected error: {}", .{err}),
     };
@@ -3154,7 +3154,7 @@ test "symlinkat" {
     }, cqe);
 
     // Validate that the symlink exist
-    _ = try tmp.dir.openFile(link_path, .{});
+    _ = try tmp.dir.openFile(io, link_path, .{});
 }
 
 test "linkat" {

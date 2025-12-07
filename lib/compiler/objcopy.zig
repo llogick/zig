@@ -157,7 +157,7 @@ fn cmdObjCopy(gpa: Allocator, arena: Allocator, args: []const []const u8) !void 
 
     const stat = input_file.stat() catch |err| fatal("failed to stat {s}: {t}", .{ input, err });
 
-    var in: File.Reader = .initSize(input_file.adaptToNewApi(), io, &input_buffer, stat.size);
+    var in: File.Reader = .initSize(input_file, io, &input_buffer, stat.size);
 
     const elf_hdr = std.elf.Header.read(&in.interface) catch |err| switch (err) {
         error.ReadFailed => fatal("unable to read {s}: {t}", .{ input, in.err.? }),
