@@ -865,7 +865,6 @@ pub const Abi = enum {
             },
             .freebsd => switch (arch) {
                 .arm,
-                .powerpc,
                 => .eabihf,
                 else => .none,
             },
