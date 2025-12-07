@@ -9,12 +9,11 @@ const mem = std.mem;
 const wasi = std.os.wasi;
 const windows = std.os.windows;
 const posix = std.posix;
-
 const ArenaAllocator = std.heap.ArenaAllocator;
-const Dir = std.fs.Dir;
+const Dir = std.Io.Dir;
 const File = std.Io.File;
-const tmpDir = testing.tmpDir;
-const SymLinkFlags = std.fs.Dir.SymLinkFlags;
+const tmpDir = std.testing.tmpDir;
+const SymLinkFlags = std.Io.Dir.SymLinkFlags;
 
 const PathType = enum {
     relative,
@@ -80,7 +79,7 @@ const TestContext = struct {
     path_sep: u8,
     arena: ArenaAllocator,
     tmp: testing.TmpDir,
-    dir: std.fs.Dir,
+    dir: Io.Dir,
     transform_fn: *const PathType.TransformFn,
 
     pub fn init(path_type: PathType, path_sep: u8, allocator: mem.Allocator, transform_fn: *const PathType.TransformFn) TestContext {
@@ -1772,7 +1771,7 @@ test "open file with exclusive lock twice, make sure second lock waits" {
             errdefer file.close(io);
 
             const S = struct {
-                fn checkFn(dir: *fs.Dir, path: []const u8, started: *std.Thread.ResetEvent, locked: *std.Thread.ResetEvent) !void {
+                fn checkFn(dir: *Io.Dir, path: []const u8, started: *std.Thread.ResetEvent, locked: *std.Thread.ResetEvent) !void {
                     started.set();
                     const file1 = try dir.createFile(path, .{ .lock = .exclusive });
 
@@ -2016,7 +2015,7 @@ test "walker without fully iterating" {
     try testing.expectEqual(@as(usize, 1), num_walked);
 }
 
-test "'.' and '..' in fs.Dir functions" {
+test "'.' and '..' in Io.Dir functions" {
     if (native_os == .windows and builtin.cpu.arch == .aarch64) {
         // https://github.com/ziglang/zig/issues/17134
         return error.SkipZigTest;

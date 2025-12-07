@@ -133,7 +133,7 @@ fn accept(context: *Context, connection: std.net.Server.Connection) void {
 const Context = struct {
     gpa: Allocator,
     io: Io,
-    lib_dir: std.fs.Dir,
+    lib_dir: Io.Dir,
     zig_lib_directory: []const u8,
     zig_exe_path: []const u8,
     global_cache_path: []const u8,

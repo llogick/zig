@@ -9582,7 +9582,7 @@ pub fn dump(b: *Builder) void {
     b.printToFile(stderr, &buffer) catch {};
 }
 
-pub fn printToFilePath(b: *Builder, io: Io, dir: std.fs.Dir, path: []const u8) !void {
+pub fn printToFilePath(b: *Builder, io: Io, dir: Io.Dir, path: []const u8) !void {
     var buffer: [4000]u8 = undefined;
     const file = try dir.createFile(io, path, .{});
     defer file.close(io);

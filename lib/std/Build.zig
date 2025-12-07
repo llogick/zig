@@ -1699,7 +1699,7 @@ pub fn addCheckFile(
     return Step.CheckFile.create(b, file_source, options);
 }
 
-pub fn truncateFile(b: *Build, dest_path: []const u8) (fs.Dir.MakeError || fs.Dir.StatFileError)!void {
+pub fn truncateFile(b: *Build, dest_path: []const u8) (Io.Dir.MakeError || Io.Dir.StatFileError)!void {
     const io = b.graph.io;
     if (b.verbose) log.info("truncate {s}", .{dest_path});
     const cwd = fs.cwd();

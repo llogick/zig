@@ -7,6 +7,7 @@ const builtin = @import("builtin");
 const is_le = builtin.target.cpu.arch.endian() == .little;
 
 const std = @import("std");
+const Io = std.Io;
 const File = std.Io.File;
 const Writer = std.Io.Writer;
 const Reader = std.Io.Reader;
@@ -461,7 +462,7 @@ pub const Iterator = struct {
             stream: *File.Reader,
             options: ExtractOptions,
             filename_buf: []u8,
-            dest: std.fs.Dir,
+            dest: Io.Dir,
         ) !void {
             if (filename_buf.len < self.filename_len)
                 return error.ZipInsufficientBuffer;
@@ -650,7 +651,7 @@ pub const ExtractOptions = struct {
 };
 
 /// Extract the zipped files to the given `dest` directory.
-pub fn extract(dest: std.fs.Dir, fr: *File.Reader, options: ExtractOptions) !void {
+pub fn extract(dest: Io.Dir, fr: *File.Reader, options: ExtractOptions) !void {
     if (options.verify_checksums) @panic("TODO unimplemented");
 
     var iter = try Iterator.init(fr);

@@ -707,7 +707,7 @@ const ErrorHandler = union(enum) {
     pub fn emitDiagnostics(
         self: *ErrorHandler,
         allocator: Allocator,
-        cwd: std.fs.Dir,
+        cwd: Io.Dir,
         source: []const u8,
         diagnostics: *Diagnostics,
         mappings: SourceMappings,

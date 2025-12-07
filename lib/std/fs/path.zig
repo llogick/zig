@@ -872,7 +872,7 @@ pub fn resolve(allocator: Allocator, paths: []const []const u8) Allocator.Error!
 
 /// This function is like a series of `cd` statements executed one after another.
 /// It resolves "." and ".." to the best of its ability, but will not convert relative paths to
-/// an absolute path, use std.fs.Dir.realpath instead.
+/// an absolute path, use Io.Dir.realpath instead.
 /// ".." components may persist in the resolved path if the resolved path is relative or drive-relative.
 /// Path separators are canonicalized to '\\' and drives are canonicalized to capital letters.
 ///
@@ -1095,7 +1095,7 @@ pub fn resolveWindows(allocator: Allocator, paths: []const []const u8) Allocator
 
 /// This function is like a series of `cd` statements executed one after another.
 /// It resolves "." and ".." to the best of its ability, but will not convert relative paths to
-/// an absolute path, use std.fs.Dir.realpath instead.
+/// an absolute path, use Io.Dir.realpath instead.
 /// ".." components may persist in the resolved path if the resolved path is relative.
 /// The result does not have a trailing path separator.
 /// This function does not perform any syscalls. Executing this series of path

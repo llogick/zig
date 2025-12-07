@@ -446,7 +446,7 @@ pub const Path = struct {
     }
 
     /// Given a `Path`, returns the directory handle and sub path to be used to open the path.
-    pub fn openInfo(p: Path, dirs: Directories) struct { fs.Dir, []const u8 } {
+    pub fn openInfo(p: Path, dirs: Directories) struct { Io.Dir, []const u8 } {
         const dir = switch (p.root) {
             .none => {
                 const cwd_sub_path = absToCwdRelative(p.sub_path, dirs.cwd);
@@ -1872,7 +1872,7 @@ pub const CreateDiagnostic = union(enum) {
     pub const CreateCachePath = struct {
         which: enum { local, global },
         sub: []const u8,
-        err: (fs.Dir.MakeError || fs.Dir.OpenError || fs.Dir.StatFileError),
+        err: (Io.Dir.MakeError || Io.Dir.OpenError || Io.Dir.StatFileError),
     };
     pub fn format(diag: CreateDiagnostic, w: *Writer) Writer.Error!void {
         switch (diag) {

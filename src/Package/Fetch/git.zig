@@ -214,7 +214,7 @@ pub const Repository = struct {
     pub fn checkout(
         repository: *Repository,
         io: Io,
-        worktree: std.fs.Dir,
+        worktree: Io.Dir,
         commit_oid: Oid,
         diagnostics: *Diagnostics,
     ) !void {
@@ -231,7 +231,7 @@ pub const Repository = struct {
     fn checkoutTree(
         repository: *Repository,
         io: Io,
-        dir: std.fs.Dir,
+        dir: Io.Dir,
         tree_oid: Oid,
         current_path: []const u8,
         diagnostics: *Diagnostics,

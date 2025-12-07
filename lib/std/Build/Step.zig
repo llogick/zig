@@ -505,7 +505,7 @@ pub fn evalZigProcess(
     return result;
 }
 
-/// Wrapper around `std.fs.Dir.updateFile` that handles verbose and error output.
+/// Wrapper around `Io.Dir.updateFile` that handles verbose and error output.
 pub fn installFile(s: *Step, src_lazy_path: Build.LazyPath, dest_path: []const u8) !Io.Dir.PrevStatus {
     const b = s.owner;
     const io = b.graph.io;
@@ -515,8 +515,8 @@ pub fn installFile(s: *Step, src_lazy_path: Build.LazyPath, dest_path: []const u
         return s.fail("unable to update file from '{f}' to '{s}': {t}", .{ src_path, dest_path, err });
 }
 
-/// Wrapper around `std.fs.Dir.makePathStatus` that handles verbose and error output.
-pub fn installDir(s: *Step, dest_path: []const u8) !std.fs.Dir.MakePathStatus {
+/// Wrapper around `Io.Dir.makePathStatus` that handles verbose and error output.
+pub fn installDir(s: *Step, dest_path: []const u8) !Io.Dir.MakePathStatus {
     const b = s.owner;
     try handleVerbose(b, null, &.{ "install", "-d", dest_path });
     return std.fs.cwd().makePathStatus(dest_path) catch |err|

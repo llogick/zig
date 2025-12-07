@@ -1,5 +1,7 @@
-const std = @import("std.zig");
 const builtin = @import("builtin");
+
+const std = @import("std.zig");
+const Io = std.Io;
 const assert = std.debug.assert;
 const math = std.math;
 
@@ -28,7 +30,7 @@ pub var allocator_instance: std.heap.GeneralPurposeAllocator(.{
     break :b .init;
 };
 
-pub var io_instance: std.Io.Threaded = undefined;
+pub var io_instance: Io.Threaded = undefined;
 pub const io = io_instance.io();
 
 /// TODO https://github.com/ziglang/zig/issues/5738
@@ -355,7 +357,7 @@ test expectApproxEqRel {
 /// This function is intended to be used only in tests. When the two slices are not
 /// equal, prints diagnostics to stderr to show exactly how they are not equal (with
 /// the differences highlighted in red), then returns a test failure error.
-/// The colorized output is optional and controlled by the return of `std.Io.tty.Config.detect`.
+/// The colorized output is optional and controlled by the return of `Io.tty.Config.detect`.
 /// If your inputs are UTF-8 encoded strings, consider calling `expectEqualStrings` instead.
 pub fn expectEqualSlices(comptime T: type, expected: []const T, actual: []const T) !void {
     const diff_index: usize = diff_index: {
@@ -378,8 +380,8 @@ fn failEqualSlices(
     expected: []const T,
     actual: []const T,
     diff_index: usize,
-    w: *std.Io.Writer,
-    ttyconf: std.Io.tty.Config,
+    w: *Io.Writer,
+    ttyconf: Io.tty.Config,
 ) !void {
     try w.print("slices differ. first difference occurs at index {d} (0x{X})\n", .{ diff_index, diff_index });
 
@@ -464,11 +466,11 @@ fn SliceDiffer(comptime T: type) type {
         start_index: usize,
         expected: []const T,
         actual: []const T,
-        ttyconf: std.Io.tty.Config,
+        ttyconf: Io.tty.Config,
 
         const Self = @This();
 
-        pub fn write(self: Self, writer: *std.Io.Writer) !void {
+        pub fn write(self: Self, writer: *Io.Writer) !void {
             for (self.expected, 0..) |value, i| {
                 const full_index = self.start_index + i;
                 const diff = if (i < self.actual.len) !std.meta.eql(self.actual[i], value) else true;
@@ -487,9 +489,9 @@ fn SliceDiffer(comptime T: type) type {
 const BytesDiffer = struct {
     expected: []const u8,
     actual: []const u8,
-    ttyconf: std.Io.tty.Config,
+    ttyconf: Io.tty.Config,
 
-    pub fn write(self: BytesDiffer, writer: *std.Io.Writer) !void {
+    pub fn write(self: BytesDiffer, writer: *Io.Writer) !void {
         var expected_iterator = std.mem.window(u8, self.expected, 16, 16);
         var row: usize = 0;
         while (expected_iterator.next()) |chunk| {
@@ -535,7 +537,7 @@ const BytesDiffer = struct {
         }
     }
 
-    fn writeDiff(self: BytesDiffer, writer: *std.Io.Writer, comptime fmt: []const u8, args: anytype, diff: bool) !void {
+    fn writeDiff(self: BytesDiffer, writer: *Io.Writer, comptime fmt: []const u8, args: anytype, diff: bool) !void {
         if (diff) try self.ttyconf.setColor(writer, .red);
         try writer.print(fmt, args);
         if (diff) try self.ttyconf.setColor(writer, .reset);
@@ -605,8 +607,8 @@ pub fn expect(ok: bool) !void {
 }
 
 pub const TmpDir = struct {
-    dir: std.fs.Dir,
-    parent_dir: std.fs.Dir,
+    dir: Io.Dir,
+    parent_dir: Io.Dir,
     sub_path: [sub_path_len]u8,
 
     const random_bytes_count = 12;
@@ -620,7 +622,7 @@ pub const TmpDir = struct {
     }
 };
 
-pub fn tmpDir(opts: std.fs.Dir.OpenOptions) TmpDir {
+pub fn tmpDir(opts: Io.Dir.OpenOptions) TmpDir {
     var random_bytes: [TmpDir.random_bytes_count]u8 = undefined;
     std.crypto.random.bytes(&random_bytes);
     var sub_path: [TmpDir.sub_path_len]u8 = undefined;
@@ -929,7 +931,7 @@ test "expectEqualDeep primitive type" {
             a,
             b,
 
-            pub fn format(self: @This(), writer: *std.Io.Writer) !void {
+            pub fn format(self: @This(), writer: *Io.Writer) !void {
                 try writer.writeAll(@tagName(self));
             }
         };
@@ -1160,7 +1162,7 @@ pub fn checkAllAllocationFailures(backing_allocator: std.mem.Allocator, comptime
         } else |err| switch (err) {
             error.OutOfMemory => {
                 if (failing_allocator_inst.allocated_bytes != failing_allocator_inst.freed_bytes) {
-                    const tty_config: std.Io.tty.Config = .detect(.stderr());
+                    const tty_config: Io.tty.Config = .detect(.stderr());
                     print(
                         "\nfail_index: {d}/{d}\nallocated bytes: {d}\nfreed bytes: {d}\nallocations: {d}\ndeallocations: {d}\nallocation that was made to fail: {f}",
                         .{
@@ -1220,14 +1222,14 @@ pub inline fn fuzz(
     return @import("root").fuzz(context, testOne, options);
 }
 
-/// A `std.Io.Reader` that writes a predetermined list of buffers during `stream`.
+/// A `Io.Reader` that writes a predetermined list of buffers during `stream`.
 pub const Reader = struct {
     calls: []const Call,
-    interface: std.Io.Reader,
+    interface: Io.Reader,
     next_call_index: usize,
     next_offset: usize,
     /// Further reduces how many bytes are written in each `stream` call.
-    artificial_limit: std.Io.Limit = .unlimited,
+    artificial_limit: Io.Limit = .unlimited,
 
     pub const Call = struct {
         buffer: []const u8,
@@ -1247,7 +1249,7 @@ pub const Reader = struct {
         };
     }
 
-    fn stream(io_r: *std.Io.Reader, w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Reader.StreamError!usize {
+    fn stream(io_r: *Io.Reader, w: *Io.Writer, limit: Io.Limit) Io.Reader.StreamError!usize {
         const r: *Reader = @alignCast(@fieldParentPtr("interface", io_r));
         if (r.calls.len - r.next_call_index == 0) return error.EndOfStream;
         const call = r.calls[r.next_call_index];
@@ -1262,13 +1264,13 @@ pub const Reader = struct {
     }
 };
 
-/// A `std.Io.Reader` that gets its data from another `std.Io.Reader`, and always
+/// A `Io.Reader` that gets its data from another `Io.Reader`, and always
 /// writes to its own buffer (and returns 0) during `stream` and `readVec`.
 pub const ReaderIndirect = struct {
-    in: *std.Io.Reader,
-    interface: std.Io.Reader,
+    in: *Io.Reader,
+    interface: Io.Reader,
 
-    pub fn init(in: *std.Io.Reader, buffer: []u8) ReaderIndirect {
+    pub fn init(in: *Io.Reader, buffer: []u8) ReaderIndirect {
         return .{
             .in = in,
             .interface = .{
@@ -1283,17 +1285,17 @@ pub const ReaderIndirect = struct {
         };
     }
 
-    fn readVec(r: *std.Io.Reader, _: [][]u8) std.Io.Reader.Error!usize {
+    fn readVec(r: *Io.Reader, _: [][]u8) Io.Reader.Error!usize {
         try streamInner(r);
         return 0;
     }
 
-    fn stream(r: *std.Io.Reader, _: *std.Io.Writer, _: std.Io.Limit) std.Io.Reader.StreamError!usize {
+    fn stream(r: *Io.Reader, _: *Io.Writer, _: Io.Limit) Io.Reader.StreamError!usize {
         try streamInner(r);
         return 0;
     }
 
-    fn streamInner(r: *std.Io.Reader) std.Io.Reader.Error!void {
+    fn streamInner(r: *Io.Reader) Io.Reader.Error!void {
         const r_indirect: *ReaderIndirect = @alignCast(@fieldParentPtr("interface", r));
 
         // If there's no room remaining in the buffer at all, make room.
@@ -1301,12 +1303,12 @@ pub const ReaderIndirect = struct {
             try r.rebase(r.buffer.len);
         }
 
-        var writer: std.Io.Writer = .{
+        var writer: Io.Writer = .{
             .buffer = r.buffer,
             .end = r.end,
             .vtable = &.{
-                .drain = std.Io.Writer.unreachableDrain,
-                .rebase = std.Io.Writer.unreachableRebase,
+                .drain = Io.Writer.unreachableDrain,
+                .rebase = Io.Writer.unreachableRebase,
             },
         };
         defer r.end = writer.end;

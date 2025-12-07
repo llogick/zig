@@ -77,7 +77,7 @@ pub fn free(sdk: WindowsSdk, allocator: Allocator) void {
 /// and a version. Returns slice of version strings sorted in descending order.
 /// Caller owns result.
 fn iterateAndFilterByVersion(
-    iterator: *std.fs.Dir.Iterator,
+    iterator: *Io.Dir.Iterator,
     allocator: Allocator,
     prefix: []const u8,
 ) error{OutOfMemory}![][]const u8 {
@@ -608,7 +608,7 @@ pub const Installation = struct {
 };
 
 const MsvcLibDir = struct {
-    fn findInstancesDirViaSetup(allocator: Allocator) error{ OutOfMemory, PathNotFound }!std.fs.Dir {
+    fn findInstancesDirViaSetup(allocator: Allocator) error{ OutOfMemory, PathNotFound }!Io.Dir {
         const vs_setup_key_path = "SOFTWARE\\Microsoft\\VisualStudio\\Setup";
         const vs_setup_key = RegistryWtf8.openKey(windows.HKEY_LOCAL_MACHINE, vs_setup_key_path, .{}) catch |err| switch (err) {
             error.KeyNotFound => return error.PathNotFound,
@@ -633,7 +633,7 @@ const MsvcLibDir = struct {
         return std.fs.openDirAbsolute(instances_path, .{ .iterate = true }) catch return error.PathNotFound;
     }
 
-    fn findInstancesDirViaCLSID(allocator: Allocator) error{ OutOfMemory, PathNotFound }!std.fs.Dir {
+    fn findInstancesDirViaCLSID(allocator: Allocator) error{ OutOfMemory, PathNotFound }!Io.Dir {
         const setup_configuration_clsid = "{177f0c4a-1cd3-4de7-a32c-71dbbb9fa36d}";
         const setup_config_key = RegistryWtf8.openKey(windows.HKEY_CLASSES_ROOT, "CLSID\\" ++ setup_configuration_clsid, .{}) catch |err| switch (err) {
             error.KeyNotFound => return error.PathNotFound,
@@ -669,7 +669,7 @@ const MsvcLibDir = struct {
         return std.fs.openDirAbsolute(instances_path, .{ .iterate = true }) catch return error.PathNotFound;
     }
 
-    fn findInstancesDir(allocator: Allocator) error{ OutOfMemory, PathNotFound }!std.fs.Dir {
+    fn findInstancesDir(allocator: Allocator) error{ OutOfMemory, PathNotFound }!Io.Dir {
         // First, try getting the packages cache path from the registry.
         // This only seems to exist when the path is different from the default.
         method1: {

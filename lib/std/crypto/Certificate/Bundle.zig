@@ -177,7 +177,7 @@ pub fn addCertsFromDirPath(
     cb: *Bundle,
     gpa: Allocator,
     io: Io,
-    dir: fs.Dir,
+    dir: Io.Dir,
     sub_dir_path: []const u8,
 ) AddCertsFromDirPathError!void {
     var iterable_dir = try dir.openDir(sub_dir_path, .{ .iterate = true });
@@ -200,7 +200,7 @@ pub fn addCertsFromDirPathAbsolute(
 
 pub const AddCertsFromDirError = AddCertsFromFilePathError;
 
-pub fn addCertsFromDir(cb: *Bundle, gpa: Allocator, io: Io, now: Io.Timestamp, iterable_dir: fs.Dir) AddCertsFromDirError!void {
+pub fn addCertsFromDir(cb: *Bundle, gpa: Allocator, io: Io, now: Io.Timestamp, iterable_dir: Io.Dir) AddCertsFromDirError!void {
     var it = iterable_dir.iterate();
     while (try it.next()) |entry| {
         switch (entry.kind) {

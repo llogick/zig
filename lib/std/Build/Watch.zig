@@ -350,7 +350,7 @@ const Os = switch (builtin.os.tag) {
             }
 
             fn init(gpa: Allocator, path: Cache.Path) !*@This() {
-                // The following code is a drawn out NtCreateFile call. (mostly adapted from std.fs.Dir.makeOpenDirAccessMaskW)
+                // The following code is a drawn out NtCreateFile call. (mostly adapted from Io.Dir.makeOpenDirAccessMaskW)
                 // It's necessary in order to get the specific flags that are required when calling ReadDirectoryChangesW.
                 var dir_handle: windows.HANDLE = undefined;
                 const root_fd = path.root_dir.handle.fd;

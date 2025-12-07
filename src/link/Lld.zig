@@ -400,7 +400,7 @@ fn coffLink(lld: *Lld, arena: Allocator) !void {
             // regarding eliding redundant object -> object transformations.
             return error.NoObjectsToLink;
         };
-        try std.fs.Dir.copyFile(
+        try Io.Dir.copyFile(
             the_object_path.root_dir.handle,
             the_object_path.sub_path,
             directory.handle,
@@ -816,7 +816,7 @@ fn elfLink(lld: *Lld, arena: Allocator) !void {
             // regarding eliding redundant object -> object transformations.
             return error.NoObjectsToLink;
         };
-        try std.fs.Dir.copyFile(
+        try Io.Dir.copyFile(
             the_object_path.root_dir.handle,
             the_object_path.sub_path,
             directory.handle,
@@ -1371,7 +1371,7 @@ fn wasmLink(lld: *Lld, arena: Allocator) !void {
             // regarding eliding redundant object -> object transformations.
             return error.NoObjectsToLink;
         };
-        try fs.Dir.copyFile(
+        try Io.Dir.copyFile(
             the_object_path.root_dir.handle,
             the_object_path.sub_path,
             directory.handle,
@@ -1692,6 +1692,7 @@ fn spawnLld(comp: *Compilation, arena: Allocator, argv: []const []const u8) !voi
 }
 
 const std = @import("std");
+const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const Cache = std.Build.Cache;
 const allocPrint = std.fmt.allocPrint;

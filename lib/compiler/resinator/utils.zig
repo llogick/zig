@@ -25,11 +25,11 @@ pub const UncheckedSliceWriter = struct {
     }
 };
 
-/// Cross-platform 'std.fs.Dir.openFile' wrapper that will always return IsDir if
+/// Cross-platform 'Io.Dir.openFile' wrapper that will always return IsDir if
 /// a directory is attempted to be opened.
 /// TODO: Remove once https://github.com/ziglang/zig/issues/5732 is addressed.
 pub fn openFileNotDir(
-    cwd: std.fs.Dir,
+    cwd: Io.Dir,
     io: Io,
     path: []const u8,
     flags: Io.File.OpenFlags,

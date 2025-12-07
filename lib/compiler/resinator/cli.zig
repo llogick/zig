@@ -250,7 +250,7 @@ pub const Options = struct {
     /// worlds' situation where we'll be compatible with most use-cases
     /// of the .rc extension being omitted from the CLI args, but still
     /// work fine if the file itself does not have an extension.
-    pub fn maybeAppendRC(options: *Options, cwd: std.fs.Dir) !void {
+    pub fn maybeAppendRC(options: *Options, cwd: Io.Dir) !void {
         switch (options.input_source) {
             .stdio => return,
             .filename => {},

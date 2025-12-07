@@ -77,7 +77,7 @@ cwd: ?[]const u8,
 /// Set to change the current working directory when spawning the child process.
 /// This is not yet implemented for Windows. See https://github.com/ziglang/zig/issues/5190
 /// Once that is done, `cwd` will be deprecated in favor of this field.
-cwd_dir: ?fs.Dir = null,
+cwd_dir: ?Io.Dir = null,
 
 err_pipe: if (native_os == .windows) void else ?posix.fd_t,
 
@@ -439,7 +439,7 @@ pub fn run(args: struct {
     allocator: mem.Allocator,
     argv: []const []const u8,
     cwd: ?[]const u8 = null,
-    cwd_dir: ?fs.Dir = null,
+    cwd_dir: ?Io.Dir = null,
     /// Required if unable to access the current env map (e.g. building a
     /// library on some platforms).
     env_map: ?*const EnvMap = null,

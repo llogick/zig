@@ -3573,7 +3573,7 @@ pub fn getTarget(self: *const MachO) *const std.Target {
 /// into a new inode, remove the original file, and rename the copy to match
 /// the original file. This is super messy, but there doesn't seem any other
 /// way to please the XNU.
-pub fn invalidateKernelCache(dir: fs.Dir, sub_path: []const u8) !void {
+pub fn invalidateKernelCache(dir: Io.Dir, sub_path: []const u8) !void {
     const tracy = trace(@src());
     defer tracy.end();
     if (builtin.target.os.tag.isDarwin() and builtin.target.cpu.arch == .aarch64) {

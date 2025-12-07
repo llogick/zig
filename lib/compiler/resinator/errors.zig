@@ -67,7 +67,7 @@ pub const Diagnostics = struct {
         return @intCast(index);
     }
 
-    pub fn renderToStdErr(self: *Diagnostics, cwd: std.fs.Dir, source: []const u8, source_mappings: ?SourceMappings) void {
+    pub fn renderToStdErr(self: *Diagnostics, cwd: Io.Dir, source: []const u8, source_mappings: ?SourceMappings) void {
         const io = self.io;
         const stderr, const ttyconf = std.debug.lockStderrWriter(&.{});
         defer std.debug.unlockStderrWriter();
@@ -903,7 +903,7 @@ pub fn renderErrorMessage(
     io: Io,
     writer: *std.Io.Writer,
     tty_config: std.Io.tty.Config,
-    cwd: std.fs.Dir,
+    cwd: Io.Dir,
     err_details: ErrorDetails,
     source: []const u8,
     strings: []const []const u8,
@@ -1100,7 +1100,7 @@ const CorrespondingLines = struct {
 
     pub fn init(
         io: Io,
-        cwd: std.fs.Dir,
+        cwd: Io.Dir,
         err_details: ErrorDetails,
         line_for_comparison: []const u8,
         corresponding_span: SourceMappings.CorrespondingSpan,

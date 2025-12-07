@@ -154,7 +154,7 @@ gpa: Allocator,
 /// Allocations in this arena live all the way until `Compilation.deinit`.
 arena: Allocator,
 io: Io,
-cwd: std.fs.Dir,
+cwd: Io.Dir,
 diagnostics: *Diagnostics,
 
 sources: std.StringArrayHashMapUnmanaged(Source) = .empty,
@@ -181,7 +181,7 @@ pragma_handlers: std.StringArrayHashMapUnmanaged(*Pragma) = .empty,
 /// Used by MS extensions which allow searching for includes relative to the directory of the main source file.
 ms_cwd_source_id: ?Source.Id = null,
 
-pub fn init(gpa: Allocator, arena: Allocator, io: Io, diagnostics: *Diagnostics, cwd: std.fs.Dir) Compilation {
+pub fn init(gpa: Allocator, arena: Allocator, io: Io, diagnostics: *Diagnostics, cwd: Io.Dir) Compilation {
     return .{
         .gpa = gpa,
         .arena = arena,
@@ -193,7 +193,7 @@ pub fn init(gpa: Allocator, arena: Allocator, io: Io, diagnostics: *Diagnostics,
 
 /// Initialize Compilation with default environment,
 /// pragma handlers and emulation mode set to target.
-pub fn initDefault(gpa: Allocator, arena: Allocator, io: Io, diagnostics: *Diagnostics, cwd: std.fs.Dir) !Compilation {
+pub fn initDefault(gpa: Allocator, arena: Allocator, io: Io, diagnostics: *Diagnostics, cwd: Io.Dir) !Compilation {
     var comp: Compilation = .{
         .gpa = gpa,
         .arena = arena,

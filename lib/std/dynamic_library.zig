@@ -157,7 +157,7 @@ pub const ElfDynLib = struct {
         dt_gnu_hash: *elf.gnu_hash.Header,
     };
 
-    fn openPath(path: []const u8, io: Io) !std.fs.Dir {
+    fn openPath(path: []const u8, io: Io) !Io.Dir {
         if (path.len == 0) return error.NotDir;
         var parts = std.mem.tokenizeScalar(u8, path, '/');
         var parent = if (path[0] == '/') try std.fs.cwd().openDir("/", .{}) else std.fs.cwd();

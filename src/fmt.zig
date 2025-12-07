@@ -204,7 +204,7 @@ pub fn run(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) !
     }
 }
 
-fn fmtPath(fmt: *Fmt, file_path: []const u8, check_mode: bool, dir: fs.Dir, sub_path: []const u8) !void {
+fn fmtPath(fmt: *Fmt, file_path: []const u8, check_mode: bool, dir: Io.Dir, sub_path: []const u8) !void {
     fmtPathFile(fmt, file_path, check_mode, dir, sub_path) catch |err| switch (err) {
         error.IsDir, error.AccessDenied => return fmtPathDir(fmt, file_path, check_mode, dir, sub_path),
         else => {
@@ -219,7 +219,7 @@ fn fmtPathDir(
     fmt: *Fmt,
     file_path: []const u8,
     check_mode: bool,
-    parent_dir: fs.Dir,
+    parent_dir: Io.Dir,
     parent_sub_path: []const u8,
 ) !void {
     const io = fmt.io;
@@ -257,7 +257,7 @@ fn fmtPathFile(
     fmt: *Fmt,
     file_path: []const u8,
     check_mode: bool,
-    dir: fs.Dir,
+    dir: Io.Dir,
     sub_path: []const u8,
 ) !void {
     const io = fmt.io;
