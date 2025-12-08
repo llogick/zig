@@ -509,7 +509,7 @@ pub fn serveTarFile(ws: *WebServer, request: *http.Server.Request, paths: []cons
             continue;
         };
         defer file.close(io);
-        const stat = try file.stat();
+        const stat = try file.stat(io);
         var read_buffer: [1024]u8 = undefined;
         var file_reader: Io.File.Reader = .initSize(file, io, &read_buffer, stat.size);
 

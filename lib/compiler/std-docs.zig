@@ -227,7 +227,7 @@ fn serveSourcesTar(request: *std.http.Server.Request, context: *Context) !void {
         }
         var file = try entry.dir.openFile(io, entry.basename, .{});
         defer file.close(io);
-        const stat = try file.stat();
+        const stat = try file.stat(io);
         var file_reader: std.Io.File.Reader = .{
             .file = file,
             .interface = std.Io.File.Reader.initInterface(&.{}),

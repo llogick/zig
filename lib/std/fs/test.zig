@@ -350,7 +350,7 @@ test "File.stat on a File that is a symlink returns Kind.sym_link" {
             };
             defer symlink.close(io);
 
-            const stat = try symlink.stat();
+            const stat = try symlink.stat(io);
             try testing.expectEqual(File.Kind.sym_link, stat.kind);
         }
     }.impl);
@@ -396,7 +396,7 @@ test "openDirAbsolute" {
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
-    const tmp_ino = (try tmp.dir.stat()).inode;
+    const tmp_ino = (try tmp.dir.stat(io)).inode;
 
     try tmp.dir.makeDir("subdir");
     const sub_path = try tmp.dir.realpathAlloc(testing.allocator, "subdir");
@@ -406,7 +406,7 @@ test "openDirAbsolute" {
     var tmp_sub = try fs.openDirAbsolute(sub_path, .{});
     defer tmp_sub.close(io);
 
-    const sub_ino = (try tmp_sub.stat()).inode;
+    const sub_ino = (try tmp_sub.stat(io)).inode;
 
     {
         // Can open sub_path + ".."
@@ -416,7 +416,7 @@ test "openDirAbsolute" {
         var dir = try fs.openDirAbsolute(dir_path, .{});
         defer dir.close(io);
 
-        const ino = (try dir.stat()).inode;
+        const ino = (try dir.stat(io)).inode;
         try testing.expectEqual(tmp_ino, ino);
     }
 
@@ -428,7 +428,7 @@ test "openDirAbsolute" {
         var dir = try fs.openDirAbsolute(dir_path, .{});
         defer dir.close(io);
 
-        const ino = (try dir.stat()).inode;
+        const ino = (try dir.stat(io)).inode;
         try testing.expectEqual(sub_ino, ino);
     }
 
@@ -440,7 +440,7 @@ test "openDirAbsolute" {
         var dir = try fs.openDirAbsolute(dir_path, .{});
         defer dir.close(io);
 
-        const ino = (try dir.stat()).inode;
+        const ino = (try dir.stat(io)).inode;
         try testing.expectEqual(tmp_ino, ino);
     }
 }
@@ -849,7 +849,7 @@ test "directory operations on files" {
 
             // ensure the file still exists and is a file as a sanity check
             file = try ctx.dir.openFile(io, test_file_name, .{});
-            const stat = try file.stat();
+            const stat = try file.stat(io);
             try testing.expectEqual(File.Kind.file, stat.kind);
             file.close(io);
         }
@@ -1151,7 +1151,7 @@ test "renameAbsolute" {
     // ensure the file was renamed
     try testing.expectError(error.FileNotFound, tmp_dir.dir.openFile(io, test_file_name, .{}));
     file = try tmp_dir.dir.openFile(io, renamed_test_file_name, .{});
-    const stat = try file.stat();
+    const stat = try file.stat(io);
     try testing.expectEqual(File.Kind.file, stat.kind);
     file.close(io);
 
@@ -2099,17 +2099,17 @@ test "chmod" {
 
     const file = try tmp.dir.createFile(io, "test_file", .{ .mode = 0o600 });
     defer file.close(io);
-    try testing.expectEqual(@as(File.Mode, 0o600), (try file.stat()).mode & 0o7777);
+    try testing.expectEqual(@as(File.Mode, 0o600), (try file.stat(io)).mode & 0o7777);
 
     try file.chmod(0o644);
-    try testing.expectEqual(@as(File.Mode, 0o644), (try file.stat()).mode & 0o7777);
+    try testing.expectEqual(@as(File.Mode, 0o644), (try file.stat(io)).mode & 0o7777);
 
     try tmp.dir.makeDir("test_dir");
     var dir = try tmp.dir.openDir(io, "test_dir", .{ .iterate = true });
     defer dir.close(io);
 
     try dir.chmod(0o700);
-    try testing.expectEqual(@as(File.Mode, 0o700), (try dir.stat()).mode & 0o7777);
+    try testing.expectEqual(@as(File.Mode, 0o700), (try dir.stat(io)).mode & 0o7777);
 }
 
 test "chown" {

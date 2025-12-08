@@ -742,7 +742,7 @@ pub fn loadInput(self: *Elf, input: link.Input) !void {
         .dso_exact => @panic("TODO"),
         .object => |obj| try parseObject(self, obj),
         .archive => |obj| try parseArchive(gpa, diags, &self.file_handles, &self.files, target, debug_fmt_strip, default_sym_version, &self.objects, obj, is_static_lib),
-        .dso => |dso| try parseDso(gpa, diags, dso, &self.shared_objects, &self.files, target),
+        .dso => |dso| try parseDso(gpa, io, diags, dso, &self.shared_objects, &self.files, target),
     }
 }
 
@@ -1136,6 +1136,7 @@ fn parseArchive(
 
 fn parseDso(
     gpa: Allocator,
+    io: Io,
     diags: *Diags,
     dso: link.Input.Dso,
     shared_objects: *std.StringArrayHashMapUnmanaged(File.Index),
@@ -1147,7 +1148,7 @@ fn parseDso(
 
     const handle = dso.file;
 
-    const stat = Stat.fromFs(try handle.stat());
+    const stat = Stat.fromFs(try handle.stat(io));
     var header = try SharedObject.parseHeader(gpa, diags, dso.path, handle, stat, target);
     defer header.deinit(gpa);
 

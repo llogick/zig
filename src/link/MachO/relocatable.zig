@@ -22,7 +22,7 @@ pub fn flushObject(macho_file: *MachO, comp: *Compilation, module_obj_path: ?Pat
         const path = positionals.items[0].path().?;
         const in_file = path.root_dir.handle.openFile(io, path.sub_path, .{}) catch |err|
             return diags.fail("failed to open {f}: {s}", .{ path, @errorName(err) });
-        const stat = in_file.stat() catch |err|
+        const stat = in_file.stat(io) catch |err|
             return diags.fail("failed to stat {f}: {s}", .{ path, @errorName(err) });
         const amt = in_file.copyRangeAll(0, macho_file.base.file.?, 0, stat.size) catch |err|
             return diags.fail("failed to copy range of file {f}: {s}", .{ path, @errorName(err) });

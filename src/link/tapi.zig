@@ -139,9 +139,9 @@ pub const LibStub = struct {
     /// Typed contents of the tbd file.
     inner: []Tbd,
 
-    pub fn loadFromFile(allocator: Allocator, file: Io.File) TapiError!LibStub {
+    pub fn loadFromFile(allocator: Allocator, io: Io, file: Io.File) TapiError!LibStub {
         const filesize = blk: {
-            const stat = file.stat() catch break :blk std.math.maxInt(u32);
+            const stat = file.stat(io) catch break :blk std.math.maxInt(u32);
             break :blk @min(stat.size, std.math.maxInt(u32));
         };
         const source = try allocator.alloc(u8, filesize);

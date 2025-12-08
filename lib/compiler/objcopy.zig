@@ -155,7 +155,7 @@ fn cmdObjCopy(gpa: Allocator, arena: Allocator, args: []const []const u8) !void 
     const input_file = Io.Dir.cwd().openFile(input, .{}) catch |err| fatal("failed to open {s}: {t}", .{ input, err });
     defer input_file.close(io);
 
-    const stat = input_file.stat() catch |err| fatal("failed to stat {s}: {t}", .{ input, err });
+    const stat = input_file.stat(io) catch |err| fatal("failed to stat {s}: {t}", .{ input, err });
 
     var in: File.Reader = .initSize(input_file, io, &input_buffer, stat.size);
 

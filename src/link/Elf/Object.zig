@@ -122,13 +122,14 @@ pub fn parse(
 pub fn parseCommon(
     self: *Object,
     gpa: Allocator,
+    io: Io,
     diags: *Diags,
     path: Path,
     handle: Io.File,
     target: *const std.Target,
 ) !void {
     const offset = if (self.archive) |ar| ar.offset else 0;
-    const file_size = (try handle.stat()).size;
+    const file_size = (try handle.stat(io)).size;
 
     const header_buffer = try Elf.preadAllAlloc(gpa, handle, offset, @sizeOf(elf.Elf64_Ehdr));
     defer gpa.free(header_buffer);
@@ -1122,9 +1123,11 @@ pub fn updateArSymtab(self: Object, ar_symtab: *Archive.ArSymtab, elf_file: *Elf
 }
 
 pub fn updateArSize(self: *Object, elf_file: *Elf) !void {
+    const comp = elf_file.base.comp;
+    const io = comp.io;
     self.output_ar_state.size = if (self.archive) |ar| ar.size else size: {
         const handle = elf_file.fileHandle(self.file_handle);
-        break :size (try handle.stat()).size;
+        break :size (try handle.stat(io)).size;
     };
 }
 

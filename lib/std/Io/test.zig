@@ -124,13 +124,13 @@ test "updateTimes" {
     var file = try tmp.dir.createFile(io, tmp_file_name, .{ .read = true });
     defer file.close(io);
 
-    const stat_old = try file.stat();
+    const stat_old = try file.stat(io);
     // Set atime and mtime to 5s before
     try file.updateTimes(
         stat_old.atime.subDuration(.fromSeconds(5)),
         stat_old.mtime.subDuration(.fromSeconds(5)),
     );
-    const stat_new = try file.stat();
+    const stat_new = try file.stat(io);
     try expect(stat_new.atime.nanoseconds < stat_old.atime.nanoseconds);
     try expect(stat_new.mtime.nanoseconds < stat_old.mtime.nanoseconds);
 }

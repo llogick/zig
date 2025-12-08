@@ -1080,7 +1080,7 @@ pub const File = struct {
         };
         defer f.close(io);
 
-        const stat = f.stat() catch |err| switch (err) {
+        const stat = f.stat(io) catch |err| switch (err) {
             error.Streaming => {
                 // Since `file.stat` is populated, this was previously a file stream; since it is
                 // now not a file stream, it must have changed.

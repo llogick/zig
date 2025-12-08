@@ -226,7 +226,7 @@ pub const ElfDynLib = struct {
         defer posix.close(fd);
 
         const file: Io.File = .{ .handle = fd };
-        const stat = try file.stat();
+        const stat = try file.stat(io);
         const size = std.math.cast(usize, stat.size) orelse return error.FileTooBig;
 
         const page_size = std.heap.pageSize();

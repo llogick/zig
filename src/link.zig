@@ -1112,10 +1112,10 @@ pub const File = struct {
 
     fn loadGnuLdScript(base: *File, path: Path, parent_query: UnresolvedInput.Query, file: Io.File) anyerror!void {
         const comp = base.comp;
+        const io = comp.io;
         const diags = &comp.link_diags;
         const gpa = comp.gpa;
-        const io = comp.io;
-        const stat = try file.stat();
+        const stat = try file.stat(io);
         const size = std.math.cast(u32, stat.size) orelse return error.FileTooBig;
         const buf = try gpa.alloc(u8, size);
         defer gpa.free(buf);
@@ -2180,7 +2180,7 @@ fn resolvePathInputLib(
             // Appears to be an ELF or archive file.
             return finishResolveLibInput(resolved_inputs, test_path, file, link_mode, pq.query);
         }
-        const stat = file.stat() catch |err|
+        const stat = file.stat(io) catch |err|
             fatal("failed to stat {f}: {s}", .{ test_path, @errorName(err) });
         const size = std.math.cast(u32, stat.size) orelse
             fatal("{f}: linker script too big", .{test_path});

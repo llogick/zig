@@ -21,7 +21,7 @@ test "fallocate" {
     const file = try tmp.dir.createFile(io, path, .{ .truncate = true, .mode = 0o666 });
     defer file.close(io);
 
-    try expect((try file.stat()).size == 0);
+    try expect((try file.stat(io)).size == 0);
 
     const len: i64 = 65536;
     switch (linux.errno(linux.fallocate(file.handle, 0, 0, len))) {
@@ -31,7 +31,7 @@ test "fallocate" {
         else => |errno| std.debug.panic("unhandled errno: {}", .{errno}),
     }
 
-    try expect((try file.stat()).size == len);
+    try expect((try file.stat(io)).size == len);
 }
 
 test "getpid" {

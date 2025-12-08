@@ -188,7 +188,7 @@ pub fn run(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) !
             error.IsDir => dir: {
                 var dir = try Io.Dir.cwd().openDir(io, file_path, .{});
                 defer dir.close(io);
-                break :dir try dir.stat();
+                break :dir try dir.stat(io);
             },
             else => |e| return e,
         };
@@ -227,7 +227,7 @@ fn fmtPathDir(
     var dir = try parent_dir.openDir(io, parent_sub_path, .{ .iterate = true });
     defer dir.close(io);
 
-    const stat = try dir.stat();
+    const stat = try dir.stat(io);
     if (try fmt.seen.fetchPut(stat.inode, {})) |_| return;
 
     var dir_it = dir.iterate();
@@ -266,7 +266,7 @@ fn fmtPathFile(
     var file_closed = false;
     errdefer if (!file_closed) source_file.close(io);
 
-    const stat = try source_file.stat();
+    const stat = try source_file.stat(io);
 
     if (stat.kind == .directory)
         return error.IsDir;

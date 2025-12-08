@@ -1689,9 +1689,11 @@ pub fn updateArSymtab(self: Object, ar_symtab: *Archive.ArSymtab, macho_file: *M
 }
 
 pub fn updateArSize(self: *Object, macho_file: *MachO) !void {
+    const comp = macho_file.base.comp;
+    const io = comp.io;
     self.output_ar_state.size = if (self.in_archive) |ar| ar.size else size: {
         const file = macho_file.getFileHandle(self.file_handle);
-        break :size (try file.stat()).size;
+        break :size (try file.stat(io)).size;
     };
 }
 

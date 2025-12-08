@@ -98,7 +98,7 @@ pub fn updateFile(
     };
     defer source_file.close(io);
 
-    const stat = try source_file.stat();
+    const stat = try source_file.stat(io);
 
     const want_local_cache = switch (file.path.root) {
         .none, .local_cache => true,
@@ -2470,7 +2470,7 @@ fn updateEmbedFileInner(
     };
     defer file.close(io);
 
-    const stat: Cache.File.Stat = .fromFs(try file.stat());
+    const stat: Cache.File.Stat = .fromFs(try file.stat(io));
 
     if (ef.val != .none) {
         const old_stat = ef.stat;

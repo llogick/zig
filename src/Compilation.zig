@@ -5367,7 +5367,7 @@ fn docsCopyModule(
             });
         };
         defer file.close(io);
-        const stat = try file.stat();
+        const stat = try file.stat(io);
         var file_reader: Io.File.Reader = .initSize(file, io, &buffer, stat.size);
 
         archiver.writeFileTimestamp(entry.path, &file_reader, stat.mtime) catch |err| {

@@ -925,6 +925,7 @@ fn addObject(self: *MachO, path: Path, handle_index: File.HandleIndex, offset: u
 
     const comp = self.base.comp;
     const gpa = comp.gpa;
+    const io = comp.io;
 
     const abs_path = try std.fs.path.resolvePosix(gpa, &.{
         comp.dirs.cwd,
@@ -934,7 +935,7 @@ fn addObject(self: *MachO, path: Path, handle_index: File.HandleIndex, offset: u
     errdefer gpa.free(abs_path);
 
     const file = self.getFileHandle(handle_index);
-    const stat = try file.stat();
+    const stat = try file.stat(io);
     const mtime = stat.mtime.toSeconds();
     const index: File.Index = @intCast(try self.files.addOne(gpa));
     self.files.set(index, .{ .object = .{

@@ -1,3 +1,21 @@
+const Archive = @This();
+
+const std = @import("std");
+const Io = std.Io;
+const assert = std.debug.assert;
+const elf = std.elf;
+const fs = std.fs;
+const log = std.log.scoped(.link);
+const mem = std.mem;
+const Path = std.Build.Cache.Path;
+const Allocator = std.mem.Allocator;
+
+const Diags = @import("../../link.zig").Diags;
+const Elf = @import("../Elf.zig");
+const File = @import("file.zig").File;
+const Object = @import("Object.zig");
+const StringTable = @import("../StringTable.zig");
+
 objects: []const Object,
 /// '\n'-delimited
 strtab: []const u8,
@@ -10,6 +28,7 @@ pub fn deinit(a: *Archive, gpa: Allocator) void {
 
 pub fn parse(
     gpa: Allocator,
+    io: Io,
     diags: *Diags,
     file_handles: *const std.ArrayList(File.Handle),
     path: Path,
@@ -25,7 +44,7 @@ pub fn parse(
         pos += magic_buffer.len;
     }
 
-    const size = (try handle.stat()).size;
+    const size = (try handle.stat(io)).size;
 
     var objects: std.ArrayList(Object) = .empty;
     defer objects.deinit(gpa);
@@ -120,7 +139,7 @@ pub fn setArHdr(opts: struct {
     @memset(mem.asBytes(&hdr), 0x20);
 
     {
-        var writer: std.Io.Writer = .fixed(&hdr.ar_name);
+        var writer: Io.Writer = .fixed(&hdr.ar_name);
         switch (opts.name) {
             .symtab => writer.print("{s}", .{elf.SYM64NAME}) catch unreachable,
             .strtab => writer.print("//", .{}) catch unreachable,
@@ -133,7 +152,7 @@ pub fn setArHdr(opts: struct {
     hdr.ar_gid[0] = '0';
     hdr.ar_mode[0] = '0';
     {
-        var writer: std.Io.Writer = .fixed(&hdr.ar_size);
+        var writer: Io.Writer = .fixed(&hdr.ar_size);
         writer.print("{d}", .{opts.size}) catch unreachable;
     }
     hdr.ar_fmag = elf.ARFMAG.*;
@@ -206,7 +225,7 @@ pub const ArSymtab = struct {
         ar: ArSymtab,
         elf_file: *Elf,
 
-        fn default(f: Format, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        fn default(f: Format, writer: *Io.Writer) Io.Writer.Error!void {
             const ar = f.ar;
             const elf_file = f.elf_file;
             for (ar.symtab.items, 0..) |entry, i| {
@@ -261,7 +280,7 @@ pub const ArStrtab = struct {
         try writer.writeAll(ar.buffer.items);
     }
 
-    pub fn format(ar: ArStrtab, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+    pub fn format(ar: ArStrtab, writer: *Io.Writer) Io.Writer.Error!void {
         try writer.print("{f}", .{std.ascii.hexEscape(ar.buffer.items, .lower)});
     }
 };
@@ -277,19 +296,3 @@ pub const ArState = struct {
     /// Total size of the contributing object (excludes ar_hdr).
     size: u64 = 0,
 };
-
-const std = @import("std");
-const assert = std.debug.assert;
-const elf = std.elf;
-const fs = std.fs;
-const log = std.log.scoped(.link);
-const mem = std.mem;
-const Path = std.Build.Cache.Path;
-const Allocator = std.mem.Allocator;
-
-const Diags = @import("../../link.zig").Diags;
-const Archive = @This();
-const Elf = @import("../Elf.zig");
-const File = @import("file.zig").File;
-const Object = @import("Object.zig");
-const StringTable = @import("../StringTable.zig");

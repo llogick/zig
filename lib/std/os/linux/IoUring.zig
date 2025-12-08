@@ -2655,7 +2655,7 @@ test "fallocate" {
     const file = try tmp.dir.createFile(io, path, .{ .truncate = true, .mode = 0o666 });
     defer file.close(io);
 
-    try testing.expectEqual(@as(u64, 0), (try file.stat()).size);
+    try testing.expectEqual(@as(u64, 0), (try file.stat(io)).size);
 
     const len: u64 = 65536;
     const sqe = try ring.fallocate(0xaaaaaaaa, file.handle, 0, 0, len);
@@ -2681,7 +2681,7 @@ test "fallocate" {
         .flags = 0,
     }, cqe);
 
-    try testing.expectEqual(len, (try file.stat()).size);
+    try testing.expectEqual(len, (try file.stat(io)).size);
 }
 
 test "statx" {
@@ -2702,7 +2702,7 @@ test "statx" {
     const file = try tmp.dir.createFile(io, path, .{ .truncate = true, .mode = 0o666 });
     defer file.close(io);
 
-    try testing.expectEqual(@as(u64, 0), (try file.stat()).size);
+    try testing.expectEqual(@as(u64, 0), (try file.stat(io)).size);
 
     try file.writeAll("foobar");
 

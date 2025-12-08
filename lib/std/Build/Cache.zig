@@ -775,7 +775,7 @@ pub const Manifest = struct {
             };
             defer this_file.close(io);
 
-            const actual_stat = this_file.stat() catch |err| {
+            const actual_stat = this_file.stat(io) catch |err| {
                 self.diagnostic = .{ .file_stat = .{
                     .file_index = idx,
                     .err = err,
@@ -883,7 +883,7 @@ pub const Manifest = struct {
             defer file.close(io);
 
             // Save locally and also save globally (we still hold the global lock).
-            const stat = file.stat() catch |err| switch (err) {
+            const stat = file.stat(io) catch |err| switch (err) {
                 error.Canceled => return error.Canceled,
                 else => return true,
             };
@@ -909,7 +909,8 @@ pub const Manifest = struct {
     }
 
     fn populateFileHashHandle(self: *Manifest, ch_file: *File, handle: Io.File) !void {
-        const actual_stat = try handle.stat();
+        const io = self.cache.io;
+        const actual_stat = try handle.stat(io);
         ch_file.stat = .{
             .size = actual_stat.size,
             .mtime = actual_stat.mtime,
@@ -1333,7 +1334,7 @@ fn testGetCurrentFileTimestamp(io: Io, dir: Io.Dir) !Io.Timestamp {
         dir.deleteFile(test_out_file) catch {};
     }
 
-    return (try file.stat()).mtime;
+    return (try file.stat(io)).mtime;
 }
 
 test "cache file and then recall it" {

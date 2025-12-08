@@ -38,7 +38,7 @@ pub fn openFileNotDir(
     errdefer file.close(io);
     // https://github.com/ziglang/zig/issues/5732
     if (builtin.os.tag != .windows) {
-        const stat = try file.stat();
+        const stat = try file.stat(io);
 
         if (stat.kind == .directory)
             return error.IsDir;
