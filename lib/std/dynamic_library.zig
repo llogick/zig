@@ -160,9 +160,9 @@ pub const ElfDynLib = struct {
     fn openPath(path: []const u8, io: Io) !Io.Dir {
         if (path.len == 0) return error.NotDir;
         var parts = std.mem.tokenizeScalar(u8, path, '/');
-        var parent = if (path[0] == '/') try Io.Dir.cwd().openDir("/", .{}) else Io.Dir.cwd();
+        var parent = if (path[0] == '/') try Io.Dir.cwd().openDir(io, "/", .{}) else Io.Dir.cwd();
         while (parts.next()) |part| {
-            const child = try parent.openDir(part, .{});
+            const child = try parent.openDir(io, part, .{});
             parent.close(io);
             parent = child;
         }
@@ -184,7 +184,7 @@ pub const ElfDynLib = struct {
     }
 
     fn resolveFromParent(io: Io, dir_path: []const u8, file_name: []const u8) ?posix.fd_t {
-        var dir = Io.Dir.cwd().openDir(dir_path, .{}) catch return null;
+        var dir = Io.Dir.cwd().openDir(io, dir_path, .{}) catch return null;
         defer dir.close(io);
         return posix.openat(dir.handle, file_name, .{
             .ACCMODE = .RDONLY,

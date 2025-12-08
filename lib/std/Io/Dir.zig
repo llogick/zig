@@ -234,7 +234,7 @@ pub const SelectiveWalker = struct {
             return;
         }
 
-        var new_dir = entry.dir.openDir(entry.basename, .{ .iterate = true }) catch |err| {
+        var new_dir = entry.dir.openDir(io, entry.basename, .{ .iterate = true }) catch |err| {
             switch (err) {
                 error.NameTooLong => unreachable,
                 else => |e| return e,
@@ -1326,7 +1326,7 @@ pub fn deleteTree(dir: Dir, io: Io, sub_path: []const u8) DeleteTreeError!void {
                 var treat_as_dir = true;
                 handle_entry: while (true) {
                     if (treat_as_dir) {
-                        break :iterable_dir parent_dir.openDir(name, .{
+                        break :iterable_dir parent_dir.openDir(io, name, .{
                             .follow_symlinks = false,
                             .iterate = true,
                         }) catch |err| switch (err) {
@@ -1430,7 +1430,7 @@ fn deleteTreeMinStackSizeWithKindHint(parent: Dir, io: Io, sub_path: []const u8,
                 var treat_as_dir = entry.kind == .directory;
                 handle_entry: while (true) {
                     if (treat_as_dir) {
-                        const new_dir = dir.openDir(entry.name, .{
+                        const new_dir = dir.openDir(io, entry.name, .{
                             .follow_symlinks = false,
                             .iterate = true,
                         }) catch |err| switch (err) {
@@ -1520,14 +1520,14 @@ fn deleteTreeMinStackSizeWithKindHint(parent: Dir, io: Io, sub_path: []const u8,
 }
 
 /// On successful delete, returns null.
-fn deleteTreeOpenInitialSubpath(dir: Dir, sub_path: []const u8, kind_hint: File.Kind) !?Dir {
+fn deleteTreeOpenInitialSubpath(dir: Dir, io: Io, sub_path: []const u8, kind_hint: File.Kind) !?Dir {
     return iterable_dir: {
         // Treat as a file by default
         var treat_as_dir = kind_hint == .directory;
 
         handle_entry: while (true) {
             if (treat_as_dir) {
-                break :iterable_dir dir.openDir(sub_path, .{
+                break :iterable_dir dir.openDir(io, sub_path, .{
                     .follow_symlinks = false,
                     .iterate = true,
                 }) catch |err| switch (err) {

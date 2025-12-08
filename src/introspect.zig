@@ -21,7 +21,7 @@ fn testZigInstallPrefix(io: Io, base_dir: Io.Dir) ?Cache.Directory {
     zig_dir: {
         // Try lib/zig/std/std.zig
         const lib_zig = "lib" ++ fs.path.sep_str ++ "zig";
-        var test_zig_dir = base_dir.openDir(lib_zig, .{}) catch break :zig_dir;
+        var test_zig_dir = base_dir.openDir(io, lib_zig, .{}) catch break :zig_dir;
         const file = test_zig_dir.openFile(io, test_index_file, .{}) catch {
             test_zig_dir.close(io);
             break :zig_dir;
@@ -31,7 +31,7 @@ fn testZigInstallPrefix(io: Io, base_dir: Io.Dir) ?Cache.Directory {
     }
 
     // Try lib/std/std.zig
-    var test_zig_dir = base_dir.openDir("lib", .{}) catch return null;
+    var test_zig_dir = base_dir.openDir(io, "lib", .{}) catch return null;
     const file = test_zig_dir.openFile(io, test_index_file, .{}) catch {
         test_zig_dir.close(io);
         return null;
@@ -85,7 +85,7 @@ pub fn findZigLibDirFromSelfExe(
     const cwd = Io.Dir.cwd();
     var cur_path: []const u8 = self_exe_path;
     while (fs.path.dirname(cur_path)) |dirname| : (cur_path = dirname) {
-        var base_dir = cwd.openDir(dirname, .{}) catch continue;
+        var base_dir = cwd.openDir(io, dirname, .{}) catch continue;
         defer base_dir.close(io);
 
         const sub_directory = testZigInstallPrefix(io, base_dir) orelse continue;

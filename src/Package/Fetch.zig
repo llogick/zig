@@ -383,7 +383,7 @@ pub fn run(f: *Fetch) RunError!void {
         },
         .remote => |remote| remote,
         .path_or_url => |path_or_url| {
-            if (Io.Dir.cwd().openDir(path_or_url, .{ .iterate = true })) |dir| {
+            if (Io.Dir.cwd().openDir(io, path_or_url, .{ .iterate = true })) |dir| {
                 var resource: Resource = .{ .dir = dir };
                 return f.runResource(path_or_url, &resource, null);
             } else |dir_err| {
@@ -2311,8 +2311,9 @@ const TestFetchBuilder = struct {
     }
 
     fn packageDir(self: *TestFetchBuilder) !Io.Dir {
+        const io = self.job_queue.io;
         const root = self.fetch.package_root;
-        return try root.root_dir.handle.openDir(root.sub_path, .{ .iterate = true });
+        return try root.root_dir.handle.openDir(io, root.sub_path, .{ .iterate = true });
     }
 
     // Test helper, asserts thet package dir constains expected_files.

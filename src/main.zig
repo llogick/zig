@@ -713,7 +713,7 @@ const Emit = union(enum) {
             } else e: {
                 // If there's a dirname, check that dir exists. This will give a more descriptive error than `Compilation` otherwise would.
                 if (fs.path.dirname(path)) |dir_path| {
-                    var dir = Io.Dir.cwd().openDir(dir_path, .{}) catch |err| {
+                    var dir = Io.Dir.cwd().openDir(io, dir_path, .{}) catch |err| {
                         fatal("unable to open output directory '{s}': {s}", .{ dir_path, @errorName(err) });
                     };
                     dir.close(io);
@@ -3304,7 +3304,7 @@ fn buildOutputType(
         } else emit: {
             // If there's a dirname, check that dir exists. This will give a more descriptive error than `Compilation` otherwise would.
             if (fs.path.dirname(path)) |dir_path| {
-                var dir = Io.Dir.cwd().openDir(dir_path, .{}) catch |err| {
+                var dir = Io.Dir.cwd().openDir(io, dir_path, .{}) catch |err| {
                     fatal("unable to open output directory '{s}': {s}", .{ dir_path, @errorName(err) });
                 };
                 dir.close(io);
@@ -3959,14 +3959,14 @@ fn createModule(
                 if (fs.path.isAbsolute(lib_dir_arg)) {
                     const stripped_dir = lib_dir_arg[fs.path.parsePath(lib_dir_arg).root.len..];
                     const full_path = try fs.path.join(arena, &[_][]const u8{ root, stripped_dir });
-                    addLibDirectoryWarn(&create_module.lib_directories, full_path);
+                    addLibDirectoryWarn(io, &create_module.lib_directories, full_path);
                 } else {
-                    addLibDirectoryWarn(&create_module.lib_directories, lib_dir_arg);
+                    addLibDirectoryWarn(io, &create_module.lib_directories, lib_dir_arg);
                 }
             }
         } else {
             for (create_module.lib_dir_args.items) |lib_dir_arg| {
-                addLibDirectoryWarn(&create_module.lib_directories, lib_dir_arg);
+                addLibDirectoryWarn(io, &create_module.lib_directories, lib_dir_arg);
             }
         }
         create_module.lib_dir_args = undefined; // From here we use lib_directories instead.
@@ -4002,7 +4002,7 @@ fn createModule(
             try create_module.rpath_list.appendSlice(arena, paths.rpaths.items);
 
             try create_module.lib_directories.ensureUnusedCapacity(arena, paths.lib_dirs.items.len);
-            for (paths.lib_dirs.items) |path| addLibDirectoryWarn2(&create_module.lib_directories, path, true);
+            for (paths.lib_dirs.items) |path| addLibDirectoryWarn2(io, &create_module.lib_directories, path, true);
         }
 
         if (create_module.libc_paths_file) |paths_file| {
@@ -4026,8 +4026,8 @@ fn createModule(
                 };
             }
             try create_module.lib_directories.ensureUnusedCapacity(arena, 2);
-            addLibDirectoryWarn(&create_module.lib_directories, create_module.libc_installation.?.msvc_lib_dir.?);
-            addLibDirectoryWarn(&create_module.lib_directories, create_module.libc_installation.?.kernel32_lib_dir.?);
+            addLibDirectoryWarn(io, &create_module.lib_directories, create_module.libc_installation.?.msvc_lib_dir.?);
+            addLibDirectoryWarn(io, &create_module.lib_directories, create_module.libc_installation.?.kernel32_lib_dir.?);
         }
 
         // Destructively mutates but does not transfer ownership of `unresolved_link_inputs`.
@@ -5118,7 +5118,7 @@ fn cmdBuild(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) 
     process.raiseFileDescriptorLimit();
 
     const cwd_path = try introspect.getResolvedCwd(arena);
-    const build_root = try findBuildRoot(arena, .{
+    const build_root = try findBuildRoot(arena, io, .{
         .cwd_path = cwd_path,
         .build_file = build_file,
     });
@@ -5227,7 +5227,7 @@ fn cmdBuild(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) 
                 if (system_pkg_dir_path) |p| {
                     job_queue.global_cache = .{
                         .path = p,
-                        .handle = Io.Dir.cwd().openDir(p, .{}) catch |err| {
+                        .handle = Io.Dir.cwd().openDir(io, p, .{}) catch |err| {
                             fatal("unable to open system package directory '{s}': {s}", .{
                                 p, @errorName(err),
                             });
@@ -7039,7 +7039,7 @@ fn cmdFetch(
 
     const cwd_path = try introspect.getResolvedCwd(arena);
 
-    var build_root = try findBuildRoot(arena, .{
+    var build_root = try findBuildRoot(arena, io, .{
         .cwd_path = cwd_path,
     });
     defer build_root.deinit();
@@ -7251,7 +7251,7 @@ const FindBuildRootOptions = struct {
     cwd_path: ?[]const u8 = null,
 };
 
-fn findBuildRoot(arena: Allocator, options: FindBuildRootOptions) !BuildRoot {
+fn findBuildRoot(arena: Allocator, io: Io, options: FindBuildRootOptions) !BuildRoot {
     const cwd_path = options.cwd_path orelse try introspect.getResolvedCwd(arena);
     const build_zig_basename = if (options.build_file) |bf|
         fs.path.basename(bf)
@@ -7260,7 +7260,7 @@ fn findBuildRoot(arena: Allocator, options: FindBuildRootOptions) !BuildRoot {
 
     if (options.build_file) |bf| {
         if (fs.path.dirname(bf)) |dirname| {
-            const dir = Io.Dir.cwd().openDir(dirname, .{}) catch |err| {
+            const dir = Io.Dir.cwd().openDir(io, dirname, .{}) catch |err| {
                 fatal("unable to open directory to build file from argument 'build-file', '{s}': {s}", .{ dirname, @errorName(err) });
             };
             return .{
@@ -7281,7 +7281,7 @@ fn findBuildRoot(arena: Allocator, options: FindBuildRootOptions) !BuildRoot {
     while (true) {
         const joined_path = try fs.path.join(arena, &[_][]const u8{ dirname, build_zig_basename });
         if (Io.Dir.cwd().access(joined_path, .{})) |_| {
-            const dir = Io.Dir.cwd().openDir(dirname, .{}) catch |err| {
+            const dir = Io.Dir.cwd().openDir(io, dirname, .{}) catch |err| {
                 fatal("unable to open directory while searching for build.zig file, '{s}': {s}", .{ dirname, @errorName(err) });
             };
             return .{
@@ -7464,7 +7464,7 @@ fn findTemplates(gpa: Allocator, arena: Allocator, io: Io) Templates {
 
     const s = fs.path.sep_str;
     const template_sub_path = "init";
-    const template_dir = zig_lib_directory.handle.openDir(template_sub_path, .{}) catch |err| {
+    const template_dir = zig_lib_directory.handle.openDir(io, template_sub_path, .{}) catch |err| {
         const path = zig_lib_directory.path orelse ".";
         fatal("unable to open zig project template directory '{s}{s}{s}': {s}", .{
             path, s, template_sub_path, @errorName(err),
@@ -7581,17 +7581,18 @@ fn anyObjectLinkInputs(link_inputs: []const link.UnresolvedInput) bool {
     return false;
 }
 
-fn addLibDirectoryWarn(lib_directories: *std.ArrayList(Directory), path: []const u8) void {
-    return addLibDirectoryWarn2(lib_directories, path, false);
+fn addLibDirectoryWarn(io: Io, lib_directories: *std.ArrayList(Directory), path: []const u8) void {
+    return addLibDirectoryWarn2(io, lib_directories, path, false);
 }
 
 fn addLibDirectoryWarn2(
+    io: Io,
     lib_directories: *std.ArrayList(Directory),
     path: []const u8,
     ignore_not_found: bool,
 ) void {
     lib_directories.appendAssumeCapacity(.{
-        .handle = Io.Dir.cwd().openDir(path, .{}) catch |err| {
+        .handle = Io.Dir.cwd().openDir(io, path, .{}) catch |err| {
             if (err == error.FileNotFound and ignore_not_found) return;
             warn("unable to open library directory '{s}': {s}", .{ path, @errorName(err) });
             return;

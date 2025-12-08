@@ -509,7 +509,7 @@ pub fn addBuiltinIncludeDir(tc: *const Toolchain) !void {
     }
     var search_path = d.aro_name;
     while (std.fs.path.dirname(search_path)) |dirname| : (search_path = dirname) {
-        var base_dir = d.comp.cwd.openDir(dirname, .{}) catch continue;
+        var base_dir = d.comp.cwd.openDir(io, dirname, .{}) catch continue;
         defer base_dir.close(io);
 
         base_dir.access("include/stddef.h", .{}) catch continue;

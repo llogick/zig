@@ -73,7 +73,7 @@ test AllTypes {
     try std.testing.expectEqualSlices(u8, encoded, buf);
 
     // Use this to update test file.
-    // const dir = try Io.Dir.cwd().openDir("lib/std/crypto/asn1", .{});
+    // const dir = try Io.Dir.cwd().openDir(io, "lib/std/crypto/asn1", .{});
     // var file = try dir.createFile(io, path, .{});
     // defer file.close(io);
     // try file.writeAll(buf);

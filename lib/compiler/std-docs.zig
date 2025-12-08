@@ -40,7 +40,7 @@ pub fn main() !void {
     const zig_exe_path = argv.next().?;
     const global_cache_path = argv.next().?;
 
-    var lib_dir = try Io.Dir.cwd().openDir(zig_lib_directory, .{});
+    var lib_dir = try Io.Dir.cwd().openDir(io, zig_lib_directory, .{});
     defer lib_dir.close(io);
 
     var listen_port: u16 = 0;
@@ -206,7 +206,7 @@ fn serveSourcesTar(request: *std.http.Server.Request, context: *Context) !void {
         },
     });
 
-    var std_dir = try context.lib_dir.openDir("std", .{ .iterate = true });
+    var std_dir = try context.lib_dir.openDir(io, "std", .{ .iterate = true });
     defer std_dir.close(io);
 
     var walker = try std_dir.walk(gpa);

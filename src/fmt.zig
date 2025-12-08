@@ -186,7 +186,7 @@ pub fn run(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) !
             error.FileNotFound => continue,
             // On Windows, statFile does not work for directories
             error.IsDir => dir: {
-                var dir = try Io.Dir.cwd().openDir(file_path, .{});
+                var dir = try Io.Dir.cwd().openDir(io, file_path, .{});
                 defer dir.close(io);
                 break :dir try dir.stat();
             },
@@ -224,7 +224,7 @@ fn fmtPathDir(
 ) !void {
     const io = fmt.io;
 
-    var dir = try parent_dir.openDir(parent_sub_path, .{ .iterate = true });
+    var dir = try parent_dir.openDir(io, parent_sub_path, .{ .iterate = true });
     defer dir.close(io);
 
     const stat = try dir.stat();

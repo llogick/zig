@@ -106,13 +106,13 @@ pub fn compile(allocator: Allocator, io: Io, source: []const u8, writer: *std.Io
         // If dirname returns null, then the root path will be the same as
         // the cwd so we don't need to add it as a distinct search path.
         if (std.fs.path.dirname(root_path)) |root_dir_path| {
-            var root_dir = try options.cwd.openDir(root_dir_path, .{});
+            var root_dir = try options.cwd.openDir(io, root_dir_path, .{});
             errdefer root_dir.close(io);
             try search_dirs.append(allocator, .{ .dir = root_dir, .path = try allocator.dupe(u8, root_dir_path) });
         }
     }
     // Re-open the passed in cwd since we want to be able to close it (Io.Dir.cwd() shouldn't be closed)
-    const cwd_dir = options.cwd.openDir(".", .{}) catch |err| {
+    const cwd_dir = options.cwd.openDir(io, ".", .{}) catch |err| {
         try options.diagnostics.append(.{
             .err = .failed_to_open_cwd,
             .token = .{
@@ -132,7 +132,7 @@ pub fn compile(allocator: Allocator, io: Io, source: []const u8, writer: *std.Io
     };
     try search_dirs.append(allocator, .{ .dir = cwd_dir, .path = null });
     for (options.extra_include_paths) |extra_include_path| {
-        var dir = openSearchPathDir(options.cwd, extra_include_path) catch {
+        var dir = openSearchPathDir(options.cwd, io, extra_include_path) catch {
             // TODO: maybe a warning that the search path is skipped?
             continue;
         };
@@ -140,7 +140,7 @@ pub fn compile(allocator: Allocator, io: Io, source: []const u8, writer: *std.Io
         try search_dirs.append(allocator, .{ .dir = dir, .path = try allocator.dupe(u8, extra_include_path) });
     }
     for (options.system_include_paths) |system_include_path| {
-        var dir = openSearchPathDir(options.cwd, system_include_path) catch {
+        var dir = openSearchPathDir(options.cwd, io, system_include_path) catch {
             // TODO: maybe a warning that the search path is skipped?
             continue;
         };
@@ -159,7 +159,7 @@ pub fn compile(allocator: Allocator, io: Io, source: []const u8, writer: *std.Io
         };
         var it = std.mem.tokenizeScalar(u8, INCLUDE, delimiter);
         while (it.next()) |search_path| {
-            var dir = openSearchPathDir(options.cwd, search_path) catch continue;
+            var dir = openSearchPathDir(options.cwd, io, search_path) catch continue;
             errdefer dir.close(io);
             try search_dirs.append(allocator, .{ .dir = dir, .path = try allocator.dupe(u8, search_path) });
         }
@@ -2896,11 +2896,11 @@ pub const Compiler = struct {
 
 pub const OpenSearchPathError = std.Io.Dir.OpenError;
 
-fn openSearchPathDir(dir: std.Io.Dir, path: []const u8) OpenSearchPathError!std.Io.Dir {
+fn openSearchPathDir(dir: std.Io.Dir, io: Io, path: []const u8) OpenSearchPathError!std.Io.Dir {
     // Validate the search path to avoid possible unreachable on invalid paths,
     // see https://github.com/ziglang/zig/issues/15607 for why this is currently necessary.
     try validateSearchPath(path);
-    return dir.openDir(path, .{});
+    return dir.openDir(io, path, .{});
 }
 
 /// Very crude attempt at validating a path. This is imperfect

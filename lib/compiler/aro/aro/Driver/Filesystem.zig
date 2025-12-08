@@ -223,9 +223,9 @@ pub const Filesystem = union(enum) {
         };
     }
 
-    pub fn openDir(fs: Filesystem, dir_name: []const u8) std.Io.Dir.OpenError!Dir {
+    pub fn openDir(fs: Filesystem, io: Io, dir_name: []const u8) std.Io.Dir.OpenError!Dir {
         return switch (fs) {
-            .real => |cwd| .{ .dir = try cwd.openDir(dir_name, .{ .access_sub_paths = false, .iterate = true }) },
+            .real => |cwd| .{ .dir = try cwd.openDir(io, dir_name, .{ .access_sub_paths = false, .iterate = true }) },
             .fake => |entries| .{ .fake = .{ .entries = entries, .path = dir_name } },
         };
     }

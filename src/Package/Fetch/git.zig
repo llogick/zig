@@ -254,7 +254,7 @@ pub const Repository = struct {
             switch (entry.type) {
                 .directory => {
                     try dir.makeDir(entry.name);
-                    var subdir = try dir.openDir(entry.name, .{});
+                    var subdir = try dir.openDir(io, entry.name, .{});
                     defer subdir.close(io);
                     const sub_path = try std.fs.path.join(repository.odb.allocator, &.{ current_path, entry.name });
                     defer repository.odb.allocator.free(sub_path);

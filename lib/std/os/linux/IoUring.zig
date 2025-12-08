@@ -3066,6 +3066,8 @@ test "unlinkat" {
 test "mkdirat" {
     if (!is_linux) return error.SkipZigTest;
 
+    const io = testing.io;
+
     var ring = IoUring.init(1, 0) catch |err| switch (err) {
         error.SystemOutdated => return error.SkipZigTest,
         error.PermissionDenied => return error.SkipZigTest,
@@ -3104,7 +3106,7 @@ test "mkdirat" {
     }, cqe);
 
     // Validate that the directory exist
-    _ = try tmp.dir.openDir(path, .{});
+    _ = try tmp.dir.openDir(io, path, .{});
 }
 
 test "symlinkat" {

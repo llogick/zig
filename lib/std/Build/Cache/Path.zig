@@ -71,6 +71,7 @@ pub fn openFile(p: Path, io: Io, sub_path: []const u8, flags: Io.File.OpenFlags)
 
 pub fn openDir(
     p: Path,
+    io: Io,
     sub_path: []const u8,
     args: Io.Dir.OpenOptions,
 ) Io.Dir.OpenError!Io.Dir {
@@ -80,7 +81,7 @@ pub fn openDir(
             p.sub_path, sub_path,
         }) catch return error.NameTooLong;
     };
-    return p.root_dir.handle.openDir(joined_path, args);
+    return p.root_dir.handle.openDir(io, joined_path, args);
 }
 
 pub fn makeOpenPath(p: Path, sub_path: []const u8, opts: Io.Dir.OpenOptions) !Io.Dir {

@@ -180,7 +180,7 @@ pub fn addCertsFromDirPath(
     dir: Io.Dir,
     sub_dir_path: []const u8,
 ) AddCertsFromDirPathError!void {
-    var iterable_dir = try dir.openDir(sub_dir_path, .{ .iterate = true });
+    var iterable_dir = try dir.openDir(io, sub_dir_path, .{ .iterate = true });
     defer iterable_dir.close(io);
     return addCertsFromDir(cb, gpa, io, iterable_dir);
 }

@@ -745,6 +745,7 @@ pub const Directories = struct {
     /// Uses `std.process.fatal` on error conditions.
     pub fn init(
         arena: Allocator,
+        io: Io,
         override_zig_lib: ?[]const u8,
         override_global_cache: ?[]const u8,
         local_cache_strat: union(enum) {
@@ -768,7 +769,7 @@ pub const Directories = struct {
         };
 
         const zig_lib: Cache.Directory = d: {
-            if (override_zig_lib) |path| break :d openUnresolved(arena, cwd, path, .@"zig lib");
+            if (override_zig_lib) |path| break :d openUnresolved(arena, io, cwd, path, .@"zig lib");
             if (wasi) break :d openWasiPreopen(wasi_preopens, "/lib");
             break :d introspect.findZigLibDirFromSelfExe(arena, cwd, self_exe_path) catch |err| {
                 fatal("unable to find zig installation directory '{s}': {s}", .{ self_exe_path, @errorName(err) });
@@ -776,22 +777,22 @@ pub const Directories = struct {
         };
 
         const global_cache: Cache.Directory = d: {
-            if (override_global_cache) |path| break :d openUnresolved(arena, cwd, path, .@"global cache");
+            if (override_global_cache) |path| break :d openUnresolved(arena, io, cwd, path, .@"global cache");
             if (wasi) break :d openWasiPreopen(wasi_preopens, "/cache");
             const path = introspect.resolveGlobalCacheDir(arena) catch |err| {
                 fatal("unable to resolve zig cache directory: {s}", .{@errorName(err)});
             };
-            break :d openUnresolved(arena, cwd, path, .@"global cache");
+            break :d openUnresolved(arena, io, cwd, path, .@"global cache");
         };
 
         const local_cache: Cache.Directory = switch (local_cache_strat) {
-            .override => |path| openUnresolved(arena, cwd, path, .@"local cache"),
+            .override => |path| openUnresolved(arena, io, cwd, path, .@"local cache"),
             .search => d: {
                 const maybe_path = introspect.resolveSuitableLocalCacheDir(arena, cwd) catch |err| {
                     fatal("unable to resolve zig cache directory: {s}", .{@errorName(err)});
                 };
                 const path = maybe_path orelse break :d global_cache;
-                break :d openUnresolved(arena, cwd, path, .@"local cache");
+                break :d openUnresolved(arena, io, cwd, path, .@"local cache");
             },
             .global => global_cache,
         };
@@ -818,13 +819,19 @@ pub const Directories = struct {
             },
         };
     }
-    fn openUnresolved(arena: Allocator, cwd: []const u8, unresolved_path: []const u8, thing: enum { @"zig lib", @"global cache", @"local cache" }) Cache.Directory {
+    fn openUnresolved(
+        arena: Allocator,
+        io: Io,
+        cwd: []const u8,
+        unresolved_path: []const u8,
+        thing: enum { @"zig lib", @"global cache", @"local cache" },
+    ) Cache.Directory {
         const path = introspect.resolvePath(arena, cwd, &.{unresolved_path}) catch |err| {
             fatal("unable to resolve {s} directory: {s}", .{ @tagName(thing), @errorName(err) });
         };
         const nonempty_path = if (path.len == 0) "." else path;
         const handle_or_err = switch (thing) {
-            .@"zig lib" => Io.Dir.cwd().openDir(nonempty_path, .{}),
+            .@"zig lib" => Io.Dir.cwd().openDir(io, nonempty_path, .{}),
             .@"global cache", .@"local cache" => Io.Dir.cwd().makeOpenPath(nonempty_path, .{}),
         };
         return .{
@@ -5331,7 +5338,7 @@ fn docsCopyModule(
     const root = module.root;
     var mod_dir = d: {
         const root_dir, const sub_path = root.openInfo(comp.dirs);
-        break :d root_dir.openDir(sub_path, .{ .iterate = true });
+        break :d root_dir.openDir(io, sub_path, .{ .iterate = true });
     } catch |err| {
         return comp.lockAndSetMiscFailure(.docs_copy, "unable to open directory '{f}': {t}", .{ root.fmt(comp), err });
     };

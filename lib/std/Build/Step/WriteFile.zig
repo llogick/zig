@@ -218,7 +218,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
         const need_derived_inputs = try step.addDirectoryWatchInput(dir.source);
         const src_dir_path = dir.source.getPath3(b, step);
 
-        var src_dir = src_dir_path.root_dir.handle.openDir(src_dir_path.subPathOrDot(), .{ .iterate = true }) catch |err| {
+        var src_dir = src_dir_path.root_dir.handle.openDir(io, src_dir_path.subPathOrDot(), .{ .iterate = true }) catch |err| {
             return step.fail("unable to open source directory '{f}': {s}", .{
                 src_dir_path, @errorName(err),
             });

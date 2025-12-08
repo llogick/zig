@@ -2184,6 +2184,7 @@ fn dependencyInner(
     pkg_deps: AvailableDeps,
     args: anytype,
 ) *Dependency {
+    const io = b.graph.io;
     const user_input_options = userInputOptionsFromArgs(b.allocator, args);
     if (b.graph.dependency_cache.getContext(.{
         .build_root_string = build_root_string,
@@ -2193,7 +2194,7 @@ fn dependencyInner(
 
     const build_root: std.Build.Cache.Directory = .{
         .path = build_root_string,
-        .handle = Io.Dir.cwd().openDir(build_root_string, .{}) catch |err| {
+        .handle = Io.Dir.cwd().openDir(io, build_root_string, .{}) catch |err| {
             std.debug.print("unable to open '{s}': {s}\n", .{
                 build_root_string, @errorName(err),
             });
