@@ -708,6 +708,7 @@ pub fn io(t: *Threaded) Io {
             .dirSetTimestampsNow = dirSetTimestampsNow,
 
             .fileStat = fileStat,
+            .fileLength = fileLength,
             .fileClose = fileClose,
             .fileWriteStreaming = fileWriteStreaming,
             .fileWritePositional = fileWritePositional,
@@ -832,6 +833,7 @@ pub fn ioBasic(t: *Threaded) Io {
             .dirSetTimestampsNow = dirSetTimestampsNow,
 
             .fileStat = fileStat,
+            .fileLength = fileLength,
             .fileClose = fileClose,
             .fileWriteStreaming = fileWriteStreaming,
             .fileWritePositional = fileWritePositional,
@@ -1938,6 +1940,51 @@ fn dirStatPathWasi(
             },
         }
     }
+}
+
+fn fileLength(userdata: ?*anyopaque, file: File) File.LengthError!u64 {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+
+    if (native_os == .linux) {
+        const current_thread = Thread.getCurrent(t);
+        const linux = std.os.linux;
+
+        try current_thread.beginSyscall();
+        while (true) {
+            var statx = std.mem.zeroes(linux.Statx);
+            switch (linux.errno(linux.statx(file.handle, "", linux.AT.EMPTY_PATH, linux.STATX_SIZE, &statx))) {
+                .SUCCESS => {
+                    current_thread.endSyscall();
+                    return statx.size;
+                },
+                .INTR => {
+                    try current_thread.checkCancel();
+                    continue;
+                },
+                .CANCELED => return current_thread.endSyscallCanceled(),
+                else => |e| {
+                    current_thread.endSyscall();
+                    switch (e) {
+                        .ACCES => |err| return errnoBug(err),
+                        .BADF => |err| return errnoBug(err), // File descriptor used after closed.
+                        .FAULT => |err| return errnoBug(err),
+                        .INVAL => |err| return errnoBug(err),
+                        .LOOP => |err| return errnoBug(err),
+                        .NAMETOOLONG => |err| return errnoBug(err),
+                        .NOENT => |err| return errnoBug(err),
+                        .NOMEM => return error.SystemResources,
+                        .NOTDIR => |err| return errnoBug(err),
+                        else => |err| return posix.unexpectedErrno(err),
+                    }
+                },
+            }
+        }
+    } else if (is_windows) {
+        // TODO call NtQueryInformationFile and ask for only the size instead of "all"
+    }
+
+    const stat = try fileStat(ioBasic(t), file);
+    return stat.size;
 }
 
 const fileStat = switch (native_os) {
@@ -5479,7 +5526,7 @@ const fileReadStreaming = switch (native_os) {
     else => fileReadStreamingPosix,
 };
 
-fn fileReadStreamingPosix(userdata: ?*anyopaque, file: File, data: [][]u8) File.Reader.Error!usize {
+fn fileReadStreamingPosix(userdata: ?*anyopaque, file: File, data: []const []u8) File.Reader.Error!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
@@ -5567,7 +5614,7 @@ fn fileReadStreamingPosix(userdata: ?*anyopaque, file: File, data: [][]u8) File.
     }
 }
 
-fn fileReadStreamingWindows(userdata: ?*anyopaque, file: File, data: [][]u8) File.Reader.Error!usize {
+fn fileReadStreamingWindows(userdata: ?*anyopaque, file: File, data: []const []u8) File.Reader.Error!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
@@ -5596,7 +5643,7 @@ fn fileReadStreamingWindows(userdata: ?*anyopaque, file: File, data: [][]u8) Fil
     }
 }
 
-fn fileReadPositionalPosix(userdata: ?*anyopaque, file: File, data: [][]u8, offset: u64) File.ReadPositionalError!usize {
+fn fileReadPositionalPosix(userdata: ?*anyopaque, file: File, data: []const []u8, offset: u64) File.ReadPositionalError!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
@@ -5698,7 +5745,7 @@ const fileReadPositional = switch (native_os) {
     else => fileReadPositionalPosix,
 };
 
-fn fileReadPositionalWindows(userdata: ?*anyopaque, file: File, data: [][]u8, offset: u64) File.ReadPositionalError!usize {
+fn fileReadPositionalWindows(userdata: ?*anyopaque, file: File, data: []const []u8, offset: u64) File.ReadPositionalError!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
