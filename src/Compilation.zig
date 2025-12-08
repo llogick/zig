@@ -450,7 +450,7 @@ pub const Path = struct {
         const dir = switch (p.root) {
             .none => {
                 const cwd_sub_path = absToCwdRelative(p.sub_path, dirs.cwd);
-                return .{ fs.cwd(), cwd_sub_path };
+                return .{ Io.Dir.cwd(), cwd_sub_path };
             },
             .zig_lib => dirs.zig_lib.handle,
             .global_cache => dirs.global_cache.handle,
@@ -723,7 +723,7 @@ pub const Directories = struct {
 
     pub fn deinit(dirs: *Directories, io: Io) void {
         // The local and global caches could be the same.
-        const close_local = dirs.local_cache.handle.fd != dirs.global_cache.handle.fd;
+        const close_local = dirs.local_cache.handle.handle != dirs.global_cache.handle.handle;
 
         dirs.global_cache.handle.close(io);
         if (close_local) dirs.local_cache.handle.close(io);
@@ -814,7 +814,7 @@ pub const Directories = struct {
         return .{
             .path = if (std.mem.eql(u8, name, ".")) null else name,
             .handle = .{
-                .fd = preopens.find(name) orelse fatal("WASI preopen not found: '{s}'", .{name}),
+                .handle = preopens.find(name) orelse fatal("WASI preopen not found: '{s}'", .{name}),
             },
         };
     }
@@ -824,8 +824,8 @@ pub const Directories = struct {
         };
         const nonempty_path = if (path.len == 0) "." else path;
         const handle_or_err = switch (thing) {
-            .@"zig lib" => fs.cwd().openDir(nonempty_path, .{}),
-            .@"global cache", .@"local cache" => fs.cwd().makeOpenPath(nonempty_path, .{}),
+            .@"zig lib" => Io.Dir.cwd().openDir(nonempty_path, .{}),
+            .@"global cache", .@"local cache" => Io.Dir.cwd().makeOpenPath(nonempty_path, .{}),
         };
         return .{
             .path = if (path.len == 0) null else path,
@@ -1104,7 +1104,7 @@ pub const CObject = struct {
             const source_line = source_line: {
                 if (diag.src_loc.offset == 0 or diag.src_loc.column == 0) break :source_line 0;
 
-                const file = fs.cwd().openFile(io, file_name, .{}) catch break :source_line 0;
+                const file = Io.Dir.cwd().openFile(io, file_name, .{}) catch break :source_line 0;
                 defer file.close(io);
                 var buffer: [1024]u8 = undefined;
                 var file_reader = file.reader(io, &buffer);
@@ -1179,7 +1179,7 @@ pub const CObject = struct {
                 };
 
                 var buffer: [1024]u8 = undefined;
-                const file = try fs.cwd().openFile(io, path, .{});
+                const file = try Io.Dir.cwd().openFile(io, path, .{});
                 defer file.close(io);
                 var file_reader = file.reader(io, &buffer);
                 var bc = std.zig.llvm.BitcodeReader.init(gpa, .{ .reader = &file_reader.interface });
@@ -2109,7 +2109,7 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
             },
         };
         // These correspond to std.zig.Server.Message.PathPrefix.
-        cache.addPrefix(.{ .path = null, .handle = fs.cwd() });
+        cache.addPrefix(.{ .path = null, .handle = Io.Dir.cwd() });
         cache.addPrefix(options.dirs.zig_lib);
         cache.addPrefix(options.dirs.local_cache);
         cache.addPrefix(options.dirs.global_cache);
@@ -5220,7 +5220,7 @@ fn createDepFile(
     binfile: Cache.Path,
 ) anyerror!void {
     var buf: [4096]u8 = undefined;
-    var af = try std.fs.cwd().atomicFile(depfile, .{ .write_buffer = &buf });
+    var af = try Io.Dir.cwd().atomicFile(depfile, .{ .write_buffer = &buf });
     defer af.deinit();
 
     comp.writeDepFile(binfile, &af.file_writer.interface) catch return af.file_writer.err.?;
@@ -5284,7 +5284,7 @@ fn docsCopyFallible(comp: *Compilation) anyerror!void {
         };
     }
 
-    var tar_file = out_dir.createFile("sources.tar", .{}) catch |err| {
+    var tar_file = out_dir.createFile(io, "sources.tar", .{}) catch |err| {
         return comp.lockAndSetMiscFailure(
             .docs_copy,
             "unable to create '{f}/sources.tar': {s}",

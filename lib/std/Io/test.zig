@@ -27,7 +27,7 @@ test "write a file, read it, then delete it" {
     random.bytes(data[0..]);
     const tmp_file_name = "temp_test_file.txt";
     {
-        var file = try tmp.dir.createFile(tmp_file_name, .{});
+        var file = try tmp.dir.createFile(io, tmp_file_name, .{});
         defer file.close(io);
 
         var file_writer = file.writer(&.{});
@@ -40,7 +40,7 @@ test "write a file, read it, then delete it" {
 
     {
         // Make sure the exclusive flag is honored.
-        try expectError(File.OpenError.PathAlreadyExists, tmp.dir.createFile(tmp_file_name, .{ .exclusive = true }));
+        try expectError(File.OpenError.PathAlreadyExists, tmp.dir.createFile(io, tmp_file_name, .{ .exclusive = true }));
     }
 
     {
@@ -70,7 +70,7 @@ test "File seek ops" {
     const io = testing.io;
 
     const tmp_file_name = "temp_test_file.txt";
-    var file = try tmp.dir.createFile(tmp_file_name, .{});
+    var file = try tmp.dir.createFile(io, tmp_file_name, .{});
     defer file.close(io);
 
     try file.writeAll(&([_]u8{0x55} ** 8192));
@@ -96,7 +96,7 @@ test "setEndPos" {
     defer tmp.cleanup();
 
     const tmp_file_name = "temp_test_file.txt";
-    var file = try tmp.dir.createFile(tmp_file_name, .{});
+    var file = try tmp.dir.createFile(io, tmp_file_name, .{});
     defer file.close(io);
 
     // Verify that the file size changes and the file offset is not moved
@@ -121,7 +121,7 @@ test "updateTimes" {
     defer tmp.cleanup();
 
     const tmp_file_name = "just_a_temporary_file.txt";
-    var file = try tmp.dir.createFile(tmp_file_name, .{ .read = true });
+    var file = try tmp.dir.createFile(io, tmp_file_name, .{ .read = true });
     defer file.close(io);
 
     const stat_old = try file.stat();

@@ -1,9 +1,10 @@
-const std = @import("std");
 const builtin = @import("builtin");
+
+const std = @import("std");
+const Io = std.Io;
 const assert = std.debug.assert;
 const mem = std.mem;
 const testing = std.testing;
-
 const Target = std.Target;
 
 /// Detect macOS version.
@@ -54,7 +55,7 @@ pub fn detect(target_os: *Target.Os) !void {
         // approx. 4 times historical file size
         var buf: [2048]u8 = undefined;
 
-        if (std.fs.cwd().readFile(path, &buf)) |bytes| {
+        if (Io.Dir.cwd().readFile(path, &buf)) |bytes| {
             if (parseSystemVersion(bytes)) |ver| {
                 // never return non-canonical `10.(16+)`
                 if (!(ver.major == 10 and ver.minor >= 16)) {

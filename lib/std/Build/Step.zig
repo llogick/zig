@@ -401,6 +401,9 @@ pub fn evalZigProcess(
     web_server: ?*Build.WebServer,
     gpa: Allocator,
 ) !?Path {
+    const b = s.owner;
+    const io = b.graph.io;
+
     // If an error occurs, it's happened in this command:
     assert(s.result_failed_command == null);
     s.result_failed_command = try allocPrintCmd(gpa, null, argv);
@@ -411,7 +414,7 @@ pub fn evalZigProcess(
         const result = zigProcessUpdate(s, zp, watch, web_server, gpa) catch |err| switch (err) {
             error.BrokenPipe => {
                 // Process restart required.
-                const term = zp.child.wait() catch |e| {
+                const term = zp.child.wait(io) catch |e| {
                     return s.fail("unable to wait for {s}: {t}", .{ argv[0], e });
                 };
                 _ = term;
@@ -427,7 +430,7 @@ pub fn evalZigProcess(
 
         if (s.result_error_msgs.items.len > 0 and result == null) {
             // Crash detected.
-            const term = zp.child.wait() catch |e| {
+            const term = zp.child.wait(io) catch |e| {
                 return s.fail("unable to wait for {s}: {t}", .{ argv[0], e });
             };
             s.result_peak_rss = zp.child.resource_usage_statistics.getMaxRss() orelse 0;
@@ -439,9 +442,7 @@ pub fn evalZigProcess(
         return result;
     }
     assert(argv.len != 0);
-    const b = s.owner;
     const arena = b.allocator;
-    const io = b.graph.io;
 
     try handleChildProcUnsupported(s);
     try handleVerbose(s.owner, null, argv);
@@ -478,7 +479,7 @@ pub fn evalZigProcess(
         zp.child.stdin.?.close(io);
         zp.child.stdin = null;
 
-        const term = zp.child.wait() catch |err| {
+        const term = zp.child.wait(io) catch |err| {
             return s.fail("unable to wait for {s}: {t}", .{ argv[0], err });
         };
         s.result_peak_rss = zp.child.resource_usage_statistics.getMaxRss() orelse 0;
@@ -519,7 +520,7 @@ pub fn installFile(s: *Step, src_lazy_path: Build.LazyPath, dest_path: []const u
 pub fn installDir(s: *Step, dest_path: []const u8) !Io.Dir.MakePathStatus {
     const b = s.owner;
     try handleVerbose(b, null, &.{ "install", "-d", dest_path });
-    return std.fs.cwd().makePathStatus(dest_path) catch |err|
+    return Io.Dir.cwd().makePathStatus(dest_path) catch |err|
         return s.fail("unable to create dir '{s}': {t}", .{ dest_path, err });
 }
 
@@ -895,7 +896,7 @@ pub fn addWatchInput(step: *Step, lazy_file: Build.LazyPath) Allocator.Error!voi
             try addWatchInputFromPath(step, .{
                 .root_dir = .{
                     .path = null,
-                    .handle = std.fs.cwd(),
+                    .handle = Io.Dir.cwd(),
                 },
                 .sub_path = std.fs.path.dirname(path_string) orelse "",
             }, std.fs.path.basename(path_string));
@@ -920,7 +921,7 @@ pub fn addDirectoryWatchInput(step: *Step, lazy_directory: Build.LazyPath) Alloc
             try addDirectoryWatchInputFromPath(step, .{
                 .root_dir = .{
                     .path = null,
-                    .handle = std.fs.cwd(),
+                    .handle = Io.Dir.cwd(),
                 },
                 .sub_path = path_string,
             });

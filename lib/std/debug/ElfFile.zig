@@ -375,7 +375,7 @@ fn loadSeparateDebugFile(
     args: anytype,
 ) Allocator.Error!?[]align(std.heap.page_size_min) const u8 {
     const path = try std.fmt.allocPrint(arena, fmt, args);
-    const elf_file = std.fs.cwd().openFile(io, path, .{}) catch return null;
+    const elf_file = Io.Dir.cwd().openFile(io, path, .{}) catch return null;
     defer elf_file.close(io);
 
     const result = loadInner(arena, elf_file, opt_crc) catch |err| switch (err) {

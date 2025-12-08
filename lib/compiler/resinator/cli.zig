@@ -2003,7 +2003,7 @@ test "maybeAppendRC" {
 
     // Create the file so that it's found. In this scenario, .rc should not get
     // appended.
-    var file = try tmp.dir.createFile("foo", .{});
+    var file = try tmp.dir.createFile(io, "foo", .{});
     file.close(io);
     try options.maybeAppendRC(tmp.dir);
     try std.testing.expectEqualStrings("foo", options.input_source.filename);

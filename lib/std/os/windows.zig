@@ -4639,8 +4639,8 @@ pub fn wToPrefixedFileW(dir: ?HANDLE, path: [:0]const u16) Wtf16ToPrefixedFileWE
                 break :path_to_get path;
             }
             // We can also skip GetFinalPathNameByHandle if the handle matches
-            // the handle returned by fs.cwd()
-            if (dir.? == std.fs.cwd().fd) {
+            // the handle returned by Io.Dir.cwd()
+            if (dir.? == Io.Dir.cwd().fd) {
                 break :path_to_get path;
             }
             // At this point, we know we have a relative path that had too many

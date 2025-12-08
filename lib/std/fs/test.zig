@@ -46,7 +46,7 @@ const PathType = enum {
                     // The final path may not actually exist which would cause realpath to fail.
                     // So instead, we get the path of the dir and join it with the relative path.
                     var fd_path_buf: [fs.max_path_bytes]u8 = undefined;
-                    const dir_path = try std.os.getFdPath(dir.fd, &fd_path_buf);
+                    const dir_path = try std.os.getFdPath(dir.handle, &fd_path_buf);
                     return fs.path.joinZ(allocator, &.{ dir_path, relative_path });
                 }
             }.transform,
@@ -55,7 +55,7 @@ const PathType = enum {
                     // Any drive absolute path (C:\foo) can be converted into a UNC path by
                     // using '127.0.0.1' as the server name and '<drive letter>$' as the share name.
                     var fd_path_buf: [fs.max_path_bytes]u8 = undefined;
-                    const dir_path = try std.os.getFdPath(dir.fd, &fd_path_buf);
+                    const dir_path = try std.os.getFdPath(dir.handle, &fd_path_buf);
                     const windows_path_type = windows.getWin32PathType(u8, dir_path);
                     switch (windows_path_type) {
                         .unc_absolute => return fs.path.joinZ(allocator, &.{ dir_path, relative_path }),
@@ -256,7 +256,7 @@ fn testReadLinkW(allocator: mem.Allocator, dir: Dir, target_path: []const u8, sy
     const target_path_w = try std.unicode.wtf8ToWtf16LeAlloc(allocator, target_path);
     defer allocator.free(target_path_w);
     // Calling the W functions directly requires the path to be NT-prefixed
-    const symlink_path_w = try std.os.windows.sliceToPrefixedFileW(dir.fd, symlink_path);
+    const symlink_path_w = try std.os.windows.sliceToPrefixedFileW(dir.handle, symlink_path);
     const wtf16_buffer = try allocator.alloc(u16, target_path_w.len);
     defer allocator.free(wtf16_buffer);
     const actual = try dir.readLinkW(symlink_path_w.span(), wtf16_buffer);
@@ -288,9 +288,11 @@ test "File.stat on a File that is a symlink returns Kind.sym_link" {
 
             var symlink: Dir = switch (builtin.target.os.tag) {
                 .windows => windows_symlink: {
-                    const sub_path_w = try windows.cStrToPrefixedFileW(ctx.dir.fd, "symlink");
+                    const sub_path_w = try windows.cStrToPrefixedFileW(ctx.dir.handle, "symlink");
 
-                    var handle: windows.HANDLE = undefined;
+                    var result: Dir = .{
+                        .handle = undefined,
+                    };
 
                     const path_len_bytes = @as(u16, @intCast(sub_path_w.span().len * 2));
                     var nt_name = windows.UNICODE_STRING{
@@ -300,26 +302,16 @@ test "File.stat on a File that is a symlink returns Kind.sym_link" {
                     };
                     var attr: windows.OBJECT_ATTRIBUTES = .{
                         .Length = @sizeOf(windows.OBJECT_ATTRIBUTES),
-                        .RootDirectory = if (fs.path.isAbsoluteWindowsW(sub_path_w.span())) null else ctx.dir.fd,
-                        .Attributes = .{},
+                        .RootDirectory = if (fs.path.isAbsoluteWindowsW(sub_path_w.span())) null else ctx.dir.handle,
+                        .Attributes = 0,
                         .ObjectName = &nt_name,
                         .SecurityDescriptor = null,
                         .SecurityQualityOfService = null,
                     };
                     var io_status_block: windows.IO_STATUS_BLOCK = undefined;
                     const rc = windows.ntdll.NtCreateFile(
-                        &handle,
-                        .{
-                            .SPECIFIC = .{ .FILE_DIRECTORY = .{
-                                .READ_EA = true,
-                                .TRAVERSE = true,
-                                .READ_ATTRIBUTES = true,
-                            } },
-                            .STANDARD = .{
-                                .RIGHTS = .READ,
-                                .SYNCHRONIZE = true,
-                            },
-                        },
+                        &result.handle,
+                        windows.STANDARD_RIGHTS_READ | windows.FILE_READ_ATTRIBUTES | windows.FILE_READ_EA | windows.SYNCHRONIZE | windows.FILE_TRAVERSE,
                         &attr,
                         &io_status_block,
                         null,
@@ -337,7 +329,7 @@ test "File.stat on a File that is a symlink returns Kind.sym_link" {
                     );
 
                     switch (rc) {
-                        .SUCCESS => break :windows_symlink .{ .fd = handle },
+                        .SUCCESS => break :windows_symlink .{ .fd = result.handle },
                         else => return windows.unexpectedStatus(rc),
                     }
                 },
@@ -351,8 +343,8 @@ test "File.stat on a File that is a symlink returns Kind.sym_link" {
                         .ACCMODE = .RDONLY,
                         .CLOEXEC = true,
                     };
-                    const fd = try posix.openatZ(ctx.dir.fd, &sub_path_c, flags, 0);
-                    break :linux_symlink Dir{ .fd = fd };
+                    const fd = try posix.openatZ(ctx.dir.handle, &sub_path_c, flags, 0);
+                    break :linux_symlink .{ .handle = fd };
                 },
                 else => unreachable,
             };
@@ -456,7 +448,7 @@ test "openDirAbsolute" {
 test "openDir cwd parent '..'" {
     const io = testing.io;
 
-    var dir = fs.cwd().openDir("..", .{}) catch |err| {
+    var dir = Io.Dir.cwd().openDir("..", .{}) catch |err| {
         if (native_os == .wasi and err == error.PermissionDenied) {
             return; // This is okay. WASI disallows escaping from the fs sandbox
         }
@@ -534,7 +526,7 @@ test "Dir.Iterator" {
     defer tmp_dir.cleanup();
 
     // First, create a couple of entries to iterate over.
-    const file = try tmp_dir.dir.createFile("some_file", .{});
+    const file = try tmp_dir.dir.createFile(io, "some_file", .{});
     file.close(io);
 
     try tmp_dir.dir.makeDir("some_dir");
@@ -570,7 +562,7 @@ test "Dir.Iterator many entries" {
     var buf: [4]u8 = undefined; // Enough to store "1024".
     while (i < num) : (i += 1) {
         const name = try std.fmt.bufPrint(&buf, "{}", .{i});
-        const file = try tmp_dir.dir.createFile(name, .{});
+        const file = try tmp_dir.dir.createFile(io, name, .{});
         file.close(io);
     }
 
@@ -603,7 +595,7 @@ test "Dir.Iterator twice" {
     defer tmp_dir.cleanup();
 
     // First, create a couple of entries to iterate over.
-    const file = try tmp_dir.dir.createFile("some_file", .{});
+    const file = try tmp_dir.dir.createFile(io, "some_file", .{});
     file.close(io);
 
     try tmp_dir.dir.makeDir("some_dir");
@@ -638,7 +630,7 @@ test "Dir.Iterator reset" {
     defer tmp_dir.cleanup();
 
     // First, create a couple of entries to iterate over.
-    const file = try tmp_dir.dir.createFile("some_file", .{});
+    const file = try tmp_dir.dir.createFile(io, "some_file", .{});
     file.close(io);
 
     try tmp_dir.dir.makeDir("some_dir");
@@ -769,7 +761,7 @@ test "readFileAlloc" {
     var tmp_dir = tmpDir(.{});
     defer tmp_dir.cleanup();
 
-    var file = try tmp_dir.dir.createFile("test_file", .{ .read = true });
+    var file = try tmp_dir.dir.createFile(io, "test_file", .{ .read = true });
     defer file.close(io);
 
     const buf1 = try tmp_dir.dir.readFileAlloc("test_file", testing.allocator, .limited(1024));
@@ -843,7 +835,7 @@ test "directory operations on files" {
 
             const test_file_name = try ctx.transformPath("test_file");
 
-            var file = try ctx.dir.createFile(test_file_name, .{ .read = true });
+            var file = try ctx.dir.createFile(io, test_file_name, .{ .read = true });
             file.close(io);
 
             try testing.expectError(error.PathAlreadyExists, ctx.dir.makeDir(test_file_name));
@@ -876,7 +868,7 @@ test "file operations on directories" {
 
             try ctx.dir.makeDir(test_dir_name);
 
-            try testing.expectError(error.IsDir, ctx.dir.createFile(test_dir_name, .{}));
+            try testing.expectError(error.IsDir, ctx.dir.createFile(io, test_dir_name, .{}));
             try testing.expectError(error.IsDir, ctx.dir.deleteFile(test_dir_name));
             switch (native_os) {
                 .dragonfly, .netbsd => {
@@ -969,7 +961,7 @@ test "Dir.rename files" {
             // Renaming files
             const test_file_name = try ctx.transformPath("test_file");
             const renamed_test_file_name = try ctx.transformPath("test_file_renamed");
-            var file = try ctx.dir.createFile(test_file_name, .{ .read = true });
+            var file = try ctx.dir.createFile(io, test_file_name, .{ .read = true });
             file.close(io);
             try ctx.dir.rename(test_file_name, renamed_test_file_name);
 
@@ -983,7 +975,7 @@ test "Dir.rename files" {
 
             // Rename to existing file succeeds
             const existing_file_path = try ctx.transformPath("existing_file");
-            var existing_file = try ctx.dir.createFile(existing_file_path, .{ .read = true });
+            var existing_file = try ctx.dir.createFile(io, existing_file_path, .{ .read = true });
             existing_file.close(io);
             try ctx.dir.rename(renamed_test_file_name, existing_file_path);
 
@@ -1017,7 +1009,7 @@ test "Dir.rename directories" {
             var dir = try ctx.dir.openDir(test_dir_renamed_path, .{});
 
             // Put a file in the directory
-            var file = try dir.createFile("test_file", .{ .read = true });
+            var file = try dir.createFile(io, "test_file", .{ .read = true });
             file.close(io);
             dir.close(io);
 
@@ -1070,7 +1062,7 @@ test "Dir.rename directory onto non-empty dir" {
             try ctx.dir.makeDir(test_dir_path);
 
             var target_dir = try ctx.dir.makeOpenPath(target_dir_path, .{});
-            var file = try target_dir.createFile("test_file", .{ .read = true });
+            var file = try target_dir.createFile(io, "test_file", .{ .read = true });
             file.close(io);
             target_dir.close(io);
 
@@ -1094,7 +1086,7 @@ test "Dir.rename file <-> dir" {
             const test_file_path = try ctx.transformPath("test_file");
             const test_dir_path = try ctx.transformPath("test_dir");
 
-            var file = try ctx.dir.createFile(test_file_path, .{ .read = true });
+            var file = try ctx.dir.createFile(io, test_file_path, .{ .read = true });
             file.close(io);
             try ctx.dir.makeDir(test_dir_path);
             try testing.expectError(error.IsDir, ctx.dir.rename(test_file_path, test_dir_path));
@@ -1115,7 +1107,7 @@ test "rename" {
     // Renaming files
     const test_file_name = "test_file";
     const renamed_test_file_name = "test_file_renamed";
-    var file = try tmp_dir1.dir.createFile(test_file_name, .{ .read = true });
+    var file = try tmp_dir1.dir.createFile(io, test_file_name, .{ .read = true });
     file.close(io);
     try fs.rename(tmp_dir1.dir, test_file_name, tmp_dir2.dir, renamed_test_file_name);
 
@@ -1149,7 +1141,7 @@ test "renameAbsolute" {
     // Renaming files
     const test_file_name = "test_file";
     const renamed_test_file_name = "test_file_renamed";
-    var file = try tmp_dir.dir.createFile(test_file_name, .{ .read = true });
+    var file = try tmp_dir.dir.createFile(io, test_file_name, .{ .read = true });
     file.close(io);
     try fs.renameAbsolute(
         try fs.path.join(allocator, &.{ base_path, test_file_name }),
@@ -1454,7 +1446,7 @@ test "writev, readv" {
     var write_vecs: [2][]const u8 = .{ line1, line2 };
     var read_vecs: [2][]u8 = .{ &buf2, &buf1 };
 
-    var src_file = try tmp.dir.createFile("test.txt", .{ .read = true });
+    var src_file = try tmp.dir.createFile(io, "test.txt", .{ .read = true });
     defer src_file.close(io);
 
     var writer = src_file.writerStreaming(&.{});
@@ -1484,7 +1476,7 @@ test "pwritev, preadv" {
     var buf2: [line2.len]u8 = undefined;
     var read_vecs: [2][]u8 = .{ &buf2, &buf1 };
 
-    var src_file = try tmp.dir.createFile("test.txt", .{ .read = true });
+    var src_file = try tmp.dir.createFile(io, "test.txt", .{ .read = true });
     defer src_file.close(io);
 
     var writer = src_file.writer(&.{});
@@ -1584,14 +1576,14 @@ test "sendfile" {
     const line2 = "second line\n";
     var vecs = [_][]const u8{ line1, line2 };
 
-    var src_file = try dir.createFile("sendfile1.txt", .{ .read = true });
+    var src_file = try dir.createFile(io, "sendfile1.txt", .{ .read = true });
     defer src_file.close(io);
     {
         var fw = src_file.writer(&.{});
         try fw.interface.writeVecAll(&vecs);
     }
 
-    var dest_file = try dir.createFile("sendfile2.txt", .{ .read = true });
+    var dest_file = try dir.createFile(io, "sendfile2.txt", .{ .read = true });
     defer dest_file.close(io);
 
     const header1 = "header1\n";
@@ -1627,12 +1619,12 @@ test "sendfile with buffered data" {
     var dir = try tmp.dir.openDir("os_test_tmp", .{});
     defer dir.close(io);
 
-    var src_file = try dir.createFile("sendfile1.txt", .{ .read = true });
+    var src_file = try dir.createFile(io, "sendfile1.txt", .{ .read = true });
     defer src_file.close(io);
 
     try src_file.writeAll("AAAABBBB");
 
-    var dest_file = try dir.createFile("sendfile2.txt", .{ .read = true });
+    var dest_file = try dir.createFile(io, "sendfile2.txt", .{ .read = true });
     defer dest_file.close(io);
 
     var src_buffer: [32]u8 = undefined;
@@ -1718,10 +1710,10 @@ test "open file with exclusive nonblocking lock twice" {
             const io = ctx.io;
             const filename = try ctx.transformPath("file_nonblocking_lock_test.txt");
 
-            const file1 = try ctx.dir.createFile(filename, .{ .lock = .exclusive, .lock_nonblocking = true });
+            const file1 = try ctx.dir.createFile(io, filename, .{ .lock = .exclusive, .lock_nonblocking = true });
             defer file1.close(io);
 
-            const file2 = ctx.dir.createFile(filename, .{ .lock = .exclusive, .lock_nonblocking = true });
+            const file2 = ctx.dir.createFile(io, filename, .{ .lock = .exclusive, .lock_nonblocking = true });
             try testing.expectError(error.WouldBlock, file2);
         }
     }.impl);
@@ -1735,10 +1727,10 @@ test "open file with shared and exclusive nonblocking lock" {
             const io = ctx.io;
             const filename = try ctx.transformPath("file_nonblocking_lock_test.txt");
 
-            const file1 = try ctx.dir.createFile(filename, .{ .lock = .shared, .lock_nonblocking = true });
+            const file1 = try ctx.dir.createFile(io, filename, .{ .lock = .shared, .lock_nonblocking = true });
             defer file1.close(io);
 
-            const file2 = ctx.dir.createFile(filename, .{ .lock = .exclusive, .lock_nonblocking = true });
+            const file2 = ctx.dir.createFile(io, filename, .{ .lock = .exclusive, .lock_nonblocking = true });
             try testing.expectError(error.WouldBlock, file2);
         }
     }.impl);
@@ -1752,10 +1744,10 @@ test "open file with exclusive and shared nonblocking lock" {
             const io = ctx.io;
             const filename = try ctx.transformPath("file_nonblocking_lock_test.txt");
 
-            const file1 = try ctx.dir.createFile(filename, .{ .lock = .exclusive, .lock_nonblocking = true });
+            const file1 = try ctx.dir.createFile(io, filename, .{ .lock = .exclusive, .lock_nonblocking = true });
             defer file1.close(io);
 
-            const file2 = ctx.dir.createFile(filename, .{ .lock = .shared, .lock_nonblocking = true });
+            const file2 = ctx.dir.createFile(io, filename, .{ .lock = .shared, .lock_nonblocking = true });
             try testing.expectError(error.WouldBlock, file2);
         }
     }.impl);
@@ -1769,13 +1761,13 @@ test "open file with exclusive lock twice, make sure second lock waits" {
             const io = ctx.io;
             const filename = try ctx.transformPath("file_lock_test.txt");
 
-            const file = try ctx.dir.createFile(filename, .{ .lock = .exclusive });
+            const file = try ctx.dir.createFile(io, filename, .{ .lock = .exclusive });
             errdefer file.close(io);
 
             const S = struct {
                 fn checkFn(dir: *Io.Dir, path: []const u8, started: *std.Thread.ResetEvent, locked: *std.Thread.ResetEvent) !void {
                     started.set();
-                    const file1 = try dir.createFile(path, .{ .lock = .exclusive });
+                    const file1 = try dir.createFile(io, path, .{ .lock = .exclusive });
 
                     locked.set();
                     file1.close(io);
@@ -1847,13 +1839,13 @@ test "read from locked file" {
             const filename = try ctx.transformPath("read_lock_file_test.txt");
 
             {
-                const f = try ctx.dir.createFile(filename, .{ .read = true });
+                const f = try ctx.dir.createFile(io, filename, .{ .read = true });
                 defer f.close(io);
                 var buffer: [1]u8 = undefined;
                 _ = try f.read(&buffer);
             }
             {
-                const f = try ctx.dir.createFile(filename, .{
+                const f = try ctx.dir.createFile(io, filename, .{
                     .read = true,
                     .lock = .exclusive,
                 });
@@ -2037,7 +2029,7 @@ test "'.' and '..' in Io.Dir functions" {
             var created_subdir = try ctx.dir.openDir(subdir_path, .{});
             created_subdir.close(io);
 
-            const created_file = try ctx.dir.createFile(file_path, .{});
+            const created_file = try ctx.dir.createFile(io, file_path, .{});
             created_file.close(io);
             try ctx.dir.access(file_path, .{});
 
@@ -2103,7 +2095,7 @@ test "chmod" {
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
-    const file = try tmp.dir.createFile("test_file", .{ .mode = 0o600 });
+    const file = try tmp.dir.createFile(io, "test_file", .{ .mode = 0o600 });
     defer file.close(io);
     try testing.expectEqual(@as(File.Mode, 0o600), (try file.stat()).mode & 0o7777);
 
@@ -2127,7 +2119,7 @@ test "chown" {
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
-    const file = try tmp.dir.createFile("test_file", .{});
+    const file = try tmp.dir.createFile(io, "test_file", .{});
     defer file.close(io);
     try file.chown(null, null);
 
@@ -2228,7 +2220,7 @@ test "read file non vectored" {
 
     const contents = "hello, world!\n";
 
-    const file = try tmp_dir.dir.createFile("input.txt", .{ .read = true });
+    const file = try tmp_dir.dir.createFile(io, "input.txt", .{ .read = true });
     defer file.close(io);
     {
         var file_writer: File.Writer = .init(file, &.{});
@@ -2260,7 +2252,7 @@ test "seek keeping partial buffer" {
 
     const contents = "0123456789";
 
-    const file = try tmp_dir.dir.createFile("input.txt", .{ .read = true });
+    const file = try tmp_dir.dir.createFile(io, "input.txt", .{ .read = true });
     defer file.close(io);
     {
         var file_writer: File.Writer = .init(file, &.{});
@@ -2321,7 +2313,7 @@ test "seekTo flushes buffered data" {
 
     const contents = "data";
 
-    const file = try tmp.dir.createFile("seek.bin", .{ .read = true });
+    const file = try tmp.dir.createFile(io, "seek.bin", .{ .read = true });
     defer file.close(io);
     {
         var buf: [16]u8 = undefined;
@@ -2350,7 +2342,7 @@ test "File.Writer sendfile with buffered contents" {
         try tmp_dir.dir.writeFile(.{ .sub_path = "a", .data = "bcd" });
         const in = try tmp_dir.dir.openFile(io, "a", .{});
         defer in.close(io);
-        const out = try tmp_dir.dir.createFile("b", .{});
+        const out = try tmp_dir.dir.createFile(io, "b", .{});
         defer out.close(io);
 
         var in_buf: [2]u8 = undefined;
@@ -2397,7 +2389,7 @@ test "readlinkat" {
     // create a symbolic link
     if (native_os == .windows) {
         std.os.windows.CreateSymbolicLink(
-            tmp.dir.fd,
+            tmp.dir.handle,
             &[_]u16{ 'l', 'i', 'n', 'k' },
             &[_:0]u16{ 'f', 'i', 'l', 'e', '.', 't', 'x', 't' },
             false,
@@ -2407,7 +2399,7 @@ test "readlinkat" {
             else => return err,
         };
     } else {
-        try posix.symlinkat("file.txt", tmp.dir.fd, "link");
+        try posix.symlinkat("file.txt", tmp.dir.handle, "link");
     }
 
     // read the link

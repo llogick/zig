@@ -631,12 +631,14 @@ fn create(
         else => return error.UnsupportedCOFFArchitecture,
     };
 
+    const io = comp.io;
+
     const coff = try arena.create(Coff);
-    const file = try path.root_dir.handle.createFile(comp.io, path.sub_path, .{
+    const file = try path.root_dir.handle.createFile(io, path.sub_path, .{
         .read = true,
         .mode = link.File.determineMode(comp.config.output_mode, comp.config.link_mode),
     });
-    errdefer file.close(comp.io);
+    errdefer file.close(io);
     coff.* = .{
         .base = .{
             .tag = .coff2,

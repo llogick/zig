@@ -2361,7 +2361,7 @@ fn dirCreateFilePosix(
                     .NFILE => return error.SystemFdQuotaExceeded,
                     .NODEV => return error.NoDevice,
                     .NOENT => return error.FileNotFound,
-                    .SRCH => return error.ProcessNotFound,
+                    .SRCH => return error.FileNotFound, // Linux when accessing procfs.
                     .NOMEM => return error.SystemResources,
                     .NOSPC => return error.NoSpaceLeft,
                     .NOTDIR => return error.NotDir,
@@ -2670,7 +2670,7 @@ fn dirOpenFilePosix(
                     .NFILE => return error.SystemFdQuotaExceeded,
                     .NODEV => return error.NoDevice,
                     .NOENT => return error.FileNotFound,
-                    .SRCH => return error.ProcessNotFound,
+                    .SRCH => return error.FileNotFound, // Linux when opening procfs files.
                     .NOMEM => return error.SystemResources,
                     .NOSPC => return error.NoSpaceLeft,
                     .NOTDIR => return error.NotDir,
@@ -3287,7 +3287,7 @@ fn dirRealPathPosix(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, out_b
                     .NFILE => return error.SystemFdQuotaExceeded,
                     .NODEV => return error.NoDevice,
                     .NOENT => return error.FileNotFound,
-                    .SRCH => return error.ProcessNotFound,
+                    .SRCH => return error.FileNotFound, // Linux when accessing procfs.
                     .NOMEM => return error.SystemResources,
                     .NOSPC => return error.NoSpaceLeft,
                     .NOTDIR => return error.NotDir,
@@ -5548,7 +5548,6 @@ fn fileReadStreamingPosix(userdata: ?*anyopaque, file: File, data: [][]u8) File.
                 switch (e) {
                     .INVAL => |err| return errnoBug(err),
                     .FAULT => |err| return errnoBug(err),
-                    .SRCH => return error.ProcessNotFound,
                     .AGAIN => return error.WouldBlock,
                     .BADF => |err| {
                         if (native_os == .wasi) return error.NotOpenForReading; // File operation on directory.
@@ -5672,7 +5671,6 @@ fn fileReadPositionalPosix(userdata: ?*anyopaque, file: File, data: [][]u8, offs
                 switch (e) {
                     .INVAL => |err| return errnoBug(err),
                     .FAULT => |err| return errnoBug(err),
-                    .SRCH => return error.ProcessNotFound,
                     .AGAIN => return error.WouldBlock,
                     .BADF => |err| {
                         if (native_os == .wasi) return error.NotOpenForReading; // File operation on directory.
@@ -6312,7 +6310,6 @@ fn fileWriteStreaming(
                 switch (e) {
                     .INVAL => return error.InvalidArgument,
                     .FAULT => |err| return errnoBug(err),
-                    .SRCH => return error.ProcessNotFound,
                     .AGAIN => return error.WouldBlock,
                     .BADF => return error.NotOpenForWriting, // Can be a race condition.
                     .DESTADDRREQ => |err| return errnoBug(err), // `connect` was never called.

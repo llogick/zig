@@ -713,7 +713,7 @@ const Emit = union(enum) {
             } else e: {
                 // If there's a dirname, check that dir exists. This will give a more descriptive error than `Compilation` otherwise would.
                 if (fs.path.dirname(path)) |dir_path| {
-                    var dir = fs.cwd().openDir(dir_path, .{}) catch |err| {
+                    var dir = Io.Dir.cwd().openDir(dir_path, .{}) catch |err| {
                         fatal("unable to open output directory '{s}': {s}", .{ dir_path, @errorName(err) });
                     };
                     dir.close(io);
@@ -3304,7 +3304,7 @@ fn buildOutputType(
         } else emit: {
             // If there's a dirname, check that dir exists. This will give a more descriptive error than `Compilation` otherwise would.
             if (fs.path.dirname(path)) |dir_path| {
-                var dir = fs.cwd().openDir(dir_path, .{}) catch |err| {
+                var dir = Io.Dir.cwd().openDir(dir_path, .{}) catch |err| {
                     fatal("unable to open output directory '{s}': {s}", .{ dir_path, @errorName(err) });
                 };
                 dir.close(io);
@@ -3389,7 +3389,7 @@ fn buildOutputType(
         // file will not run and this temp file will be leaked. The filename
         // will be a hash of its contents — so multiple invocations of
         // `zig cc -` will result in the same temp file name.
-        var f = try dirs.local_cache.handle.createFile(dump_path, .{});
+        var f = try dirs.local_cache.handle.createFile(io, dump_path, .{});
         defer f.close(io);
 
         // Re-using the hasher from Cache, since the functional requirements
@@ -4773,7 +4773,7 @@ fn cmdInit(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) !
             var ok_count: usize = 0;
 
             for (template_paths) |template_path| {
-                if (templates.write(arena, fs.cwd(), sanitized_root_name, template_path, fingerprint)) |_| {
+                if (templates.write(arena, Io.Dir.cwd(), sanitized_root_name, template_path, fingerprint)) |_| {
                     std.log.info("created {s}", .{template_path});
                     ok_count += 1;
                 } else |err| switch (err) {
@@ -5227,7 +5227,7 @@ fn cmdBuild(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) 
                 if (system_pkg_dir_path) |p| {
                     job_queue.global_cache = .{
                         .path = p,
-                        .handle = fs.cwd().openDir(p, .{}) catch |err| {
+                        .handle = Io.Dir.cwd().openDir(p, .{}) catch |err| {
                             fatal("unable to open system package directory '{s}': {s}", .{
                                 p, @errorName(err),
                             });
@@ -5823,7 +5823,7 @@ const ArgIteratorResponseFile = process.ArgIteratorGeneral(.{ .comments = true, 
 /// Initialize the arguments from a Response File. "*.rsp"
 fn initArgIteratorResponseFile(allocator: Allocator, resp_file_path: []const u8) !ArgIteratorResponseFile {
     const max_bytes = 10 * 1024 * 1024; // 10 MiB of command line arguments is a reasonable limit
-    const cmd_line = try fs.cwd().readFileAlloc(resp_file_path, allocator, .limited(max_bytes));
+    const cmd_line = try Io.Dir.cwd().readFileAlloc(resp_file_path, allocator, .limited(max_bytes));
     errdefer allocator.free(cmd_line);
 
     return ArgIteratorResponseFile.initTakeOwnership(allocator, cmd_line);
@@ -6187,7 +6187,7 @@ fn cmdAstCheck(arena: Allocator, io: Io, args: []const []const u8) !void {
     const display_path = zig_source_path orelse "<stdin>";
     const source: [:0]const u8 = s: {
         var f = if (zig_source_path) |p| file: {
-            break :file fs.cwd().openFile(io, p, .{}) catch |err| {
+            break :file Io.Dir.cwd().openFile(io, p, .{}) catch |err| {
                 fatal("unable to open file '{s}' for ast-check: {s}", .{ display_path, @errorName(err) });
             };
         } else Io.File.stdin();
@@ -6494,7 +6494,7 @@ fn cmdDumpZir(arena: Allocator, io: Io, args: []const []const u8) !void {
 
     const cache_file = args[0];
 
-    var f = fs.cwd().openFile(io, cache_file, .{}) catch |err| {
+    var f = Io.Dir.cwd().openFile(io, cache_file, .{}) catch |err| {
         fatal("unable to open zir cache file for dumping '{s}': {s}", .{ cache_file, @errorName(err) });
     };
     defer f.close(io);
@@ -6541,7 +6541,7 @@ fn cmdChangelist(arena: Allocator, io: Io, args: []const []const u8) !void {
     const new_source_path = args[1];
 
     const old_source = source: {
-        var f = fs.cwd().openFile(io, old_source_path, .{}) catch |err|
+        var f = Io.Dir.cwd().openFile(io, old_source_path, .{}) catch |err|
             fatal("unable to open old source file '{s}': {s}", .{ old_source_path, @errorName(err) });
         defer f.close(io);
         var file_reader: Io.File.Reader = f.reader(io, &stdin_buffer);
@@ -6549,7 +6549,7 @@ fn cmdChangelist(arena: Allocator, io: Io, args: []const []const u8) !void {
             fatal("unable to read old source file '{s}': {s}", .{ old_source_path, @errorName(err) });
     };
     const new_source = source: {
-        var f = fs.cwd().openFile(io, new_source_path, .{}) catch |err|
+        var f = Io.Dir.cwd().openFile(io, new_source_path, .{}) catch |err|
             fatal("unable to open new source file '{s}': {s}", .{ new_source_path, @errorName(err) });
         defer f.close(io);
         var file_reader: Io.File.Reader = f.reader(io, &stdin_buffer);
@@ -6845,7 +6845,7 @@ fn accessFrameworkPath(
             framework_dir_path, framework_name, framework_name, ext,
         });
         try checked_paths.print("\n {s}", .{test_path.items});
-        fs.cwd().access(test_path.items, .{}) catch |err| switch (err) {
+        Io.Dir.cwd().access(test_path.items, .{}) catch |err| switch (err) {
             error.FileNotFound => continue,
             else => |e| fatal("unable to search for {s} framework '{s}': {s}", .{
                 ext, test_path.items, @errorName(e),
@@ -6957,7 +6957,7 @@ fn cmdFetch(
     var global_cache_directory: Directory = l: {
         const p = override_global_cache_dir orelse try introspect.resolveGlobalCacheDir(arena);
         break :l .{
-            .handle = try fs.cwd().makeOpenPath(p, .{}),
+            .handle = try Io.Dir.cwd().makeOpenPath(p, .{}),
             .path = p,
         };
     };
@@ -7260,7 +7260,7 @@ fn findBuildRoot(arena: Allocator, options: FindBuildRootOptions) !BuildRoot {
 
     if (options.build_file) |bf| {
         if (fs.path.dirname(bf)) |dirname| {
-            const dir = fs.cwd().openDir(dirname, .{}) catch |err| {
+            const dir = Io.Dir.cwd().openDir(dirname, .{}) catch |err| {
                 fatal("unable to open directory to build file from argument 'build-file', '{s}': {s}", .{ dirname, @errorName(err) });
             };
             return .{
@@ -7272,7 +7272,7 @@ fn findBuildRoot(arena: Allocator, options: FindBuildRootOptions) !BuildRoot {
 
         return .{
             .build_zig_basename = build_zig_basename,
-            .directory = .{ .path = null, .handle = fs.cwd() },
+            .directory = .{ .path = null, .handle = Io.Dir.cwd() },
             .cleanup_build_dir = null,
         };
     }
@@ -7280,8 +7280,8 @@ fn findBuildRoot(arena: Allocator, options: FindBuildRootOptions) !BuildRoot {
     var dirname: []const u8 = cwd_path;
     while (true) {
         const joined_path = try fs.path.join(arena, &[_][]const u8{ dirname, build_zig_basename });
-        if (fs.cwd().access(joined_path, .{})) |_| {
-            const dir = fs.cwd().openDir(dirname, .{}) catch |err| {
+        if (Io.Dir.cwd().access(joined_path, .{})) |_| {
+            const dir = Io.Dir.cwd().openDir(dirname, .{}) catch |err| {
                 fatal("unable to open directory while searching for build.zig file, '{s}': {s}", .{ dirname, @errorName(err) });
             };
             return .{
@@ -7443,7 +7443,7 @@ const Templates = struct {
     }
 };
 fn writeSimpleTemplateFile(io: Io, file_name: []const u8, comptime fmt: []const u8, args: anytype) !void {
-    const f = try fs.cwd().createFile(file_name, .{ .exclusive = true });
+    const f = try Io.Dir.cwd().createFile(io, file_name, .{ .exclusive = true });
     defer f.close(io);
     var buf: [4096]u8 = undefined;
     var fw = f.writer(&buf);
@@ -7591,7 +7591,7 @@ fn addLibDirectoryWarn2(
     ignore_not_found: bool,
 ) void {
     lib_directories.appendAssumeCapacity(.{
-        .handle = fs.cwd().openDir(path, .{}) catch |err| {
+        .handle = Io.Dir.cwd().openDir(path, .{}) catch |err| {
             if (err == error.FileNotFound and ignore_not_found) return;
             warn("unable to open library directory '{s}': {s}", .{ path, @errorName(err) });
             return;

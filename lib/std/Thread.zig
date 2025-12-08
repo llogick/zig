@@ -208,7 +208,7 @@ pub fn setName(self: Thread, io: Io, name: []const u8) SetNameError!void {
             var buf: [32]u8 = undefined;
             const path = try std.fmt.bufPrint(&buf, "/proc/self/task/{d}/comm", .{self.getHandle()});
 
-            const file = try std.fs.cwd().openFile(io, path, .{ .mode = .write_only });
+            const file = try Io.Dir.cwd().openFile(io, path, .{ .mode = .write_only });
             defer file.close(io);
 
             try file.writeAll(name);
@@ -325,7 +325,7 @@ pub fn getName(self: Thread, buffer_ptr: *[max_name_len:0]u8) GetNameError!?[]co
             var threaded: std.Io.Threaded = .init_single_threaded;
             const io = threaded.ioBasic();
 
-            const file = try std.fs.cwd().openFile(io, path, .{});
+            const file = try Io.Dir.cwd().openFile(io, path, .{});
             defer file.close(io);
 
             var file_reader = file.readerStreaming(io, &.{});

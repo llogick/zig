@@ -1991,7 +1991,7 @@ test "writev/fsync/readv" {
     defer tmp.cleanup();
 
     const path = "test_io_uring_writev_fsync_readv";
-    const file = try tmp.dir.createFile(path, .{ .read = true, .truncate = true });
+    const file = try tmp.dir.createFile(io, path, .{ .read = true, .truncate = true });
     defer file.close(io);
     const fd = file.handle;
 
@@ -2062,7 +2062,7 @@ test "write/read" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const path = "test_io_uring_write_read";
-    const file = try tmp.dir.createFile(path, .{ .read = true, .truncate = true });
+    const file = try tmp.dir.createFile(io, path, .{ .read = true, .truncate = true });
     defer file.close(io);
     const fd = file.handle;
 
@@ -2110,12 +2110,12 @@ test "splice/read" {
 
     var tmp = std.testing.tmpDir(.{});
     const path_src = "test_io_uring_splice_src";
-    const file_src = try tmp.dir.createFile(path_src, .{ .read = true, .truncate = true });
+    const file_src = try tmp.dir.createFile(io, path_src, .{ .read = true, .truncate = true });
     defer file_src.close(io);
     const fd_src = file_src.handle;
 
     const path_dst = "test_io_uring_splice_dst";
-    const file_dst = try tmp.dir.createFile(path_dst, .{ .read = true, .truncate = true });
+    const file_dst = try tmp.dir.createFile(io, path_dst, .{ .read = true, .truncate = true });
     defer file_dst.close(io);
     const fd_dst = file_dst.handle;
 
@@ -2185,7 +2185,7 @@ test "write_fixed/read_fixed" {
     defer tmp.cleanup();
 
     const path = "test_io_uring_write_read_fixed";
-    const file = try tmp.dir.createFile(path, .{ .read = true, .truncate = true });
+    const file = try tmp.dir.createFile(io, path, .{ .read = true, .truncate = true });
     defer file.close(io);
     const fd = file.handle;
 
@@ -2306,7 +2306,7 @@ test "close" {
     defer tmp.cleanup();
 
     const path = "test_io_uring_close";
-    const file = try tmp.dir.createFile(path, .{});
+    const file = try tmp.dir.createFile(io, path, .{});
     errdefer file.close(io);
 
     const sqe_close = try ring.close(0x44444444, file.handle);
@@ -2652,7 +2652,7 @@ test "fallocate" {
     defer tmp.cleanup();
 
     const path = "test_io_uring_fallocate";
-    const file = try tmp.dir.createFile(path, .{ .truncate = true, .mode = 0o666 });
+    const file = try tmp.dir.createFile(io, path, .{ .truncate = true, .mode = 0o666 });
     defer file.close(io);
 
     try testing.expectEqual(@as(u64, 0), (try file.stat()).size);
@@ -2699,7 +2699,7 @@ test "statx" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const path = "test_io_uring_statx";
-    const file = try tmp.dir.createFile(path, .{ .truncate = true, .mode = 0o666 });
+    const file = try tmp.dir.createFile(io, path, .{ .truncate = true, .mode = 0o666 });
     defer file.close(io);
 
     try testing.expectEqual(@as(u64, 0), (try file.stat()).size);
@@ -2969,7 +2969,7 @@ test "renameat" {
 
     // Write old file with data
 
-    const old_file = try tmp.dir.createFile(old_path, .{ .truncate = true, .mode = 0o666 });
+    const old_file = try tmp.dir.createFile(io, old_path, .{ .truncate = true, .mode = 0o666 });
     defer old_file.close(io);
     try old_file.writeAll("hello");
 
@@ -3028,7 +3028,7 @@ test "unlinkat" {
 
     // Write old file with data
 
-    const file = try tmp.dir.createFile(path, .{ .truncate = true, .mode = 0o666 });
+    const file = try tmp.dir.createFile(io, path, .{ .truncate = true, .mode = 0o666 });
     defer file.close(io);
 
     // Submit unlinkat
@@ -3125,7 +3125,7 @@ test "symlinkat" {
     const path = "test_io_uring_symlinkat";
     const link_path = "test_io_uring_symlinkat_link";
 
-    const file = try tmp.dir.createFile(path, .{ .truncate = true, .mode = 0o666 });
+    const file = try tmp.dir.createFile(io, path, .{ .truncate = true, .mode = 0o666 });
     defer file.close(io);
 
     // Submit symlinkat
@@ -3177,7 +3177,7 @@ test "linkat" {
 
     // Write file with data
 
-    const first_file = try tmp.dir.createFile(first_path, .{ .truncate = true, .mode = 0o666 });
+    const first_file = try tmp.dir.createFile(io, first_path, .{ .truncate = true, .mode = 0o666 });
     defer first_file.close(io);
     try first_file.writeAll("hello");
 

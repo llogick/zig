@@ -170,7 +170,7 @@ pub fn updateFile(
     // version. Likewise if we're working on AstGen and another process asks for
     // the cached file, they'll get it.
     const cache_file = while (true) {
-        break zir_dir.createFile(&hex_digest, .{
+        break zir_dir.createFile(io, &hex_digest, .{
             .read = true,
             .truncate = false,
             .lock = lock,
@@ -196,7 +196,7 @@ pub fn updateFile(
                         cache_directory,
                     });
                 }
-                break zir_dir.createFile(&hex_digest, .{
+                break zir_dir.createFile(io, &hex_digest, .{
                     .read = true,
                     .truncate = false,
                     .lock = lock,

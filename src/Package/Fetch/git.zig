@@ -264,7 +264,7 @@ pub const Repository = struct {
                     try repository.odb.seekOid(entry.oid);
                     const file_object = try repository.odb.readObject();
                     if (file_object.type != .blob) return error.InvalidFile;
-                    var file = dir.createFile(entry.name, .{ .exclusive = true }) catch |e| {
+                    var file = dir.createFile(io, entry.name, .{ .exclusive = true }) catch |e| {
                         const file_name = try std.fs.path.join(diagnostics.allocator, &.{ current_path, entry.name });
                         errdefer diagnostics.allocator.free(file_name);
                         try diagnostics.errors.append(diagnostics.allocator, .{ .unable_to_create_file = .{
@@ -1584,14 +1584,14 @@ fn runRepositoryTest(io: Io, comptime format: Oid.Format, head_commit: []const u
 
     var git_dir = testing.tmpDir(.{});
     defer git_dir.cleanup();
-    var pack_file = try git_dir.dir.createFile("testrepo.pack", .{ .read = true });
+    var pack_file = try git_dir.dir.createFile(io, "testrepo.pack", .{ .read = true });
     defer pack_file.close(io);
     try pack_file.writeAll(testrepo_pack);
 
     var pack_file_buffer: [2000]u8 = undefined;
     var pack_file_reader = pack_file.reader(io, &pack_file_buffer);
 
-    var index_file = try git_dir.dir.createFile("testrepo.idx", .{ .read = true });
+    var index_file = try git_dir.dir.createFile(io, "testrepo.idx", .{ .read = true });
     defer index_file.close(io);
     var index_file_buffer: [2000]u8 = undefined;
     var index_file_writer = index_file.writer(&index_file_buffer);
@@ -1714,20 +1714,20 @@ pub fn main() !void {
 
     const format = std.meta.stringToEnum(Oid.Format, args[1]) orelse return error.InvalidFormat;
 
-    var pack_file = try std.fs.cwd().openFile(io, args[2], .{});
+    var pack_file = try Io.Dir.cwd().openFile(io, args[2], .{});
     defer pack_file.close(io);
     var pack_file_buffer: [4096]u8 = undefined;
     var pack_file_reader = pack_file.reader(io, &pack_file_buffer);
 
     const commit = try Oid.parse(format, args[3]);
-    var worktree = try std.fs.cwd().makeOpenPath(args[4], .{});
+    var worktree = try Io.Dir.cwd().makeOpenPath(args[4], .{});
     defer worktree.close(io);
 
     var git_dir = try worktree.makeOpenPath(".git", .{});
     defer git_dir.close(io);
 
     std.debug.print("Starting index...\n", .{});
-    var index_file = try git_dir.createFile("idx", .{ .read = true });
+    var index_file = try git_dir.createFile(io, "idx", .{ .read = true });
     defer index_file.close(io);
     var index_file_buffer: [4096]u8 = undefined;
     var index_file_writer = index_file.writer(&index_file_buffer);

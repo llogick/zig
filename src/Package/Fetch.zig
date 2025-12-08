@@ -383,14 +383,14 @@ pub fn run(f: *Fetch) RunError!void {
         },
         .remote => |remote| remote,
         .path_or_url => |path_or_url| {
-            if (fs.cwd().openDir(path_or_url, .{ .iterate = true })) |dir| {
+            if (Io.Dir.cwd().openDir(path_or_url, .{ .iterate = true })) |dir| {
                 var resource: Resource = .{ .dir = dir };
                 return f.runResource(path_or_url, &resource, null);
             } else |dir_err| {
                 var server_header_buffer: [init_resource_buffer_size]u8 = undefined;
 
                 const file_err = if (dir_err == error.NotDir) e: {
-                    if (fs.cwd().openFile(io, path_or_url, .{})) |file| {
+                    if (Io.Dir.cwd().openFile(io, path_or_url, .{})) |file| {
                         var resource: Resource = .{ .file = file.reader(io, &server_header_buffer) };
                         return f.runResource(path_or_url, &resource, null);
                     } else |err| break :e err;
@@ -1303,7 +1303,7 @@ fn unzip(
         const random_integer = std.crypto.random.int(u64);
         zip_path[prefix.len..][0..random_len].* = std.fmt.hex(random_integer);
 
-        break cache_root.handle.createFile(&zip_path, .{
+        break cache_root.handle.createFile(io, &zip_path, .{
             .exclusive = true,
             .read = true,
         }) catch |err| switch (err) {
@@ -1365,7 +1365,7 @@ fn unpackGitPack(f: *Fetch, out_dir: Io.Dir, resource: *Resource.Git) anyerror!U
     {
         var pack_dir = try out_dir.makeOpenPath(".git", .{});
         defer pack_dir.close(io);
-        var pack_file = try pack_dir.createFile("pkg.pack", .{ .read = true });
+        var pack_file = try pack_dir.createFile(io, "pkg.pack", .{ .read = true });
         defer pack_file.close(io);
         var pack_file_buffer: [4096]u8 = undefined;
         var pack_file_reader = b: {
@@ -1376,7 +1376,7 @@ fn unpackGitPack(f: *Fetch, out_dir: Io.Dir, resource: *Resource.Git) anyerror!U
             break :b pack_file_writer.moveToReader(io);
         };
 
-        var index_file = try pack_dir.createFile("pkg.idx", .{ .read = true });
+        var index_file = try pack_dir.createFile(io, "pkg.idx", .{ .read = true });
         defer index_file.close(io);
         var index_file_buffer: [2000]u8 = undefined;
         var index_file_writer = index_file.writer(&index_file_buffer);
@@ -2235,7 +2235,7 @@ test "set executable bit based on file content" {
 fn saveEmbedFile(io: Io, comptime tarball_name: []const u8, dir: Io.Dir) !void {
     //const tarball_name = "duplicate_paths_excluded.tar.gz";
     const tarball_content = @embedFile("Fetch/testdata/" ++ tarball_name);
-    var tmp_file = try dir.createFile(tarball_name, .{});
+    var tmp_file = try dir.createFile(io, tarball_name, .{});
     defer tmp_file.close(io);
     try tmp_file.writeAll(tarball_content);
 }

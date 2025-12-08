@@ -136,7 +136,7 @@ pub fn createEmpty(
     assert(!use_lld);
     assert(!use_llvm);
 
-    const file = try emit.root_dir.handle.createFile(emit.sub_path, .{
+    const file = try emit.root_dir.handle.createFile(io, emit.sub_path, .{
         // Truncation is done on `flush`.
         .truncate = false,
     });
@@ -792,7 +792,7 @@ pub fn flushEmitH(zcu: *Zcu) !void {
     }
 
     const directory = emit_h.loc.directory orelse zcu.comp.local_cache_directory;
-    const file = try directory.handle.createFile(emit_h.loc.basename, .{
+    const file = try directory.handle.createFile(io, emit_h.loc.basename, .{
         // We set the end position explicitly below; by not truncating the file, we possibly
         // make it easier on the file system by doing 1 reallocation instead of two.
         .truncate = false,

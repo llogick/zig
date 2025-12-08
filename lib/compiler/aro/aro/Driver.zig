@@ -1327,7 +1327,7 @@ fn processSource(
         const dep_file_name = try d.getDepFileName(source, writer_buf[0..std.fs.max_name_bytes]);
 
         const file = if (dep_file_name) |path|
-            d.comp.cwd.createFile(path, .{}) catch |er|
+            d.comp.cwd.createFile(io, path, .{}) catch |er|
                 return d.fatal("unable to create dependency file '{s}': {s}", .{ path, errorDescription(er) })
         else
             Io.File.stdout();
@@ -1352,7 +1352,7 @@ fn processSource(
         }
 
         const file = if (d.output_name) |some|
-            d.comp.cwd.createFile(some, .{}) catch |er|
+            d.comp.cwd.createFile(io, some, .{}) catch |er|
                 return d.fatal("unable to create output file '{s}': {s}", .{ some, errorDescription(er) })
         else
             Io.File.stdout();
@@ -1405,7 +1405,7 @@ fn processSource(
         defer assembly.deinit(gpa);
 
         if (d.only_preprocess_and_compile) {
-            const out_file = d.comp.cwd.createFile(out_file_name, .{}) catch |er|
+            const out_file = d.comp.cwd.createFile(io, out_file_name, .{}) catch |er|
                 return d.fatal("unable to create output file '{s}': {s}", .{ out_file_name, errorDescription(er) });
             defer out_file.close(io);
 
@@ -1419,7 +1419,7 @@ fn processSource(
         // then assemble to out_file_name
         var assembly_name_buf: [std.fs.max_name_bytes]u8 = undefined;
         const assembly_out_file_name = try d.getRandomFilename(&assembly_name_buf, ".s");
-        const out_file = d.comp.cwd.createFile(assembly_out_file_name, .{}) catch |er|
+        const out_file = d.comp.cwd.createFile(io, assembly_out_file_name, .{}) catch |er|
             return d.fatal("unable to create output file '{s}': {s}", .{ assembly_out_file_name, errorDescription(er) });
         defer out_file.close(io);
         assembly.writeToFile(out_file) catch |er|
@@ -1455,7 +1455,7 @@ fn processSource(
         };
         defer obj.deinit();
 
-        const out_file = d.comp.cwd.createFile(out_file_name, .{}) catch |er|
+        const out_file = d.comp.cwd.createFile(io, out_file_name, .{}) catch |er|
             return d.fatal("unable to create output file '{s}': {s}", .{ out_file_name, errorDescription(er) });
         defer out_file.close(io);
 

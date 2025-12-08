@@ -1,11 +1,12 @@
 const builtin = @import("builtin");
+const native_endian = builtin.cpu.arch.endian();
+
 const std = @import("../std.zig");
 const mem = std.mem;
 const elf = std.elf;
 const fs = std.fs;
 const assert = std.debug.assert;
 const Target = std.Target;
-const native_endian = builtin.cpu.arch.endian();
 const posix = std.posix;
 const Io = std.Io;
 
@@ -69,7 +70,7 @@ pub fn getExternalExecutor(
     if (os_match and cpu_ok) native: {
         if (options.link_libc) {
             if (candidate.dynamic_linker.get()) |candidate_dl| {
-                fs.cwd().access(candidate_dl, .{}) catch {
+                Io.Dir.cwd().access(candidate_dl, .{}) catch {
                     bad_result = .{ .bad_dl = candidate_dl };
                     break :native;
                 };
@@ -710,6 +711,7 @@ fn abiAndDynamicLinkerFromFile(
                 error.SystemResources,
                 error.FileSystem,
                 error.SymLinkLoop,
+                error.Canceled,
                 error.Unexpected,
                 => |e| return e,
             };

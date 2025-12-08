@@ -15,15 +15,16 @@
 //! deal with the exception.
 
 const builtin = @import("builtin");
-const root = @import("root");
+const native_os = builtin.os.tag;
+
 const std = @import("std.zig");
+const Io = std.Io;
 const mem = std.mem;
 const fs = std.fs;
-const max_path_bytes = fs.max_path_bytes;
+const max_path_bytes = std.fs.max_path_bytes;
 const maxInt = std.math.maxInt;
 const cast = std.math.cast;
 const assert = std.debug.assert;
-const native_os = builtin.os.tag;
 const page_size_min = std.heap.page_size_min;
 
 test {
@@ -797,7 +798,6 @@ pub fn read(fd: fd_t, buf: []u8) ReadError!usize {
             .INTR => continue,
             .INVAL => unreachable,
             .FAULT => unreachable,
-            .SRCH => return error.ProcessNotFound,
             .AGAIN => return error.WouldBlock,
             .CANCELED => return error.Canceled,
             .BADF => return error.NotOpenForReading, // Can be a race condition.
@@ -917,7 +917,6 @@ pub fn write(fd: fd_t, bytes: []const u8) WriteError!usize {
             .INTR => continue,
             .INVAL => return error.InvalidArgument,
             .FAULT => unreachable,
-            .SRCH => return error.ProcessNotFound,
             .AGAIN => return error.WouldBlock,
             .BADF => return error.NotOpenForWriting, // can be a race condition.
             .DESTADDRREQ => unreachable, // `connect` was never called.
@@ -985,7 +984,8 @@ pub fn openZ(file_path: [*:0]const u8, flags: O, perm: mode_t) OpenError!fd_t {
             .NFILE => return error.SystemFdQuotaExceeded,
             .NODEV => return error.NoDevice,
             .NOENT => return error.FileNotFound,
-            .SRCH => return error.ProcessNotFound,
+            // Can happen on Linux when opening procfs files.
+            .SRCH => return error.FileNotFound,
             .NOMEM => return error.SystemResources,
             .NOSPC => return error.NoSpaceLeft,
             .NOTDIR => return error.NotDir,
@@ -1560,7 +1560,7 @@ pub fn mkdirZ(dir_path: [*:0]const u8, mode: mode_t) MakeDirError!void {
 pub fn mkdirW(dir_path_w: []const u16, mode: mode_t) MakeDirError!void {
     _ = mode;
     const sub_dir_handle = windows.OpenFile(dir_path_w, .{
-        .dir = fs.cwd().fd,
+        .dir = Io.Dir.cwd().handle,
         .access_mask = .{
             .STANDARD = .{ .SYNCHRONIZE = true },
             .GENERIC = .{ .READ = true },

@@ -564,9 +564,9 @@ pub const Iterator = struct {
                     defer parent_dir.close(io);
 
                     const basename = std.fs.path.basename(filename);
-                    break :blk try parent_dir.createFile(basename, .{ .exclusive = true });
+                    break :blk try parent_dir.createFile(io, basename, .{ .exclusive = true });
                 }
-                break :blk try dest.createFile(filename, .{ .exclusive = true });
+                break :blk try dest.createFile(io, filename, .{ .exclusive = true });
             };
             defer out_file.close(io);
             var out_file_buffer: [1024]u8 = undefined;

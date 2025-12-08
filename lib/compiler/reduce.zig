@@ -233,7 +233,7 @@ pub fn main() !void {
                 }
             }
 
-            try std.fs.cwd().writeFile(.{ .sub_path = root_source_file_path, .data = rendered.written() });
+            try Io.Dir.cwd().writeFile(.{ .sub_path = root_source_file_path, .data = rendered.written() });
             // std.debug.print("trying this code:\n{s}\n", .{rendered.items});
 
             const interestingness = try runCheck(arena, interestingness_argv.items);
@@ -274,7 +274,7 @@ pub fn main() !void {
         fixups.clearRetainingCapacity();
         rendered.clearRetainingCapacity();
         try tree.render(gpa, &rendered.writer, fixups);
-        try std.fs.cwd().writeFile(.{ .sub_path = root_source_file_path, .data = rendered.written() });
+        try Io.Dir.cwd().writeFile(.{ .sub_path = root_source_file_path, .data = rendered.written() });
 
         return std.process.cleanExit();
     }
@@ -398,7 +398,7 @@ fn transformationsToFixups(
 }
 
 fn parse(gpa: Allocator, file_path: []const u8) !Ast {
-    const source_code = std.fs.cwd().readFileAllocOptions(
+    const source_code = Io.Dir.cwd().readFileAllocOptions(
         file_path,
         gpa,
         .limited(std.math.maxInt(u32)),

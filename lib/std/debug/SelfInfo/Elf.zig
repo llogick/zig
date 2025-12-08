@@ -29,13 +29,12 @@ pub fn deinit(si: *SelfInfo, gpa: Allocator) void {
 }
 
 pub fn getSymbol(si: *SelfInfo, gpa: Allocator, io: Io, address: usize) Error!std.debug.Symbol {
-    _ = io;
     const module = try si.findModule(gpa, address, .exclusive);
     defer si.rwlock.unlock();
 
     const vaddr = address - module.load_offset;
 
-    const loaded_elf = try module.getLoadedElf(gpa);
+    const loaded_elf = try module.getLoadedElf(gpa, io);
     if (loaded_elf.file.dwarf) |*dwarf| {
         if (!loaded_elf.scanned_dwarf) {
             dwarf.open(gpa, native_endian) catch |err| switch (err) {
@@ -180,7 +179,7 @@ comptime {
     }
 }
 pub const UnwindContext = Dwarf.SelfUnwinder;
-pub fn unwindFrame(si: *SelfInfo, gpa: Allocator, context: *UnwindContext) Error!usize {
+pub fn unwindFrame(si: *SelfInfo, gpa: Allocator, io: Io, context: *UnwindContext) Error!usize {
     comptime assert(can_unwind);
 
     {
@@ -201,7 +200,7 @@ pub fn unwindFrame(si: *SelfInfo, gpa: Allocator, context: *UnwindContext) Error
         @memset(si.unwind_cache.?, .empty);
     }
 
-    const unwind_sections = try module.getUnwindSections(gpa);
+    const unwind_sections = try module.getUnwindSections(gpa, io);
     for (unwind_sections) |*unwind| {
         if (context.computeRules(gpa, unwind, module.load_offset, null)) |entry| {
             entry.populate(si.unwind_cache.?);
@@ -261,12 +260,12 @@ const Module = struct {
     };
 
     /// Assumes we already hold an exclusive lock.
-    fn getUnwindSections(mod: *Module, gpa: Allocator) Error![]Dwarf.Unwind {
-        if (mod.unwind == null) mod.unwind = loadUnwindSections(mod, gpa);
+    fn getUnwindSections(mod: *Module, gpa: Allocator, io: Io) Error![]Dwarf.Unwind {
+        if (mod.unwind == null) mod.unwind = loadUnwindSections(mod, gpa, io);
         const us = &(mod.unwind.? catch |err| return err);
         return us.buf[0..us.len];
     }
-    fn loadUnwindSections(mod: *Module, gpa: Allocator) Error!UnwindSections {
+    fn loadUnwindSections(mod: *Module, gpa: Allocator, io: Io) Error!UnwindSections {
         var us: UnwindSections = .{
             .buf = undefined,
             .len = 0,
@@ -284,7 +283,7 @@ const Module = struct {
         } else {
             // There is no `.eh_frame_hdr` section. There may still be an `.eh_frame` or `.debug_frame`
             // section, but we'll have to load the binary to get at it.
-            const loaded = try mod.getLoadedElf(gpa);
+            const loaded = try mod.getLoadedElf(gpa, io);
             // If both are present, we can't just pick one -- the info could be split between them.
             // `.debug_frame` is likely to be the more complete section, so we'll prioritize that one.
             if (loaded.file.debug_frame) |*debug_frame| {
@@ -325,7 +324,7 @@ const Module = struct {
     }
     fn loadElf(mod: *Module, gpa: Allocator, io: Io) Error!LoadedElf {
         const load_result = if (mod.name.len > 0) res: {
-            var file = std.fs.cwd().openFile(io, mod.name, .{}) catch return error.MissingDebugInfo;
+            var file = Io.Dir.cwd().openFile(io, mod.name, .{}) catch return error.MissingDebugInfo;
             defer file.close(io);
             break :res std.debug.ElfFile.load(gpa, file, mod.build_id, &.native(mod.name));
         } else res: {
@@ -334,7 +333,7 @@ const Module = struct {
                 else => return error.ReadFailed,
             };
             defer gpa.free(path);
-            var file = std.fs.cwd().openFile(io, path, .{}) catch return error.MissingDebugInfo;
+            var file = Io.Dir.cwd().openFile(io, path, .{}) catch return error.MissingDebugInfo;
             defer file.close(io);
             break :res std.debug.ElfFile.load(gpa, file, mod.build_id, &.native(path));
         };

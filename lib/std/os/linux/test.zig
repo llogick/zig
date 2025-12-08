@@ -18,7 +18,7 @@ test "fallocate" {
     defer tmp.cleanup();
 
     const path = "test_fallocate";
-    const file = try tmp.dir.createFile(path, .{ .truncate = true, .mode = 0o666 });
+    const file = try tmp.dir.createFile(io, path, .{ .truncate = true, .mode = 0o666 });
     defer file.close(io);
 
     try expect((try file.stat()).size == 0);
@@ -85,7 +85,7 @@ test "statx" {
     defer tmp.cleanup();
 
     const tmp_file_name = "just_a_temporary_file.txt";
-    var file = try tmp.dir.createFile(tmp_file_name, .{});
+    var file = try tmp.dir.createFile(io, tmp_file_name, .{});
     defer file.close(io);
 
     var buf: linux.Statx = undefined;
@@ -121,7 +121,7 @@ test "fadvise" {
     defer tmp.cleanup();
 
     const tmp_file_name = "temp_posix_fadvise.txt";
-    var file = try tmp.dir.createFile(tmp_file_name, .{});
+    var file = try tmp.dir.createFile(io, tmp_file_name, .{});
     defer file.close(io);
 
     var buf: [2048]u8 = undefined;

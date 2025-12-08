@@ -1,19 +1,22 @@
-const std = @import("std");
 const builtin = @import("builtin");
+
+const std = @import("std");
+const Io = std.Io;
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const log = std.log.scoped(.codegen);
 const math = std.math;
 const DW = std.dwarf;
-
 const Builder = std.zig.llvm.Builder;
+
+const build_options = @import("build_options");
 const llvm = if (build_options.have_llvm)
     @import("llvm/bindings.zig")
 else
     @compileError("LLVM unavailable");
+
 const link = @import("../link.zig");
 const Compilation = @import("../Compilation.zig");
-const build_options = @import("build_options");
 const Zcu = @import("../Zcu.zig");
 const InternPool = @import("../InternPool.zig");
 const Package = @import("../Package.zig");
@@ -964,7 +967,7 @@ pub const Object = struct {
                 if (std.mem.eql(u8, path, "-")) {
                     o.builder.dump();
                 } else {
-                    o.builder.printToFilePath(std.fs.cwd(), path) catch |err| {
+                    o.builder.printToFilePath(Io.Dir.cwd(), path) catch |err| {
                         log.err("failed printing LLVM module to \"{s}\": {s}", .{ path, @errorName(err) });
                     };
                 }
@@ -978,7 +981,7 @@ pub const Object = struct {
             o.builder.clearAndFree();
 
             if (options.pre_bc_path) |path| {
-                var file = std.fs.cwd().createFile(path, .{}) catch |err|
+                var file = Io.Dir.cwd().createFile(io, path, .{}) catch |err|
                     return diags.fail("failed to create '{s}': {s}", .{ path, @errorName(err) });
                 defer file.close(io);
 
@@ -991,7 +994,7 @@ pub const Object = struct {
                 options.post_ir_path == null and options.post_bc_path == null) return;
 
             if (options.post_bc_path) |path| {
-                var file = std.fs.cwd().createFile(path, .{}) catch |err|
+                var file = Io.Dir.cwd().createFile(io, path, .{}) catch |err|
                     return diags.fail("failed to create '{s}': {s}", .{ path, @errorName(err) });
                 defer file.close(io);
 
@@ -2711,7 +2714,7 @@ pub const Object = struct {
     }
 
     fn allocTypeName(o: *Object, pt: Zcu.PerThread, ty: Type) Allocator.Error![:0]const u8 {
-        var aw: std.Io.Writer.Allocating = .init(o.gpa);
+        var aw: Io.Writer.Allocating = .init(o.gpa);
         defer aw.deinit();
         ty.print(&aw.writer, pt, null) catch |err| switch (err) {
             error.WriteFailed => return error.OutOfMemory,

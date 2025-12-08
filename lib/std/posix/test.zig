@@ -148,7 +148,7 @@ test "linkat with different directories" {
     try tmp.dir.writeFile(.{ .sub_path = target_name, .data = "example" });
 
     // Test 1: link from file in subdir back up to target in parent directory
-    try posix.linkat(tmp.dir.fd, target_name, subdir.fd, link_name, 0);
+    try posix.linkat(tmp.dir.handle, target_name, subdir.handle, link_name, 0);
 
     const efd = try tmp.dir.openFile(io, target_name, .{});
     defer efd.close(io);
@@ -164,7 +164,7 @@ test "linkat with different directories" {
     }
 
     // Test 2: remove link
-    try posix.unlinkat(subdir.fd, link_name, 0);
+    try posix.unlinkat(subdir.handle, link_name, 0);
     _, const elink = try getLinkInfo(efd.handle);
     try testing.expectEqual(@as(posix.nlink_t, 1), elink);
 }
@@ -373,7 +373,7 @@ test "mmap" {
 
     // Create a file used for testing mmap() calls with a file descriptor
     {
-        const file = try tmp.dir.createFile(test_out_file, .{});
+        const file = try tmp.dir.createFile(io, test_out_file, .{});
         defer file.close(io);
 
         var stream = file.writer(&.{});
@@ -444,7 +444,7 @@ test "fcntl" {
 
     const test_out_file = "os_tmp_test";
 
-    const file = try tmp.dir.createFile(test_out_file, .{});
+    const file = try tmp.dir.createFile(io, test_out_file, .{});
     defer file.close(io);
 
     // Note: The test assumes createFile opens the file with CLOEXEC
@@ -495,7 +495,7 @@ test "fsync" {
     defer tmp.cleanup();
 
     const test_out_file = "os_tmp_test";
-    const file = try tmp.dir.createFile(test_out_file, .{});
+    const file = try tmp.dir.createFile(io, test_out_file, .{});
     defer file.close(io);
 
     try posix.fsync(file.handle);
@@ -617,7 +617,7 @@ test "dup & dup2" {
     defer tmp.cleanup();
 
     {
-        var file = try tmp.dir.createFile("os_dup_test", .{});
+        var file = try tmp.dir.createFile(io, "os_dup_test", .{});
         defer file.close(io);
 
         var duped = Io.File{ .handle = try posix.dup(file.handle) };
@@ -659,7 +659,7 @@ test "writev longer than IOV_MAX" {
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
-    var file = try tmp.dir.createFile("pwritev", .{});
+    var file = try tmp.dir.createFile(io, "pwritev", .{});
     defer file.close(io);
 
     const iovecs = [_]posix.iovec_const{.{ .base = "a", .len = 1 }} ** (posix.IOV_MAX + 1);
@@ -684,7 +684,7 @@ test "POSIX file locking with fcntl" {
     defer tmp.cleanup();
 
     // Create a temporary lock file
-    var file = try tmp.dir.createFile("lock", .{ .read = true });
+    var file = try tmp.dir.createFile(io, "lock", .{ .read = true });
     defer file.close(io);
     try file.setEndPos(2);
     const fd = file.handle;
@@ -881,7 +881,7 @@ test "isatty" {
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
-    var file = try tmp.dir.createFile("foo", .{});
+    var file = try tmp.dir.createFile(io, "foo", .{});
     defer file.close(io);
 
     try expectEqual(posix.isatty(file.handle), false);
@@ -893,7 +893,7 @@ test "pread with empty buffer" {
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
-    var file = try tmp.dir.createFile("pread_empty", .{ .read = true });
+    var file = try tmp.dir.createFile(io, "pread_empty", .{ .read = true });
     defer file.close(io);
 
     const bytes = try a.alloc(u8, 0);
@@ -909,7 +909,7 @@ test "write with empty buffer" {
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
-    var file = try tmp.dir.createFile("write_empty", .{});
+    var file = try tmp.dir.createFile(io, "write_empty", .{});
     defer file.close(io);
 
     const bytes = try a.alloc(u8, 0);
@@ -925,7 +925,7 @@ test "pwrite with empty buffer" {
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
-    var file = try tmp.dir.createFile("pwrite_empty", .{});
+    var file = try tmp.dir.createFile(io, "pwrite_empty", .{});
     defer file.close(io);
 
     const bytes = try a.alloc(u8, 0);
@@ -965,35 +965,35 @@ test "fchmodat smoke test" {
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
-    try expectError(error.FileNotFound, posix.fchmodat(tmp.dir.fd, "regfile", 0o666, 0));
+    try expectError(error.FileNotFound, posix.fchmodat(tmp.dir.handle, "regfile", 0o666, 0));
     const fd = try posix.openat(
-        tmp.dir.fd,
+        tmp.dir.handle,
         "regfile",
         .{ .ACCMODE = .WRONLY, .CREAT = true, .EXCL = true, .TRUNC = true },
         0o644,
     );
     posix.close(fd);
 
-    try posix.symlinkat("regfile", tmp.dir.fd, "symlink");
-    const sym_mode = try getFileMode(tmp.dir.fd, "symlink");
+    try posix.symlinkat("regfile", tmp.dir.handle, "symlink");
+    const sym_mode = try getFileMode(tmp.dir.handle, "symlink");
 
-    try posix.fchmodat(tmp.dir.fd, "regfile", 0o640, 0);
-    try expectMode(tmp.dir.fd, "regfile", 0o640);
-    try posix.fchmodat(tmp.dir.fd, "regfile", 0o600, posix.AT.SYMLINK_NOFOLLOW);
-    try expectMode(tmp.dir.fd, "regfile", 0o600);
+    try posix.fchmodat(tmp.dir.handle, "regfile", 0o640, 0);
+    try expectMode(tmp.dir.handle, "regfile", 0o640);
+    try posix.fchmodat(tmp.dir.handle, "regfile", 0o600, posix.AT.SYMLINK_NOFOLLOW);
+    try expectMode(tmp.dir.handle, "regfile", 0o600);
 
-    try posix.fchmodat(tmp.dir.fd, "symlink", 0o640, 0);
-    try expectMode(tmp.dir.fd, "regfile", 0o640);
-    try expectMode(tmp.dir.fd, "symlink", sym_mode);
+    try posix.fchmodat(tmp.dir.handle, "symlink", 0o640, 0);
+    try expectMode(tmp.dir.handle, "regfile", 0o640);
+    try expectMode(tmp.dir.handle, "symlink", sym_mode);
 
     var test_link = true;
-    posix.fchmodat(tmp.dir.fd, "symlink", 0o600, posix.AT.SYMLINK_NOFOLLOW) catch |err| switch (err) {
+    posix.fchmodat(tmp.dir.handle, "symlink", 0o600, posix.AT.SYMLINK_NOFOLLOW) catch |err| switch (err) {
         error.OperationNotSupported => test_link = false,
         else => |e| return e,
     };
     if (test_link)
-        try expectMode(tmp.dir.fd, "symlink", 0o600);
-    try expectMode(tmp.dir.fd, "regfile", 0o640);
+        try expectMode(tmp.dir.handle, "symlink", 0o600);
+    try expectMode(tmp.dir.handle, "regfile", 0o640);
 }
 
 const CommonOpenFlags = packed struct {

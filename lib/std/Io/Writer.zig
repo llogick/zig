@@ -2835,7 +2835,7 @@ test "discarding sendFile" {
     var tmp_dir = testing.tmpDir(.{});
     defer tmp_dir.cleanup();
 
-    const file = try tmp_dir.dir.createFile("input.txt", .{ .read = true });
+    const file = try tmp_dir.dir.createFile(io, "input.txt", .{ .read = true });
     defer file.close(io);
     var r_buffer: [256]u8 = undefined;
     var file_writer: File.Writer = .init(file, &r_buffer);
@@ -2857,7 +2857,7 @@ test "allocating sendFile" {
     var tmp_dir = testing.tmpDir(.{});
     defer tmp_dir.cleanup();
 
-    const file = try tmp_dir.dir.createFile("input.txt", .{ .read = true });
+    const file = try tmp_dir.dir.createFile(io, "input.txt", .{ .read = true });
     defer file.close(io);
     var r_buffer: [2]u8 = undefined;
     var file_writer: File.Writer = .init(file, &r_buffer);
@@ -2881,7 +2881,7 @@ test sendFileReading {
     var tmp_dir = testing.tmpDir(.{});
     defer tmp_dir.cleanup();
 
-    const file = try tmp_dir.dir.createFile("input.txt", .{ .read = true });
+    const file = try tmp_dir.dir.createFile(io, "input.txt", .{ .read = true });
     defer file.close(io);
     var r_buffer: [2]u8 = undefined;
     var file_writer: File.Writer = .init(file, &r_buffer);

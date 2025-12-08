@@ -1572,7 +1572,7 @@ fn wasmLink(lld: *Lld, arena: Allocator) !void {
             // report a nice error here with the file path if it fails instead of
             // just returning the error code.
             // chmod does not interact with umask, so we use a conservative -rwxr--r-- here.
-            std.posix.fchmodat(fs.cwd().fd, full_out_path, 0o744, 0) catch |err| switch (err) {
+            std.posix.fchmodat(Io.Dir.cwd().handle, full_out_path, 0o744, 0) catch |err| switch (err) {
                 error.OperationNotSupported => unreachable, // Not a symlink.
                 else => |e| return e,
             };
@@ -1624,7 +1624,7 @@ fn spawnLld(comp: *Compilation, arena: Allocator, argv: []const []const u8) !voi
                 const rand_int = std.crypto.random.int(u64);
                 const rsp_path = "tmp" ++ s ++ std.fmt.hex(rand_int) ++ ".rsp";
 
-                const rsp_file = try comp.dirs.local_cache.handle.createFile(rsp_path, .{});
+                const rsp_file = try comp.dirs.local_cache.handle.createFile(io, rsp_path, .{});
                 defer comp.dirs.local_cache.handle.deleteFileZ(rsp_path) catch |err|
                     log.warn("failed to delete response file {s}: {s}", .{ rsp_path, @errorName(err) });
                 {

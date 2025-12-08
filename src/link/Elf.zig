@@ -313,9 +313,11 @@ pub fn createEmpty(
     const is_obj = output_mode == .Obj;
     const is_obj_or_ar = is_obj or (output_mode == .Lib and link_mode == .static);
 
+    const io = comp.io;
+
     // What path should this ELF linker code output to?
     const sub_path = emit.sub_path;
-    self.base.file = try emit.root_dir.handle.createFile(sub_path, .{
+    self.base.file = try emit.root_dir.handle.createFile(io, sub_path, .{
         .truncate = true,
         .read = true,
         .mode = link.File.determineMode(output_mode, link_mode),

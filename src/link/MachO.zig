@@ -219,7 +219,9 @@ pub fn createEmpty(
     };
     errdefer self.base.destroy();
 
-    self.base.file = try emit.root_dir.handle.createFile(emit.sub_path, .{
+    const io = comp.io;
+
+    self.base.file = try emit.root_dir.handle.createFile(io, emit.sub_path, .{
         .truncate = true,
         .read = true,
         .mode = link.File.determineMode(output_mode, link_mode),
@@ -1082,7 +1084,7 @@ fn accessLibPath(
         test_path.clearRetainingCapacity();
         try test_path.print("{s}" ++ sep ++ "lib{s}{s}", .{ search_dir, name, ext });
         try checked_paths.append(try arena.dupe(u8, test_path.items));
-        fs.cwd().access(test_path.items, .{}) catch |err| switch (err) {
+        Io.Dir.cwd().access(test_path.items, .{}) catch |err| switch (err) {
             error.FileNotFound => continue,
             else => |e| return e,
         };
@@ -1110,7 +1112,7 @@ fn accessFrameworkPath(
             ext,
         });
         try checked_paths.append(try arena.dupe(u8, test_path.items));
-        fs.cwd().access(test_path.items, .{}) catch |err| switch (err) {
+        Io.Dir.cwd().access(test_path.items, .{}) catch |err| switch (err) {
             error.FileNotFound => continue,
             else => |e| return e,
         };
@@ -1191,7 +1193,7 @@ fn parseDependentDylibs(self: *MachO) !void {
                             try test_path.print("{s}{s}", .{ path, ext });
                         }
                         try checked_paths.append(try arena.dupe(u8, test_path.items));
-                        fs.cwd().access(test_path.items, .{}) catch |err| switch (err) {
+                        Io.Dir.cwd().access(test_path.items, .{}) catch |err| switch (err) {
                             error.FileNotFound => continue,
                             else => |e| return e,
                         };
@@ -3289,7 +3291,7 @@ pub fn reopenDebugInfo(self: *MachO) !void {
     var d_sym_bundle = try self.base.emit.root_dir.handle.makeOpenPath(d_sym_path, .{});
     defer d_sym_bundle.close(io);
 
-    self.d_sym.?.file = try d_sym_bundle.createFile(fs.path.basename(self.base.emit.sub_path), .{
+    self.d_sym.?.file = try d_sym_bundle.createFile(io, fs.path.basename(self.base.emit.sub_path), .{
         .truncate = false,
         .read = true,
     });
@@ -4370,7 +4372,7 @@ fn inferSdkVersion(comp: *Compilation, sdk_layout: SdkLayout) ?std.SemanticVersi
 // The file/property is also available with vendored libc.
 fn readSdkVersionFromSettings(arena: Allocator, dir: []const u8) ![]const u8 {
     const sdk_path = try fs.path.join(arena, &.{ dir, "SDKSettings.json" });
-    const contents = try fs.cwd().readFileAlloc(sdk_path, arena, .limited(std.math.maxInt(u16)));
+    const contents = try Io.Dir.cwd().readFileAlloc(sdk_path, arena, .limited(std.math.maxInt(u16)));
     const parsed = try std.json.parseFromSlice(std.json.Value, arena, contents, .{});
     if (parsed.value.object.get("MinimalDisplayName")) |ver| return ver.string;
     return error.SdkVersionFailure;

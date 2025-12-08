@@ -114,7 +114,7 @@ pub const options: Options = if (@hasDecl(root, "std_options")) root.std_options
 pub const Options = struct {
     enable_segfault_handler: bool = debug.default_enable_segfault_handler,
 
-    /// Function used to implement `std.fs.cwd` for WASI.
+    /// Function used to implement `std.Io.Dir.cwd` for WASI.
     wasiCwd: fn () os.wasi.fd_t = os.defaultWasiCwd,
 
     /// The current log level.

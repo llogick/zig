@@ -59,7 +59,7 @@ pub fn main() u8 {
         } },
     };
 
-    var comp = Compilation.initDefault(gpa, arena, io, &diagnostics, std.fs.cwd()) catch |er| switch (er) {
+    var comp = Compilation.initDefault(gpa, arena, io, &diagnostics, Io.Dir.cwd()) catch |er| switch (er) {
         error.OutOfMemory => {
             std.debug.print("out of memory\n", .{});
             if (fast_exit) process.exit(1);

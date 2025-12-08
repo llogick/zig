@@ -1,5 +1,7 @@
-const std = @import("std");
 const ConfigHeader = @This();
+
+const std = @import("std");
+const Io = std.Io;
 const Step = std.Build.Step;
 const Allocator = std.mem.Allocator;
 const Writer = std.Io.Writer;
@@ -205,7 +207,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
         .autoconf_undef, .autoconf_at => |file_source| {
             try bw.writeAll(c_generated_line);
             const src_path = file_source.getPath2(b, step);
-            const contents = std.fs.cwd().readFileAlloc(src_path, arena, .limited(config_header.max_bytes)) catch |err| {
+            const contents = Io.Dir.cwd().readFileAlloc(src_path, arena, .limited(config_header.max_bytes)) catch |err| {
                 return step.fail("unable to read autoconf input file '{s}': {s}", .{
                     src_path, @errorName(err),
                 });
@@ -219,7 +221,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
         .cmake => |file_source| {
             try bw.writeAll(c_generated_line);
             const src_path = file_source.getPath2(b, step);
-            const contents = std.fs.cwd().readFileAlloc(src_path, arena, .limited(config_header.max_bytes)) catch |err| {
+            const contents = Io.Dir.cwd().readFileAlloc(src_path, arena, .limited(config_header.max_bytes)) catch |err| {
                 return step.fail("unable to read cmake input file '{s}': {s}", .{
                     src_path, @errorName(err),
                 });

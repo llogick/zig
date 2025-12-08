@@ -1,9 +1,9 @@
 const std = @import("std");
+const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const mem = std.mem;
 const log = std.log;
-const fs = std.fs;
-const path = fs.path;
+const path = std.Io.Dir.path;
 const assert = std.debug.assert;
 const Version = std.SemanticVersion;
 const Path = std.Build.Cache.Path;
@@ -446,7 +446,7 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
         .io = io,
         .manifest_dir = try comp.dirs.global_cache.handle.makeOpenPath("h", .{}),
     };
-    cache.addPrefix(.{ .path = null, .handle = fs.cwd() });
+    cache.addPrefix(.{ .path = null, .handle = Io.Dir.cwd() });
     cache.addPrefix(comp.dirs.zig_lib);
     cache.addPrefix(comp.dirs.global_cache);
     defer cache.manifest_dir.close(io);
@@ -468,7 +468,7 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
             .lock = man.toOwnedLock(),
             .dir_path = .{
                 .root_dir = comp.dirs.global_cache,
-                .sub_path = try gpa.dupe(u8, "o" ++ fs.path.sep_str ++ digest),
+                .sub_path = try gpa.dupe(u8, "o" ++ path.sep_str ++ digest),
             },
         });
     }
@@ -986,7 +986,7 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
         .lock = man.toOwnedLock(),
         .dir_path = .{
             .root_dir = comp.dirs.global_cache,
-            .sub_path = try gpa.dupe(u8, "o" ++ fs.path.sep_str ++ digest),
+            .sub_path = try gpa.dupe(u8, "o" ++ path.sep_str ++ digest),
         },
     });
 }
@@ -1014,7 +1014,7 @@ fn queueSharedObjects(comp: *Compilation, so_files: BuiltSharedObjects) std.Io.C
             const so_path: Path = .{
                 .root_dir = so_files.dir_path.root_dir,
                 .sub_path = std.fmt.allocPrint(comp.arena, "{s}{c}lib{s}.so.{d}", .{
-                    so_files.dir_path.sub_path, fs.path.sep, lib.name, lib.getSoVersion(&target.os),
+                    so_files.dir_path.sub_path, path.sep, lib.name, lib.getSoVersion(&target.os),
                 }) catch return comp.setAllocFailure(),
             };
             task_buffer[task_buffer_i] = .{ .load_dso = so_path };

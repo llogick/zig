@@ -508,7 +508,7 @@ pub const Manifest = struct {
         // and `want_shared_lock` is set, a shared lock might be sufficient, so we'll
         // open with a shared lock instead.
         while (true) {
-            if (self.cache.manifest_dir.createFile(&manifest_file_path, .{
+            if (self.cache.manifest_dir.createFile(io, &manifest_file_path, .{
                 .read = true,
                 .truncate = false,
                 .lock = .exclusive,
@@ -543,7 +543,7 @@ pub const Manifest = struct {
                         return error.CacheCheckFailed;
                     }
 
-                    if (self.cache.manifest_dir.createFile(&manifest_file_path, .{
+                    if (self.cache.manifest_dir.createFile(io, &manifest_file_path, .{
                         .read = true,
                         .truncate = false,
                         .lock = .exclusive,
@@ -873,7 +873,7 @@ pub const Manifest = struct {
         if (man.want_refresh_timestamp) {
             man.want_refresh_timestamp = false;
 
-            var file = man.cache.manifest_dir.createFile("timestamp", .{
+            var file = man.cache.manifest_dir.createFile(io, "timestamp", .{
                 .read = true,
                 .truncate = true,
             }) catch |err| switch (err) {
@@ -1324,7 +1324,7 @@ fn hashFile(file: Io.File, bin_digest: *[Hasher.mac_length]u8) Io.File.PReadErro
 fn testGetCurrentFileTimestamp(io: Io, dir: Io.Dir) !Io.Timestamp {
     const test_out_file = "test-filetimestamp.tmp";
 
-    var file = try dir.createFile(test_out_file, .{
+    var file = try dir.createFile(io, test_out_file, .{
         .read = true,
         .truncate = true,
     });

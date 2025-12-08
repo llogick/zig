@@ -82,7 +82,7 @@ pub fn findZigLibDirFromSelfExe(
     cwd_path: []const u8,
     self_exe_path: []const u8,
 ) error{ OutOfMemory, FileNotFound }!Cache.Directory {
-    const cwd = fs.cwd();
+    const cwd = Io.Dir.cwd();
     var cur_path: []const u8 = self_exe_path;
     while (fs.path.dirname(cur_path)) |dirname| : (cur_path = dirname) {
         var base_dir = cwd.openDir(dirname, .{}) catch continue;
@@ -206,7 +206,7 @@ pub fn resolveSuitableLocalCacheDir(arena: Allocator, cwd: []const u8) Allocator
     var cur_dir = cwd;
     while (true) {
         const joined = try fs.path.join(arena, &.{ cur_dir, Package.build_zig_basename });
-        if (fs.cwd().access(joined, .{})) |_| {
+        if (Io.Dir.cwd().access(joined, .{})) |_| {
             return try fs.path.join(arena, &.{ cur_dir, default_local_zig_cache_basename });
         } else |err| switch (err) {
             error.FileNotFound => {

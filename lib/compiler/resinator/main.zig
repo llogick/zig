@@ -67,7 +67,7 @@ pub fn main() !void {
             },
             else => |e| return e,
         };
-        try options.maybeAppendRC(std.fs.cwd());
+        try options.maybeAppendRC(Io.Dir.cwd());
 
         if (!zig_integration) {
             // print any warnings/notes
@@ -141,7 +141,7 @@ pub fn main() !void {
                 if (!zig_integration) std.debug.unlockStderrWriter();
             }
 
-            var comp = aro.Compilation.init(aro_arena, aro_arena, io, &diagnostics, std.fs.cwd());
+            var comp = aro.Compilation.init(aro_arena, aro_arena, io, &diagnostics, Io.Dir.cwd());
             defer comp.deinit();
 
             var argv: std.ArrayList([]const u8) = .empty;
@@ -196,7 +196,7 @@ pub fn main() !void {
                     };
                 },
                 .filename => |input_filename| {
-                    break :full_input std.fs.cwd().readFileAlloc(input_filename, gpa, .unlimited) catch |err| {
+                    break :full_input Io.Dir.cwd().readFileAlloc(input_filename, gpa, .unlimited) catch |err| {
                         try error_handler.emitMessage(gpa, .err, "unable to read input file path '{s}': {s}", .{ input_filename, @errorName(err) });
                         std.process.exit(1);
                     };
@@ -212,7 +212,7 @@ pub fn main() !void {
                 try output_file.writeAll(full_input);
             },
             .filename => |output_filename| {
-                try std.fs.cwd().writeFile(.{ .sub_path = output_filename, .data = full_input });
+                try Io.Dir.cwd().writeFile(.{ .sub_path = output_filename, .data = full_input });
             },
         }
         return;
@@ -277,7 +277,7 @@ pub fn main() !void {
                 const output_buffered_stream = res_stream_writer.interface();
 
                 compile(gpa, io, final_input, output_buffered_stream, .{
-                    .cwd = std.fs.cwd(),
+                    .cwd = Io.Dir.cwd(),
                     .diagnostics = &diagnostics,
                     .source_mappings = &mapping_results.mappings,
                     .dependencies = maybe_dependencies,
@@ -294,7 +294,7 @@ pub fn main() !void {
                     .warn_instead_of_error_on_invalid_code_page = options.warn_instead_of_error_on_invalid_code_page,
                 }) catch |err| switch (err) {
                     error.ParseError, error.CompileError => {
-                        try error_handler.emitDiagnostics(gpa, std.fs.cwd(), final_input, &diagnostics, mapping_results.mappings);
+                        try error_handler.emitDiagnostics(gpa, Io.Dir.cwd(), final_input, &diagnostics, mapping_results.mappings);
                         // Delete the output file on error
                         res_stream.cleanupAfterError(io);
                         std.process.exit(1);
@@ -306,12 +306,12 @@ pub fn main() !void {
 
                 // print any warnings/notes
                 if (!zig_integration) {
-                    diagnostics.renderToStdErr(std.fs.cwd(), final_input, mapping_results.mappings);
+                    diagnostics.renderToStdErr(Io.Dir.cwd(), final_input, mapping_results.mappings);
                 }
 
                 // write the depfile
                 if (options.depfile_path) |depfile_path| {
-                    var depfile = std.fs.cwd().createFile(depfile_path, .{}) catch |err| {
+                    var depfile = Io.Dir.cwd().createFile(io, depfile_path, .{}) catch |err| {
                         try error_handler.emitMessage(gpa, .err, "unable to create depfile '{s}': {s}", .{ depfile_path, @errorName(err) });
                         std.process.exit(1);
                     };
@@ -440,7 +440,7 @@ const IoStream = struct {
                 // Delete the output file on error
                 file.close(io);
                 // Failing to delete is not really a big deal, so swallow any errors
-                std.fs.cwd().deleteFile(self.name) catch {};
+                Io.Dir.cwd().deleteFile(self.name) catch {};
             },
             .stdio, .memory, .closed => return,
         }
@@ -457,8 +457,8 @@ const IoStream = struct {
             switch (source) {
                 .filename => |filename| return .{
                     .file = switch (io) {
-                        .input => try openFileNotDir(std.fs.cwd(), filename, .{}),
-                        .output => try std.fs.cwd().createFile(filename, .{}),
+                        .input => try openFileNotDir(Io.Dir.cwd(), filename, .{}),
+                        .output => try Io.Dir.cwd().createFile(io, filename, .{}),
                     },
                 },
                 .stdio => |file| return .{ .stdio = file },

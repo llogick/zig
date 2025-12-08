@@ -40,7 +40,7 @@ pub fn main() !void {
     const zig_exe_path = argv.next().?;
     const global_cache_path = argv.next().?;
 
-    var lib_dir = try std.fs.cwd().openDir(zig_lib_directory, .{});
+    var lib_dir = try Io.Dir.cwd().openDir(zig_lib_directory, .{});
     defer lib_dir.close(io);
 
     var listen_port: u16 = 0;

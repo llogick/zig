@@ -432,7 +432,7 @@ const Module = struct {
                 break :pdb null;
             };
             const pdb_file_open_result = if (fs.path.isAbsolute(path)) res: {
-                break :res std.fs.cwd().openFile(io, path, .{});
+                break :res Io.Dir.cwd().openFile(io, path, .{});
             } else res: {
                 const self_dir = std.process.executableDirPathAlloc(io, gpa) catch |err| switch (err) {
                     error.OutOfMemory, error.Unexpected => |e| return e,
@@ -441,7 +441,7 @@ const Module = struct {
                 defer gpa.free(self_dir);
                 const abs_path = try fs.path.join(gpa, &.{ self_dir, path });
                 defer gpa.free(abs_path);
-                break :res std.fs.cwd().openFile(io, abs_path, .{});
+                break :res Io.Dir.cwd().openFile(io, abs_path, .{});
             };
             const pdb_file = pdb_file_open_result catch |err| switch (err) {
                 error.FileNotFound, error.IsDir => break :pdb null,

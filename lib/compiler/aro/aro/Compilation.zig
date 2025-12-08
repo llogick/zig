@@ -2253,7 +2253,7 @@ test "addSourceFromBuffer" {
             var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
             defer arena.deinit();
             var diagnostics: Diagnostics = .{ .output = .ignore };
-            var comp = Compilation.init(std.testing.allocator, arena.allocator(), std.testing.io, &diagnostics, std.fs.cwd());
+            var comp = Compilation.init(std.testing.allocator, arena.allocator(), std.testing.io, &diagnostics, Io.Dir.cwd());
             defer comp.deinit();
 
             const source = try comp.addSourceFromBuffer("path", str);
@@ -2267,7 +2267,7 @@ test "addSourceFromBuffer" {
             var arena: std.heap.ArenaAllocator = .init(allocator);
             defer arena.deinit();
             var diagnostics: Diagnostics = .{ .output = .ignore };
-            var comp = Compilation.init(allocator, arena.allocator(), std.testing.io, &diagnostics, std.fs.cwd());
+            var comp = Compilation.init(allocator, arena.allocator(), std.testing.io, &diagnostics, Io.Dir.cwd());
             defer comp.deinit();
 
             _ = try comp.addSourceFromBuffer("path", "spliced\\\nbuffer\n");
@@ -2313,7 +2313,7 @@ test "addSourceFromBuffer - exhaustive check for carriage return elimination" {
     var buf: [alphabet.len]u8 = @splat(alphabet[0]);
 
     var diagnostics: Diagnostics = .{ .output = .ignore };
-    var comp = Compilation.init(std.testing.allocator, arena.allocator(), std.testing.io, &diagnostics, std.fs.cwd());
+    var comp = Compilation.init(std.testing.allocator, arena.allocator(), std.testing.io, &diagnostics, Io.Dir.cwd());
     defer comp.deinit();
 
     var source_count: u32 = 0;
@@ -2341,7 +2341,7 @@ test "ignore BOM at beginning of file" {
     const Test = struct {
         fn run(arena: Allocator, buf: []const u8) !void {
             var diagnostics: Diagnostics = .{ .output = .ignore };
-            var comp = Compilation.init(std.testing.allocator, arena, std.testing.io, &diagnostics, std.fs.cwd());
+            var comp = Compilation.init(std.testing.allocator, arena, std.testing.io, &diagnostics, Io.Dir.cwd());
             defer comp.deinit();
 
             const source = try comp.addSourceFromBuffer("file.c", buf);

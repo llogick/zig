@@ -1702,13 +1702,13 @@ pub fn addCheckFile(
 pub fn truncateFile(b: *Build, dest_path: []const u8) (Io.Dir.MakeError || Io.Dir.StatFileError)!void {
     const io = b.graph.io;
     if (b.verbose) log.info("truncate {s}", .{dest_path});
-    const cwd = fs.cwd();
-    var src_file = cwd.createFile(dest_path, .{}) catch |err| switch (err) {
+    const cwd = Io.Dir.cwd();
+    var src_file = cwd.createFile(io, dest_path, .{}) catch |err| switch (err) {
         error.FileNotFound => blk: {
             if (fs.path.dirname(dest_path)) |dirname| {
                 try cwd.makePath(dirname);
             }
-            break :blk try cwd.createFile(dest_path, .{});
+            break :blk try cwd.createFile(io, dest_path, .{});
         },
         else => |e| return e,
     };
@@ -1846,7 +1846,7 @@ pub fn runAllowFail(
     };
     errdefer b.allocator.free(stdout);
 
-    const term = try child.wait();
+    const term = try child.wait(io);
     switch (term) {
         .Exited => |code| {
             if (code != 0) {
@@ -2193,7 +2193,7 @@ fn dependencyInner(
 
     const build_root: std.Build.Cache.Directory = .{
         .path = build_root_string,
-        .handle = fs.cwd().openDir(build_root_string, .{}) catch |err| {
+        .handle = Io.Dir.cwd().openDir(build_root_string, .{}) catch |err| {
             std.debug.print("unable to open '{s}': {s}\n", .{
                 build_root_string, @errorName(err),
             });

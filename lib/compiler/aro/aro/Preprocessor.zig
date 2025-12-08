@@ -3900,7 +3900,7 @@ test "Preserve pragma tokens sometimes" {
             defer arena.deinit();
 
             var diagnostics: Diagnostics = .{ .output = .ignore };
-            var comp = Compilation.init(gpa, arena.allocator(), std.testing.io, &diagnostics, std.fs.cwd());
+            var comp = Compilation.init(gpa, arena.allocator(), std.testing.io, &diagnostics, Io.Dir.cwd());
             defer comp.deinit();
 
             try comp.addDefaultPragmaHandlers();
@@ -3967,7 +3967,7 @@ test "destringify" {
     var arena: std.heap.ArenaAllocator = .init(gpa);
     defer arena.deinit();
     var diagnostics: Diagnostics = .{ .output = .ignore };
-    var comp = Compilation.init(gpa, arena.allocator(), std.testing.io, &diagnostics, std.fs.cwd());
+    var comp = Compilation.init(gpa, arena.allocator(), std.testing.io, &diagnostics, Io.Dir.cwd());
     defer comp.deinit();
     var pp = Preprocessor.init(&comp, .default);
     defer pp.deinit();
@@ -4030,7 +4030,7 @@ test "Include guards" {
             const arena = arena_state.allocator();
 
             var diagnostics: Diagnostics = .{ .output = .ignore };
-            var comp = Compilation.init(gpa, arena, std.testing.io, &diagnostics, std.fs.cwd());
+            var comp = Compilation.init(gpa, arena, std.testing.io, &diagnostics, Io.Dir.cwd());
             defer comp.deinit();
             var pp = Preprocessor.init(&comp, .default);
             defer pp.deinit();

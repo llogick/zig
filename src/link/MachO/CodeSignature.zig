@@ -247,7 +247,7 @@ pub fn deinit(self: *CodeSignature, allocator: Allocator) void {
 }
 
 pub fn addEntitlements(self: *CodeSignature, allocator: Allocator, path: []const u8) !void {
-    const inner = try fs.cwd().readFileAlloc(path, allocator, .limited(std.math.maxInt(u32)));
+    const inner = try Io.Dir.cwd().readFileAlloc(path, allocator, .limited(std.math.maxInt(u32)));
     self.entitlements = .{ .inner = inner };
 }
 

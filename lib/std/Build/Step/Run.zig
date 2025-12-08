@@ -1023,7 +1023,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
 
     try runCommand(run, argv_list.items, has_side_effects, tmp_dir_path, options, null);
 
-    const dep_file_dir = std.fs.cwd();
+    const dep_file_dir = Io.Dir.cwd();
     const dep_file_basename = dep_output_file.generated_file.getPath2(b, step);
     if (has_side_effects)
         try man.addDepFile(dep_file_dir, dep_file_basename)

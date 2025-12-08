@@ -677,7 +677,7 @@ fn spawnPosix(self: *ChildProcess) SpawnError!void {
         setUpChildIo(self.stderr_behavior, stderr_pipe[1], posix.STDERR_FILENO, dev_null_fd) catch |err| forkChildErrReport(err_pipe[1], err);
 
         if (self.cwd_dir) |cwd| {
-            posix.fchdir(cwd.fd) catch |err| forkChildErrReport(err_pipe[1], err);
+            posix.fchdir(cwd.handle) catch |err| forkChildErrReport(err_pipe[1], err);
         } else if (self.cwd) |cwd| {
             posix.chdir(cwd) catch |err| forkChildErrReport(err_pipe[1], err);
         }

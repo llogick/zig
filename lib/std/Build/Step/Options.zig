@@ -1,11 +1,12 @@
-const std = @import("std");
+const Options = @This();
 const builtin = @import("builtin");
+
+const std = @import("std");
+const Io = std.Io;
 const fs = std.fs;
 const Step = std.Build.Step;
 const GeneratedFile = std.Build.GeneratedFile;
 const LazyPath = std.Build.LazyPath;
-
-const Options = @This();
 
 pub const base_id: Step.Id = .options;
 
@@ -542,11 +543,11 @@ test Options {
         .cache = .{
             .io = io,
             .gpa = arena.allocator(),
-            .manifest_dir = std.fs.cwd(),
+            .manifest_dir = Io.Dir.cwd(),
         },
         .zig_exe = "test",
         .env_map = std.process.EnvMap.init(arena.allocator()),
-        .global_cache_root = .{ .path = "test", .handle = std.fs.cwd() },
+        .global_cache_root = .{ .path = "test", .handle = Io.Dir.cwd() },
         .host = .{
             .query = .{},
             .result = try std.zig.system.resolveTargetQuery(io, .{}),
@@ -557,8 +558,8 @@ test Options {
 
     var builder = try std.Build.create(
         &graph,
-        .{ .path = "test", .handle = std.fs.cwd() },
-        .{ .path = "test", .handle = std.fs.cwd() },
+        .{ .path = "test", .handle = Io.Dir.cwd() },
+        .{ .path = "test", .handle = Io.Dir.cwd() },
         &.{},
     );
 

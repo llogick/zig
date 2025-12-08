@@ -1,7 +1,8 @@
 const std = @import("std");
+const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const mem = std.mem;
-const path = std.fs.path;
+const path = std.Io.Dir.path;
 const assert = std.debug.assert;
 const log = std.log.scoped(.mingw);
 
@@ -259,7 +260,7 @@ pub fn buildImportLib(comp: *Compilation, lib_name: []const u8) !void {
         .io = io,
         .manifest_dir = try comp.dirs.global_cache.handle.makeOpenPath("h", .{}),
     };
-    cache.addPrefix(.{ .path = null, .handle = std.fs.cwd() });
+    cache.addPrefix(.{ .path = null, .handle = Io.Dir.cwd() });
     cache.addPrefix(comp.dirs.zig_lib);
     cache.addPrefix(comp.dirs.global_cache);
     defer cache.manifest_dir.close(io);
@@ -304,7 +305,7 @@ pub fn buildImportLib(comp: *Compilation, lib_name: []const u8) !void {
         .output = .{ .to_list = .{ .arena = .init(gpa) } },
     };
     defer diagnostics.deinit();
-    var aro_comp = aro.Compilation.init(gpa, arena, io, &diagnostics, std.fs.cwd());
+    var aro_comp = aro.Compilation.init(gpa, arena, io, &diagnostics, Io.Dir.cwd());
     defer aro_comp.deinit();
 
     aro_comp.target = .fromZigTarget(target.*);
@@ -343,7 +344,7 @@ pub fn buildImportLib(comp: *Compilation, lib_name: []const u8) !void {
     }
 
     const members = members: {
-        var aw: std.Io.Writer.Allocating = .init(gpa);
+        var aw: Io.Writer.Allocating = .init(gpa);
         errdefer aw.deinit();
         try pp.prettyPrintTokens(&aw.writer, .result_only);
 
@@ -376,7 +377,7 @@ pub fn buildImportLib(comp: *Compilation, lib_name: []const u8) !void {
     errdefer gpa.free(lib_final_path);
 
     {
-        const lib_final_file = try o_dir.createFile(final_lib_basename, .{ .truncate = true });
+        const lib_final_file = try o_dir.createFile(io, final_lib_basename, .{ .truncate = true });
         defer lib_final_file.close(io);
         var buffer: [1024]u8 = undefined;
         var file_writer = lib_final_file.writer(&buffer);
@@ -442,7 +443,7 @@ fn findDef(
         } else {
             try override_path.print(fmt_path, .{ lib_path, lib_name });
         }
-        if (std.fs.cwd().access(override_path.items, .{})) |_| {
+        if (Io.Dir.cwd().access(override_path.items, .{})) |_| {
             return override_path.toOwnedSlice();
         } else |err| switch (err) {
             error.FileNotFound => {},
@@ -459,7 +460,7 @@ fn findDef(
         } else {
             try override_path.print(fmt_path, .{lib_name});
         }
-        if (std.fs.cwd().access(override_path.items, .{})) |_| {
+        if (Io.Dir.cwd().access(override_path.items, .{})) |_| {
             return override_path.toOwnedSlice();
         } else |err| switch (err) {
             error.FileNotFound => {},
@@ -476,7 +477,7 @@ fn findDef(
         } else {
             try override_path.print(fmt_path, .{lib_name});
         }
-        if (std.fs.cwd().access(override_path.items, .{})) |_| {
+        if (Io.Dir.cwd().access(override_path.items, .{})) |_| {
             return override_path.toOwnedSlice();
         } else |err| switch (err) {
             error.FileNotFound => {},

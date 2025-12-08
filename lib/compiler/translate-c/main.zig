@@ -47,7 +47,7 @@ pub fn main() u8 {
     };
     defer diagnostics.deinit();
 
-    var comp = aro.Compilation.initDefault(gpa, arena, io, &diagnostics, std.fs.cwd()) catch |err| switch (err) {
+    var comp = aro.Compilation.initDefault(gpa, arena, io, &diagnostics, Io.Dir.cwd()) catch |err| switch (err) {
         error.OutOfMemory => {
             std.debug.print("ran out of memory initializing C compilation\n", .{});
             if (fast_exit) process.exit(1);
@@ -226,7 +226,7 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8, zig_integration
         const dep_file_name = try d.getDepFileName(source, out_buf[0..std.fs.max_name_bytes]);
 
         const file = if (dep_file_name) |path|
-            d.comp.cwd.createFile(path, .{}) catch |er|
+            d.comp.cwd.createFile(io, path, .{}) catch |er|
                 return d.fatal("unable to create dependency file '{s}': {s}", .{ path, aro.Driver.errorDescription(er) })
         else
             Io.File.stdout();
@@ -253,10 +253,10 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8, zig_integration
     if (d.output_name) |path| blk: {
         if (std.mem.eql(u8, path, "-")) break :blk;
         if (std.fs.path.dirname(path)) |dirname| {
-            std.fs.cwd().makePath(dirname) catch |err|
+            Io.Dir.cwd().makePath(dirname) catch |err|
                 return d.fatal("failed to create path to '{s}': {s}", .{ path, aro.Driver.errorDescription(err) });
         }
-        out_file = std.fs.cwd().createFile(path, .{}) catch |err| {
+        out_file = Io.Dir.cwd().createFile(io, path, .{}) catch |err| {
             return d.fatal("failed to create output file '{s}': {s}", .{ path, aro.Driver.errorDescription(err) });
         };
         close_out_file = true;

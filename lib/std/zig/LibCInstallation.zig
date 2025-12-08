@@ -57,7 +57,7 @@ pub fn parse(
         }
     }
 
-    const contents = try std.fs.cwd().readFileAlloc(libc_file, allocator, .limited(std.math.maxInt(usize)));
+    const contents = try Io.Dir.cwd().readFileAlloc(libc_file, allocator, .limited(std.math.maxInt(usize)));
     defer allocator.free(contents);
 
     var it = std.mem.tokenizeScalar(u8, contents, '\n');
@@ -337,7 +337,7 @@ fn findNativeIncludeDirPosix(self: *LibCInstallation, args: FindNativeOptions) F
         // search in reverse order
         const search_path_untrimmed = search_paths.items[search_paths.items.len - path_i - 1];
         const search_path = std.mem.trimStart(u8, search_path_untrimmed, " ");
-        var search_dir = fs.cwd().openDir(search_path, .{}) catch |err| switch (err) {
+        var search_dir = Io.Dir.cwd().openDir(search_path, .{}) catch |err| switch (err) {
             error.FileNotFound,
             error.NotDir,
             error.NoDevice,
@@ -392,7 +392,7 @@ fn findNativeIncludeDirWindows(
         result_buf.shrinkAndFree(0);
         try result_buf.print("{s}\\Include\\{s}\\ucrt", .{ install.path, install.version });
 
-        var dir = fs.cwd().openDir(result_buf.items, .{}) catch |err| switch (err) {
+        var dir = Io.Dir.cwd().openDir(result_buf.items, .{}) catch |err| switch (err) {
             error.FileNotFound,
             error.NotDir,
             error.NoDevice,
@@ -440,7 +440,7 @@ fn findNativeCrtDirWindows(
         result_buf.shrinkAndFree(0);
         try result_buf.print("{s}\\Lib\\{s}\\ucrt\\{s}", .{ install.path, install.version, arch_sub_dir });
 
-        var dir = fs.cwd().openDir(result_buf.items, .{}) catch |err| switch (err) {
+        var dir = Io.Dir.cwd().openDir(result_buf.items, .{}) catch |err| switch (err) {
             error.FileNotFound,
             error.NotDir,
             error.NoDevice,
@@ -508,7 +508,7 @@ fn findNativeKernel32LibDir(
         result_buf.shrinkAndFree(0);
         try result_buf.print("{s}\\Lib\\{s}\\um\\{s}", .{ install.path, install.version, arch_sub_dir });
 
-        var dir = fs.cwd().openDir(result_buf.items, .{}) catch |err| switch (err) {
+        var dir = Io.Dir.cwd().openDir(result_buf.items, .{}) catch |err| switch (err) {
             error.FileNotFound,
             error.NotDir,
             error.NoDevice,
@@ -544,7 +544,7 @@ fn findNativeMsvcIncludeDir(
     const dir_path = try fs.path.join(allocator, &[_][]const u8{ up2, "include" });
     errdefer allocator.free(dir_path);
 
-    var dir = fs.cwd().openDir(dir_path, .{}) catch |err| switch (err) {
+    var dir = Io.Dir.cwd().openDir(dir_path, .{}) catch |err| switch (err) {
         error.FileNotFound,
         error.NotDir,
         error.NoDevice,

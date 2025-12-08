@@ -628,7 +628,7 @@ pub fn tmpDir(opts: Io.Dir.OpenOptions) TmpDir {
     var sub_path: [TmpDir.sub_path_len]u8 = undefined;
     _ = std.fs.base64_encoder.encode(&sub_path, &random_bytes);
 
-    const cwd = std.fs.cwd();
+    const cwd = Io.Dir.cwd();
     var cache_dir = cwd.makeOpenPath(".zig-cache", .{}) catch
         @panic("unable to make tmp dir for testing: unable to make and open .zig-cache dir");
     defer cache_dir.close(io);

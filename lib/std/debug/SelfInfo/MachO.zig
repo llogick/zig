@@ -616,7 +616,7 @@ test {
 
 /// Uses `mmap` to map the file at `path` into memory.
 fn mapDebugInfoFile(io: Io, path: []const u8) ![]align(std.heap.page_size_min) const u8 {
-    const file = std.fs.cwd().openFile(io, path, .{}) catch |err| switch (err) {
+    const file = Io.Dir.cwd().openFile(io, path, .{}) catch |err| switch (err) {
         error.FileNotFound => return error.MissingDebugInfo,
         else => return error.ReadFailed,
     };

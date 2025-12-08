@@ -2997,7 +2997,9 @@ pub fn createEmpty(
         .named => |name| (try wasm.internString(name)).toOptional(),
     };
 
-    wasm.base.file = try emit.root_dir.handle.createFile(emit.sub_path, .{
+    const io = comp.io;
+
+    wasm.base.file = try emit.root_dir.handle.createFile(io, emit.sub_path, .{
         .truncate = true,
         .read = true,
         .mode = if (fs.has_executable_bit)

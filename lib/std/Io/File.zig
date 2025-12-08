@@ -527,6 +527,14 @@ pub fn writerStreaming(file: File, io: Io, buffer: []u8) Writer {
     return .initStreaming(file, io, buffer);
 }
 
+/// Equivalent to creating a streaming writer, writing `bytes`, and then flushing.
+pub fn writeStreamingAll(file: File, io: Io, bytes: []const u8) Writer.Error!void {
+    var index: usize = 0;
+    while (index < bytes.len) {
+        index += try io.vtable.fileWriteStreaming(io.userdata, file, &.{}, &.{bytes[index..]}, 1);
+    }
+}
+
 pub const LockError = error{
     SystemResources,
     FileLocksUnsupported,

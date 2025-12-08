@@ -111,7 +111,7 @@ pub fn compile(allocator: Allocator, io: Io, source: []const u8, writer: *std.Io
             try search_dirs.append(allocator, .{ .dir = root_dir, .path = try allocator.dupe(u8, root_dir_path) });
         }
     }
-    // Re-open the passed in cwd since we want to be able to close it (std.fs.cwd() shouldn't be closed)
+    // Re-open the passed in cwd since we want to be able to close it (Io.Dir.cwd() shouldn't be closed)
     const cwd_dir = options.cwd.openDir(".", .{}) catch |err| {
         try options.diagnostics.append(.{
             .err = .failed_to_open_cwd,
@@ -406,7 +406,7 @@ pub const Compiler = struct {
         // `/test.bin` relative to include paths and instead only treats it as
         // an absolute path.
         if (std.fs.path.isAbsolute(path)) {
-            const file = try utils.openFileNotDir(std.fs.cwd(), path, .{});
+            const file = try utils.openFileNotDir(Io.Dir.cwd(), path, .{});
             errdefer file.close(io);
 
             if (self.dependencies) |dependencies| {

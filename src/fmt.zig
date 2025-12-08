@@ -182,11 +182,11 @@ pub fn run(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) !
     // Mark any excluded files/directories as already seen,
     // so that they are skipped later during actual processing
     for (excluded_files.items) |file_path| {
-        const stat = fs.cwd().statFile(file_path) catch |err| switch (err) {
+        const stat = Io.Dir.cwd().statFile(file_path) catch |err| switch (err) {
             error.FileNotFound => continue,
             // On Windows, statFile does not work for directories
             error.IsDir => dir: {
-                var dir = try fs.cwd().openDir(file_path, .{});
+                var dir = try Io.Dir.cwd().openDir(file_path, .{});
                 defer dir.close(io);
                 break :dir try dir.stat();
             },
@@ -196,7 +196,7 @@ pub fn run(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) !
     }
 
     for (input_files.items) |file_path| {
-        try fmtPath(&fmt, file_path, check_flag, fs.cwd(), file_path);
+        try fmtPath(&fmt, file_path, check_flag, Io.Dir.cwd(), file_path);
     }
     try fmt.stdout_writer.interface.flush();
     if (fmt.any_error) {

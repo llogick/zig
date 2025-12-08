@@ -60,7 +60,7 @@ pub const cpu_context = @import("debug/cpu_context.zig");
 /// };
 /// /// Only required if `can_unwind == true`. Unwinds a single stack frame, returning the frame's
 /// /// return address, or 0 if the end of the stack has been reached.
-/// pub fn unwindFrame(si: *SelfInfo, gpa: Allocator, context: *UnwindContext) SelfInfoError!usize;
+/// pub fn unwindFrame(si: *SelfInfo, gpa: Allocator, io: Io, context: *UnwindContext) SelfInfoError!usize;
 /// ```
 pub const SelfInfo = if (@hasDecl(root, "debug") and @hasDecl(root.debug, "SelfInfo"))
     root.debug.SelfInfo
@@ -558,9 +558,9 @@ pub fn defaultPanic(
                 stderr.print("{s}\n", .{msg}) catch break :trace;
 
                 if (@errorReturnTrace()) |t| if (t.index > 0) {
-                    stderr.writeAll("error return context:\n") catch break :trace;
+                    stderr.writeStreamingAll("error return context:\n") catch break :trace;
                     writeStackTrace(t, stderr, tty_config) catch break :trace;
-                    stderr.writeAll("\nstack trace:\n") catch break :trace;
+                    stderr.writeStreamingAll("\nstack trace:\n") catch break :trace;
                 };
                 writeCurrentStackTrace(.{
                     .first_address = first_trace_addr orelse @returnAddress(),
@@ -575,7 +575,7 @@ pub fn defaultPanic(
             // A panic happened while trying to print a previous panic message.
             // We're still holding the mutex but that's fine as we're going to
             // call abort().
-            File.stderr().writeAll("aborting due to recursive panic\n") catch {};
+            File.stderr().writeStreamingAll("aborting due to recursive panic\n") catch {};
         },
         else => {}, // Panicked while printing the recursive panic message.
     }
@@ -960,7 +960,7 @@ const StackIterator = union(enum) {
         },
     };
 
-    fn next(it: *StackIterator) Result {
+    fn next(it: *StackIterator, io: Io) Result {
         switch (it.*) {
             .ctx_first => |context_ptr| {
                 // After the first frame, start actually unwinding.
@@ -976,7 +976,7 @@ const StackIterator = union(enum) {
             .di => |*unwind_context| {
                 const di = getSelfDebugInfo() catch unreachable;
                 const di_gpa = getDebugInfoAllocator();
-                const ret_addr = di.unwindFrame(di_gpa, unwind_context) catch |err| {
+                const ret_addr = di.unwindFrame(di_gpa, io, unwind_context) catch |err| {
                     const pc = unwind_context.pc;
                     const fp = unwind_context.getFp();
                     it.* = .{ .fp = fp };
@@ -1297,7 +1297,7 @@ test printLineFromFile {
         aw.clearRetainingCapacity();
     }
     {
-        const file = try test_dir.dir.createFile("line_overlaps_page_boundary.zig", .{});
+        const file = try test_dir.dir.createFile(io, "line_overlaps_page_boundary.zig", .{});
         defer file.close(io);
         const path = try fs.path.join(gpa, &.{ test_dir_path, "line_overlaps_page_boundary.zig" });
         defer gpa.free(path);
@@ -1316,7 +1316,7 @@ test printLineFromFile {
         aw.clearRetainingCapacity();
     }
     {
-        const file = try test_dir.dir.createFile("file_ends_on_page_boundary.zig", .{});
+        const file = try test_dir.dir.createFile(io, "file_ends_on_page_boundary.zig", .{});
         defer file.close(io);
         const path = try fs.path.join(gpa, &.{ test_dir_path, "file_ends_on_page_boundary.zig" });
         defer gpa.free(path);
@@ -1330,7 +1330,7 @@ test printLineFromFile {
         aw.clearRetainingCapacity();
     }
     {
-        const file = try test_dir.dir.createFile("very_long_first_line_spanning_multiple_pages.zig", .{});
+        const file = try test_dir.dir.createFile(io, "very_long_first_line_spanning_multiple_pages.zig", .{});
         defer file.close(io);
         const path = try fs.path.join(gpa, &.{ test_dir_path, "very_long_first_line_spanning_multiple_pages.zig" });
         defer gpa.free(path);
@@ -1356,7 +1356,7 @@ test printLineFromFile {
         aw.clearRetainingCapacity();
     }
     {
-        const file = try test_dir.dir.createFile("file_of_newlines.zig", .{});
+        const file = try test_dir.dir.createFile(io, "file_of_newlines.zig", .{});
         defer file.close(io);
         const path = try fs.path.join(gpa, &.{ test_dir_path, "file_of_newlines.zig" });
         defer gpa.free(path);

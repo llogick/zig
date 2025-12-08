@@ -610,7 +610,7 @@ pub fn pipeToFileSystem(io: Io, dir: Io.Dir, reader: *Io.Reader, options: PipeOp
                 }
             },
             .file => {
-                if (createDirAndFile(dir, file_name, fileMode(file.mode, options))) |fs_file| {
+                if (createDirAndFile(io, dir, file_name, fileMode(file.mode, options))) |fs_file| {
                     defer fs_file.close(io);
                     var file_writer = fs_file.writer(&file_contents_buffer);
                     try it.streamRemaining(file, &file_writer.interface);
@@ -638,12 +638,12 @@ pub fn pipeToFileSystem(io: Io, dir: Io.Dir, reader: *Io.Reader, options: PipeOp
     }
 }
 
-fn createDirAndFile(dir: Io.Dir, file_name: []const u8, mode: Io.File.Mode) !Io.File {
-    const fs_file = dir.createFile(file_name, .{ .exclusive = true, .mode = mode }) catch |err| {
+fn createDirAndFile(io: Io, dir: Io.Dir, file_name: []const u8, mode: Io.File.Mode) !Io.File {
+    const fs_file = dir.createFile(io, file_name, .{ .exclusive = true, .mode = mode }) catch |err| {
         if (err == error.FileNotFound) {
             if (std.fs.path.dirname(file_name)) |dir_name| {
                 try dir.makePath(dir_name);
-                return try dir.createFile(file_name, .{ .exclusive = true, .mode = mode });
+                return try dir.createFile(io, file_name, .{ .exclusive = true, .mode = mode });
             }
         }
         return err;
@@ -880,9 +880,9 @@ test "create file and symlink" {
     var root = testing.tmpDir(.{});
     defer root.cleanup();
 
-    var file = try createDirAndFile(root.dir, "file1", default_mode);
+    var file = try createDirAndFile(io, root.dir, "file1", default_mode);
     file.close(io);
-    file = try createDirAndFile(root.dir, "a/b/c/file2", default_mode);
+    file = try createDirAndFile(io, root.dir, "a/b/c/file2", default_mode);
     file.close(io);
 
     createDirAndSymlink(root.dir, "a/b/c/file2", "symlink1") catch |err| {
@@ -894,7 +894,7 @@ test "create file and symlink" {
 
     // Danglink symlnik, file created later
     try createDirAndSymlink(root.dir, "../../../g/h/i/file4", "j/k/l/symlink3");
-    file = try createDirAndFile(root.dir, "g/h/i/file4", default_mode);
+    file = try createDirAndFile(io, root.dir, "g/h/i/file4", default_mode);
     file.close(io);
 }
 
