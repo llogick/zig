@@ -1455,7 +1455,7 @@ test "writev, readv" {
 
     try writer.interface.writeVecAll(&write_vecs);
     try writer.interface.flush();
-    try testing.expectEqual(@as(u64, line1.len + line2.len), try src_file.getEndPos());
+    try testing.expectEqual(@as(u64, line1.len + line2.len), try src_file.length(io));
 
     var reader = writer.moveToReader(io);
     try reader.seekTo(0);
@@ -1486,7 +1486,7 @@ test "pwritev, preadv" {
     try writer.seekTo(16);
     try writer.interface.writeVecAll(&lines);
     try writer.interface.flush();
-    try testing.expectEqual(@as(u64, 16 + line1.len + line2.len), try src_file.getEndPos());
+    try testing.expectEqual(@as(u64, 16 + line1.len + line2.len), try src_file.length(io));
 
     var reader = writer.moveToReader(io);
     try reader.seekTo(16);
@@ -1511,13 +1511,13 @@ test "setEndPos" {
     const f = try tmp.dir.openFile(io, file_name, .{ .mode = .read_write });
     defer f.close(io);
 
-    const initial_size = try f.getEndPos();
+    const initial_size = try f.length(io);
     var buffer: [32]u8 = undefined;
     var reader = f.reader(io, &.{});
 
     {
         try f.setEndPos(initial_size);
-        try testing.expectEqual(initial_size, try f.getEndPos());
+        try testing.expectEqual(initial_size, try f.length(io));
         try reader.seekTo(0);
         try testing.expectEqual(initial_size, try reader.interface.readSliceShort(&buffer));
         try testing.expectEqualStrings("ninebytes", buffer[0..@intCast(initial_size)]);
@@ -1526,7 +1526,7 @@ test "setEndPos" {
     {
         const larger = initial_size + 4;
         try f.setEndPos(larger);
-        try testing.expectEqual(larger, try f.getEndPos());
+        try testing.expectEqual(larger, try f.length(io));
         try reader.seekTo(0);
         try testing.expectEqual(larger, try reader.interface.readSliceShort(&buffer));
         try testing.expectEqualStrings("ninebytes\x00\x00\x00\x00", buffer[0..@intCast(larger)]);
@@ -1535,14 +1535,14 @@ test "setEndPos" {
     {
         const smaller = initial_size - 5;
         try f.setEndPos(smaller);
-        try testing.expectEqual(smaller, try f.getEndPos());
+        try testing.expectEqual(smaller, try f.length(io));
         try reader.seekTo(0);
         try testing.expectEqual(smaller, try reader.interface.readSliceShort(&buffer));
         try testing.expectEqualStrings("nine", buffer[0..@intCast(smaller)]);
     }
 
     try f.setEndPos(0);
-    try testing.expectEqual(0, try f.getEndPos());
+    try testing.expectEqual(0, try f.length(io));
     try reader.seekTo(0);
     try testing.expectEqual(0, try reader.interface.readSliceShort(&buffer));
 }

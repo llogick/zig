@@ -800,7 +800,7 @@ pub const Manifest = struct {
                 }
 
                 var actual_digest: BinDigest = undefined;
-                hashFile(this_file, &actual_digest) catch |err| {
+                hashFile(io, this_file, &actual_digest) catch |err| {
                     self.diagnostic = .{ .file_read = .{
                         .file_index = idx,
                         .err = err,
@@ -908,9 +908,11 @@ pub const Manifest = struct {
         }
     }
 
-    fn populateFileHashHandle(self: *Manifest, ch_file: *File, handle: Io.File) !void {
+    fn populateFileHashHandle(self: *Manifest, ch_file: *File, io_file: Io.File) !void {
         const io = self.cache.io;
-        const actual_stat = try handle.stat(io);
+        const gpa = self.cache.gpa;
+
+        const actual_stat = try io_file.stat(io);
         ch_file.stat = .{
             .size = actual_stat.size,
             .mtime = actual_stat.mtime,
@@ -924,19 +926,17 @@ pub const Manifest = struct {
         }
 
         if (ch_file.max_file_size) |max_file_size| {
-            if (ch_file.stat.size > max_file_size) {
-                return error.FileTooBig;
-            }
+            if (ch_file.stat.size > max_file_size) return error.FileTooBig;
 
-            const contents = try self.cache.gpa.alloc(u8, @as(usize, @intCast(ch_file.stat.size)));
-            errdefer self.cache.gpa.free(contents);
+            // Hash while reading from disk, to keep the contents in the cpu
+            // cache while doing hashing.
+            const contents = try gpa.alloc(u8, @intCast(ch_file.stat.size));
+            errdefer gpa.free(contents);
 
-            // Hash while reading from disk, to keep the contents in the cpu cache while
-            // doing hashing.
             var hasher = hasher_init;
             var off: usize = 0;
             while (true) {
-                const bytes_read = try handle.pread(contents[off..], off);
+                const bytes_read = try io_file.readPositional(io, &.{contents[off..]}, off);
                 if (bytes_read == 0) break;
                 hasher.update(contents[off..][0..bytes_read]);
                 off += bytes_read;
@@ -945,7 +945,7 @@ pub const Manifest = struct {
 
             ch_file.contents = contents;
         } else {
-            try hashFile(handle, &ch_file.bin_digest);
+            try hashFile(io, io_file, &ch_file.bin_digest);
         }
 
         self.hash.hasher.update(&ch_file.bin_digest);
@@ -1169,13 +1169,11 @@ pub const Manifest = struct {
 
     fn downgradeToSharedLock(self: *Manifest) !void {
         if (!self.have_exclusive_lock) return;
+        const io = self.cache.io;
 
-        // WASI does not currently support flock, so we bypass it here.
-        // TODO: If/when flock is supported on WASI, this check should be removed.
-        //       See https://github.com/WebAssembly/wasi-filesystem/issues/2
-        if (builtin.os.tag != .wasi or std.process.can_spawn or !builtin.single_threaded) {
+        if (std.process.can_spawn or !builtin.single_threaded) {
             const manifest_file = self.manifest_file.?;
-            try manifest_file.downgradeLock();
+            try manifest_file.downgradeLock(io);
         }
 
         self.have_exclusive_lock = false;
@@ -1184,16 +1182,14 @@ pub const Manifest = struct {
     fn upgradeToExclusiveLock(self: *Manifest) error{CacheCheckFailed}!bool {
         if (self.have_exclusive_lock) return false;
         assert(self.manifest_file != null);
+        const io = self.cache.io;
 
-        // WASI does not currently support flock, so we bypass it here.
-        // TODO: If/when flock is supported on WASI, this check should be removed.
-        //       See https://github.com/WebAssembly/wasi-filesystem/issues/2
-        if (builtin.os.tag != .wasi or std.process.can_spawn or !builtin.single_threaded) {
+        if (std.process.can_spawn or !builtin.single_threaded) {
             const manifest_file = self.manifest_file.?;
             // Here we intentionally have a period where the lock is released, in case there are
             // other processes holding a shared lock.
-            manifest_file.unlock();
-            manifest_file.lock(.exclusive) catch |err| {
+            manifest_file.unlock(io);
+            manifest_file.lock(io, .exclusive) catch |err| {
                 self.diagnostic = .{ .manifest_lock = err };
                 return error.CacheCheckFailed;
             };
@@ -1206,12 +1202,8 @@ pub const Manifest = struct {
     /// The `Manifest` remains safe to deinit.
     /// Don't forget to call `writeManifest` before this!
     pub fn toOwnedLock(self: *Manifest) Lock {
-        const lock: Lock = .{
-            .manifest_file = self.manifest_file.?,
-        };
-
-        self.manifest_file = null;
-        return lock;
+        defer self.manifest_file = null;
+        return .{ .manifest_file = self.manifest_file.? };
     }
 
     /// Releases the manifest file and frees any memory the Manifest was using.
@@ -1223,7 +1215,7 @@ pub const Manifest = struct {
         if (self.manifest_file) |file| {
             if (builtin.os.tag == .windows) {
                 // See Lock.release for why this is required on Windows
-                file.unlock();
+                file.unlock(io);
             }
 
             file.close(io);
@@ -1308,15 +1300,15 @@ pub fn writeSmallFile(dir: Io.Dir, sub_path: []const u8, data: []const u8) !void
     }
 }
 
-fn hashFile(file: Io.File, bin_digest: *[Hasher.mac_length]u8) Io.File.PReadError!void {
-    var buf: [1024]u8 = undefined;
+fn hashFile(io: Io, file: Io.File, bin_digest: *[Hasher.mac_length]u8) Io.File.ReadPositionalError!void {
+    var buffer: [2048]u8 = undefined;
     var hasher = hasher_init;
-    var off: u64 = 0;
+    var offset: u64 = 0;
     while (true) {
-        const bytes_read = try file.pread(&buf, off);
-        if (bytes_read == 0) break;
-        hasher.update(buf[0..bytes_read]);
-        off += bytes_read;
+        const n = try file.readPositional(io, &.{&buffer}, offset);
+        if (n == 0) break;
+        hasher.update(buffer[0..n]);
+        offset += n;
     }
     hasher.final(bin_digest);
 }

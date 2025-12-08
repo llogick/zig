@@ -4,7 +4,7 @@ const Md5 = std.crypto.hash.Md5;
 
 const trace = @import("../../tracy.zig").trace;
 const Compilation = @import("../../Compilation.zig");
-const Hasher = @import("hasher.zig").ParallelHasher;
+const ParallelHasher = @import("hasher.zig").ParallelHasher;
 
 /// Calculates Md5 hash of each chunk in parallel and then hashes all Md5 hashes to produce
 /// the final digest.
@@ -16,21 +16,23 @@ pub fn calcUuid(comp: *const Compilation, file: Io.File, file_size: u64, out: *[
     const tracy = trace(@src());
     defer tracy.end();
 
+    const gpa = comp.gpa;
+    const io = comp.io;
+
     const chunk_size: usize = 1024 * 1024;
     const num_chunks: usize = std.math.cast(usize, @divTrunc(file_size, chunk_size)) orelse return error.Overflow;
     const actual_num_chunks = if (@rem(file_size, chunk_size) > 0) num_chunks + 1 else num_chunks;
 
-    const hashes = try comp.gpa.alloc([Md5.digest_length]u8, actual_num_chunks);
-    defer comp.gpa.free(hashes);
+    const hashes = try gpa.alloc([Md5.digest_length]u8, actual_num_chunks);
+    defer gpa.free(hashes);
 
-    var hasher = Hasher(Md5){ .allocator = comp.gpa, .io = comp.io };
-    try hasher.hash(file, hashes, .{
+    try ParallelHasher(Md5).hash(gpa, io, file, hashes, .{
         .chunk_size = chunk_size,
         .max_file_size = file_size,
     });
 
-    const final_buffer = try comp.gpa.alloc(u8, actual_num_chunks * Md5.digest_length);
-    defer comp.gpa.free(final_buffer);
+    const final_buffer = try gpa.alloc(u8, actual_num_chunks * Md5.digest_length);
+    defer gpa.free(final_buffer);
 
     for (hashes, 0..) |hash, i| {
         @memcpy(final_buffer[i * Md5.digest_length ..][0..Md5.digest_length], &hash);

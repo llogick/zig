@@ -218,9 +218,9 @@ pub fn finishBuild(ws: *WebServer, opts: struct {
             else => {},
         }
         if (@bitSizeOf(usize) != 64) {
-            // Current implementation depends on posix.mmap()'s second parameter, `length: usize`,
-            // being compatible with `std.fs.getEndPos() u64`'s return value. This is not the case
-            // on 32-bit platforms.
+            // Current implementation depends on posix.mmap()'s second
+            // parameter, `length: usize`, being compatible with file system's
+            // u64 return value. This is not the case on 32-bit platforms.
             // Affects or affected by issues #5185, #22523, and #22464.
             std.process.fatal("--fuzz not yet implemented on {d}-bit platforms", .{@bitSizeOf(usize)});
         }

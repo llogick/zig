@@ -466,13 +466,21 @@ pub fn setTimestampsNow(file: File, io: Io) SetTimestampsError!void {
 
 pub const ReadPositionalError = Reader.Error || error{Unseekable};
 
-pub fn readPositional(file: File, io: Io, buffer: [][]u8, offset: u64) ReadPositionalError!usize {
+/// Returns 0 on end of stream.
+///
+/// See also:
+/// * `reader`
+pub fn readPositional(file: File, io: Io, buffer: []const []u8, offset: u64) ReadPositionalError!usize {
     return io.vtable.fileReadPositional(io.userdata, file, buffer, offset);
 }
 
 pub const WritePositionalError = Writer.Error || error{Unseekable};
 
-pub fn writePositional(file: File, io: Io, buffer: [][]const u8, offset: u64) WritePositionalError!usize {
+/// Returns 0 on end of stream.
+///
+/// See also:
+/// * `writer`
+pub fn writePositional(file: File, io: Io, buffer: []const []const u8, offset: u64) WritePositionalError!usize {
     return io.vtable.fileWritePositional(io.userdata, file, buffer, offset);
 }
 
@@ -501,13 +509,35 @@ pub const WriteFilePositionalError = Writer.WriteFileError || error{Unseekable};
 ///
 /// Positional is more threadsafe, since the global seek position is not
 /// affected.
+///
+/// See also:
+/// * `readerStreaming`
 pub fn reader(file: File, io: Io, buffer: []u8) Reader {
     return .init(file, io, buffer);
+}
+
+/// Equivalent to creating a positional reader and reading multiple times to fill `buffer`.
+///
+/// Returns number of bytes read into `buffer`. If less than `buffer.len`, end of file occurred.
+///
+/// See also:
+/// * `reader`
+pub fn readPositionalAll(file: File, io: Io, buffer: []u8, offset: u64) ReadPositionalError!usize {
+    var index: usize = 0;
+    while (index != buffer.len) {
+        const amt = try file.readPositional(io, &.{buffer[index..]}, offset + index);
+        if (amt == 0) break;
+        index += amt;
+    }
+    return index;
 }
 
 /// Positional is more threadsafe, since the global seek position is not
 /// affected, but when such syscalls are not available, preemptively
 /// initializing in streaming mode skips a failed syscall.
+///
+/// See also:
+/// * `reader`
 pub fn readerStreaming(file: File, io: Io, buffer: []u8) Reader {
     return .initStreaming(file, io, buffer);
 }

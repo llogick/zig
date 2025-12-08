@@ -12,7 +12,7 @@ const Sha256 = std.crypto.hash.sha2.Sha256;
 const Allocator = std.mem.Allocator;
 
 const trace = @import("../../tracy.zig").trace;
-const Hasher = @import("hasher.zig").ParallelHasher;
+const ParallelHasher = @import("hasher.zig").ParallelHasher;
 const MachO = @import("../MachO.zig");
 
 const hash_size = Sha256.digest_length;
@@ -268,7 +268,9 @@ pub fn writeAdhocSignature(
     const tracy = trace(@src());
     defer tracy.end();
 
-    const allocator = macho_file.base.comp.gpa;
+    const comp = macho_file.base.comp;
+    const gpa = comp.gpa;
+    const io = comp.io;
 
     var header: macho.SuperBlob = .{
         .magic = macho.CSMAGIC_EMBEDDED_SIGNATURE,
@@ -276,7 +278,7 @@ pub fn writeAdhocSignature(
         .count = 0,
     };
 
-    var blobs = std.array_list.Managed(Blob).init(allocator);
+    var blobs = std.array_list.Managed(Blob).init(gpa);
     defer blobs.deinit();
 
     self.code_directory.inner.execSegBase = opts.exec_seg_base;
@@ -286,13 +288,12 @@ pub fn writeAdhocSignature(
 
     const total_pages = @as(u32, @intCast(mem.alignForward(usize, opts.file_size, self.page_size) / self.page_size));
 
-    try self.code_directory.code_slots.ensureTotalCapacityPrecise(allocator, total_pages);
+    try self.code_directory.code_slots.ensureTotalCapacityPrecise(gpa, total_pages);
     self.code_directory.code_slots.items.len = total_pages;
     self.code_directory.inner.nCodeSlots = total_pages;
 
     // Calculate hash for each page (in file) and write it to the buffer
-    var hasher = Hasher(Sha256){ .allocator = allocator, .io = macho_file.base.comp.io };
-    try hasher.hash(opts.file, self.code_directory.code_slots.items, .{
+    try ParallelHasher(Sha256).hash(gpa, io, opts.file, self.code_directory.code_slots.items, .{
         .chunk_size = self.page_size,
         .max_file_size = opts.file_size,
     });
@@ -304,7 +305,7 @@ pub fn writeAdhocSignature(
     var hash: [hash_size]u8 = undefined;
 
     if (self.requirements) |*req| {
-        var a: std.Io.Writer.Allocating = .init(allocator);
+        var a: std.Io.Writer.Allocating = .init(gpa);
         defer a.deinit();
         try req.write(&a.writer);
         Sha256.hash(a.written(), &hash, .{});
@@ -316,7 +317,7 @@ pub fn writeAdhocSignature(
     }
 
     if (self.entitlements) |*ents| {
-        var a: std.Io.Writer.Allocating = .init(allocator);
+        var a: std.Io.Writer.Allocating = .init(gpa);
         defer a.deinit();
         try ents.write(&a.writer);
         Sha256.hash(a.written(), &hash, .{});
