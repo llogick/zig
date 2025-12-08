@@ -3243,10 +3243,10 @@ const MakeOpenDirAccessMaskWOptions = struct {
     create_disposition: u32,
 };
 
-fn dirClose(userdata: ?*anyopaque, dir: Dir) void {
+fn dirClose(userdata: ?*anyopaque, dirs: []const Dir) void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     _ = t;
-    posix.close(dir.handle);
+    for (dirs) |dir| posix.close(dir.handle);
 }
 
 const dirRealPath = switch (native_os) {
@@ -5515,10 +5515,10 @@ fn dirOpenDirWasi(
     }
 }
 
-fn fileClose(userdata: ?*anyopaque, file: File) void {
+fn fileClose(userdata: ?*anyopaque, files: []const File) void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     _ = t;
-    posix.close(file.handle);
+    for (files) |file| posix.close(file.handle);
 }
 
 const fileReadStreaming = switch (native_os) {
@@ -9084,18 +9084,18 @@ fn addBuf(v: []posix.iovec_const, i: *iovlen_t, bytes: []const u8) void {
     i.* += 1;
 }
 
-fn netClose(userdata: ?*anyopaque, handle: net.Socket.Handle) void {
+fn netClose(userdata: ?*anyopaque, handles: []const net.Socket.Handle) void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     _ = t;
     switch (native_os) {
-        .windows => closeSocketWindows(handle),
-        else => posix.close(handle),
+        .windows => for (handles) |handle| closeSocketWindows(handle),
+        else => for (handles) |handle| posix.close(handle),
     }
 }
 
-fn netCloseUnavailable(userdata: ?*anyopaque, handle: net.Socket.Handle) void {
+fn netCloseUnavailable(userdata: ?*anyopaque, handles: []const net.Socket.Handle) void {
     _ = userdata;
-    _ = handle;
+    _ = handles;
     unreachable; // How you gonna close something that was impossible to open?
 }
 

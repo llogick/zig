@@ -446,7 +446,11 @@ pub fn openDirAbsolute(io: Io, absolute_path: []const u8, options: OpenOptions) 
 }
 
 pub fn close(dir: Dir, io: Io) void {
-    return io.vtable.dirClose(io.userdata, dir);
+    return io.vtable.dirClose(io.userdata, (&dir)[0..1]);
+}
+
+pub fn closeMany(io: Io, dirs: []const Dir) void {
+    return io.vtable.dirClose(io.userdata, dirs);
 }
 
 /// Opens a file for reading or writing, without attempting to create a new file.

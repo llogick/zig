@@ -208,7 +208,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
 
     const open_dir_cache = try arena.alloc(Io.Dir, write_file.directories.items.len);
     var open_dirs_count: usize = 0;
-    defer closeDirs(open_dir_cache[0..open_dirs_count]);
+    defer Io.Dir.closeMany(io, open_dir_cache[0..open_dirs_count]);
 
     for (write_file.directories.items, open_dir_cache) |dir, *open_dir_cache_elem| {
         man.hash.addBytes(dir.sub_path);
@@ -340,10 +340,4 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
     }
 
     try step.writeManifest(&man);
-}
-
-fn closeDirs(io: Io, dirs: []Io.Dir) void {
-    var group: Io.Group = .init;
-    defer group.wait();
-    for (dirs) |d| group.async(Io.Dir.close, .{ d, io });
 }

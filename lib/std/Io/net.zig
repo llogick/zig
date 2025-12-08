@@ -1043,7 +1043,11 @@ pub const Socket = struct {
 
     /// Leaves `address` in a valid state.
     pub fn close(s: *const Socket, io: Io) void {
-        io.vtable.netClose(io.userdata, s.handle);
+        io.vtable.netClose(io.userdata, (&s.handle)[0..1]);
+    }
+
+    pub fn closeMany(io: Io, sockets: []const Socket) void {
+        io.vtable.netClose(io.userdata, sockets);
     }
 
     pub const SendError = error{
@@ -1184,7 +1188,7 @@ pub const Stream = struct {
     const max_iovecs_len = 8;
 
     pub fn close(s: *const Stream, io: Io) void {
-        io.vtable.netClose(io.userdata, s.socket.handle);
+        io.vtable.netClose(io.userdata, (&s.socket.handle)[0..1]);
     }
 
     pub const Reader = struct {

@@ -252,7 +252,11 @@ pub const OpenError = error{
 } || Io.Dir.PathNameError || Io.Cancelable || Io.UnexpectedError;
 
 pub fn close(file: File, io: Io) void {
-    return io.vtable.fileClose(io.userdata, file);
+    return io.vtable.fileClose(io.userdata, (&file)[0..1]);
+}
+
+pub fn closeMany(io: Io, files: []const File) void {
+    return io.vtable.fileClose(io.userdata, files);
 }
 
 pub const SyncError = error{
