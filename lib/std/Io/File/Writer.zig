@@ -28,7 +28,9 @@ pub const Error = error{
     /// File descriptor does not hold the required rights to write to it.
     AccessDenied,
     PermissionDenied,
+    /// File is an unconnected socket, or closed its read end.
     BrokenPipe,
+    /// Insufficient kernel memory to read from in_fd.
     SystemResources,
     NotOpenForWriting,
     /// The process cannot access the file because another process has locked
@@ -39,20 +41,15 @@ pub const Error = error{
     /// This error occurs when a device gets disconnected before or mid-flush
     /// while it's being written to - errno(6): No such device or address.
     NoDevice,
+    FileBusy,
 } || Io.Cancelable || Io.UnexpectedError;
 
-pub const WriteFileError = error{
-    /// `out_fd` is an unconnected socket, or out_fd closed its read end.
-    BrokenPipe,
+pub const WriteFileError = Error || error{
     /// Descriptor is not valid or locked, or an mmap(2)-like operation is not available for in_fd.
-    UnsupportedOperation,
-    /// Nonblocking I/O has been selected but the write would block.
-    WouldBlock,
-    /// Unspecified error while reading from in_fd.
-    InputOutput,
-    /// Insufficient kernel memory to read from in_fd.
-    SystemResources,
-} || Io.Cancelable || Io.UnexpectedError;
+    Unimplemented,
+    EndOfStream,
+    ReadFailed,
+};
 
 pub const SeekError = Io.File.SeekError;
 
@@ -175,6 +172,9 @@ fn sendFilePositional(w: *Writer, file_reader: *Io.File.Reader, limit: Io.Limit)
             w.err = error.Canceled;
             return error.WriteFailed;
         },
+        error.EndOfStream => return error.EndOfStream,
+        error.Unimplemented => return error.Unimplemented,
+        error.ReadFailed => return error.ReadFailed,
         else => |e| {
             w.write_file_err = e;
             return error.WriteFailed;
@@ -192,6 +192,9 @@ fn sendFileStreaming(w: *Writer, file_reader: *Io.File.Reader, limit: Io.Limit) 
             w.err = error.Canceled;
             return error.WriteFailed;
         },
+        error.EndOfStream => return error.EndOfStream,
+        error.Unimplemented => return error.Unimplemented,
+        error.ReadFailed => return error.ReadFailed,
         else => |e| {
             w.write_file_err = e;
             return error.WriteFailed;

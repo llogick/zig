@@ -844,7 +844,7 @@ test "directory operations on files" {
 
             try testing.expectError(error.PathAlreadyExists, ctx.dir.makeDir(io, test_file_name, .default_dir));
             try testing.expectError(error.NotDir, ctx.dir.openDir(io, test_file_name, .{}));
-            try testing.expectError(error.NotDir, ctx.dir.deleteDir(test_file_name));
+            try testing.expectError(error.NotDir, ctx.dir.deleteDir(io, test_file_name));
 
             if (ctx.path_type == .absolute and comptime PathType.absolute.isSupported(builtin.os)) {
                 try testing.expectError(error.PathAlreadyExists, fs.makeDirAbsolute(test_file_name));
@@ -934,16 +934,16 @@ test "deleteDir" {
             const test_file_path = try ctx.transformPath("test_dir" ++ fs.path.sep_str ++ "test_file");
 
             // deleting a non-existent directory
-            try testing.expectError(error.FileNotFound, ctx.dir.deleteDir(test_dir_path));
+            try testing.expectError(error.FileNotFound, ctx.dir.deleteDir(io, test_dir_path));
 
             // deleting a non-empty directory
             try ctx.dir.makeDir(io, test_dir_path, .default_dir);
             try ctx.dir.writeFile(io, .{ .sub_path = test_file_path, .data = "" });
-            try testing.expectError(error.DirNotEmpty, ctx.dir.deleteDir(test_dir_path));
+            try testing.expectError(error.DirNotEmpty, ctx.dir.deleteDir(io, test_dir_path));
 
             // deleting an empty directory
             try ctx.dir.deleteFile(io, test_file_path);
-            try ctx.dir.deleteDir(test_dir_path);
+            try ctx.dir.deleteDir(io, test_dir_path);
         }
     }.impl);
 }
@@ -2062,7 +2062,7 @@ test "'.' and '..' in Io.Dir functions" {
             const prev_status = try dir.updateFile(io, file_path, dir, update_path, .{});
             try testing.expectEqual(Io.Dir.PrevStatus.stale, prev_status);
 
-            try ctx.dir.deleteDir(subdir_path);
+            try ctx.dir.deleteDir(io, subdir_path);
         }
     }.impl);
 }
@@ -2174,7 +2174,7 @@ test "invalid UTF-8/WTF-8 paths" {
 
             try testing.expectError(expected_err, ctx.dir.deleteFile(invalid_path));
 
-            try testing.expectError(expected_err, ctx.dir.deleteDir(invalid_path));
+            try testing.expectError(expected_err, ctx.dir.deleteDir(io, invalid_path));
 
             try testing.expectError(expected_err, ctx.dir.rename(invalid_path, ctx.dir, invalid_path, io));
 

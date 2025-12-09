@@ -284,7 +284,9 @@ pub fn isTty(file: File, io: Io) bool {
     return io.vtable.fileIsTty(io.userdata, file);
 }
 
-pub const EnableAnsiEscapeCodesError = error{} || Io.Cancelable || Io.UnexpectedError;
+pub const EnableAnsiEscapeCodesError = error{
+    NotTerminalDevice,
+} || Io.Cancelable || Io.UnexpectedError;
 
 pub fn enableAnsiEscapeCodes(file: File, io: Io) EnableAnsiEscapeCodesError!void {
     return io.vtable.fileEnableAnsiEscapeCodes(io.userdata, file);
@@ -491,19 +493,6 @@ pub const WritePositionalError = Writer.Error || error{Unseekable};
 pub fn writePositional(file: File, io: Io, buffer: []const []const u8, offset: u64) WritePositionalError!usize {
     return io.vtable.fileWritePositional(io.userdata, file, buffer, offset);
 }
-
-pub const WriteFileStreamingError = error{
-    /// `out_fd` is an unconnected socket, or out_fd closed its read end.
-    BrokenPipe,
-    /// Descriptor is not valid or locked, or an mmap(2)-like operation is not available for in_fd.
-    UnsupportedOperation,
-    /// Nonblocking I/O has been selected but the write would block.
-    WouldBlock,
-    /// Unspecified error while reading from in_fd.
-    InputOutput,
-    /// Insufficient kernel memory to read from in_fd.
-    SystemResources,
-} || Io.Cancelable || Io.UnexpectedError;
 
 pub const SeekError = error{
     Unseekable,

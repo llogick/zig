@@ -696,6 +696,7 @@ pub fn io(t: *Threaded) Io {
             .dirOpenFile = dirOpenFile,
             .dirOpenDir = dirOpenDir,
             .dirClose = dirClose,
+            .dirRead = dirRead,
             .dirRealPath = dirRealPath,
             .dirDeleteFile = dirDeleteFile,
             .dirDeleteDir = dirDeleteDir,
@@ -822,6 +823,7 @@ pub fn ioBasic(t: *Threaded) Io {
             .dirOpenFile = dirOpenFile,
             .dirOpenDir = dirOpenDir,
             .dirClose = dirClose,
+            .dirRead = dirRead,
             .dirRealPath = dirRealPath,
             .dirDeleteFile = dirDeleteFile,
             .dirDeleteDir = dirDeleteDir,
@@ -1621,7 +1623,7 @@ fn dirMakeOpenPathPosix(
 ) Dir.MakeOpenPathError!Dir {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const t_io = ioBasic(t);
-    return dirOpenDirPosix(t, dir, sub_path, permissions, options) catch |err| switch (err) {
+    return dirOpenDirPosix(t, dir, sub_path, options) catch |err| switch (err) {
         error.FileNotFound => {
             _ = try dir.makePathStatus(t_io, sub_path, permissions);
             return dirOpenDirPosix(t, dir, sub_path, options);
@@ -2388,7 +2390,7 @@ fn dirCreateFilePosix(
 
     try current_thread.beginSyscall();
     const fd: posix.fd_t = while (true) {
-        const rc = openat_sym(dir.handle, sub_path_posix, os_flags, flags.mode);
+        const rc = openat_sym(dir.handle, sub_path_posix, os_flags, flags.permissions.toMode());
         switch (posix.errno(rc)) {
             .SUCCESS => {
                 current_thread.endSyscall();
@@ -3256,6 +3258,14 @@ fn dirClose(userdata: ?*anyopaque, dirs: []const Dir) void {
     for (dirs) |dir| posix.close(dir.handle);
 }
 
+fn dirRead(userdata: ?*anyopaque, dir_reader: *Dir.Reader, buffer: []Dir.Entry) Dir.Reader.Error!usize {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    _ = t;
+    _ = dir_reader;
+    _ = buffer;
+    @panic("TODO");
+}
+
 const dirRealPath = switch (native_os) {
     .windows => dirRealPathWindows,
     else => dirRealPathPosix,
@@ -3412,7 +3422,6 @@ fn dirRealPathPosix(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, out_b
                         switch (e) {
                             .ACCES => return error.AccessDenied,
                             .FAULT => |err| return errnoBug(err),
-                            .INVAL => return error.NotLink,
                             .IO => return error.FileSystem,
                             .LOOP => return error.SymLinkLoop,
                             .NAMETOOLONG => return error.NameTooLong,
@@ -4562,7 +4571,7 @@ fn fileSyncPosix(userdata: ?*anyopaque, file: File) File.SyncError!void {
     const current_thread = Thread.getCurrent(t);
     try current_thread.beginSyscall();
     while (true) {
-        switch (posix.system.fsync(file.handle)) {
+        switch (posix.errno(posix.system.fsync(file.handle))) {
             .SUCCESS => return current_thread.endSyscall(),
             .CANCELED => return current_thread.endSyscallCanceled(),
             .INTR => {
@@ -4640,7 +4649,7 @@ fn isTty(current_thread: *Thread, file: File) Io.Cancelable!bool {
         const linux = std.os.linux;
         try current_thread.beginSyscall();
         while (true) {
-            var wsz: linux.winsize = undefined;
+            var wsz: posix.winsize = undefined;
             const fd: usize = @bitCast(@as(isize, file.handle));
             const rc = linux.syscall3(.ioctl, fd, linux.T.IOCGWINSZ, @intFromPtr(&wsz));
             switch (linux.errno(rc)) {
@@ -4948,7 +4957,7 @@ fn dirSetTimestamps(
     last_accessed: Io.Timestamp,
     last_modified: Io.Timestamp,
     options: Dir.SetTimestampsOptions,
-) File.SetTimestampsError!void {
+) Dir.SetTimestampsError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
@@ -4961,8 +4970,8 @@ fn dirSetTimestamps(
     }
 
     const times: [2]posix.timespec = .{
-        timestampToPosix(last_accessed),
-        timestampToPosix(last_modified),
+        timestampToPosix(last_accessed.nanoseconds),
+        timestampToPosix(last_modified.nanoseconds),
     };
 
     const flags: u32 = if (!options.follow_symlinks) posix.AT.SYMLINK_NOFOLLOW else 0;
@@ -5000,7 +5009,7 @@ fn dirSetTimestampsNow(
     dir: Dir,
     sub_path: []const u8,
     options: Dir.SetTimestampsOptions,
-) File.SetTimestampsError!void {
+) Dir.SetTimestampsError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
@@ -5068,8 +5077,8 @@ fn fileSetTimestamps(
     }
 
     const times: [2]posix.timespec = .{
-        timestampToPosix(last_accessed),
-        timestampToPosix(last_modified),
+        timestampToPosix(last_accessed.nanoseconds),
+        timestampToPosix(last_modified.nanoseconds),
     };
 
     if (native_os == .wasi and !builtin.link_libc) {
@@ -5226,7 +5235,7 @@ fn fileLock(userdata: ?*anyopaque, file: File, lock: File.Lock) File.LockError!v
         }
     }
 
-    const operation = switch (lock) {
+    const operation: i32 = switch (lock) {
         .none => posix.LOCK.UN,
         .shared => posix.LOCK.SH,
         .exclusive => posix.LOCK.EX,
@@ -5288,7 +5297,7 @@ fn fileTryLock(userdata: ?*anyopaque, file: File, lock: File.Lock) File.LockErro
         }
     }
 
-    const operation = switch (lock) {
+    const operation: i32 = switch (lock) {
         .none => posix.LOCK.UN,
         .shared => posix.LOCK.SH | posix.LOCK.NB,
         .exclusive => posix.LOCK.EX | posix.LOCK.NB,
@@ -5346,27 +5355,16 @@ fn fileUnlock(userdata: ?*anyopaque, file: File) void {
         return;
     }
 
-    try current_thread.beginSyscall();
     while (true) {
         switch (posix.errno(posix.system.flock(file.handle, posix.LOCK.UN))) {
-            .SUCCESS => return current_thread.endSyscall(),
-            .CANCELED => return current_thread.endSyscallCanceled(),
-            .INTR => {
-                try current_thread.checkCancel();
-                continue;
-            },
-            else => |e| {
-                current_thread.endSyscall();
-                if (is_debug) switch (e) {
-                    .AGAIN => unreachable, // unlocking can't block
-                    .BADF => unreachable, // File descriptor used after closed.
-                    .INVAL => unreachable, // invalid parameters
-                    .NOLCK => unreachable, // Resource deallocation.
-                    .OPNOTSUPP => unreachable, // We already got the lock.
-                    else => unreachable, // Resource deallocation must succeed.
-                };
-                return;
-            },
+            .SUCCESS => return,
+            .CANCELED, .INTR => continue,
+            .AGAIN => return assert(!is_debug), // unlocking can't block
+            .BADF => return assert(!is_debug), // File descriptor used after closed.
+            .INVAL => return assert(!is_debug), // invalid parameters
+            .NOLCK => return assert(!is_debug), // Resource deallocation.
+            .OPNOTSUPP => return assert(!is_debug), // We already got the lock.
+            else => return assert(!is_debug), // Resource deallocation must succeed.
         }
     }
 }
@@ -5424,7 +5422,7 @@ fn fileDowngradeLock(userdata: ?*anyopaque, file: File) File.DowngradeLockError!
         switch (posix.errno(posix.system.flock(file.handle, operation))) {
             .SUCCESS => {
                 current_thread.endSyscall();
-                return true;
+                return;
             },
             .CANCELED => return current_thread.endSyscallCanceled(),
             .INTR => {
@@ -6255,8 +6253,9 @@ fn fileWritePositional(
                     .NOSPC => return error.NoSpaceLeft,
                     .PERM => return error.PermissionDenied,
                     .PIPE => return error.BrokenPipe,
-                    .CONNRESET => return error.ConnectionResetByPeer,
+                    .CONNRESET => |err| return errnoBug(err), // Not a socket handle.
                     .BUSY => return error.DeviceBusy,
+                    .TXTBSY => return error.FileBusy,
                     .NXIO => return error.Unseekable,
                     .SPIPE => return error.Unseekable,
                     .OVERFLOW => return error.Unseekable,
@@ -6373,7 +6372,7 @@ fn fileWriteStreaming(
                     .NOSPC => return error.NoSpaceLeft,
                     .PERM => return error.PermissionDenied,
                     .PIPE => return error.BrokenPipe,
-                    .CONNRESET => return error.ConnectionResetByPeer,
+                    .CONNRESET => |err| return errnoBug(err), // Not a socket handle.
                     .BUSY => return error.DeviceBusy,
                     else => |err| return posix.unexpectedErrno(err),
                 }
@@ -6388,12 +6387,12 @@ fn fileWriteFileStreaming(
     header: []const u8,
     file_reader: *File.Reader,
     limit: Io.Limit,
-) File.WriteFileStreamingError!usize {
+) File.Writer.WriteFileError!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const reader_buffered = file_reader.interface.buffered();
     if (reader_buffered.len >= @intFromEnum(limit)) {
         const n = try fileWriteStreaming(t, file, header, &.{limit.slice(reader_buffered)}, 1);
-        file_reader.seekBy(n -| header.len) catch return error.ReadFailed;
+        file_reader.interface.toss(n -| header.len);
         return n;
     }
     const file_limit = @intFromEnum(limit) - reader_buffered.len;
@@ -6404,7 +6403,7 @@ fn fileWriteFileStreaming(
         if (size - file_reader.pos == 0) {
             if (reader_buffered.len != 0) {
                 const n = try fileWriteStreaming(t, file, header, &.{limit.slice(reader_buffered)}, 1);
-                file_reader.seekBy(n -| header.len) catch return error.ReadFailed;
+                file_reader.interface.toss(n -| header.len);
                 return n;
             } else {
                 return error.EndOfStream;
@@ -6495,7 +6494,7 @@ fn fileWriteFileStreaming(
             return error.EndOfStream;
         }
         const ubytes: usize = @intCast(sbytes);
-        file_reader.seekBy(ubytes -| header.len) catch return error.ReadFailed;
+        file_reader.interface.toss(ubytes -| header.len);
         return ubytes;
     }
 
@@ -6581,7 +6580,7 @@ fn fileWriteFileStreaming(
             return error.EndOfStream;
         }
         const u_len: usize = @bitCast(len);
-        file_reader.seekBy(u_len -| header.len) catch return error.ReadFailed;
+        file_reader.interface.toss(u_len -| header.len);
         return u_len;
     }
 
@@ -6591,7 +6590,7 @@ fn fileWriteFileStreaming(
         // Linux sendfile does not support headers.
         if (header.len != 0 or reader_buffered.len != 0) {
             const n = try fileWriteStreaming(t, file, header, &.{limit.slice(reader_buffered)}, 1);
-            file_reader.seekBy(n -| header.len) catch return error.ReadFailed;
+            file_reader.interface.toss(n -| header.len);
             return n;
         }
         const max_count = 0x7ffff000; // Avoid EINVAL.
@@ -6671,7 +6670,7 @@ fn fileWriteFileStreaming(
         if (@atomicLoad(UseCopyFileRange, &t.use_copy_file_range, .monotonic) == .disabled) break :cfr;
         if (header.len != 0 or reader_buffered.len != 0) {
             const n = try fileWriteStreaming(t, file, header, &.{limit.slice(reader_buffered)}, 1);
-            file_reader.seekBy(n -| header.len) catch return error.ReadFailed;
+            file_reader.interface.toss(n -| header.len);
             return n;
         }
         var off_in: i64 = undefined;
@@ -6682,7 +6681,7 @@ fn fileWriteFileStreaming(
                 break :p &off_in;
             },
             .streaming => null,
-            .failure => return error.WriteFailed,
+            .failure => return error.ReadFailed,
         };
         const current_thread = Thread.getCurrent(t);
         const n: usize = switch (native_os) {
@@ -6712,13 +6711,16 @@ fn fileWriteFileStreaming(
                             assert(error.Unexpected == switch (e) {
                                 .FBIG => return error.FileTooBig,
                                 .IO => return error.InputOutput,
-                                .ISDIR => return error.IsDir,
                                 .NOMEM => return error.SystemResources,
                                 .NOSPC => return error.NoSpaceLeft,
-                                .OVERFLOW => return error.Overflow,
+                                .OVERFLOW => |err| errnoBug(err), // We avoid passing too large a count.
                                 .PERM => return error.PermissionDenied,
-                                .TXTBSY => return error.SwapFile,
-                                .XDEV => return error.NotSameFileSystem,
+                                .BUSY => return error.DeviceBusy,
+                                .TXTBSY => return error.FileBusy,
+                                // copy_file_range can still work but not on
+                                // this pair of file descriptors.
+                                .XDEV => return error.Unimplemented,
+                                .ISDIR => |err| errnoBug(err),
                                 .BADF => |err| errnoBug(err),
                                 else => |err| posix.unexpectedErrno(err),
                             });
@@ -6791,7 +6793,7 @@ fn netWriteFile(
     _ = header;
     _ = file_reader;
     _ = limit;
-    return error.Unimplemented; // TODO
+    @panic("TODO");
 }
 
 fn netWriteFileUnavailable(
@@ -6822,7 +6824,7 @@ fn fileWriteFilePositional(
     const reader_buffered = file_reader.interface.buffered();
     if (reader_buffered.len >= @intFromEnum(limit)) {
         const n = try fileWritePositional(t, file, header, &.{limit.slice(reader_buffered)}, 1, offset);
-        file_reader.seekBy(n -| header.len) catch return error.ReadFailed;
+        file_reader.interface.toss(n -| header.len);
         return n;
     }
     const out_fd = file.handle;
@@ -6832,7 +6834,7 @@ fn fileWriteFilePositional(
         if (size - file_reader.pos == 0) {
             if (reader_buffered.len != 0) {
                 const n = try fileWritePositional(t, file, header, &.{limit.slice(reader_buffered)}, 1, offset);
-                file_reader.seekBy(n -| header.len) catch return error.ReadFailed;
+                file_reader.interface.toss(n -| header.len);
                 return n;
             } else {
                 return error.EndOfStream;
@@ -6844,7 +6846,7 @@ fn fileWriteFilePositional(
         if (@atomicLoad(UseCopyFileRange, &t.use_copy_file_range, .monotonic) == .disabled) break :cfr;
         if (header.len != 0 or reader_buffered.len != 0) {
             const n = try fileWritePositional(t, file, header, &.{limit.slice(reader_buffered)}, 1, offset);
-            file_reader.seekBy(n -| header.len) catch return error.ReadFailed;
+            file_reader.interface.toss(n -| header.len);
             return n;
         }
         var off_in: i64 = undefined;
@@ -6855,7 +6857,7 @@ fn fileWriteFilePositional(
                 break :p &off_in;
             },
             .streaming => null,
-            .failure => return error.WriteFailed,
+            .failure => return error.ReadFailed,
         };
         var off_out: i64 = @intCast(offset);
         const current_thread = Thread.getCurrent(t);
@@ -6886,15 +6888,17 @@ fn fileWriteFilePositional(
                             assert(error.Unexpected == switch (e) {
                                 .FBIG => return error.FileTooBig,
                                 .IO => return error.InputOutput,
-                                .ISDIR => return error.IsDir,
                                 .NOMEM => return error.SystemResources,
                                 .NOSPC => return error.NoSpaceLeft,
                                 .OVERFLOW => return error.Unseekable,
                                 .NXIO => return error.Unseekable,
                                 .SPIPE => return error.Unseekable,
                                 .PERM => return error.PermissionDenied,
-                                .TXTBSY => return error.SwapFile,
-                                .XDEV => return error.NotSameFileSystem,
+                                .TXTBSY => return error.FileBusy,
+                                // copy_file_range can still work but not on
+                                // this pair of file descriptors.
+                                .XDEV => return error.Unimplemented,
+                                .ISDIR => |err| errnoBug(err),
                                 .BADF => |err| errnoBug(err),
                                 else => |err| posix.unexpectedErrno(err),
                             });
@@ -6962,7 +6966,7 @@ fn fileWriteFilePositional(
         const size = file_reader.getSize() catch break :fcf;
         if (header.len != 0 or reader_buffered.len != 0) {
             const n = try fileWritePositional(t, file, header, &.{limit.slice(reader_buffered)}, 1, offset);
-            file_reader.seekBy(n -| header.len) catch return error.ReadFailed;
+            file_reader.interface.toss(n -| header.len);
             return n;
         }
         const current_thread = Thread.getCurrent(t);

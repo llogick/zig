@@ -578,7 +578,7 @@ fn runResource(
     };
     // Remove temporary directory root if not already renamed to global cache.
     if (!std.mem.eql(u8, package_sub_path, tmp_dir_sub_path)) {
-        cache_root.handle.deleteDir(tmp_dir_sub_path) catch {};
+        cache_root.handle.deleteDir(io, tmp_dir_sub_path) catch {};
     }
 
     // Validate the computed hash against the expected hash. If invalid, this
@@ -1593,7 +1593,7 @@ fn computeHash(f: *Fetch, pkg_path: Cache.Path, filter: Filter) RunError!Compute
         var i: usize = 0;
         while (i < sus_dirs.count()) : (i += 1) {
             const sus_dir = sus_dirs.keys()[i];
-            root_dir.deleteDir(sus_dir) catch |err| switch (err) {
+            root_dir.deleteDir(io, sus_dir) catch |err| switch (err) {
                 error.DirNotEmpty => continue,
                 error.FileNotFound => continue,
                 else => |e| {

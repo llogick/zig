@@ -198,7 +198,7 @@ pub const SelectiveWalker = struct {
                 // likely just fail with the same error.
                 var item = self.stack.pop().?;
                 if (self.stack.items.len != 0) {
-                    item.iter.dir.close(io);
+                    item.iter.reader.dir.close(io);
                 }
                 return err;
             }) |entry| {
@@ -211,7 +211,7 @@ pub const SelectiveWalker = struct {
                 self.name_buffer.appendSliceAssumeCapacity(entry.name);
                 self.name_buffer.appendAssumeCapacity(0);
                 const walker_entry: Walker.Entry = .{
-                    .dir = top.iter.dir,
+                    .dir = top.iter.reader.dir,
                     .basename = self.name_buffer.items[dirname_len .. self.name_buffer.items.len - 1 :0],
                     .path = self.name_buffer.items[0 .. self.name_buffer.items.len - 1 :0],
                     .kind = entry.kind,
@@ -220,7 +220,7 @@ pub const SelectiveWalker = struct {
             } else {
                 var item = self.stack.pop().?;
                 if (self.stack.items.len != 0) {
-                    item.iter.dir.close(io);
+                    item.iter.reader.dir.close(io);
                 }
             }
         }
@@ -260,7 +260,7 @@ pub const SelectiveWalker = struct {
         var item = self.stack.pop().?;
         if (self.stack.items.len != 0) {
             @branchHint(.likely);
-            item.iter.dir.close(io);
+            item.iter.reader.dir.close(io);
         }
     }
 };
@@ -741,7 +741,6 @@ pub const RealPathError = error{
     FileNotFound,
     AccessDenied,
     PermissionDenied,
-    NameTooLong,
     NotSupported,
     NotDir,
     SymLinkLoop,
@@ -757,9 +756,6 @@ pub const RealPathError = error{
     DeviceBusy,
     SharingViolation,
     PipeBusy,
-    /// Windows: file paths provided by the user must be valid WTF-8.
-    /// https://wtf-8.codeberg.page/
-    BadPathName,
     /// On Windows, `\\server` or `\\server\share` was not found.
     NetworkNotFound,
     PathAlreadyExists,
@@ -772,7 +768,7 @@ pub const RealPathError = error{
     /// On Windows, the volume does not contain a recognized file system. File
     /// system drivers might not be loaded, or the volume may be corrupt.
     UnrecognizedVolume,
-} || Io.Cancelable || Io.UnexpectedError;
+} || PathNameError || Io.Cancelable || Io.UnexpectedError;
 
 ///  This function returns the canonicalized absolute pathname of `pathname`
 ///  relative to this `Dir`. If `pathname` is absolute, ignores this `Dir`
@@ -824,19 +820,12 @@ pub const DeleteFileError = error{
     FileSystem,
     IsDir,
     SymLinkLoop,
-    NameTooLong,
     NotDir,
     SystemResources,
     ReadOnlyFileSystem,
-    /// WASI: file paths must be valid UTF-8.
-    /// Windows: file paths provided by the user must be valid WTF-8.
-    /// https://wtf-8.codeberg.page/
-    /// Windows: file paths cannot contain these characters:
-    /// '/', '*', '?', '"', '<', '>', '|'
-    BadPathName,
     /// On Windows, `\\server` or `\\server\share` was not found.
     NetworkNotFound,
-} || Io.Cancelable || Io.UnexpectedError;
+} || PathNameError || Io.Cancelable || Io.UnexpectedError;
 
 /// Delete a file name and possibly the file it refers to, based on an open directory handle.
 ///
@@ -864,17 +853,12 @@ pub const DeleteDirError = error{
     FileBusy,
     FileSystem,
     SymLinkLoop,
-    NameTooLong,
     NotDir,
     SystemResources,
     ReadOnlyFileSystem,
-    /// WASI: file paths must be valid UTF-8.
-    /// Windows: file paths provided by the user must be valid WTF-8.
-    /// https://wtf-8.codeberg.page/
-    BadPathName,
     /// On Windows, `\\server` or `\\server\share` was not found.
     NetworkNotFound,
-} || Io.Cancelable || Io.UnexpectedError;
+} || PathNameError || Io.Cancelable || Io.UnexpectedError;
 
 /// Returns `error.DirNotEmpty` if the directory is not empty.
 ///
@@ -910,7 +894,6 @@ pub const RenameError = error{
     IsDir,
     SymLinkLoop,
     LinkQuotaExceeded,
-    NameTooLong,
     FileNotFound,
     NotDir,
     SystemResources,
@@ -918,10 +901,6 @@ pub const RenameError = error{
     PathAlreadyExists,
     ReadOnlyFileSystem,
     RenameAcrossMountPoints,
-    /// WASI: file paths must be valid UTF-8.
-    /// Windows: file paths provided by the user must be valid WTF-8.
-    /// https://wtf-8.codeberg.page/
-    BadPathName,
     NoDevice,
     SharingViolation,
     PipeBusy,
@@ -933,7 +912,7 @@ pub const RenameError = error{
     /// intercepts file system operations and makes them significantly slower
     /// in addition to possibly failing with this error code.
     AntivirusInterference,
-} || Io.Cancelable || Io.UnexpectedError;
+} || PathNameError || Io.Cancelable || Io.UnexpectedError;
 
 /// Change the name or location of a file or directory.
 ///
@@ -985,12 +964,7 @@ pub const SymLinkError = error{
     NoSpaceLeft,
     ReadOnlyFileSystem,
     NotDir,
-    NameTooLong,
-    /// WASI: file paths must be valid UTF-8.
-    /// Windows: file paths provided by the user must be valid WTF-8.
-    /// https://wtf-8.codeberg.page/
-    BadPathName,
-} || Io.Cancelable || Io.UnexpectedError;
+} || PathNameError || Io.Cancelable || Io.UnexpectedError;
 
 /// Creates a symbolic link named `sym_link_path` which contains the string `target_path`.
 ///
@@ -1075,15 +1049,10 @@ pub const ReadLinkError = error{
     PermissionDenied,
     FileSystem,
     SymLinkLoop,
-    NameTooLong,
     FileNotFound,
     SystemResources,
     NotLink,
     NotDir,
-    /// WASI: file paths must be valid UTF-8.
-    /// Windows: file paths provided by the user must be valid WTF-8.
-    /// https://wtf-8.codeberg.page/
-    BadPathName,
     /// Windows-only. This error may occur if the opened reparse point is
     /// of unsupported type.
     UnsupportedReparsePointType,
@@ -1095,7 +1064,7 @@ pub const ReadLinkError = error{
     /// intercepts file system operations and makes them significantly slower
     /// in addition to possibly failing with this error code.
     AntivirusInterference,
-} || Io.Cancelable || Io.UnexpectedError;
+} || PathNameError || Io.Cancelable || Io.UnexpectedError;
 
 /// Obtain target of a symbolic link.
 ///
@@ -1183,7 +1152,6 @@ pub const DeleteTreeError = error{
     FileTooBig,
     SymLinkLoop,
     ProcessFdQuotaExceeded,
-    NameTooLong,
     SystemFdQuotaExceeded,
     NoDevice,
     SystemResources,
@@ -1194,15 +1162,9 @@ pub const DeleteTreeError = error{
     /// One of the path components was not a directory.
     /// This error is unreachable if `sub_path` does not contain a path separator.
     NotDir,
-    /// WASI: file paths must be valid UTF-8.
-    /// Windows: file paths provided by the user must be valid WTF-8.
-    /// https://wtf-8.codeberg.page/
-    /// On Windows, file paths cannot contain these characters:
-    /// '/', '*', '?', '"', '<', '>', '|'
-    BadPathName,
     /// On Windows, `\\server` or `\\server\share` was not found.
     NetworkNotFound,
-} || Io.Cancelable || Io.UnexpectedError;
+} || PathNameError || Io.Cancelable || Io.UnexpectedError;
 
 /// Whether `sub_path` describes a symlink, file, or directory, this function
 /// removes it. If it cannot be removed because it is a non-empty directory,
@@ -1222,7 +1184,7 @@ pub fn deleteTree(dir: Dir, io: Io, sub_path: []const u8) DeleteTreeError!void {
         iter: Dir.Iterator,
 
         fn closeAll(inner_io: Io, items: []@This()) void {
-            for (items) |*item| item.iter.dir.close(inner_io);
+            for (items) |*item| item.iter.reader.dir.close(inner_io);
         }
     };
 
@@ -1243,7 +1205,7 @@ pub fn deleteTree(dir: Dir, io: Io, sub_path: []const u8) DeleteTreeError!void {
             handle_entry: while (true) {
                 if (treat_as_dir) {
                     if (stack.unusedCapacitySlice().len >= 1) {
-                        var iterable_dir = top.iter.dir.openDir(io, entry.name, .{
+                        var iterable_dir = top.iter.reader.dir.openDir(io, entry.name, .{
                             .follow_symlinks = false,
                             .iterate = true,
                         }) catch |err| switch (err) {
@@ -1273,16 +1235,16 @@ pub fn deleteTree(dir: Dir, io: Io, sub_path: []const u8) DeleteTreeError!void {
                         };
                         stack.appendAssumeCapacity(.{
                             .name = entry.name,
-                            .parent_dir = top.iter.dir,
+                            .parent_dir = top.iter.reader.dir,
                             .iter = iterable_dir.iterateAssumeFirstIteration(),
                         });
                         continue :process_stack;
                     } else {
-                        try top.iter.dir.deleteTreeMinStackSizeWithKindHint(io, entry.name, entry.kind);
+                        try top.iter.reader.dir.deleteTreeMinStackSizeWithKindHint(io, entry.name, entry.kind);
                         break :handle_entry;
                     }
                 } else {
-                    if (top.iter.dir.deleteFile(io, entry.name)) {
+                    if (top.iter.reader.dir.deleteFile(io, entry.name)) {
                         break :handle_entry;
                     } else |err| switch (err) {
                         error.FileNotFound => break :handle_entry,
@@ -1305,6 +1267,7 @@ pub fn deleteTree(dir: Dir, io: Io, sub_path: []const u8) DeleteTreeError!void {
                         error.FileBusy,
                         error.BadPathName,
                         error.NetworkNotFound,
+                        error.Canceled,
                         error.Unexpected,
                         => |e| return e,
                     }
@@ -1314,7 +1277,7 @@ pub fn deleteTree(dir: Dir, io: Io, sub_path: []const u8) DeleteTreeError!void {
 
         // On Windows, we can't delete until the dir's handle has been closed, so
         // close it before we try to delete.
-        top.iter.dir.close(io);
+        top.iter.reader.dir.close(io);
 
         // In order to avoid double-closing the directory when cleaning up
         // the stack in the case of an error, we save the relevant portions and
@@ -1324,7 +1287,7 @@ pub fn deleteTree(dir: Dir, io: Io, sub_path: []const u8) DeleteTreeError!void {
         stack.items.len -= 1;
 
         var need_to_retry: bool = false;
-        parent_dir.deleteDir(name) catch |err| switch (err) {
+        parent_dir.deleteDir(io, name) catch |err| switch (err) {
             error.FileNotFound => {},
             error.DirNotEmpty => need_to_retry = true,
             else => |e| return e,
@@ -1389,6 +1352,7 @@ pub fn deleteTree(dir: Dir, io: Io, sub_path: []const u8) DeleteTreeError!void {
                             error.FileBusy,
                             error.BadPathName,
                             error.NetworkNotFound,
+                            error.Canceled,
                             error.Unexpected,
                             => |e| return e,
                         }
@@ -1437,7 +1401,7 @@ fn deleteTreeMinStackSizeWithKindHint(parent: Dir, io: Io, sub_path: []const u8,
 
         scan_dir: while (true) {
             var dir_it = dir.iterateAssumeFirstIteration();
-            dir_it: while (try dir_it.next()) |entry| {
+            dir_it: while (try dir_it.next(io)) |entry| {
                 var treat_as_dir = entry.kind == .directory;
                 handle_entry: while (true) {
                     if (treat_as_dir) {
@@ -1500,6 +1464,7 @@ fn deleteTreeMinStackSizeWithKindHint(parent: Dir, io: Io, sub_path: []const u8,
                             error.FileBusy,
                             error.BadPathName,
                             error.NetworkNotFound,
+                            error.Canceled,
                             error.Unexpected,
                             => |e| return e,
                         }
@@ -1727,7 +1692,7 @@ pub fn setOwner(dir: Dir, io: Io, owner: ?File.Uid, group: ?File.Gid) SetOwnerEr
     return io.vtable.dirSetOwner(io.userdata, dir, owner, group);
 }
 
-pub const SetTimestampsError = File.SetTimestampsError;
+pub const SetTimestampsError = File.SetTimestampsError || PathNameError;
 
 pub const SetTimestampsOptions = struct {
     follow_symlinks: bool = true,

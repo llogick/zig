@@ -1290,7 +1290,9 @@ pub const Stream = struct {
             SocketNotBound,
         } || Io.UnexpectedError || Io.Cancelable;
 
-        pub const WriteFileError = error{} || Io.Cancelable || Io.UnexpectedError;
+        pub const WriteFileError = error{
+            NetworkDown,
+        } || Io.Cancelable || Io.UnexpectedError;
 
         pub fn init(stream: Stream, io: Io, buffer: []u8) Writer {
             return .{
