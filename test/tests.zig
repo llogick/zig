@@ -2632,7 +2632,7 @@ pub fn addCases(
     const gpa = b.allocator;
     const io = b.graph.io;
 
-    var cases = @import("src/Cases.zig").init(gpa, arena);
+    var cases = @import("src/Cases.zig").init(gpa, arena, io);
 
     var dir = try b.build_root.handle.openDir(io, "test/cases", .{ .iterate = true });
     defer dir.close(io);

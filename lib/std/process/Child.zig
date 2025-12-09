@@ -470,7 +470,7 @@ pub fn run(allocator: Allocator, io: Io, args: struct {
     return .{
         .stdout = try stdout.toOwnedSlice(allocator),
         .stderr = try stderr.toOwnedSlice(allocator),
-        .term = try child.wait(),
+        .term = try child.wait(io),
     };
 }
 

@@ -66,7 +66,7 @@ pub fn deinit(af: *Atomic) void {
     af.* = undefined;
 }
 
-pub const FlushError = File.WriteError;
+pub const FlushError = File.Writer.Error;
 
 pub fn flush(af: *Atomic) FlushError!void {
     af.file_writer.interface.flush() catch |err| switch (err) {

@@ -286,11 +286,13 @@ pub fn unlockStdErr() void {
 pub fn lockStderrWriter(buffer: []u8) struct { *Writer, tty.Config } {
     const global = struct {
         var conf: ?tty.Config = null;
+        var single_threaded_io: Io.Threaded = .init_single_threaded;
     };
+    const io = global.single_threaded_io.io();
     const w = std.Progress.lockStderrWriter(buffer);
     // The stderr lock also locks access to `global.conf`.
     if (global.conf == null) {
-        global.conf = .detect(.stderr());
+        global.conf = .detect(io, .stderr());
     }
     return .{ w, global.conf.? };
 }

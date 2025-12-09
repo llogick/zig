@@ -574,7 +574,7 @@ pub fn updateFile(
         error.WriteFailed => return atomic_file.file_writer.err.?,
     };
     try atomic_file.flush();
-    try atomic_file.file_writer.file.updateTimes(src_stat.atime, src_stat.mtime);
+    try atomic_file.file_writer.file.setTimestamps(io, src_stat.atime, src_stat.mtime);
     try atomic_file.renameIntoPlace();
     return .stale;
 }
@@ -1238,7 +1238,7 @@ pub fn deleteTree(dir: Dir, io: Io, sub_path: []const u8) DeleteTreeError!void {
 
     process_stack: while (stack.items.len != 0) {
         var top = &stack.items[stack.items.len - 1];
-        while (try top.iter.next()) |entry| {
+        while (try top.iter.next(io)) |entry| {
             var treat_as_dir = entry.kind == .directory;
             handle_entry: while (true) {
                 if (treat_as_dir) {
@@ -1695,9 +1695,9 @@ pub fn atomicFile(parent: Dir, io: Io, dest_path: []const u8, options: AtomicFil
         else
             try parent.openDir(io, dirname, .{});
 
-        return .init(path.basename(dest_path), options.permissions, dir, true, options.write_buffer);
+        return .init(io, path.basename(dest_path), options.permissions, dir, true, options.write_buffer);
     } else {
-        return .init(dest_path, options.permissions, parent, false, options.write_buffer);
+        return .init(io, dest_path, options.permissions, parent, false, options.write_buffer);
     }
 }
 

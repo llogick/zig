@@ -51,10 +51,10 @@ pub const UpdateError = error{
 } ||
     codegen.GenerateSymbolError ||
     Io.File.OpenError ||
-    Io.File.SetEndPosError ||
+    Io.File.LengthError ||
     Io.File.CopyRangeError ||
-    Io.File.PReadError ||
-    Io.File.PWriteError;
+    Io.File.ReadPositionalError ||
+    Io.File.WritePositionalError;
 
 pub const FlushError = UpdateError;
 

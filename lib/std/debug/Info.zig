@@ -42,7 +42,7 @@ pub fn load(
             var file = try path.root_dir.handle.openFile(io, path.sub_path, .{});
             defer file.close(io);
 
-            var elf_file: ElfFile = try .load(gpa, file, null, &.none);
+            var elf_file: ElfFile = try .load(gpa, io, file, null, &.none);
             errdefer elf_file.deinit(gpa);
 
             if (elf_file.dwarf == null) return error.MissingDebugInfo;
@@ -58,7 +58,7 @@ pub fn load(
             const path_str = try path.toString(gpa);
             defer gpa.free(path_str);
 
-            var macho_file: MachOFile = try .load(gpa, path_str, arch);
+            var macho_file: MachOFile = try .load(gpa, io, path_str, arch);
             errdefer macho_file.deinit(gpa);
 
             return .{
@@ -85,6 +85,7 @@ pub const ResolveAddressesError = Coverage.ResolveAddressesDwarfError || error{U
 pub fn resolveAddresses(
     info: *Info,
     gpa: Allocator,
+    io: Io,
     /// Asserts the addresses are in ascending order.
     sorted_pc_addrs: []const u64,
     /// Asserts its length equals length of `sorted_pc_addrs`.
@@ -97,7 +98,7 @@ pub fn resolveAddresses(
             // Resolving all of the addresses at once unfortunately isn't so easy in Mach-O binaries
             // due to split debug information. For now, we'll just resolve the addreses one by one.
             for (sorted_pc_addrs, output) |pc_addr, *src_loc| {
-                const dwarf, const dwarf_pc_addr = mf.getDwarfForAddress(gpa, pc_addr) catch |err| switch (err) {
+                const dwarf, const dwarf_pc_addr = mf.getDwarfForAddress(gpa, io, pc_addr) catch |err| switch (err) {
                     error.InvalidMachO, error.InvalidDwarf => return error.InvalidDebugInfo,
                     else => |e| return e,
                 };

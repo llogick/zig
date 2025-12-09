@@ -4,8 +4,6 @@ const builtin = @import("builtin");
 const native_os = builtin.os.tag;
 const is_windows = native_os == .windows;
 const is_darwin = native_os.isDarwin();
-const windows = std.os.windows;
-const ws2_32 = std.os.windows.ws2_32;
 const is_debug = builtin.mode == .Debug;
 
 const std = @import("../std.zig");
@@ -19,6 +17,8 @@ const Allocator = std.mem.Allocator;
 const Alignment = std.mem.Alignment;
 const assert = std.debug.assert;
 const posix = std.posix;
+const windows = std.os.windows;
+const ws2_32 = std.os.windows.ws2_32;
 
 /// Thread-safe.
 allocator: Allocator,
@@ -1452,7 +1452,7 @@ const dirMake = switch (native_os) {
     else => dirMakePosix,
 };
 
-fn dirMakePosix(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, mode: Dir.Mode) Dir.MakeError!void {
+fn dirMakePosix(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, permissions: Dir.Permissions) Dir.MakeError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
@@ -1461,7 +1461,7 @@ fn dirMakePosix(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, mode: Dir
 
     try current_thread.beginSyscall();
     while (true) {
-        switch (posix.errno(posix.system.mkdirat(dir.handle, sub_path_posix, mode))) {
+        switch (posix.errno(posix.system.mkdirat(dir.handle, sub_path_posix, permissions.toMode()))) {
             .SUCCESS => {
                 current_thread.endSyscall();
                 return;
@@ -1498,8 +1498,8 @@ fn dirMakePosix(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, mode: Dir
     }
 }
 
-fn dirMakeWasi(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, mode: Dir.Mode) Dir.MakeError!void {
-    if (builtin.link_libc) return dirMakePosix(userdata, dir, sub_path, mode);
+fn dirMakeWasi(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, permissions: Dir.Permissions) Dir.MakeError!void {
+    if (builtin.link_libc) return dirMakePosix(userdata, dir, sub_path, permissions);
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
     try current_thread.beginSyscall();
@@ -1540,13 +1540,13 @@ fn dirMakeWasi(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, mode: Dir.
     }
 }
 
-fn dirMakeWindows(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, mode: Dir.Mode) Dir.MakeError!void {
+fn dirMakeWindows(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, permissions: Dir.Permissions) Dir.MakeError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
     try current_thread.checkCancel();
 
     const sub_path_w = try windows.sliceToPrefixedFileW(dir.handle, sub_path);
-    _ = mode;
+    _ = permissions; // TODO use this value
     const sub_dir_handle = windows.OpenFile(sub_path_w.span(), .{
         .dir = dir.handle,
         .access_mask = .{
@@ -1570,7 +1570,7 @@ fn dirMakePath(
     userdata: ?*anyopaque,
     dir: Dir,
     sub_path: []const u8,
-    mode: Dir.Mode,
+    permissions: Dir.Permissions,
 ) Dir.MakePathError!Dir.MakePathStatus {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
 
@@ -1578,7 +1578,7 @@ fn dirMakePath(
     var status: Dir.MakePathStatus = .existed;
     var component = it.last() orelse return error.BadPathName;
     while (true) {
-        if (dirMake(t, dir, component.path, mode)) |_| {
+        if (dirMake(t, dir, component.path, permissions)) |_| {
             status = .created;
         } else |err| switch (err) {
             error.PathAlreadyExists => {
@@ -4945,7 +4945,7 @@ fn dirSetTimestamps(
     sub_path: []const u8,
     last_accessed: Io.Timestamp,
     last_modified: Io.Timestamp,
-    options: File.SetTimestampsOptions,
+    options: Dir.SetTimestampsOptions,
 ) File.SetTimestampsError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
@@ -4997,7 +4997,7 @@ fn dirSetTimestampsNow(
     userdata: ?*anyopaque,
     dir: Dir,
     sub_path: []const u8,
-    options: File.SetTimestampsOptions,
+    options: Dir.SetTimestampsOptions,
 ) File.SetTimestampsError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
@@ -6271,7 +6271,7 @@ fn fileWriteStreaming(
     header: []const u8,
     data: []const []const u8,
     splat: usize,
-) File.WriteStreamingError!usize {
+) File.Writer.Error!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
@@ -9690,7 +9690,7 @@ fn statFromLinux(stx: *const std.os.linux.Statx) File.Stat {
     return .{
         .inode = stx.ino,
         .size = stx.size,
-        .mode = stx.mode,
+        .permissions = .fromMode(stx.mode),
         .kind = switch (stx.mode & std.os.linux.S.IFMT) {
             std.os.linux.S.IFDIR => .directory,
             std.os.linux.S.IFCHR => .character_device,
@@ -9714,7 +9714,7 @@ fn statFromPosix(st: *const posix.Stat) File.Stat {
     return .{
         .inode = st.ino,
         .size = @bitCast(st.size),
-        .mode = st.mode,
+        .permissions = .fromMode(st.mode),
         .kind = k: {
             const m = st.mode & posix.S.IFMT;
             switch (m) {
@@ -10019,7 +10019,7 @@ fn lookupHosts(
     options: HostName.LookupOptions,
 ) !void {
     const t_io = io(t);
-    const file = File.openAbsolute(t_io, "/etc/hosts", .{}) catch |err| switch (err) {
+    const file = Dir.openFileAbsolute(t_io, "/etc/hosts", .{}) catch |err| switch (err) {
         error.FileNotFound,
         error.NotDir,
         error.AccessDenied,

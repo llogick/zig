@@ -339,7 +339,7 @@ fn addFromDirInner(
     var it = try iterable_dir.walk(ctx.arena);
     var filenames: ArrayList([]const u8) = .empty;
 
-    while (try it.next()) |entry| {
+    while (try it.next(io)) |entry| {
         if (entry.kind != .file) continue;
 
         // Ignore stuff such as .swp files
@@ -431,9 +431,10 @@ fn addFromDirInner(
     }
 }
 
-pub fn init(gpa: Allocator, arena: Allocator) Cases {
+pub fn init(gpa: Allocator, arena: Allocator, io: Io) Cases {
     return .{
         .gpa = gpa,
+        .io = io,
         .cases = .init(gpa),
         .arena = arena,
     };

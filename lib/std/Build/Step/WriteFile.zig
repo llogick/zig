@@ -309,7 +309,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
 
         var it = try already_open_dir.walk(gpa);
         defer it.deinit();
-        while (try it.next()) |entry| {
+        while (try it.next(io)) |entry| {
             if (!dir.options.pathIncluded(entry.path)) continue;
 
             const src_entry_path = try src_dir_path.join(arena, entry.path);

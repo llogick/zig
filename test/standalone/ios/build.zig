@@ -23,7 +23,9 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
-    if (std.zig.system.darwin.getSdk(b.allocator, &target.result)) |sdk| {
+    const io = b.graph.io;
+
+    if (std.zig.system.darwin.getSdk(b.allocator, io, &target.result)) |sdk| {
         b.sysroot = sdk;
         exe.root_module.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ sdk, "/usr/include" }) });
         exe.root_module.addSystemFrameworkPath(.{ .cwd_relative = b.pathJoin(&.{ sdk, "/System/Library/Frameworks" }) });

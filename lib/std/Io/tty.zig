@@ -2,6 +2,7 @@ const builtin = @import("builtin");
 const native_os = builtin.os.tag;
 
 const std = @import("std");
+const Io = std.Io;
 const File = std.Io.File;
 const process = std.process;
 const windows = std.os.windows;
@@ -39,7 +40,7 @@ pub const Config = union(enum) {
     /// This includes feature checks for ANSI escape codes and the Windows console API, as well as
     /// respecting the `NO_COLOR` and `CLICOLOR_FORCE` environment variables to override the default.
     /// Will attempt to enable ANSI escape code support if necessary/possible.
-    pub fn detect(file: File) Config {
+    pub fn detect(io: Io, file: File) Config {
         const force_color: ?bool = if (builtin.os.tag == .wasi)
             null // wasi does not support environment variables
         else if (process.hasNonEmptyEnvVarConstant("NO_COLOR"))
@@ -51,7 +52,7 @@ pub const Config = union(enum) {
 
         if (force_color == false) return .no_color;
 
-        if (file.enableAnsiEscapeCodes()) |_| {
+        if (file.enableAnsiEscapeCodes(io)) |_| {
             return .escape_codes;
         } else |_| {}
 
@@ -74,9 +75,9 @@ pub const Config = union(enum) {
         reset_attributes: u16,
     };
 
-    pub const SetColorError = std.os.windows.SetConsoleTextAttributeError || std.Io.Writer.Error;
+    pub const SetColorError = std.os.windows.SetConsoleTextAttributeError || Io.Writer.Error;
 
-    pub fn setColor(conf: Config, w: *std.Io.Writer, color: Color) SetColorError!void {
+    pub fn setColor(conf: Config, w: *Io.Writer, color: Color) SetColorError!void {
         nosuspend switch (conf) {
             .no_color => return,
             .escape_codes => {

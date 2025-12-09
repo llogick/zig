@@ -460,7 +460,7 @@ pub fn setTimestamps(
     last_accessed: Io.Timestamp,
     last_modified: Io.Timestamp,
 ) SetTimestampsError!void {
-    return io.vtable.fileUpdateTimes(io.userdata, file, last_accessed, last_modified);
+    return io.vtable.fileSetTimestamps(io.userdata, file, last_accessed, last_modified);
 }
 
 /// Sets the accessed and modification timestamps of `file` to the current wall

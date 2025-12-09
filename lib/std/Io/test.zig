@@ -114,7 +114,7 @@ test "setEndPos" {
     try expect((try file.getPos()) == 100);
 }
 
-test "updateTimes" {
+test "setTimestamps" {
     const io = testing.io;
 
     var tmp = tmpDir(.{});
@@ -126,7 +126,8 @@ test "updateTimes" {
 
     const stat_old = try file.stat(io);
     // Set atime and mtime to 5s before
-    try file.updateTimes(
+    try file.setTimestamps(
+        io,
         stat_old.atime.subDuration(.fromSeconds(5)),
         stat_old.mtime.subDuration(.fromSeconds(5)),
     );

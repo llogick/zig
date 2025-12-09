@@ -435,7 +435,7 @@ pub fn main() !void {
         if (builtin.single_threaded) fatal("'--webui' is not yet supported on single-threaded hosts", .{});
     }
 
-    const ttyconf = color.detectTtyConf();
+    const ttyconf = color.detectTtyConf(io);
 
     const main_progress_node = std.Progress.start(.{
         .disable_printing = (color == .off),

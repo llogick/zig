@@ -60,9 +60,9 @@ pub const Color = enum {
             .off => .no_color,
         };
     }
-    pub fn detectTtyConf(color: Color) Io.tty.Config {
+    pub fn detectTtyConf(color: Color, io: Io) Io.tty.Config {
         return switch (color) {
-            .auto => .detect(.stderr()),
+            .auto => .detect(io, .stderr()),
             .on => .escape_codes,
             .off => .no_color,
         };

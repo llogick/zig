@@ -162,17 +162,20 @@ var debug_allocator: std.heap.DebugAllocator(.{
     .stack_trace_frames = build_options.mem_leak_frames,
 }) = .init;
 
+const use_debug_allocator = build_options.debug_gpa or
+    (native_os != .wasi and !builtin.link_libc and switch (builtin.mode) {
+        .Debug, .ReleaseSafe => true,
+        .ReleaseFast, .ReleaseSmall => false,
+    });
+
 pub fn main() anyerror!void {
-    const gpa, const is_debug = gpa: {
-        if (build_options.debug_gpa) break :gpa .{ debug_allocator.allocator(), true };
-        if (native_os == .wasi) break :gpa .{ std.heap.wasm_allocator, false };
-        if (builtin.link_libc) break :gpa .{ std.heap.c_allocator, false };
-        break :gpa switch (builtin.mode) {
-            .Debug, .ReleaseSafe => .{ debug_allocator.allocator(), true },
-            .ReleaseFast, .ReleaseSmall => .{ std.heap.smp_allocator, false },
-        };
+    const gpa = gpa: {
+        if (use_debug_allocator) break :gpa debug_allocator.allocator();
+        if (native_os == .wasi) break :gpa std.heap.wasm_allocator;
+        if (builtin.link_libc) break :gpa std.heap.c_allocator;
+        break :gpa std.heap.smp_allocator;
     };
-    defer if (is_debug) {
+    defer if (use_debug_allocator) {
         _ = debug_allocator.deinit();
     };
     var arena_instance = std.heap.ArenaAllocator.init(gpa);
@@ -243,6 +246,8 @@ fn mainArgs(gpa: Allocator, arena: Allocator, args: []const []const u8) !void {
     threaded_impl_ptr = &threaded;
     threaded.stack_size = thread_stack_size;
     const io = threaded.io();
+
+    debug_allocator.tty_config = .detect(io, .stderr());
 
     const cmd = args[1];
     const cmd_args = args[2..];

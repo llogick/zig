@@ -28,7 +28,7 @@ writers: std.SinglyLinkedList,
 
 pub const growth_factor = 4;
 
-pub const Error = std.posix.MMapError || std.posix.MRemapError || Io.File.SetEndPosError || error{
+pub const Error = std.posix.MMapError || std.posix.MRemapError || Io.File.LengthError || error{
     NotFile,
     SystemResources,
     IsDir,

@@ -158,7 +158,7 @@ pub fn sendFile(io_w: *Io.Writer, file_reader: *Io.File.Reader, limit: Io.Limit)
 fn sendFilePositional(w: *Writer, file_reader: *Io.File.Reader, limit: Io.Limit) Io.Writer.FileError!usize {
     const io = w.io;
     const header = w.interface.buffered();
-    const n = io.vtable.fileSendFilePositional(io.userdata, w.file, header, file_reader, limit, w.pos) catch |err| switch (err) {
+    const n = io.vtable.fileWriteFilePositional(io.userdata, w.file, header, file_reader, limit, w.pos) catch |err| switch (err) {
         error.Unseekable => {
             w.mode = w.mode.toStreaming();
             const pos = w.pos;
@@ -187,7 +187,7 @@ fn sendFilePositional(w: *Writer, file_reader: *Io.File.Reader, limit: Io.Limit)
 fn sendFileStreaming(w: *Writer, file_reader: *Io.File.Reader, limit: Io.Limit) Io.Writer.FileError!usize {
     const io = w.io;
     const header = w.interface.buffered();
-    const n = io.vtable.fileSendFileStreaming(io.userdata, w.file, header, file_reader, limit) catch |err| switch (err) {
+    const n = io.vtable.fileWriteFileStreaming(io.userdata, w.file, header, file_reader, limit) catch |err| switch (err) {
         error.Canceled => {
             w.err = error.Canceled;
             return error.WriteFailed;
@@ -226,7 +226,7 @@ pub fn seekToUnbuffered(w: *Writer, offset: u64) SeekError!void {
     }
 }
 
-pub const EndError = File.SetEndPosError || Io.Writer.Error;
+pub const EndError = File.SetLengthError || Io.Writer.Error;
 
 /// Flushes any buffered data and sets the end position of the file.
 ///
@@ -236,11 +236,12 @@ pub const EndError = File.SetEndPosError || Io.Writer.Error;
 /// Flush failure is handled by setting `err` so that it can be handled
 /// along with other write failures.
 pub fn end(w: *Writer) EndError!void {
+    const io = w.io;
     try w.interface.flush();
     switch (w.mode) {
         .positional,
         .positional_reading,
-        => w.file.setLength(w.pos) catch |err| switch (err) {
+        => w.file.setLength(io, w.pos) catch |err| switch (err) {
             error.NonResizable => return,
             else => |e| return e,
         },

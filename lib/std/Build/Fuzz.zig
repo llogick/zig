@@ -360,12 +360,13 @@ fn coverageRunCancelable(fuzz: *Fuzz) Io.Cancelable!void {
 fn prepareTables(fuzz: *Fuzz, run_step: *Step.Run, coverage_id: u64) error{ OutOfMemory, AlreadyReported, Canceled }!void {
     assert(fuzz.mode == .forever);
     const ws = fuzz.mode.forever.ws;
+    const gpa = fuzz.gpa;
     const io = fuzz.io;
 
     try fuzz.coverage_mutex.lock(io);
     defer fuzz.coverage_mutex.unlock(io);
 
-    const gop = try fuzz.coverage_files.getOrPut(fuzz.gpa, coverage_id);
+    const gop = try fuzz.coverage_files.getOrPut(gpa, coverage_id);
     if (gop.found_existing) {
         // We are fuzzing the same executable with multiple threads.
         // Perhaps the same unit test; perhaps a different one. In any
@@ -383,12 +384,12 @@ fn prepareTables(fuzz: *Fuzz, run_step: *Step.Run, coverage_id: u64) error{ OutO
         .entry_points = .{},
         .start_timestamp = ws.now(),
     };
-    errdefer gop.value_ptr.coverage.deinit(fuzz.gpa);
+    errdefer gop.value_ptr.coverage.deinit(gpa);
 
     const rebuilt_exe_path = run_step.rebuilt_executable.?;
     const target = run_step.producer.?.rootModuleTarget();
     var debug_info = std.debug.Info.load(
-        fuzz.gpa,
+        gpa,
         io,
         rebuilt_exe_path,
         &gop.value_ptr.coverage,
@@ -400,7 +401,7 @@ fn prepareTables(fuzz: *Fuzz, run_step: *Step.Run, coverage_id: u64) error{ OutO
         });
         return error.AlreadyReported;
     };
-    defer debug_info.deinit(fuzz.gpa);
+    defer debug_info.deinit(gpa);
 
     const coverage_file_path: Build.Cache.Path = .{
         .root_dir = run_step.step.owner.cache_root,
@@ -434,14 +435,14 @@ fn prepareTables(fuzz: *Fuzz, run_step: *Step.Run, coverage_id: u64) error{ OutO
 
     const header: *const abi.SeenPcsHeader = @ptrCast(mapped_memory[0..@sizeOf(abi.SeenPcsHeader)]);
     const pcs = header.pcAddrs();
-    const source_locations = try fuzz.gpa.alloc(Coverage.SourceLocation, pcs.len);
-    errdefer fuzz.gpa.free(source_locations);
+    const source_locations = try gpa.alloc(Coverage.SourceLocation, pcs.len);
+    errdefer gpa.free(source_locations);
 
     // Unfortunately the PCs array that LLVM gives us from the 8-bit PC
     // counters feature is not sorted.
     var sorted_pcs: std.MultiArrayList(struct { pc: u64, index: u32, sl: Coverage.SourceLocation }) = .{};
-    defer sorted_pcs.deinit(fuzz.gpa);
-    try sorted_pcs.resize(fuzz.gpa, pcs.len);
+    defer sorted_pcs.deinit(gpa);
+    try sorted_pcs.resize(gpa, pcs.len);
     @memcpy(sorted_pcs.items(.pc), pcs);
     for (sorted_pcs.items(.index), 0..) |*v, i| v.* = @intCast(i);
     sorted_pcs.sortUnstable(struct {
@@ -452,7 +453,7 @@ fn prepareTables(fuzz: *Fuzz, run_step: *Step.Run, coverage_id: u64) error{ OutO
         }
     }{ .addrs = sorted_pcs.items(.pc) });
 
-    debug_info.resolveAddresses(fuzz.gpa, sorted_pcs.items(.pc), sorted_pcs.items(.sl)) catch |err| {
+    debug_info.resolveAddresses(gpa, io, sorted_pcs.items(.pc), sorted_pcs.items(.sl)) catch |err| {
         log.err("failed to resolve addresses to source locations: {t}", .{err});
         return error.AlreadyReported;
     };
