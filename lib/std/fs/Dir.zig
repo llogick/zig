@@ -453,10 +453,10 @@ pub const Iterator = switch (native_os) {
                         &io,
                         &self.buf,
                         self.buf.len,
-                        .FileBothDirectoryInformation,
+                        .BothDirectory,
                         w.FALSE,
                         null,
-                        if (self.first_iter) @as(w.BOOLEAN, w.TRUE) else @as(w.BOOLEAN, w.FALSE),
+                        @intFromBool(self.first_iter),
                     );
                     self.first_iter = false;
                     if (io.Information == 0) return null;
@@ -487,8 +487,8 @@ pub const Iterator = switch (native_os) {
                 const name_wtf8 = self.name_data[0..name_wtf8_len];
                 const kind: Entry.Kind = blk: {
                     const attrs = dir_info.FileAttributes;
-                    if (attrs & w.FILE_ATTRIBUTE_DIRECTORY != 0) break :blk .directory;
-                    if (attrs & w.FILE_ATTRIBUTE_REPARSE_POINT != 0) break :blk .sym_link;
+                    if (attrs.DIRECTORY) break :blk .directory;
+                    if (attrs.REPARSE_POINT) break :blk .sym_link;
                     break :blk .file;
                 };
                 return Entry{
@@ -1013,15 +1013,14 @@ pub fn realpathW(self: Dir, pathname: []const u16, out_buffer: []u8) RealPathErr
 pub fn realpathW2(self: Dir, pathname: []const u16, out_buffer: []u16) RealPathError![]u16 {
     const w = windows;
 
-    const access_mask = w.GENERIC_READ | w.SYNCHRONIZE;
-    const share_access = w.FILE_SHARE_READ | w.FILE_SHARE_WRITE | w.FILE_SHARE_DELETE;
-    const creation = w.FILE_OPEN;
     const h_file = blk: {
         const res = w.OpenFile(pathname, .{
             .dir = self.fd,
-            .access_mask = access_mask,
-            .share_access = share_access,
-            .creation = creation,
+            .access_mask = .{
+                .STANDARD = .{ .SYNCHRONIZE = true },
+                .GENERIC = .{ .READ = true },
+            },
+            .creation = .OPEN,
             .filter = .any,
         }) catch |err| switch (err) {
             error.WouldBlock => unreachable,

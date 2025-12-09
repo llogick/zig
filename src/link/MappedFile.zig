@@ -953,12 +953,19 @@ pub fn ensureTotalCapacityPrecise(mf: *MappedFile, new_capacity: usize) !void {
     if (is_windows) {
         if (mf.section == windows.INVALID_HANDLE_VALUE) switch (windows.ntdll.NtCreateSection(
             &mf.section,
-            windows.STANDARD_RIGHTS_REQUIRED | windows.SECTION_QUERY |
-                windows.SECTION_MAP_WRITE | windows.SECTION_MAP_READ | windows.SECTION_EXTEND_SIZE,
+            .{
+                .SPECIFIC = .{ .SECTION = .{
+                    .QUERY = true,
+                    .MAP_WRITE = true,
+                    .MAP_READ = true,
+                    .EXTEND_SIZE = true,
+                } },
+                .STANDARD = .{ .RIGHTS = .REQUIRED },
+            },
             null,
             @constCast(&@as(i64, @intCast(aligned_capacity))),
-            windows.PAGE_READWRITE,
-            windows.SEC_COMMIT,
+            .{ .READWRITE = true },
+            .{ .COMMIT = true },
             mf.file.handle,
         )) {
             .SUCCESS => {},
@@ -974,9 +981,9 @@ pub fn ensureTotalCapacityPrecise(mf: *MappedFile, new_capacity: usize) !void {
             0,
             null,
             &contents_len,
-            .ViewUnmap,
-            0,
-            windows.PAGE_READWRITE,
+            .Unmap,
+            .{},
+            .{ .READWRITE = true },
         )) {
             .SUCCESS => mf.contents = contents_ptr.?[0..contents_len],
             else => return error.MemoryMappingNotSupported,

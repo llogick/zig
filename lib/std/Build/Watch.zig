@@ -366,7 +366,7 @@ const Os = switch (builtin.os.tag) {
                 var attr = windows.OBJECT_ATTRIBUTES{
                     .Length = @sizeOf(windows.OBJECT_ATTRIBUTES),
                     .RootDirectory = if (std.fs.path.isAbsoluteWindowsW(sub_path_w.span())) null else root_fd,
-                    .Attributes = 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
+                    .Attributes = .{},
                     .ObjectName = &nt_name,
                     .SecurityDescriptor = null,
                     .SecurityQualityOfService = null,
@@ -375,14 +375,23 @@ const Os = switch (builtin.os.tag) {
 
                 switch (windows.ntdll.NtCreateFile(
                     &dir_handle,
-                    windows.SYNCHRONIZE | windows.GENERIC_READ | windows.FILE_LIST_DIRECTORY,
+                    .{
+                        .SPECIFIC = .{ .FILE_DIRECTORY = .{
+                            .LIST = true,
+                        } },
+                        .STANDARD = .{ .SYNCHRONIZE = true },
+                        .GENERIC = .{ .READ = true },
+                    },
                     &attr,
                     &io,
                     null,
-                    0,
-                    windows.FILE_SHARE_READ | windows.FILE_SHARE_WRITE | windows.FILE_SHARE_DELETE,
-                    windows.FILE_OPEN,
-                    windows.FILE_DIRECTORY_FILE | windows.FILE_OPEN_FOR_BACKUP_INTENT,
+                    .{},
+                    .VALID_FLAGS,
+                    .OPEN,
+                    .{
+                        .DIRECTORY_FILE = true,
+                        .OPEN_FOR_BACKUP_INTENT = true,
+                    },
                     null,
                     0,
                 )) {
@@ -437,13 +446,13 @@ const Os = switch (builtin.os.tag) {
         fn getFileId(handle: windows.HANDLE) !FileId {
             var file_id: FileId = undefined;
             var io_status: windows.IO_STATUS_BLOCK = undefined;
-            var volume_info: windows.FILE_FS_VOLUME_INFORMATION = undefined;
+            var volume_info: windows.FILE.FS_VOLUME_INFORMATION = undefined;
             switch (windows.ntdll.NtQueryVolumeInformationFile(
                 handle,
                 &io_status,
                 &volume_info,
-                @sizeOf(windows.FILE_FS_VOLUME_INFORMATION),
-                .FileFsVolumeInformation,
+                @sizeOf(windows.FILE.FS_VOLUME_INFORMATION),
+                .Volume,
             )) {
                 .SUCCESS => {},
                 // Buffer overflow here indicates that there is more information available than was able to be stored in the buffer
@@ -453,13 +462,13 @@ const Os = switch (builtin.os.tag) {
                 else => |rc| return windows.unexpectedStatus(rc),
             }
             file_id.volumeSerialNumber = volume_info.VolumeSerialNumber;
-            var internal_info: windows.FILE_INTERNAL_INFORMATION = undefined;
+            var internal_info: windows.FILE.INTERNAL_INFORMATION = undefined;
             switch (windows.ntdll.NtQueryInformationFile(
                 handle,
                 &io_status,
                 &internal_info,
-                @sizeOf(windows.FILE_INTERNAL_INFORMATION),
-                .FileInternalInformation,
+                @sizeOf(windows.FILE.INTERNAL_INFORMATION),
+                .Internal,
             )) {
                 .SUCCESS => {},
                 else => |rc| return windows.unexpectedStatus(rc),

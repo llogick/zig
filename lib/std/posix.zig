@@ -1041,18 +1041,16 @@ pub fn ftruncate(fd: fd_t, length: u64) TruncateError!void {
 
     if (native_os == .windows) {
         var io_status_block: windows.IO_STATUS_BLOCK = undefined;
-        var eof_info = windows.FILE_END_OF_FILE_INFORMATION{
+        const eof_info: windows.FILE.END_OF_FILE_INFORMATION = .{
             .EndOfFile = signed_len,
         };
-
         const rc = windows.ntdll.NtSetInformationFile(
             fd,
             &io_status_block,
             &eof_info,
-            @sizeOf(windows.FILE_END_OF_FILE_INFORMATION),
-            .FileEndOfFileInformation,
+            @sizeOf(windows.FILE.END_OF_FILE_INFORMATION),
+            .EndOfFile,
         );
-
         switch (rc) {
             .SUCCESS => return,
             .INVALID_HANDLE => unreachable, // Handle not open for writing
@@ -2691,8 +2689,11 @@ pub fn mkdirW(dir_path_w: []const u16, mode: mode_t) MakeDirError!void {
     _ = mode;
     const sub_dir_handle = windows.OpenFile(dir_path_w, .{
         .dir = fs.cwd().fd,
-        .access_mask = windows.GENERIC_READ | windows.SYNCHRONIZE,
-        .creation = windows.FILE_CREATE,
+        .access_mask = .{
+            .STANDARD = .{ .SYNCHRONIZE = true },
+            .GENERIC = .{ .READ = true },
+        },
+        .creation = .CREATE,
         .filter = .dir_only,
     }) catch |err| switch (err) {
         error.IsDir => return error.Unexpected,

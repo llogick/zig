@@ -61,7 +61,9 @@ pub fn values(comptime E: type) []const E {
 /// panic when `e` has no tagged value.
 /// Returns the tag name for `e` or null if no tag exists.
 pub fn tagName(comptime E: type, e: E) ?[:0]const u8 {
-    return inline for (@typeInfo(E).@"enum".fields) |f| {
+    const fields = @typeInfo(E).@"enum".fields;
+    @setEvalBranchQuota(fields.len);
+    return inline for (fields) |f| {
         if (@intFromEnum(e) == f.value) break f.name;
     } else null;
 }

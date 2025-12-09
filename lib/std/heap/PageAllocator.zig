@@ -30,7 +30,8 @@ pub fn map(n: usize, alignment: mem.Alignment) ?[*]u8 {
         var base_addr: ?*anyopaque = null;
         var size: windows.SIZE_T = n;
 
-        var status = ntdll.NtAllocateVirtualMemory(windows.GetCurrentProcess(), @ptrCast(&base_addr), 0, &size, windows.MEM_COMMIT | windows.MEM_RESERVE, windows.PAGE_READWRITE);
+        const current_process = windows.GetCurrentProcess();
+        var status = ntdll.NtAllocateVirtualMemory(current_process, @ptrCast(&base_addr), 0, &size, .{ .COMMIT = true, .RESERVE = true }, .{ .READWRITE = true });
 
         if (status == SUCCESS and mem.isAligned(@intFromPtr(base_addr), alignment_bytes)) {
             return @ptrCast(base_addr);
@@ -38,7 +39,7 @@ pub fn map(n: usize, alignment: mem.Alignment) ?[*]u8 {
 
         if (status == SUCCESS) {
             var region_size: windows.SIZE_T = 0;
-            _ = ntdll.NtFreeVirtualMemory(windows.GetCurrentProcess(), @ptrCast(&base_addr), &region_size, windows.MEM_RELEASE);
+            _ = ntdll.NtFreeVirtualMemory(current_process, @ptrCast(&base_addr), &region_size, .{ .RELEASE = true });
         }
 
         const overalloc_len = n + alignment_bytes - page_size;
@@ -47,7 +48,7 @@ pub fn map(n: usize, alignment: mem.Alignment) ?[*]u8 {
         base_addr = null;
         size = overalloc_len;
 
-        status = ntdll.NtAllocateVirtualMemory(windows.GetCurrentProcess(), @ptrCast(&base_addr), 0, &size, windows.MEM_RESERVE | MEM_RESERVE_PLACEHOLDER, windows.PAGE_NOACCESS);
+        status = ntdll.NtAllocateVirtualMemory(current_process, @ptrCast(&base_addr), 0, &size, .{ .RESERVE = true, .RESERVE_PLACEHOLDER = true }, .{ .NOACCESS = true });
 
         if (status != SUCCESS) return null;
 
@@ -58,7 +59,7 @@ pub fn map(n: usize, alignment: mem.Alignment) ?[*]u8 {
         if (prefix_size > 0) {
             var prefix_base = base_addr;
             var prefix_size_param: windows.SIZE_T = prefix_size;
-            _ = ntdll.NtFreeVirtualMemory(windows.GetCurrentProcess(), @ptrCast(&prefix_base), &prefix_size_param, windows.MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER);
+            _ = ntdll.NtFreeVirtualMemory(current_process, @ptrCast(&prefix_base), &prefix_size_param, .{ .RELEASE = true, .PRESERVE_PLACEHOLDER = true });
         }
 
         const suffix_start = aligned_addr + aligned_len;
@@ -66,13 +67,13 @@ pub fn map(n: usize, alignment: mem.Alignment) ?[*]u8 {
         if (suffix_size > 0) {
             var suffix_base = @as(?*anyopaque, @ptrFromInt(suffix_start));
             var suffix_size_param: windows.SIZE_T = suffix_size;
-            _ = ntdll.NtFreeVirtualMemory(windows.GetCurrentProcess(), @ptrCast(&suffix_base), &suffix_size_param, windows.MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER);
+            _ = ntdll.NtFreeVirtualMemory(current_process, @ptrCast(&suffix_base), &suffix_size_param, .{ .RELEASE = true, .PRESERVE_PLACEHOLDER = true });
         }
 
         base_addr = @ptrFromInt(aligned_addr);
         size = aligned_len;
 
-        status = ntdll.NtAllocateVirtualMemory(windows.GetCurrentProcess(), @ptrCast(&base_addr), 0, &size, windows.MEM_COMMIT | MEM_PRESERVE_PLACEHOLDER, windows.PAGE_READWRITE);
+        status = ntdll.NtAllocateVirtualMemory(current_process, @ptrCast(&base_addr), 0, &size, .{ .COMMIT = true }, .{ .READWRITE = true });
 
         if (status == SUCCESS) {
             return @ptrCast(base_addr);
@@ -80,7 +81,7 @@ pub fn map(n: usize, alignment: mem.Alignment) ?[*]u8 {
 
         base_addr = @as(?*anyopaque, @ptrFromInt(aligned_addr));
         size = aligned_len;
-        _ = ntdll.NtFreeVirtualMemory(windows.GetCurrentProcess(), @ptrCast(&base_addr), &size, windows.MEM_RELEASE);
+        _ = ntdll.NtFreeVirtualMemory(current_process, @ptrCast(&base_addr), &size, .{ .RELEASE = true });
 
         return null;
     }
@@ -145,7 +146,7 @@ pub fn unmap(memory: []align(page_size_min) u8) void {
     if (native_os == .windows) {
         var base_addr: ?*anyopaque = memory.ptr;
         var region_size: windows.SIZE_T = 0;
-        _ = ntdll.NtFreeVirtualMemory(windows.GetCurrentProcess(), @ptrCast(&base_addr), &region_size, windows.MEM_RELEASE);
+        _ = ntdll.NtFreeVirtualMemory(windows.GetCurrentProcess(), @ptrCast(&base_addr), &region_size, .{ .RELEASE = true });
     } else {
         const page_aligned_len = mem.alignForward(usize, memory.len, std.heap.pageSize());
         posix.munmap(memory.ptr[0..page_aligned_len]);
@@ -166,7 +167,7 @@ pub fn realloc(uncasted_memory: []u8, new_len: usize, may_move: bool) ?[*]u8 {
                 var decommit_addr: ?*anyopaque = @ptrFromInt(new_addr_end);
                 var decommit_size: windows.SIZE_T = old_addr_end - new_addr_end;
 
-                _ = ntdll.NtAllocateVirtualMemory(windows.GetCurrentProcess(), @ptrCast(&decommit_addr), 0, &decommit_size, windows.MEM_RESET, windows.PAGE_NOACCESS);
+                _ = ntdll.NtAllocateVirtualMemory(windows.GetCurrentProcess(), @ptrCast(&decommit_addr), 0, &decommit_size, .{ .RESET = true }, .{ .NOACCESS = true });
             }
             return memory.ptr;
         }

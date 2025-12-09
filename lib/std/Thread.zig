@@ -226,7 +226,7 @@ pub fn setName(self: Thread, name: []const u8) SetNameError!void {
 
             switch (windows.ntdll.NtSetInformationThread(
                 self.getHandle(),
-                .ThreadNameInformation,
+                .NameInformation,
                 &unicode_string,
                 @sizeOf(windows.UNICODE_STRING),
             )) {
@@ -338,7 +338,7 @@ pub fn getName(self: Thread, buffer_ptr: *[max_name_len:0]u8) GetNameError!?[]co
 
             switch (windows.ntdll.NtQueryInformationThread(
                 self.getHandle(),
-                .ThreadNameInformation,
+                .NameInformation,
                 &buf,
                 buf_capacity,
                 null,
@@ -521,12 +521,10 @@ pub const YieldError = error{
 
 /// Yields the current thread potentially allowing other threads to run.
 pub fn yield() YieldError!void {
-    if (native_os == .windows) {
-        // The return value has to do with how many other threads there are; it is not
-        // an error condition on Windows.
-        _ = windows.kernel32.SwitchToThread();
-        return;
-    }
+    if (native_os == .windows) switch (windows.ntdll.NtYieldExecution()) {
+        .SUCCESS, .NO_YIELD_PERFORMED => return,
+        else => return error.SystemCannotYield,
+    };
     switch (posix.errno(posix.system.sched_yield())) {
         .SUCCESS => return,
         .NOSYS => return error.SystemCannotYield,
@@ -647,11 +645,11 @@ const WindowsThreadImpl = struct {
     const ThreadCompletion = struct {
         completion: Completion,
         heap_ptr: windows.PVOID,
-        heap_handle: windows.HANDLE,
+        heap_handle: *windows.HEAP,
         thread_handle: windows.HANDLE = undefined,
 
         fn free(self: ThreadCompletion) void {
-            const status = windows.kernel32.HeapFree(self.heap_handle, 0, self.heap_ptr);
+            const status = windows.ntdll.RtlFreeHeap(self.heap_handle, .{}, self.heap_ptr);
             assert(status != 0);
         }
     };
@@ -673,10 +671,10 @@ const WindowsThreadImpl = struct {
             }
         };
 
-        const heap_handle = windows.kernel32.GetProcessHeap() orelse return error.OutOfMemory;
+        const heap_handle = windows.GetProcessHeap() orelse return error.OutOfMemory;
         const alloc_bytes = @alignOf(Instance) + @sizeOf(Instance);
-        const alloc_ptr = windows.ntdll.RtlAllocateHeap(heap_handle, 0, alloc_bytes) orelse return error.OutOfMemory;
-        errdefer assert(windows.kernel32.HeapFree(heap_handle, 0, alloc_ptr) != 0);
+        const alloc_ptr = windows.ntdll.RtlAllocateHeap(heap_handle, .{}, alloc_bytes) orelse return error.OutOfMemory;
+        errdefer assert(windows.ntdll.RtlFreeHeap(heap_handle, .{}, alloc_ptr) != 0);
 
         const instance_bytes = @as([*]u8, @ptrCast(alloc_ptr))[0..alloc_bytes];
         var fba = std.heap.FixedBufferAllocator.init(instance_bytes);
@@ -693,8 +691,7 @@ const WindowsThreadImpl = struct {
         // Windows appears to only support SYSTEM_INFO.dwAllocationGranularity minimum stack size.
         // Going lower makes it default to that specified in the executable (~1mb).
         // Its also fine if the limit here is incorrect as stack size is only a hint.
-        var stack_size = std.math.cast(u32, config.stack_size) orelse std.math.maxInt(u32);
-        stack_size = @max(64 * 1024, stack_size);
+        const stack_size = @max(64 * 1024, std.math.lossyCast(u32, config.stack_size));
 
         instance.thread.thread_handle = windows.kernel32.CreateThread(
             null,

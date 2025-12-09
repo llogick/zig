@@ -154,10 +154,10 @@ pub fn unwindFrame(si: *SelfInfo, gpa: Allocator, context: *UnwindContext) Error
     _ = gpa;
 
     const current_regs = context.cur.getRegs();
-    var image_base: windows.DWORD64 = undefined;
+    var image_base: usize = undefined;
     if (windows.ntdll.RtlLookupFunctionEntry(current_regs.ip, &image_base, &context.history_table)) |runtime_function| {
         var handler_data: ?*anyopaque = null;
-        var establisher_frame: u64 = undefined;
+        var establisher_frame: usize = undefined;
         _ = windows.ntdll.RtlVirtualUnwind(
             windows.UNW_FLAG_NHANDLER,
             image_base,
@@ -351,13 +351,19 @@ const Module = struct {
             var section_handle: windows.HANDLE = undefined;
             const create_section_rc = windows.ntdll.NtCreateSection(
                 &section_handle,
-                windows.STANDARD_RIGHTS_REQUIRED | windows.SECTION_QUERY | windows.SECTION_MAP_READ,
+                .{
+                    .SPECIFIC = .{ .SECTION = .{
+                        .QUERY = true,
+                        .MAP_READ = true,
+                    } },
+                    .STANDARD = .{ .RIGHTS = .REQUIRED },
+                },
                 null,
                 null,
-                windows.PAGE_READONLY,
+                .{ .READONLY = true },
                 // The documentation states that if no AllocationAttribute is specified, then SEC_COMMIT is the default.
                 // In practice, this isn't the case and specifying 0 will result in INVALID_PARAMETER_6.
-                windows.SEC_COMMIT,
+                .{ .COMMIT = true },
                 coff_file.handle,
             );
             if (create_section_rc != .SUCCESS) return error.MissingDebugInfo;
@@ -372,9 +378,9 @@ const Module = struct {
                 0,
                 null,
                 &coff_len,
-                .ViewUnmap,
-                0,
-                windows.PAGE_READONLY,
+                .Unmap,
+                .{},
+                .{ .READONLY = true },
             );
             if (map_section_rc != .SUCCESS) return error.MissingDebugInfo;
             errdefer assert(windows.ntdll.NtUnmapViewOfSection(process_handle, @constCast(section_view_ptr.?)) == .SUCCESS);

@@ -1,6 +1,7 @@
 const std = @import("../../std.zig");
 const windows = std.os.windows;
 
+const ACCESS_MASK = windows.ACCESS_MASK;
 const BOOL = windows.BOOL;
 const CONDITION_VARIABLE = windows.CONDITION_VARIABLE;
 const CONSOLE_SCREEN_BUFFER_INFO = windows.CONSOLE_SCREEN_BUFFER_INFO;
@@ -66,7 +67,7 @@ pub extern "kernel32" fn CancelIoEx(
 
 pub extern "kernel32" fn CreateFileW(
     lpFileName: LPCWSTR,
-    dwDesiredAccess: DWORD,
+    dwDesiredAccess: ACCESS_MASK,
     dwShareMode: DWORD,
     lpSecurityAttributes: ?*SECURITY_ATTRIBUTES,
     dwCreationDisposition: DWORD,
@@ -160,7 +161,7 @@ pub extern "kernel32" fn DuplicateHandle(
     hSourceHandle: HANDLE,
     hTargetProcessHandle: HANDLE,
     lpTargetHandle: *HANDLE,
-    dwDesiredAccess: DWORD,
+    dwDesiredAccess: ACCESS_MASK,
     bInheritHandle: BOOL,
     dwOptions: DWORD,
 ) callconv(.winapi) BOOL;
@@ -308,9 +309,6 @@ pub extern "kernel32" fn CreateThread(
     lpThreadId: ?*DWORD,
 ) callconv(.winapi) ?HANDLE;
 
-// TODO: Wrapper around RtlDelayExecution.
-pub extern "kernel32" fn SwitchToThread() callconv(.winapi) BOOL;
-
 // Locks, critical sections, initializers
 
 pub extern "kernel32" fn InitOnceExecuteOnce(
@@ -400,34 +398,6 @@ pub extern "kernel32" fn ReadConsoleOutputCharacterW(
     dwReadCoord: COORD,
     lpNumberOfCharsRead: *DWORD,
 ) callconv(.winapi) BOOL;
-
-// Memory Mapping/Allocation
-
-// TODO: Wrapper around RtlCreateHeap.
-pub extern "kernel32" fn HeapCreate(
-    flOptions: DWORD,
-    dwInitialSize: SIZE_T,
-    dwMaximumSize: SIZE_T,
-) callconv(.winapi) ?HANDLE;
-
-// TODO: Fowrarder to RtlFreeHeap before win11_zn.
-// Since win11_zn this function points to unexported symbol RtlFreeHeapFast.
-// See https://github.com/ziglang/zig/pull/25766#discussion_r2479727640
-pub extern "kernel32" fn HeapFree(
-    hHeap: HANDLE,
-    dwFlags: DWORD,
-    lpMem: LPVOID,
-) callconv(.winapi) BOOL;
-
-// TODO: Wrapper around RtlValidateHeap (BOOLEAN -> BOOL)
-pub extern "kernel32" fn HeapValidate(
-    hHeap: HANDLE,
-    dwFlags: DWORD,
-    lpMem: ?*const anyopaque,
-) callconv(.winapi) BOOL;
-
-// TODO: Getter for peb.ProcessHeap
-pub extern "kernel32" fn GetProcessHeap() callconv(.winapi) ?HANDLE;
 
 // Code Libraries/Modules
 

@@ -762,10 +762,12 @@ fn spawnWindows(self: *ChildProcess) SpawnError!void {
     const nul_handle = if (any_ignore)
         // "\Device\Null" or "\??\NUL"
         windows.OpenFile(&[_]u16{ '\\', 'D', 'e', 'v', 'i', 'c', 'e', '\\', 'N', 'u', 'l', 'l' }, .{
-            .access_mask = windows.GENERIC_READ | windows.GENERIC_WRITE | windows.SYNCHRONIZE,
-            .share_access = windows.FILE_SHARE_READ | windows.FILE_SHARE_WRITE | windows.FILE_SHARE_DELETE,
+            .access_mask = .{
+                .STANDARD = .{ .SYNCHRONIZE = true },
+                .GENERIC = .{ .WRITE = true, .READ = true },
+            },
             .sa = &saAttr,
-            .creation = windows.OPEN_EXISTING,
+            .creation = .OPEN,
         }) catch |err| switch (err) {
             error.PathAlreadyExists => return error.Unexpected, // not possible for "NUL"
             error.PipeBusy => return error.Unexpected, // not possible for "NUL"
@@ -1174,7 +1176,7 @@ fn windowsCreateProcessPathExt(
             &io_status,
             &file_information_buf,
             file_information_buf.len,
-            .FileDirectoryInformation,
+            .Directory,
             windows.FALSE, // single result
             &app_name_unicode_string,
             windows.FALSE, // restart iteration
@@ -1198,7 +1200,7 @@ fn windowsCreateProcessPathExt(
         var it = windows.FileInformationIterator(windows.FILE_DIRECTORY_INFORMATION){ .buf = &file_information_buf };
         while (it.next()) |info| {
             // Skip directories
-            if (info.FileAttributes & windows.FILE_ATTRIBUTE_DIRECTORY != 0) continue;
+            if (info.FileAttributes.DIRECTORY) continue;
             const filename = @as([*]u16, @ptrCast(&info.FileName))[0 .. info.FileNameLength / 2];
             // Because all results start with the app_name since we're using the wildcard `app_name*`,
             // if the length is equal to app_name then this is an exact match
@@ -1415,11 +1417,11 @@ fn windowsMakeAsyncPipe(rd: *?windows.HANDLE, wr: *?windows.HANDLE, sattr: *cons
     var sattr_copy = sattr.*;
     const write_handle = windows.kernel32.CreateFileW(
         pipe_path.ptr,
-        windows.GENERIC_WRITE,
+        .{ .GENERIC = .{ .WRITE = true } },
         0,
         &sattr_copy,
         windows.OPEN_EXISTING,
-        windows.FILE_ATTRIBUTE_NORMAL,
+        @bitCast(windows.FILE.ATTRIBUTE{ .NORMAL = true }),
         null,
     );
     if (write_handle == windows.INVALID_HANDLE_VALUE) {

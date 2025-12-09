@@ -146,13 +146,13 @@ pub fn isCygwinPty(file: File) bool {
     // for handles that aren't named pipes.
     {
         var io_status: windows.IO_STATUS_BLOCK = undefined;
-        var device_info: windows.FILE_FS_DEVICE_INFORMATION = undefined;
-        const rc = windows.ntdll.NtQueryVolumeInformationFile(handle, &io_status, &device_info, @sizeOf(windows.FILE_FS_DEVICE_INFORMATION), .FileFsDeviceInformation);
+        var device_info: windows.FILE.FS_DEVICE_INFORMATION = undefined;
+        const rc = windows.ntdll.NtQueryVolumeInformationFile(handle, &io_status, &device_info, @sizeOf(windows.FILE.FS_DEVICE_INFORMATION), .Device);
         switch (rc) {
             .SUCCESS => {},
             else => return false,
         }
-        if (device_info.DeviceType != windows.FILE_DEVICE_NAMED_PIPE) return false;
+        if (device_info.DeviceType.FileDevice != .NAMED_PIPE) return false;
     }
 
     const name_bytes_offset = @offsetOf(windows.FILE_NAME_INFO, "FileName");
@@ -166,7 +166,7 @@ pub fn isCygwinPty(file: File) bool {
     var name_info_bytes align(@alignOf(windows.FILE_NAME_INFO)) = [_]u8{0} ** (name_bytes_offset + num_name_bytes);
 
     var io_status_block: windows.IO_STATUS_BLOCK = undefined;
-    const rc = windows.ntdll.NtQueryInformationFile(handle, &io_status_block, &name_info_bytes, @intCast(name_info_bytes.len), .FileNameInformation);
+    const rc = windows.ntdll.NtQueryInformationFile(handle, &io_status_block, &name_info_bytes, @intCast(name_info_bytes.len), .Name);
     switch (rc) {
         .SUCCESS => {},
         .INVALID_PARAMETER => unreachable,
@@ -485,7 +485,7 @@ pub fn setPermissions(self: File, permissions: Permissions) SetPermissionsError!
                 &io_status_block,
                 &info,
                 @sizeOf(windows.FILE_BASIC_INFORMATION),
-                .FileBasicInformation,
+                .Basic,
             );
             switch (rc) {
                 .SUCCESS => return,
@@ -1324,7 +1324,7 @@ pub fn unlock(file: File) void {
             &io_status_block,
             &range_off,
             &range_len,
-            null,
+            0,
         ) catch |err| switch (err) {
             error.RangeNotLocked => unreachable, // Function assumes unlocked.
             error.Unexpected => unreachable, // Resource deallocation must succeed.
@@ -1415,7 +1415,7 @@ pub fn downgradeLock(file: File) LockError!void {
             &io_status_block,
             &range_off,
             &range_len,
-            null,
+            0,
         ) catch |err| switch (err) {
             error.RangeNotLocked => unreachable, // File was not locked.
             error.Unexpected => unreachable, // Resource deallocation must succeed.
