@@ -616,7 +616,7 @@ pub const TmpDir = struct {
 
     pub fn cleanup(self: *TmpDir) void {
         self.dir.close(io);
-        self.parent_dir.deleteTree(&self.sub_path) catch {};
+        self.parent_dir.deleteTree(io, &self.sub_path) catch {};
         self.parent_dir.close(io);
         self.* = undefined;
     }

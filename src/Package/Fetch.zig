@@ -656,9 +656,11 @@ fn checkBuildFileExistence(f: *Fetch) RunError!void {
 
 /// This function populates `f.manifest` or leaves it `null`.
 fn loadManifest(f: *Fetch, pkg_root: Cache.Path) RunError!void {
+    const io = f.job_queue.io;
     const eb = &f.error_bundle;
     const arena = f.arena.allocator();
     const manifest_bytes = pkg_root.root_dir.handle.readFileAllocOptions(
+        io,
         try fs.path.join(arena, &.{ pkg_root.sub_path, Manifest.basename }),
         arena,
         .limited(Manifest.max_bytes),
@@ -1409,7 +1411,7 @@ fn unpackGitPack(f: *Fetch, out_dir: Io.Dir, resource: *Resource.Git) anyerror!U
         }
     }
 
-    try out_dir.deleteTree(".git");
+    try out_dir.deleteTree(io, ".git");
     return res;
 }
 
@@ -1461,7 +1463,7 @@ pub fn renameTmpIntoCache(io: Io, cache_dir: Io.Dir, tmp_dir_sub_path: []const u
         cache_dir.rename(tmp_dir_sub_path, cache_dir, dest_dir_sub_path, io) catch |err| switch (err) {
             error.FileNotFound => {
                 if (handled_missing_dir) return err;
-                cache_dir.makeDir(dest_dir_sub_path[0..1]) catch |mkd_err| switch (mkd_err) {
+                cache_dir.makeDir(io, dest_dir_sub_path[0..1], .default_dir) catch |mkd_err| switch (mkd_err) {
                     error.PathAlreadyExists => handled_missing_dir = true,
                     else => |e| return e,
                 };
@@ -1469,7 +1471,7 @@ pub fn renameTmpIntoCache(io: Io, cache_dir: Io.Dir, tmp_dir_sub_path: []const u
             },
             error.PathAlreadyExists, error.AccessDenied => {
                 // Package has been already downloaded and may already be in use on the system.
-                cache_dir.deleteTree(tmp_dir_sub_path) catch {
+                cache_dir.deleteTree(io, tmp_dir_sub_path) catch {
                     // Garbage files leftover in zig-cache/tmp/ is, as they say
                     // on Star Trek, "operating within normal parameters".
                 };

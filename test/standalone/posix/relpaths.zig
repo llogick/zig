@@ -5,13 +5,14 @@ const builtin = @import("builtin");
 
 const std = @import("std");
 const Io = std.Io;
+const Allocator = std.mem.Allocator;
 
 pub fn main() !void {
     if (builtin.target.os.tag == .wasi) return; // Can link, but can't change into tmpDir
 
-    var Allocator = std.heap.DebugAllocator(.{}){};
-    const a = Allocator.allocator();
-    defer std.debug.assert(Allocator.deinit() == .ok);
+    var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
+    const gpa = debug_allocator.allocator();
+    defer std.debug.assert(debug_allocator.deinit() == .ok);
 
     var threaded: std.Io.Threaded = .init_single_threaded;
     const io = threaded.io();
@@ -24,22 +25,22 @@ pub fn main() !void {
     // Want to test relative paths, so cd into the tmpdir for these tests
     try tmp.dir.setAsCwd();
 
-    try test_symlink(a, tmp);
+    try test_symlink(gpa, io, tmp);
     try test_link(io, tmp);
 }
 
-fn test_symlink(a: std.mem.Allocator, tmp: std.testing.TmpDir) !void {
+fn test_symlink(gpa: Allocator, io: Io, tmp: std.testing.TmpDir) !void {
     const target_name = "symlink-target";
     const symlink_name = "symlinker";
 
     // Create the target file
-    try tmp.dir.writeFile(.{ .sub_path = target_name, .data = "nonsense" });
+    try tmp.dir.writeFile(io, .{ .sub_path = target_name, .data = "nonsense" });
 
     if (builtin.target.os.tag == .windows) {
-        const wtarget_name = try std.unicode.wtf8ToWtf16LeAllocZ(a, target_name);
-        const wsymlink_name = try std.unicode.wtf8ToWtf16LeAllocZ(a, symlink_name);
-        defer a.free(wtarget_name);
-        defer a.free(wsymlink_name);
+        const wtarget_name = try std.unicode.wtf8ToWtf16LeAllocZ(gpa, target_name);
+        const wsymlink_name = try std.unicode.wtf8ToWtf16LeAllocZ(gpa, symlink_name);
+        defer gpa.free(wtarget_name);
+        defer gpa.free(wsymlink_name);
 
         std.os.windows.CreateSymbolicLink(tmp.dir.fd, wsymlink_name, wtarget_name, false) catch |err| switch (err) {
             // Symlink requires admin privileges on windows, so this test can legitimately fail.

@@ -7316,6 +7316,7 @@ fn loadManifest(
 ) !struct { Package.Manifest, Ast } {
     const manifest_bytes = while (true) {
         break options.dir.readFileAllocOptions(
+            io,
             Package.Manifest.basename,
             arena,
             .limited(Package.Manifest.max_bytes),

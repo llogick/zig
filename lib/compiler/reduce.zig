@@ -92,9 +92,7 @@ pub fn main() !void {
                     if (i >= args.len) fatal("expected 32-bit integer after {s}", .{arg});
                     const next_arg = args[i];
                     seed = std.fmt.parseUnsigned(u32, next_arg, 0) catch |err| {
-                        fatal("unable to parse seed '{s}' as 32-bit integer: {s}", .{
-                            next_arg, @errorName(err),
-                        });
+                        fatal("unable to parse seed '{s}' as 32-bit integer: {t}", .{ next_arg, err });
                     };
                 } else {
                     fatal("unrecognized parameter: '{s}'", .{arg});
@@ -125,7 +123,7 @@ pub fn main() !void {
     var astgen_input: std.Io.Writer.Allocating = .init(gpa);
     defer astgen_input.deinit();
 
-    var tree = try parse(gpa, root_source_file_path);
+    var tree = try parse(gpa, io, root_source_file_path);
     defer {
         gpa.free(tree.source);
         tree.deinit(gpa);
@@ -190,7 +188,7 @@ pub fn main() !void {
                 std.debug.print("{s} ", .{@tagName(t)});
             }
             std.debug.print("\n", .{});
-            try transformationsToFixups(gpa, arena, root_source_file_path, this_set, &fixups);
+            try transformationsToFixups(gpa, arena, io, root_source_file_path, this_set, &fixups);
 
             rendered.clearRetainingCapacity();
             try tree.render(gpa, &rendered.writer, fixups);
@@ -246,7 +244,7 @@ pub fn main() !void {
             });
             switch (interestingness) {
                 .interesting => {
-                    const new_tree = try parse(gpa, root_source_file_path);
+                    const new_tree = try parse(gpa, io, root_source_file_path);
                     gpa.free(tree.source);
                     tree.deinit(gpa);
                     tree = new_tree;
@@ -317,6 +315,7 @@ fn runCheck(arena: Allocator, io: Io, argv: []const []const u8) !Interestingness
 fn transformationsToFixups(
     gpa: Allocator,
     arena: Allocator,
+    io: Io,
     root_source_file_path: []const u8,
     transforms: []const Walk.Transformation,
     fixups: *Ast.Render.Fixups,
@@ -354,7 +353,7 @@ fn transformationsToFixups(
                 inline_imported_file.imported_string,
             });
             defer gpa.free(full_imported_path);
-            var other_file_ast = try parse(gpa, full_imported_path);
+            var other_file_ast = try parse(gpa, io, full_imported_path);
             defer {
                 gpa.free(other_file_ast.source);
                 other_file_ast.deinit(gpa);
@@ -398,8 +397,9 @@ fn transformationsToFixups(
     };
 }
 
-fn parse(gpa: Allocator, file_path: []const u8) !Ast {
+fn parse(gpa: Allocator, io: Io, file_path: []const u8) !Ast {
     const source_code = Io.Dir.cwd().readFileAllocOptions(
+        io,
         file_path,
         gpa,
         .limited(std.math.maxInt(u32)),

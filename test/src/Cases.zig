@@ -10,6 +10,7 @@ const ArrayList = std.ArrayList;
 
 gpa: Allocator,
 arena: Allocator,
+io: Io,
 cases: std.array_list.Managed(Case),
 
 pub const IncrementalCase = struct {
@@ -334,6 +335,7 @@ fn addFromDirInner(
     current_file: *[]const u8,
     b: *std.Build,
 ) !void {
+    const io = ctx.io;
     var it = try iterable_dir.walk(ctx.arena);
     var filenames: ArrayList([]const u8) = .empty;
 
@@ -349,7 +351,7 @@ fn addFromDirInner(
         current_file.* = filename;
 
         const max_file_size = 10 * 1024 * 1024;
-        const src = try iterable_dir.readFileAllocOptions(filename, ctx.arena, .limited(max_file_size), .@"1", 0);
+        const src = try iterable_dir.readFileAllocOptions(io, filename, ctx.arena, .limited(max_file_size), .@"1", 0);
 
         // Parse the manifest
         var manifest = try TestManifest.parse(ctx.arena, src);

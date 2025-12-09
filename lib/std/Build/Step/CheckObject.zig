@@ -547,12 +547,14 @@ pub fn checkComputeCompare(
 fn make(step: *Step, make_options: Step.MakeOptions) !void {
     _ = make_options;
     const b = step.owner;
+    const io = b.graph.io;
     const gpa = b.allocator;
     const check_object: *CheckObject = @fieldParentPtr("step", step);
     try step.singleUnchangingWatchInput(check_object.source);
 
     const src_path = check_object.source.getPath3(b, step);
     const contents = src_path.root_dir.handle.readFileAllocOptions(
+        io,
         src_path.sub_path,
         gpa,
         .limited(check_object.max_bytes),

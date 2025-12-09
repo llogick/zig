@@ -2823,12 +2823,9 @@ fn cleanupAfterUpdate(comp: *Compilation, tmp_dir_rand_int: u64) void {
                     return;
                 }
                 const tmp_dir_sub_path = "tmp" ++ fs.path.sep_str ++ std.fmt.hex(tmp_dir_rand_int);
-                comp.dirs.local_cache.handle.deleteTree(tmp_dir_sub_path) catch |err| {
-                    log.warn("failed to delete temporary directory '{s}{c}{s}': {s}", .{
-                        comp.dirs.local_cache.path orelse ".",
-                        fs.path.sep,
-                        tmp_dir_sub_path,
-                        @errorName(err),
+                comp.dirs.local_cache.handle.deleteTree(io, tmp_dir_sub_path) catch |err| {
+                    log.warn("failed to delete temporary directory '{s}{c}{s}': {t}", .{
+                        comp.dirs.local_cache.path orelse ".", fs.path.sep, tmp_dir_sub_path, err,
                     });
                 };
             }
@@ -2847,12 +2844,9 @@ fn cleanupAfterUpdate(comp: *Compilation, tmp_dir_rand_int: u64) void {
                 tmp_dir.handle.close(io);
                 whole.tmp_artifact_directory = null;
                 const tmp_dir_sub_path = "tmp" ++ fs.path.sep_str ++ std.fmt.hex(tmp_dir_rand_int);
-                comp.dirs.local_cache.handle.deleteTree(tmp_dir_sub_path) catch |err| {
-                    log.warn("failed to delete temporary directory '{s}{c}{s}': {s}", .{
-                        comp.dirs.local_cache.path orelse ".",
-                        fs.path.sep,
-                        tmp_dir_sub_path,
-                        @errorName(err),
+                comp.dirs.local_cache.handle.deleteTree(io, tmp_dir_sub_path) catch |err| {
+                    log.warn("failed to delete temporary directory '{s}{c}{s}': {t}", .{
+                        comp.dirs.local_cache.path orelse ".", fs.path.sep, tmp_dir_sub_path, err,
                     });
                 };
             }
@@ -3419,13 +3413,13 @@ fn renameTmpIntoCache(
                 .windows => {
                     if (seen_eaccess) return error.AccessDenied;
                     seen_eaccess = true;
-                    try cache_directory.handle.deleteTree(o_sub_path);
+                    try cache_directory.handle.deleteTree(io, o_sub_path);
                     continue;
                 },
                 else => return error.AccessDenied,
             },
             error.PathAlreadyExists => {
-                try cache_directory.handle.deleteTree(o_sub_path);
+                try cache_directory.handle.deleteTree(io, o_sub_path);
                 continue;
             },
             error.FileNotFound => {

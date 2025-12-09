@@ -2135,12 +2135,12 @@ pub fn addCliTests(b: *std.Build) *Step {
 
         var dir = std.Io.Dir.cwd().openDir(io, tmp_path, .{}) catch @panic("unhandled");
         defer dir.close(io);
-        dir.writeFile(.{ .sub_path = "fmt1.zig", .data = unformatted_code }) catch @panic("unhandled");
-        dir.writeFile(.{ .sub_path = "fmt2.zig", .data = unformatted_code }) catch @panic("unhandled");
-        dir.makeDir("subdir") catch @panic("unhandled");
+        dir.writeFile(io, .{ .sub_path = "fmt1.zig", .data = unformatted_code }) catch @panic("unhandled");
+        dir.writeFile(io, .{ .sub_path = "fmt2.zig", .data = unformatted_code }) catch @panic("unhandled");
+        dir.makeDir(io, "subdir", .default_dir) catch @panic("unhandled");
         var subdir = dir.openDir(io, "subdir", .{}) catch @panic("unhandled");
         defer subdir.close(io);
-        subdir.writeFile(.{ .sub_path = "fmt3.zig", .data = unformatted_code }) catch @panic("unhandled");
+        subdir.writeFile(io, .{ .sub_path = "fmt3.zig", .data = unformatted_code }) catch @panic("unhandled");
 
         // Test zig fmt affecting only the appropriate files.
         const run1 = b.addSystemCommand(&.{ b.graph.zig_exe, "fmt", "fmt1.zig" });

@@ -1044,7 +1044,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
 
         b.cache_root.handle.rename(tmp_dir_path, b.cache_root.handle, o_sub_path, io) catch |err| {
             if (err == error.PathAlreadyExists) {
-                b.cache_root.handle.deleteTree(o_sub_path) catch |del_err| {
+                b.cache_root.handle.deleteTree(io, o_sub_path) catch |del_err| {
                     return step.fail("unable to remove dir '{f}'{s}: {t}", .{
                         b.cache_root, tmp_dir_path, del_err,
                     });

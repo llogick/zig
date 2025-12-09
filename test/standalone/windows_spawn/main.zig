@@ -65,9 +65,9 @@ pub fn main() anyerror!void {
     try std.testing.expectError(error.FileNotFound, testExecWithCwd(gpa, io, "hello.exe", "missing_dir", ""));
 
     // now add a .bat
-    try tmp.dir.writeFile(.{ .sub_path = "hello.bat", .data = "@echo hello from bat" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "hello.bat", .data = "@echo hello from bat" });
     // and a .cmd
-    try tmp.dir.writeFile(.{ .sub_path = "hello.cmd", .data = "@echo hello from cmd" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "hello.cmd", .data = "@echo hello from cmd" });
 
     // with extension should find the .bat (case insensitive)
     try testExec(gpa, "heLLo.bat", "hello from bat\r\n");
@@ -84,7 +84,7 @@ pub fn main() anyerror!void {
     // without extension should succeed (case insensitive)
     try testExec(gpa, "heLLo", "hello from exe\n");
 
-    try tmp.dir.makeDir("something");
+    try tmp.dir.makeDir(io, "something", .default_dir);
     try renameExe(tmp.dir, "hello", "something/hello.exe");
 
     const relative_path_no_ext = try std.fs.path.join(gpa, &.{ tmp_relative_path, "something/hello" });
@@ -99,7 +99,7 @@ pub fn main() anyerror!void {
     try testExec(gpa, "heLLo", "hello from bat\r\n");
 
     // Add a hello.exe that is not a valid executable
-    try tmp.dir.writeFile(.{ .sub_path = "hello.exe", .data = "invalid" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "hello.exe", .data = "invalid" });
 
     // Trying to execute it with extension will give InvalidExe. This is a special
     // case for .EXE extensions, where if they ever try to get executed but they are

@@ -9,6 +9,9 @@ pub fn main() anyerror!void {
     defer std.debug.assert(debug_alloc_inst.deinit() == .ok);
     const gpa = debug_alloc_inst.allocator();
 
+    var threaded: Io.Threaded = .init(gpa);
+    const io = threaded.io();
+
     var it = try std.process.argsWithAllocator(gpa);
     defer it.deinit();
     _ = it.next() orelse unreachable; // skip binary name
@@ -58,15 +61,15 @@ pub fn main() anyerror!void {
     const preamble_len = buf.items.len;
 
     try buf.appendSlice(gpa, " %*");
-    try tmp.dir.writeFile(.{ .sub_path = "args1.bat", .data = buf.items });
+    try tmp.dir.writeFile(io, .{ .sub_path = "args1.bat", .data = buf.items });
     buf.shrinkRetainingCapacity(preamble_len);
 
     try buf.appendSlice(gpa, " %1 %2 %3 %4 %5 %6 %7 %8 %9");
-    try tmp.dir.writeFile(.{ .sub_path = "args2.bat", .data = buf.items });
+    try tmp.dir.writeFile(io, .{ .sub_path = "args2.bat", .data = buf.items });
     buf.shrinkRetainingCapacity(preamble_len);
 
     try buf.appendSlice(gpa, " \"%~1\" \"%~2\" \"%~3\" \"%~4\" \"%~5\" \"%~6\" \"%~7\" \"%~8\" \"%~9\"");
-    try tmp.dir.writeFile(.{ .sub_path = "args3.bat", .data = buf.items });
+    try tmp.dir.writeFile(io, .{ .sub_path = "args3.bat", .data = buf.items });
     buf.shrinkRetainingCapacity(preamble_len);
 
     var i: u64 = 0;
@@ -74,7 +77,7 @@ pub fn main() anyerror!void {
         const rand_arg = try randomArg(gpa, rand);
         defer gpa.free(rand_arg);
 
-        try testExec(gpa, &.{rand_arg}, null);
+        try testExec(gpa, io, &.{rand_arg}, null);
 
         i += 1;
     }

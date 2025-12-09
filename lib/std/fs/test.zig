@@ -186,7 +186,7 @@ test "Dir.readLink" {
             const file_target_path = try ctx.transformPath("file.txt");
             try ctx.dir.writeFile(io, .{ .sub_path = file_target_path, .data = "nonsense" });
             const dir_target_path = try ctx.transformPath("subdir");
-            try ctx.dir.makeDir(dir_target_path);
+            try ctx.dir.makeDir(io, dir_target_path, .default_dir);
 
             // On Windows, symlink targets always use the canonical path separator
             const canonical_file_target_path = try ctx.toCanonicalPathSep(file_target_path);
@@ -282,7 +282,7 @@ test "File.stat on a File that is a symlink returns Kind.sym_link" {
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {
             const dir_target_path = try ctx.transformPath("subdir");
-            try ctx.dir.makeDir(dir_target_path);
+            try ctx.dir.makeDir(io, dir_target_path, .default_dir);
 
             try setupSymlink(ctx.dir, dir_target_path, "symlink", .{ .is_directory = true });
 
@@ -363,7 +363,7 @@ test "openDir" {
         fn impl(ctx: *TestContext) !void {
             const allocator = ctx.arena.allocator();
             const subdir_path = try ctx.transformPath("subdir");
-            try ctx.dir.makeDir(subdir_path);
+            try ctx.dir.makeDir(io, subdir_path, .default_dir);
 
             for ([_][]const u8{ "", ".", ".." }) |sub_path| {
                 const dir_path = try fs.path.join(allocator, &.{ subdir_path, sub_path });
@@ -398,7 +398,7 @@ test "openDirAbsolute" {
 
     const tmp_ino = (try tmp.dir.stat(io)).inode;
 
-    try tmp.dir.makeDir("subdir");
+    try tmp.dir.makeDir(io, "subdir", .default_dir);
     const sub_path = try tmp.dir.realpathAlloc(testing.allocator, "subdir");
     defer testing.allocator.free(sub_path);
 
@@ -494,7 +494,7 @@ test "readLinkAbsolute" {
 
     // Create some targets
     try tmp.dir.writeFile(io, .{ .sub_path = "file.txt", .data = "nonsense" });
-    try tmp.dir.makeDir("subdir");
+    try tmp.dir.makeDir(io, "subdir", .default_dir);
 
     // Get base abs path
     var arena = ArenaAllocator.init(testing.allocator);
@@ -531,7 +531,7 @@ test "Dir.Iterator" {
     const file = try tmp_dir.dir.createFile(io, "some_file", .{});
     file.close(io);
 
-    try tmp_dir.dir.makeDir("some_dir");
+    try tmp_dir.dir.makeDir(io, "some_dir", .default_dir);
 
     var arena = ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -600,7 +600,7 @@ test "Dir.Iterator twice" {
     const file = try tmp_dir.dir.createFile(io, "some_file", .{});
     file.close(io);
 
-    try tmp_dir.dir.makeDir("some_dir");
+    try tmp_dir.dir.makeDir(io, "some_dir", .default_dir);
 
     var arena = ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -635,7 +635,7 @@ test "Dir.Iterator reset" {
     const file = try tmp_dir.dir.createFile(io, "some_file", .{});
     file.close(io);
 
-    try tmp_dir.dir.makeDir("some_dir");
+    try tmp_dir.dir.makeDir(io, "some_dir", .default_dir);
 
     var arena = ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -682,7 +682,7 @@ test "Dir.Iterator but dir is deleted during iteration" {
     // This is a contrived reproduction, but this could happen outside of the program, in another thread, etc.
     // If we get an error while trying to delete, we can skip this test (this will happen on platforms
     // like Windows which will give FileBusy if the directory is currently open for iteration).
-    tmp.dir.deleteTree("subdir") catch return error.SkipZigTest;
+    tmp.dir.deleteTree(io, "subdir") catch return error.SkipZigTest;
 
     // Now, when we try to iterate, the next call should return null immediately.
     const entry = try iterator.next();
@@ -724,7 +724,7 @@ test "Dir.realpath smoke test" {
 
             // Now create the file and dir
             try ctx.dir.writeFile(io, .{ .sub_path = test_file_path, .data = "" });
-            try ctx.dir.makeDir(test_dir_path);
+            try ctx.dir.makeDir(io, test_dir_path, .default_dir);
 
             const base_path = try ctx.transformPath(".");
             const base_realpath = try ctx.dir.realpathAlloc(allocator, base_path);
@@ -842,7 +842,7 @@ test "directory operations on files" {
             var file = try ctx.dir.createFile(io, test_file_name, .{ .read = true });
             file.close(io);
 
-            try testing.expectError(error.PathAlreadyExists, ctx.dir.makeDir(test_file_name));
+            try testing.expectError(error.PathAlreadyExists, ctx.dir.makeDir(io, test_file_name, .default_dir));
             try testing.expectError(error.NotDir, ctx.dir.openDir(io, test_file_name, .{}));
             try testing.expectError(error.NotDir, ctx.dir.deleteDir(test_file_name));
 
@@ -870,7 +870,7 @@ test "file operations on directories" {
         fn impl(ctx: *TestContext) !void {
             const test_dir_name = try ctx.transformPath("test_dir");
 
-            try ctx.dir.makeDir(test_dir_name);
+            try ctx.dir.makeDir(io, test_dir_name, .default_dir);
 
             try testing.expectError(error.IsDir, ctx.dir.createFile(io, test_dir_name, .{}));
             try testing.expectError(error.IsDir, ctx.dir.deleteFile(test_dir_name));
@@ -937,7 +937,7 @@ test "deleteDir" {
             try testing.expectError(error.FileNotFound, ctx.dir.deleteDir(test_dir_path));
 
             // deleting a non-empty directory
-            try ctx.dir.makeDir(test_dir_path);
+            try ctx.dir.makeDir(io, test_dir_path, .default_dir);
             try ctx.dir.writeFile(io, .{ .sub_path = test_file_path, .data = "" });
             try testing.expectError(error.DirNotEmpty, ctx.dir.deleteDir(test_dir_path));
 
@@ -1006,7 +1006,7 @@ test "Dir.rename directories" {
             const test_dir_renamed_path = try ctx.transformPath("test_dir_renamed");
 
             // Renaming directories
-            try ctx.dir.makeDir(test_dir_path);
+            try ctx.dir.makeDir(io, test_dir_path, .default_dir);
             try ctx.dir.rename(test_dir_path, ctx.dir, test_dir_renamed_path, io);
 
             // Ensure the directory was renamed
@@ -1042,8 +1042,8 @@ test "Dir.rename directory onto empty dir" {
             const test_dir_path = try ctx.transformPath("test_dir");
             const target_dir_path = try ctx.transformPath("target_dir_path");
 
-            try ctx.dir.makeDir(test_dir_path);
-            try ctx.dir.makeDir(target_dir_path);
+            try ctx.dir.makeDir(io, test_dir_path, .default_dir);
+            try ctx.dir.makeDir(io, target_dir_path, .default_dir);
             try ctx.dir.rename(test_dir_path, ctx.dir, target_dir_path, io);
 
             // Ensure the directory was renamed
@@ -1064,7 +1064,7 @@ test "Dir.rename directory onto non-empty dir" {
             const test_dir_path = try ctx.transformPath("test_dir");
             const target_dir_path = try ctx.transformPath("target_dir_path");
 
-            try ctx.dir.makeDir(test_dir_path);
+            try ctx.dir.makeDir(io, test_dir_path, .default_dir);
 
             var target_dir = try ctx.dir.makeOpenPath(target_dir_path, .{});
             var file = try target_dir.createFile(io, "test_file", .{ .read = true });
@@ -1093,7 +1093,7 @@ test "Dir.rename file <-> dir" {
 
             var file = try ctx.dir.createFile(io, test_file_path, .{ .read = true });
             file.close(io);
-            try ctx.dir.makeDir(test_dir_path);
+            try ctx.dir.makeDir(io, test_dir_path, .default_dir);
             try testing.expectError(error.IsDir, ctx.dir.rename(test_file_path, ctx.dir, test_dir_path, io));
             try testing.expectError(error.NotDir, ctx.dir.rename(test_dir_path, ctx.dir, test_file_path, io));
         }
@@ -1163,7 +1163,7 @@ test "renameAbsolute" {
     // Renaming directories
     const test_dir_name = "test_dir";
     const renamed_test_dir_name = "test_dir_renamed";
-    try tmp_dir.dir.makeDir(test_dir_name);
+    try tmp_dir.dir.makeDir(io, test_dir_name, .default_dir);
     try fs.renameAbsolute(
         try fs.path.join(allocator, &.{ base_path, test_dir_name }),
         try fs.path.join(allocator, &.{ base_path, renamed_test_dir_name }),
@@ -1209,7 +1209,7 @@ test "deleteTree does not follow symlinks" {
         try setupSymlink(a, "../b", "b", .{ .is_directory = true });
     }
 
-    try tmp.dir.deleteTree("a");
+    try tmp.dir.deleteTree(io, "a");
 
     try testing.expectError(error.FileNotFound, tmp.dir.access(io, "a", .{}));
     try tmp.dir.access(io, "b", .{});
@@ -1225,7 +1225,7 @@ test "deleteTree on a symlink" {
     try tmp.dir.writeFile(io, .{ .sub_path = "file", .data = "" });
     try setupSymlink(tmp.dir, "file", "filelink", .{});
 
-    try tmp.dir.deleteTree("filelink");
+    try tmp.dir.deleteTree(io, "filelink");
     try testing.expectError(error.FileNotFound, tmp.dir.access(io, "filelink", .{}));
     try tmp.dir.access(io, "file", .{});
 
@@ -1233,7 +1233,7 @@ test "deleteTree on a symlink" {
     try tmp.dir.makePath(io, "dir");
     try setupSymlink(tmp.dir, "dir", "dirlink", .{ .is_directory = true });
 
-    try tmp.dir.deleteTree("dirlink");
+    try tmp.dir.deleteTree(io, "dirlink");
     try testing.expectError(error.FileNotFound, tmp.dir.access(io, "dirlink", .{}));
     try tmp.dir.access(io, "dir", .{});
 }
@@ -1255,7 +1255,7 @@ test "makePath, put some files in it, deleteTree" {
                 .data = "blah",
             });
 
-            try ctx.dir.deleteTree(dir_path);
+            try ctx.dir.deleteTree(io, dir_path);
             try testing.expectError(error.FileNotFound, ctx.dir.openDir(io, dir_path, .{}));
         }
     }.impl);
@@ -1291,7 +1291,7 @@ test "makePath in a directory that no longer exists" {
 
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.parent_dir.deleteTree(&tmp.sub_path);
+    try tmp.parent_dir.deleteTree(io, &tmp.sub_path);
 
     try testing.expectError(error.FileNotFound, tmp.dir.makePath(io, "sub-path"));
 }
@@ -1302,7 +1302,7 @@ test "makePath but sub_path contains pre-existing file" {
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makeDir("foo");
+    try tmp.dir.makeDir(io, "foo", .default_dir);
     try tmp.dir.writeFile(io, .{ .sub_path = "foo/bar", .data = "" });
 
     try testing.expectError(error.NotDir, tmp.dir.makePath(io, "foo/bar/baz"));
@@ -1319,10 +1319,10 @@ test "makepath existing directories" {
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makeDir("A");
+    try tmp.dir.makeDir(io, "A", .default_dir);
     var tmpA = try tmp.dir.openDir(io, "A", .{});
     defer tmpA.close(io);
-    try tmpA.makeDir("B");
+    try tmpA.makeDir(io, "B", .default_dir);
 
     const testPath = "A" ++ fs.path.sep_str ++ "B" ++ fs.path.sep_str ++ "C";
     try tmp.dir.makePath(io, testPath);
@@ -1336,7 +1336,7 @@ test "makepath through existing valid symlink" {
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makeDir("realfolder");
+    try tmp.dir.makeDir(io, "realfolder", .default_dir);
     try setupSymlink(tmp.dir, "." ++ fs.path.sep_str ++ "realfolder", "working-symlink", .{});
 
     try tmp.dir.makePath(io, "working-symlink" ++ fs.path.sep_str ++ "in-realfolder");
@@ -1419,7 +1419,7 @@ fn testFilenameLimits(io: Io, iterable_dir: Dir, maxed_filename: []const u8) !vo
     }
 
     // ensure that we can delete the tree
-    try iterable_dir.deleteTree(maxed_filename);
+    try iterable_dir.deleteTree(io, maxed_filename);
 }
 
 test "max file name component lengths" {
@@ -1570,7 +1570,7 @@ test "access file" {
 
             try ctx.dir.writeFile(io, .{ .sub_path = file_path, .data = "" });
             try ctx.dir.access(io, file_path, .{});
-            try ctx.dir.deleteTree(dir_path);
+            try ctx.dir.deleteTree(io, dir_path);
         }
     }.impl);
 }
@@ -2042,7 +2042,7 @@ test "'.' and '..' in Io.Dir functions" {
             const rename_path = try ctx.transformPath("./subdir/../rename");
             const update_path = try ctx.transformPath("./subdir/../update");
 
-            try ctx.dir.makeDir(subdir_path);
+            try ctx.dir.makeDir(io, subdir_path, .default_dir);
             try ctx.dir.access(io, subdir_path, .{});
             var created_subdir = try ctx.dir.openDir(io, subdir_path, .{});
             created_subdir.close(io);
@@ -2120,7 +2120,7 @@ test "chmod" {
     try file.chmod(0o644);
     try testing.expectEqual(@as(File.Mode, 0o644), (try file.stat(io)).mode & 0o7777);
 
-    try tmp.dir.makeDir("test_dir");
+    try tmp.dir.makeDir(io, "test_dir", .default_dir);
     var dir = try tmp.dir.openDir(io, "test_dir", .{ .iterate = true });
     defer dir.close(io);
 
@@ -2141,7 +2141,7 @@ test "chown" {
     defer file.close(io);
     try file.chown(null, null);
 
-    try tmp.dir.makeDir("test_dir");
+    try tmp.dir.makeDir(io, "test_dir", .default_dir);
 
     var dir = try tmp.dir.openDir(io, "test_dir", .{ .iterate = true });
     defer dir.close(io);
@@ -2165,7 +2165,7 @@ test "invalid UTF-8/WTF-8 paths" {
 
             try testing.expectError(expected_err, ctx.dir.createFile(invalid_path, .{}));
 
-            try testing.expectError(expected_err, ctx.dir.makeDir(invalid_path));
+            try testing.expectError(expected_err, ctx.dir.makeDir(invalid_path, .default_dir));
 
             try testing.expectError(expected_err, ctx.dir.makePath(invalid_path));
             try testing.expectError(expected_err, ctx.dir.makeOpenPath(invalid_path, .{}));
@@ -2191,7 +2191,7 @@ test "invalid UTF-8/WTF-8 paths" {
             try testing.expectError(expected_err, ctx.dir.readFile(invalid_path, &[_]u8{}));
             try testing.expectError(expected_err, ctx.dir.readFileAlloc(invalid_path, testing.allocator, .limited(0)));
 
-            try testing.expectError(expected_err, ctx.dir.deleteTree(invalid_path));
+            try testing.expectError(expected_err, ctx.dir.deleteTree(io, invalid_path));
             try testing.expectError(expected_err, ctx.dir.deleteTreeMinStackSize(invalid_path));
 
             try testing.expectError(expected_err, ctx.dir.writeFile(io, .{ .sub_path = invalid_path, .data = "" }));

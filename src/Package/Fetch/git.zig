@@ -253,7 +253,7 @@ pub const Repository = struct {
         while (try tree_iter.next()) |entry| {
             switch (entry.type) {
                 .directory => {
-                    try dir.makeDir(entry.name);
+                    try dir.makeDir(io, entry.name, .default_dir);
                     var subdir = try dir.openDir(io, entry.name, .{});
                     defer subdir.close(io);
                     const sub_path = try std.fs.path.join(repository.odb.allocator, &.{ current_path, entry.name });
@@ -296,7 +296,7 @@ pub const Repository = struct {
                 .gitlink => {
                     // Consistent with git archive behavior, create the directory but
                     // do nothing else
-                    try dir.makeDir(entry.name);
+                    try dir.makeDir(io, entry.name, .default_dir);
                 },
             }
         }
