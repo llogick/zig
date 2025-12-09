@@ -1689,7 +1689,7 @@ fn evalZigTest(
     };
 
     while (true) {
-        try child.spawn();
+        try child.spawn(io);
         var poller = std.Io.poll(gpa, StdioPollEnum, .{
             .stdout = child.stdout.?,
             .stderr = child.stderr.?,
@@ -2168,7 +2168,7 @@ fn evalGeneric(run: *Run, child: *std.process.Child) !EvalGenericResult {
     const io = b.graph.io;
     const arena = b.allocator;
 
-    try child.spawn();
+    try child.spawn(io);
     errdefer _ = child.kill(io) catch {};
 
     try child.waitForSpawn();

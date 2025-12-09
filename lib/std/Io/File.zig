@@ -407,6 +407,10 @@ pub const Permissions = std.options.FilePermissions orelse if (is_windows) enum(
         return @intFromEnum(self);
     }
 
+    pub fn fromMode(mode: std.posix.mode_t) @This() {
+        return @enumFromInt(mode);
+    }
+
     /// Returns `true` if and only if no class has write permissions.
     pub fn readOnly(self: @This()) bool {
         const mode = toMode(self);

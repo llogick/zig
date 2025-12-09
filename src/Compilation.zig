@@ -5782,7 +5782,7 @@ pub fn translateC(
         }
 
         // Just to save disk space, we delete the file because it is never needed again.
-        cache_tmp_dir.deleteFile(dep_basename) catch |err| {
+        cache_tmp_dir.deleteFile(io, dep_basename) catch |err| {
             log.warn("failed to delete '{s}': {t}", .{ dep_file_path, err });
         };
     }
@@ -6314,11 +6314,11 @@ fn updateCObject(comp: *Compilation, c_object: *CObject, c_obj_prog_node: std.Pr
         }
 
         // Just to save disk space, we delete the files that are never needed again.
-        defer if (out_diag_path) |diag_file_path| zig_cache_tmp_dir.deleteFile(fs.path.basename(diag_file_path)) catch |err| switch (err) {
+        defer if (out_diag_path) |diag_file_path| zig_cache_tmp_dir.deleteFile(io, fs.path.basename(diag_file_path)) catch |err| switch (err) {
             error.FileNotFound => {}, // the file wasn't created due to an error we reported
             else => log.warn("failed to delete '{s}': {s}", .{ diag_file_path, @errorName(err) }),
         };
-        defer if (out_dep_path) |dep_file_path| zig_cache_tmp_dir.deleteFile(fs.path.basename(dep_file_path)) catch |err| switch (err) {
+        defer if (out_dep_path) |dep_file_path| zig_cache_tmp_dir.deleteFile(io, fs.path.basename(dep_file_path)) catch |err| switch (err) {
             error.FileNotFound => {}, // the file wasn't created due to an error we reported
             else => log.warn("failed to delete '{s}': {s}", .{ dep_file_path, @errorName(err) }),
         };
@@ -6329,7 +6329,7 @@ fn updateCObject(comp: *Compilation, c_object: *CObject, c_obj_prog_node: std.Pr
                 child.stdout_behavior = .Inherit;
                 child.stderr_behavior = .Inherit;
 
-                const term = child.spawnAndWait() catch |err| {
+                const term = child.spawnAndWait(io) catch |err| {
                     return comp.failCObj(c_object, "failed to spawn zig clang (passthrough mode) {s}: {s}", .{ argv.items[0], @errorName(err) });
                 };
                 switch (term) {
@@ -6347,7 +6347,7 @@ fn updateCObject(comp: *Compilation, c_object: *CObject, c_obj_prog_node: std.Pr
                 child.stdout_behavior = .Ignore;
                 child.stderr_behavior = .Pipe;
 
-                try child.spawn();
+                try child.spawn(io);
 
                 var stderr_reader = child.stderr.?.readerStreaming(io, &.{});
                 const stderr = try stderr_reader.interface.allocRemaining(arena, .limited(std.math.maxInt(u32)));
@@ -6723,6 +6723,7 @@ fn spawnZigRc(
     argv: []const []const u8,
     child_progress_node: std.Progress.Node,
 ) !void {
+    const io = comp.io;
     var node_name: std.ArrayList(u8) = .empty;
     defer node_name.deinit(arena);
 
@@ -6732,8 +6733,8 @@ fn spawnZigRc(
     child.stderr_behavior = .Pipe;
     child.progress_node = child_progress_node;
 
-    child.spawn() catch |err| {
-        return comp.failWin32Resource(win32_resource, "unable to spawn {s} rc: {s}", .{ argv[0], @errorName(err) });
+    child.spawn(io) catch |err| {
+        return comp.failWin32Resource(win32_resource, "unable to spawn {s} rc: {t}", .{ argv[0], err });
     };
 
     var poller = std.Io.poll(comp.gpa, enum { stdout, stderr }, .{

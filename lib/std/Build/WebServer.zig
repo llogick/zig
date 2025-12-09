@@ -580,7 +580,7 @@ fn buildClientWasm(ws: *WebServer, arena: Allocator, optimize: std.builtin.Optim
     child.stdin_behavior = .Pipe;
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = .Pipe;
-    try child.spawn();
+    try child.spawn(io);
 
     var poller = Io.poll(gpa, enum { stdout, stderr }, .{
         .stdout = child.stdout.?,

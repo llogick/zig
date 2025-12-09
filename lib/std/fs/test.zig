@@ -873,7 +873,7 @@ test "file operations on directories" {
             try ctx.dir.makeDir(io, test_dir_name, .default_dir);
 
             try testing.expectError(error.IsDir, ctx.dir.createFile(io, test_dir_name, .{}));
-            try testing.expectError(error.IsDir, ctx.dir.deleteFile(test_dir_name));
+            try testing.expectError(error.IsDir, ctx.dir.deleteFile(io, test_dir_name));
             switch (native_os) {
                 .dragonfly, .netbsd => {
                     // no error when reading a directory. See https://github.com/ziglang/zig/issues/5732
@@ -942,7 +942,7 @@ test "deleteDir" {
             try testing.expectError(error.DirNotEmpty, ctx.dir.deleteDir(test_dir_path));
 
             // deleting an empty directory
-            try ctx.dir.deleteFile(test_file_path);
+            try ctx.dir.deleteFile(io, test_file_path);
             try ctx.dir.deleteDir(test_dir_path);
         }
     }.impl);
@@ -1671,13 +1671,13 @@ test "copyFile" {
             const dest_file2 = try ctx.transformPath("tmp_test_copy_file3.txt");
 
             try ctx.dir.writeFile(io, .{ .sub_path = src_file, .data = data });
-            defer ctx.dir.deleteFile(src_file) catch {};
+            defer ctx.dir.deleteFile(io, src_file) catch {};
 
             try ctx.dir.copyFile(src_file, ctx.dir, dest_file, .{});
-            defer ctx.dir.deleteFile(dest_file) catch {};
+            defer ctx.dir.deleteFile(io, dest_file) catch {};
 
             try ctx.dir.copyFile(src_file, ctx.dir, dest_file2, .{ .override_mode = File.default_mode });
-            defer ctx.dir.deleteFile(dest_file2) catch {};
+            defer ctx.dir.deleteFile(io, dest_file2) catch {};
 
             try expectFileContents(io, ctx.dir, dest_file, data);
             try expectFileContents(io, ctx.dir, dest_file2, data);
@@ -1713,7 +1713,7 @@ test "AtomicFile" {
             const content = try ctx.dir.readFileAlloc(io, test_out_file, allocator, .limited(9999));
             try testing.expectEqualStrings(test_content, content);
 
-            try ctx.dir.deleteFile(test_out_file);
+            try ctx.dir.deleteFile(io, test_out_file);
         }
     }.impl);
 }
@@ -2055,7 +2055,7 @@ test "'.' and '..' in Io.Dir functions" {
             try ctx.dir.rename(copy_path, ctx.dir, rename_path, io);
             const renamed_file = try ctx.dir.openFile(io, rename_path, .{});
             renamed_file.close(io);
-            try ctx.dir.deleteFile(rename_path);
+            try ctx.dir.deleteFile(io, rename_path);
 
             try ctx.dir.writeFile(io, .{ .sub_path = update_path, .data = "something" });
             var dir = ctx.dir;
@@ -2113,19 +2113,19 @@ test "chmod" {
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
-    const file = try tmp.dir.createFile(io, "test_file", .{ .mode = 0o600 });
+    const file = try tmp.dir.createFile(io, "test_file", .{ .permissions = .fromMode(0o600) });
     defer file.close(io);
-    try testing.expectEqual(@as(File.Mode, 0o600), (try file.stat(io)).mode & 0o7777);
+    try testing.expectEqual(@as(posix.mode_t, 0o600), (try file.stat(io)).permissions.toMode() & 0o7777);
 
-    try file.chmod(0o644);
-    try testing.expectEqual(@as(File.Mode, 0o644), (try file.stat(io)).mode & 0o7777);
+    try file.setPermissions(io, .fromMode(0o644));
+    try testing.expectEqual(@as(posix.mode_t, 0o644), (try file.stat(io)).permissions.toMode() & 0o7777);
 
     try tmp.dir.makeDir(io, "test_dir", .default_dir);
     var dir = try tmp.dir.openDir(io, "test_dir", .{ .iterate = true });
     defer dir.close(io);
 
-    try dir.chmod(0o700);
-    try testing.expectEqual(@as(File.Mode, 0o700), (try dir.stat(io)).mode & 0o7777);
+    try dir.setPermissions(io, .fromMode(0o700));
+    try testing.expectEqual(@as(posix.mode_t, 0o700), (try dir.stat(io)).permissions.toMode() & 0o7777);
 }
 
 test "chown" {

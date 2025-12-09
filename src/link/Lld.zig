@@ -1608,13 +1608,13 @@ fn spawnLld(comp: *Compilation, arena: Allocator, argv: []const []const u8) !voi
         child.stdout_behavior = .Inherit;
         child.stderr_behavior = .Inherit;
 
-        break :term child.spawnAndWait();
+        break :term child.spawnAndWait(io);
     } else term: {
         child.stdin_behavior = .Ignore;
         child.stdout_behavior = .Ignore;
         child.stderr_behavior = .Pipe;
 
-        child.spawn() catch |err| break :term err;
+        child.spawn(io) catch |err| break :term err;
         var stderr_reader = child.stderr.?.readerStreaming(io, &.{});
         stderr = try stderr_reader.interface.allocRemaining(comp.gpa, .unlimited);
         break :term child.wait();
@@ -1658,13 +1658,13 @@ fn spawnLld(comp: *Compilation, arena: Allocator, argv: []const []const u8) !voi
                     rsp_child.stdout_behavior = .Inherit;
                     rsp_child.stderr_behavior = .Inherit;
 
-                    break :term rsp_child.spawnAndWait() catch |err| break :err err;
+                    break :term rsp_child.spawnAndWait(io) catch |err| break :err err;
                 } else {
                     rsp_child.stdin_behavior = .Ignore;
                     rsp_child.stdout_behavior = .Ignore;
                     rsp_child.stderr_behavior = .Pipe;
 
-                    rsp_child.spawn() catch |err| break :err err;
+                    rsp_child.spawn(io) catch |err| break :err err;
                     var stderr_reader = rsp_child.stderr.?.readerStreaming(io, &.{});
                     stderr = try stderr_reader.interface.allocRemaining(comp.gpa, .unlimited);
                     break :term rsp_child.wait() catch |err| break :err err;

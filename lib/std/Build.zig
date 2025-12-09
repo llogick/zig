@@ -1838,7 +1838,7 @@ pub fn runAllowFail(
     child.env_map = &b.graph.env_map;
 
     try Step.handleVerbose2(b, null, child.env_map, argv);
-    try child.spawn();
+    try child.spawn(io);
 
     var stdout_reader = child.stdout.?.readerStreaming(io, &.{});
     const stdout = stdout_reader.interface.allocRemaining(b.allocator, .limited(max_output_size)) catch {

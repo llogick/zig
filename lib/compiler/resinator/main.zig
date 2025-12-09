@@ -440,7 +440,7 @@ const IoStream = struct {
                 // Delete the output file on error
                 file.close(io);
                 // Failing to delete is not really a big deal, so swallow any errors
-                Io.Dir.cwd().deleteFile(self.name) catch {};
+                Io.Dir.cwd().deleteFile(io, self.name) catch {};
             },
             .stdio, .memory, .closed => return,
         }

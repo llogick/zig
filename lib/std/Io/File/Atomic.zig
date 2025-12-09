@@ -20,7 +20,7 @@ pub const InitError = File.OpenError;
 pub fn init(
     io: Io,
     dest_basename: []const u8,
-    mode: File.Mode,
+    permissions: File.Permissions,
     dir: Dir,
     close_dir_on_deinit: bool,
     write_buffer: []u8,
@@ -28,7 +28,10 @@ pub fn init(
     while (true) {
         const random_integer = std.crypto.random.int(u64);
         const tmp_sub_path = std.fmt.hex(random_integer);
-        const file = dir.createFile(io, &tmp_sub_path, .{ .mode = mode, .exclusive = true }) catch |err| switch (err) {
+        const file = dir.createFile(io, &tmp_sub_path, .{
+            .permissions = permissions,
+            .exclusive = true,
+        }) catch |err| switch (err) {
             error.PathAlreadyExists => continue,
             else => |e| return e,
         };

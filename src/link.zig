@@ -1235,22 +1235,26 @@ pub const File = struct {
         ty: InternPool.Index,
     };
 
-    pub fn determineMode(
+    pub fn determinePermissions(
         output_mode: std.builtin.OutputMode,
         link_mode: std.builtin.LinkMode,
-    ) Io.File.Mode {
+    ) Io.File.Permissions {
         // On common systems with a 0o022 umask, 0o777 will still result in a file created
         // with 0o755 permissions, but it works appropriately if the system is configured
         // more leniently. As another data point, C's fopen seems to open files with the
         // 666 mode.
-        const executable_mode = if (builtin.target.os.tag == .windows) 0 else 0o777;
+        const executable_mode: Io.FilePermissions = if (builtin.target.os.tag == .windows)
+            .default_file
+        else
+            .fromMode(0o777);
+
         switch (output_mode) {
             .Lib => return switch (link_mode) {
                 .dynamic => executable_mode,
-                .static => Io.File.default_mode,
+                .static => .default_file,
             },
             .Exe => return executable_mode,
-            .Obj => return Io.File.default_mode,
+            .Obj => return .default_file,
         }
     }
 

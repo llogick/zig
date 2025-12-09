@@ -1347,7 +1347,7 @@ fn unzip(
         .diagnostics = &diagnostics,
     }) catch |err| return f.fail(f.location_tok, try eb.printString("zip extract failed: {t}", .{err}));
 
-    cache_root.handle.deleteFile(&zip_path) catch |err|
+    cache_root.handle.deleteFile(io, &zip_path) catch |err|
         return f.fail(f.location_tok, try eb.printString("delete temporary zip failed: {t}", .{err}));
 
     return .{ .root_dir = diagnostics.root_dir };
@@ -1547,7 +1547,7 @@ fn computeHash(f: *Fetch, pkg_path: Cache.Path, filter: Filter) RunError!Compute
                     .fs_path = fs_path,
                     .failure = undefined, // to be populated by the worker
                 };
-                group.async(io, workerDeleteFile, .{ root_dir, deleted_file });
+                group.async(io, workerDeleteFile, .{ io, root_dir, deleted_file });
                 try deleted_files.append(deleted_file);
                 continue;
             }
@@ -1669,8 +1669,8 @@ fn workerHashFile(dir: Io.Dir, hashed_file: *HashedFile) void {
     hashed_file.failure = hashFileFallible(dir, hashed_file);
 }
 
-fn workerDeleteFile(dir: Io.Dir, deleted_file: *DeletedFile) void {
-    deleted_file.failure = deleteFileFallible(dir, deleted_file);
+fn workerDeleteFile(io: Io, dir: Io.Dir, deleted_file: *DeletedFile) void {
+    deleted_file.failure = deleteFileFallible(io, dir, deleted_file);
 }
 
 fn hashFileFallible(io: Io, dir: Io.Dir, hashed_file: *HashedFile) HashedFile.Error!void {
@@ -1712,8 +1712,8 @@ fn hashFileFallible(io: Io, dir: Io.Dir, hashed_file: *HashedFile) HashedFile.Er
     hashed_file.size = file_size;
 }
 
-fn deleteFileFallible(dir: Io.Dir, deleted_file: *DeletedFile) DeletedFile.Error!void {
-    try dir.deleteFile(deleted_file.fs_path);
+fn deleteFileFallible(io: Io, dir: Io.Dir, deleted_file: *DeletedFile) DeletedFile.Error!void {
+    try dir.deleteFile(io, deleted_file.fs_path);
 }
 
 fn setExecutable(file: Io.File) !void {

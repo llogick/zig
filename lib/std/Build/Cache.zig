@@ -1300,7 +1300,7 @@ fn testGetCurrentFileTimestamp(io: Io, dir: Io.Dir) !Io.Timestamp {
     });
     defer {
         file.close(io);
-        dir.deleteFile(test_out_file) catch {};
+        dir.deleteFile(io, test_out_file) catch {};
     }
 
     return (try file.stat(io)).mtime;

@@ -29,7 +29,7 @@ pub fn main() !void {
     child.stdin_behavior = .Pipe;
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = .Inherit;
-    try child.spawn();
+    try child.spawn(io);
     const child_stdin = child.stdin.?;
     try child_stdin.writeAll("hello from stdin"); // verified in child
     child_stdin.close(io);

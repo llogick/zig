@@ -4457,7 +4457,7 @@ fn runOrTest(
         const term_result = t: {
             std.debug.lockStdErr();
             defer std.debug.unlockStdErr();
-            break :t child.spawnAndWait();
+            break :t child.spawnAndWait(io);
         };
         const term = term_result catch |err| {
             try warnAboutForeignBinaries(io, arena, arg_mode, target, link_libc);
@@ -4512,6 +4512,7 @@ fn runOrTestHotSwap(
     all_args: []const []const u8,
     runtime_args_start: ?usize,
 ) !std.process.Child.Id {
+    const io = comp.io;
     const lf = comp.bin_file.?;
 
     const exe_path = switch (builtin.target.os.tag) {
@@ -4593,7 +4594,7 @@ fn runOrTestHotSwap(
             child.stdout_behavior = .Inherit;
             child.stderr_behavior = .Inherit;
 
-            try child.spawn();
+            try child.spawn(io);
 
             return child.id;
         },
@@ -5419,8 +5420,8 @@ fn cmdBuild(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) 
             const term = t: {
                 std.debug.lockStdErr();
                 defer std.debug.unlockStdErr();
-                break :t child.spawnAndWait() catch |err| {
-                    fatal("failed to spawn build runner {s}: {s}", .{ child_argv.items[0], @errorName(err) });
+                break :t child.spawnAndWait(io) catch |err| {
+                    fatal("failed to spawn build runner {s}: {t}", .{ child_argv.items[0], err });
                 };
             };
 
@@ -5444,7 +5445,7 @@ fn cmdBuild(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) 
                                 dirs.local_cache, tmp_sub_path, @errorName(err),
                             });
                         };
-                        dirs.local_cache.handle.deleteFile(tmp_sub_path) catch {};
+                        dirs.local_cache.handle.deleteFile(io, tmp_sub_path) catch {};
 
                         var it = mem.splitScalar(u8, stdout, '\n');
                         var any_errors = false;
@@ -5685,7 +5686,7 @@ fn jitCmd(
     child.stdout_behavior = if (options.capture == null) .Inherit else .Pipe;
     child.stderr_behavior = .Inherit;
 
-    try child.spawn();
+    try child.spawn(io);
 
     if (options.capture) |ptr| {
         var stdout_reader = child.stdout.?.readerStreaming(io, &.{});

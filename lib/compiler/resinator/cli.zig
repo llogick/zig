@@ -2010,7 +2010,7 @@ test "maybeAppendRC" {
 
     // Now delete the file and try again. But this time change the input format
     // to non-rc.
-    try tmp.dir.deleteFile("foo");
+    try tmp.dir.deleteFile(io, "foo");
     options.input_format = .res;
     try options.maybeAppendRC(io, tmp.dir);
     try std.testing.expectEqualStrings("foo", options.input_source.filename);

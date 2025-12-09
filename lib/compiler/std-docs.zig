@@ -72,8 +72,8 @@ pub fn main() !void {
     const url_with_newline = try std.fmt.allocPrint(arena, "http://127.0.0.1:{d}/\n", .{port});
     std.Io.File.stdout().writeAll(url_with_newline) catch {};
     if (should_open_browser) {
-        openBrowserTab(gpa, url_with_newline[0 .. url_with_newline.len - 1 :'\n']) catch |err| {
-            std.log.err("unable to open browser: {s}", .{@errorName(err)});
+        openBrowserTab(gpa, io, url_with_newline[0 .. url_with_newline.len - 1 :'\n']) catch |err| {
+            std.log.err("unable to open browser: {t}", .{err});
         };
     }
 
@@ -89,7 +89,7 @@ pub fn main() !void {
     while (true) {
         const connection = try http_server.accept();
         _ = std.Thread.spawn(.{}, accept, .{ &context, connection }) catch |err| {
-            std.log.err("unable to accept connection: {s}", .{@errorName(err)});
+            std.log.err("unable to accept connection: {t}", .{err});
             connection.stream.close(io);
             continue;
         };
@@ -328,7 +328,7 @@ fn buildWasmBinary(
     child.stdin_behavior = .Pipe;
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = .Pipe;
-    try child.spawn();
+    try child.spawn(io);
 
     var poller = std.Io.poll(gpa, enum { stdout, stderr }, .{
         .stdout = child.stdout.?,
@@ -434,13 +434,13 @@ fn sendMessage(io: Io, file: std.Io.File, tag: std.zig.Client.Message.Tag) !void
     };
 }
 
-fn openBrowserTab(gpa: Allocator, url: []const u8) !void {
+fn openBrowserTab(gpa: Allocator, io: Io, url: []const u8) !void {
     // Until https://github.com/ziglang/zig/issues/19205 is implemented, we
     // spawn a thread for this child process.
-    _ = try std.Thread.spawn(.{}, openBrowserTabThread, .{ gpa, url });
+    _ = try std.Thread.spawn(.{}, openBrowserTabThread, .{ gpa, io, url });
 }
 
-fn openBrowserTabThread(gpa: Allocator, url: []const u8) !void {
+fn openBrowserTabThread(gpa: Allocator, io: Io, url: []const u8) !void {
     const main_exe = switch (builtin.os.tag) {
         .windows => "explorer",
         .macos => "open",
@@ -450,6 +450,6 @@ fn openBrowserTabThread(gpa: Allocator, url: []const u8) !void {
     child.stdin_behavior = .Ignore;
     child.stdout_behavior = .Ignore;
     child.stderr_behavior = .Ignore;
-    try child.spawn();
-    _ = try child.wait();
+    try child.spawn(io);
+    _ = try child.wait(io);
 }

@@ -455,7 +455,7 @@ pub fn evalZigProcess(
     child.request_resource_usage_statistics = true;
     child.progress_node = prog_node;
 
-    child.spawn() catch |err| return s.fail("failed to spawn zig compiler {s}: {t}", .{ argv[0], err });
+    child.spawn(io) catch |err| return s.fail("failed to spawn zig compiler {s}: {t}", .{ argv[0], err });
 
     const zp = try gpa.create(ZigProcess);
     zp.* = .{

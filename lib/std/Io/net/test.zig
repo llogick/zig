@@ -278,7 +278,7 @@ test "listen on a unix socket, send bytes, receive bytes" {
     defer testing.allocator.free(socket_path);
 
     const socket_addr = try net.UnixAddress.init(socket_path);
-    defer Io.Dir.cwd().deleteFile(socket_path) catch {};
+    defer Io.Dir.cwd().deleteFile(io, socket_path) catch {};
 
     var server = try socket_addr.listen(io, .{});
     defer server.socket.close(io);

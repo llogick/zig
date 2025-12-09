@@ -461,6 +461,7 @@ pub fn lowerToBuildSteps(
     parent_step: *std.Build.Step,
     options: CaseTestOptions,
 ) void {
+    const io = self.io;
     const host = b.resolveTargetQuery(.{});
     const cases_dir_path = b.build_root.join(b.allocator, &.{ "test", "cases" }) catch @panic("OOM");
 
@@ -595,7 +596,7 @@ pub fn lowerToBuildSteps(
             },
             .Execution => |expected_stdout| no_exec: {
                 const run = if (case.target.result.ofmt == .c) run_step: {
-                    if (getExternalExecutor(&host.result, &case.target.result, .{ .link_libc = true }) != .native) {
+                    if (getExternalExecutor(io, &host.result, &case.target.result, .{ .link_libc = true }) != .native) {
                         // We wouldn't be able to run the compiled C code.
                         break :no_exec;
                     }

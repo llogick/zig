@@ -60,7 +60,7 @@ test "write a file, read it, then delete it" {
         try expect(mem.eql(u8, contents["begin".len .. contents.len - "end".len], &data));
         try expect(mem.eql(u8, contents[contents.len - "end".len ..], "end"));
     }
-    try tmp.dir.deleteFile(tmp_file_name);
+    try tmp.dir.deleteFile(io, tmp_file_name);
 }
 
 test "File seek ops" {

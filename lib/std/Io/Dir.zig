@@ -1366,7 +1366,7 @@ pub fn deleteTree(dir: Dir, io: Io, sub_path: []const u8) DeleteTreeError!void {
                             => |e| return e,
                         };
                     } else {
-                        if (parent_dir.deleteFile(name)) {
+                        if (parent_dir.deleteFile(io, name)) {
                             continue :process_stack;
                         } else |err| switch (err) {
                             error.FileNotFound => continue :process_stack,
@@ -1477,7 +1477,7 @@ fn deleteTreeMinStackSizeWithKindHint(parent: Dir, io: Io, sub_path: []const u8,
                         dir_name = result;
                         continue :scan_dir;
                     } else {
-                        if (dir.deleteFile(entry.name)) {
+                        if (dir.deleteFile(io, entry.name)) {
                             continue :dir_it;
                         } else |err| switch (err) {
                             error.FileNotFound => continue :dir_it,
@@ -1567,7 +1567,7 @@ fn deleteTreeOpenInitialSubpath(dir: Dir, io: Io, sub_path: []const u8, kind_hin
                     => |e| return e,
                 };
             } else {
-                if (dir.deleteFile(sub_path)) {
+                if (dir.deleteFile(io, sub_path)) {
                     return null;
                 } else |err| switch (err) {
                     error.FileNotFound => return null,
@@ -1588,6 +1588,7 @@ fn deleteTreeOpenInitialSubpath(dir: Dir, io: Io, sub_path: []const u8, kind_hin
                     error.FileBusy,
                     error.BadPathName,
                     error.NetworkNotFound,
+                    error.Canceled,
                     error.Unexpected,
                     => |e| return e,
                 }
