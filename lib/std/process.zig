@@ -16,8 +16,6 @@ const unicode = std.unicode;
 const max_path_bytes = std.fs.max_path_bytes;
 
 pub const Child = @import("process/Child.zig");
-pub const abort = posix.abort;
-pub const exit = posix.exit;
 pub const changeCurDir = posix.chdir;
 pub const changeCurDirZ = posix.chdirZ;
 
@@ -2207,4 +2205,88 @@ pub const OpenExecutableError = File.OpenError || ExecutablePathError || File.Lo
 
 pub fn openExecutable(io: Io, flags: File.OpenFlags) OpenExecutableError!File {
     return io.vtable.processExecutableOpen(io.userdata, flags);
+}
+
+/// Causes abnormal process termination.
+///
+/// If linking against libc, this calls `std.c.abort`. Otherwise it raises
+/// SIGABRT followed by SIGKILL.
+///
+/// Invokes the current signal handler for SIGABRT, if any.
+pub fn abort() noreturn {
+    @branchHint(.cold);
+    // MSVCRT abort() sometimes opens a popup window which is undesirable, so
+    // even when linking libc on Windows we use our own abort implementation.
+    // See https://github.com/ziglang/zig/issues/2071 for more details.
+    if (native_os == .windows) {
+        if (builtin.mode == .Debug and windows.peb().BeingDebugged != 0) {
+            @breakpoint();
+        }
+        windows.ntdll.RtlExitUserProcess(3);
+    }
+    if (!builtin.link_libc and native_os == .linux) {
+        // The Linux man page says that the libc abort() function
+        // "first unblocks the SIGABRT signal", but this is a footgun
+        // for user-defined signal handlers that want to restore some state in
+        // some program sections and crash in others.
+        // So, the user-installed SIGABRT handler is run, if present.
+        posix.raise(.ABRT) catch {};
+
+        // Disable all signal handlers.
+        const filledset = std.os.linux.sigfillset();
+        posix.sigprocmask(posix.SIG.BLOCK, &filledset, null);
+
+        // Only one thread may proceed to the rest of abort().
+        if (!builtin.single_threaded) {
+            const global = struct {
+                var abort_entered: bool = false;
+            };
+            while (@cmpxchgWeak(bool, &global.abort_entered, false, true, .seq_cst, .seq_cst)) |_| {}
+        }
+
+        // Install default handler so that the tkill below will terminate.
+        const sigact: posix.Sigaction = .{
+            .handler = .{ .handler = posix.SIG.DFL },
+            .mask = posix.sigemptyset(),
+            .flags = 0,
+        };
+        posix.sigaction(.ABRT, &sigact, null);
+
+        _ = std.os.linux.tkill(std.os.linux.gettid(), .ABRT);
+
+        var sigabrtmask = posix.sigemptyset();
+        posix.sigaddset(&sigabrtmask, .ABRT);
+        posix.sigprocmask(posix.SIG.UNBLOCK, &sigabrtmask, null);
+
+        // Beyond this point should be unreachable.
+        @as(*allowzero volatile u8, @ptrFromInt(0)).* = 0;
+        posix.raise(.KILL) catch {};
+        exit(127); // Pid 1 might not be signalled in some containers.
+    }
+    switch (native_os) {
+        .uefi, .wasi, .emscripten, .cuda, .amdhsa => @trap(),
+        else => posix.system.abort(),
+    }
+}
+
+/// Exits all threads of the program with the specified status code.
+pub fn exit(status: u8) noreturn {
+    if (builtin.link_libc) {
+        std.c.exit(status);
+    } else switch (native_os) {
+        .windows => windows.ntdll.RtlExitUserProcess(status),
+        .wasi => std.os.wasi.proc_exit(status),
+        .linux => if (!builtin.single_threaded) std.os.linux.exit_group(status),
+        .uefi => {
+            const uefi = std.os.uefi;
+            // exit() is only available if exitBootServices() has not been called yet.
+            // This call to exit should not fail, so we catch-ignore errors.
+            if (uefi.system_table.boot_services) |bs| {
+                bs.exit(uefi.handle, @enumFromInt(status), null) catch {};
+            }
+            // If we can't exit, reboot the system instead.
+            uefi.system_table.runtime_services.resetSystem(.cold, @enumFromInt(status), null);
+        },
+        else => posix.system.exit(status),
+    }
 }

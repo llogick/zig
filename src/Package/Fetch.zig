@@ -1414,6 +1414,7 @@ fn unpackGitPack(f: *Fetch, out_dir: Io.Dir, resource: *Resource.Git) anyerror!U
 
 fn recursiveDirectoryCopy(f: *Fetch, dir: Io.Dir, tmp_dir: Io.Dir) anyerror!void {
     const gpa = f.arena.child_allocator;
+    const io = f.job_queue.io;
     // Recursive directory copy.
     var it = try dir.walk(gpa);
     defer it.deinit();
@@ -1428,7 +1429,7 @@ fn recursiveDirectoryCopy(f: *Fetch, dir: Io.Dir, tmp_dir: Io.Dir) anyerror!void
                     .{},
                 ) catch |err| switch (err) {
                     error.FileNotFound => {
-                        if (fs.path.dirname(entry.path)) |dirname| try tmp_dir.makePath(dirname);
+                        if (fs.path.dirname(entry.path)) |dirname| try tmp_dir.makePath(io, dirname);
                         try dir.copyFile(entry.path, tmp_dir, entry.path, .{});
                     },
                     else => |e| return e,
@@ -1441,7 +1442,7 @@ fn recursiveDirectoryCopy(f: *Fetch, dir: Io.Dir, tmp_dir: Io.Dir) anyerror!void
                 // the destination directory, fail with an error instead.
                 tmp_dir.symLink(link_name, entry.path, .{}) catch |err| switch (err) {
                     error.FileNotFound => {
-                        if (fs.path.dirname(entry.path)) |dirname| try tmp_dir.makePath(dirname);
+                        if (fs.path.dirname(entry.path)) |dirname| try tmp_dir.makePath(io, dirname);
                         try tmp_dir.symLink(link_name, entry.path, .{});
                     },
                     else => |e| return e,

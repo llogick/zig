@@ -3382,7 +3382,7 @@ fn buildOutputType(
         const dump_path = try std.fmt.allocPrint(arena, "tmp" ++ sep ++ "{x}-dump-stdin{s}", .{
             std.crypto.random.int(u64), ext.canonicalName(target),
         });
-        try dirs.local_cache.handle.makePath("tmp");
+        try dirs.local_cache.handle.makePath(io, "tmp");
 
         // Note that in one of the happy paths, execve() is used to switch to
         // clang in which case any cleanup logic that exists for this temporary
@@ -4773,7 +4773,7 @@ fn cmdInit(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) !
             var ok_count: usize = 0;
 
             for (template_paths) |template_path| {
-                if (templates.write(arena, Io.Dir.cwd(), sanitized_root_name, template_path, fingerprint)) |_| {
+                if (templates.write(arena, io, Io.Dir.cwd(), sanitized_root_name, template_path, fingerprint)) |_| {
                     std.log.info("created {s}", .{template_path});
                     ok_count += 1;
                 } else |err| switch (err) {
@@ -7394,20 +7394,21 @@ const Templates = struct {
     fn write(
         templates: *Templates,
         arena: Allocator,
+        io: Io,
         out_dir: Io.Dir,
         root_name: []const u8,
         template_path: []const u8,
         fingerprint: Package.Fingerprint,
     ) !void {
         if (fs.path.dirname(template_path)) |dirname| {
-            out_dir.makePath(dirname) catch |err| {
-                fatal("unable to make path '{s}': {s}", .{ dirname, @errorName(err) });
+            out_dir.makePath(io, dirname) catch |err| {
+                fatal("unable to make path '{s}': {t}", .{ dirname, err });
             };
         }
 
         const max_bytes = 10 * 1024 * 1024;
         const contents = templates.dir.readFileAlloc(template_path, arena, .limited(max_bytes)) catch |err| {
-            fatal("unable to read template file '{s}': {s}", .{ template_path, @errorName(err) });
+            fatal("unable to read template file '{s}': {t}", .{ template_path, err });
         };
         templates.buffer.clearRetainingCapacity();
         try templates.buffer.ensureUnusedCapacity(contents.len);

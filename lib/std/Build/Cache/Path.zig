@@ -128,14 +128,14 @@ pub fn access(p: Path, sub_path: []const u8, flags: Io.Dir.AccessOptions) !void 
     return p.root_dir.handle.access(joined_path, flags);
 }
 
-pub fn makePath(p: Path, sub_path: []const u8) !void {
+pub fn makePath(p: Path, io: Io, sub_path: []const u8) !void {
     var buf: [fs.max_path_bytes]u8 = undefined;
     const joined_path = if (p.sub_path.len == 0) sub_path else p: {
         break :p std.fmt.bufPrint(&buf, "{s}" ++ fs.path.sep_str ++ "{s}", .{
             p.sub_path, sub_path,
         }) catch return error.NameTooLong;
     };
-    return p.root_dir.handle.makePath(joined_path);
+    return p.root_dir.handle.makePath(io, joined_path);
 }
 
 pub fn toString(p: Path, allocator: Allocator) Allocator.Error![]u8 {

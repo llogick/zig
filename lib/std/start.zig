@@ -110,7 +110,7 @@ fn main2() callconv(.c) c_int {
 }
 
 fn _start2() callconv(.withStackAlign(.c, 1)) noreturn {
-    std.posix.exit(callMain());
+    std.process.exit(callMain());
 }
 
 fn spirvMain2() callconv(.kernel) void {
@@ -118,7 +118,7 @@ fn spirvMain2() callconv(.kernel) void {
 }
 
 fn wWinMainCRTStartup2() callconv(.c) noreturn {
-    std.posix.exit(callMain());
+    std.process.exit(callMain());
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -627,7 +627,7 @@ fn posixCallMainAndExit(argc_argv_ptr: [*]usize) callconv(.c) noreturn {
         for (slice) |func| func();
     }
 
-    std.posix.exit(callMainWithArgs(argc, argv, envp));
+    std.process.exit(callMainWithArgs(argc, argv, envp));
 }
 
 fn expandStackSize(phdrs: []elf.Phdr) void {

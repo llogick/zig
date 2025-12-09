@@ -3180,7 +3180,7 @@ pub fn update(comp: *Compilation, main_progress_node: std.Progress.Node) UpdateE
             const s = fs.path.sep_str;
             const tmp_dir_sub_path = "tmp" ++ s ++ std.fmt.hex(tmp_dir_rand_int);
             const o_sub_path = "o" ++ s ++ hex_digest;
-            renameTmpIntoCache(comp.dirs.local_cache, tmp_dir_sub_path, o_sub_path) catch |err| {
+            renameTmpIntoCache(io, comp.dirs.local_cache, tmp_dir_sub_path, o_sub_path) catch |err| {
                 return comp.setMiscFailure(
                     .rename_results,
                     "failed to rename compilation results ('{f}{s}') into local cache ('{f}{s}'): {t}",
@@ -3399,17 +3399,19 @@ fn flush(
 /// implementation at the bottom of this function.
 /// This function is only called when CacheMode is `whole`.
 fn renameTmpIntoCache(
+    io: Io,
     cache_directory: Cache.Directory,
     tmp_dir_sub_path: []const u8,
     o_sub_path: []const u8,
 ) !void {
     var seen_eaccess = false;
     while (true) {
-        fs.rename(
+        Io.Dir.rename(
             cache_directory.handle,
             tmp_dir_sub_path,
             cache_directory.handle,
             o_sub_path,
+            io,
         ) catch |err| switch (err) {
             // On Windows, rename fails with `AccessDenied` rather than `PathAlreadyExists`.
             // See https://github.com/ziglang/zig/issues/8362
@@ -3427,7 +3429,7 @@ fn renameTmpIntoCache(
                 continue;
             },
             error.FileNotFound => {
-                try cache_directory.handle.makePath("o");
+                try cache_directory.handle.makePath(io, "o");
                 continue;
             },
             else => |e| return e,
@@ -5816,7 +5818,7 @@ pub fn translateC(
     const o_sub_path = "o" ++ fs.path.sep_str ++ hex_digest;
 
     if (comp.verbose_cimport) log.info("renaming {s} to {s}", .{ tmp_sub_path, o_sub_path });
-    try renameTmpIntoCache(comp.dirs.local_cache, tmp_sub_path, o_sub_path);
+    try renameTmpIntoCache(io, comp.dirs.local_cache, tmp_sub_path, o_sub_path);
 
     return .{
         .digest = bin_digest,

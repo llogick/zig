@@ -973,7 +973,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
                 .output_directory => output_sub_path,
                 else => unreachable,
             };
-            b.cache_root.handle.makePath(output_sub_dir_path) catch |err| {
+            b.cache_root.handle.makePath(io, output_sub_dir_path) catch |err| {
                 return step.fail("unable to make path '{f}{s}': {s}", .{
                     b.cache_root, output_sub_dir_path, @errorName(err),
                 });
@@ -1005,7 +1005,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
             .output_directory => output_sub_path,
             else => unreachable,
         };
-        b.cache_root.handle.makePath(output_sub_dir_path) catch |err| {
+        b.cache_root.handle.makePath(io, output_sub_dir_path) catch |err| {
             return step.fail("unable to make path '{f}{s}': {s}", .{
                 b.cache_root, output_sub_dir_path, @errorName(err),
             });
@@ -1241,6 +1241,7 @@ fn runCommand(
     const b = step.owner;
     const arena = b.allocator;
     const gpa = options.gpa;
+    const io = b.graph.io;
 
     const cwd: ?[]const u8 = if (run.cwd) |lazy_cwd| lazy_cwd.getPath2(b, step) else null;
 
@@ -1470,7 +1471,7 @@ fn runCommand(
 
             const sub_path = b.pathJoin(&output_components);
             const sub_path_dirname = fs.path.dirname(sub_path).?;
-            b.cache_root.handle.makePath(sub_path_dirname) catch |err| {
+            b.cache_root.handle.makePath(io, sub_path_dirname) catch |err| {
                 return step.fail("unable to make path '{f}{s}': {s}", .{
                     b.cache_root, sub_path_dirname, @errorName(err),
                 });

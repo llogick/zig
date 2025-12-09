@@ -464,6 +464,8 @@ pub const Iterator = struct {
             filename_buf: []u8,
             dest: Io.Dir,
         ) !void {
+            const io = stream.io;
+
             if (filename_buf.len < self.filename_len)
                 return error.ZipInsufficientBuffer;
             switch (self.compression_method) {
@@ -552,11 +554,9 @@ pub const Iterator = struct {
             if (filename[filename.len - 1] == '/') {
                 if (self.uncompressed_size != 0)
                     return error.ZipBadDirectorySize;
-                try dest.makePath(filename[0 .. filename.len - 1]);
+                try dest.makePath(io, filename[0 .. filename.len - 1]);
                 return;
             }
-
-            const io = stream.io;
 
             const out_file = blk: {
                 if (std.fs.path.dirname(filename)) |dirname| {

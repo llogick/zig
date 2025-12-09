@@ -4090,32 +4090,6 @@ test "openat_direct/close_direct" {
     try ring.unregister_files();
 }
 
-test "waitid" {
-    try skipKernelLessThan(.{ .major = 6, .minor = 7, .patch = 0 });
-
-    var ring = IoUring.init(16, 0) catch |err| switch (err) {
-        error.SystemOutdated => return error.SkipZigTest,
-        error.PermissionDenied => return error.SkipZigTest,
-        else => return err,
-    };
-    defer ring.deinit();
-
-    const pid = try posix.fork();
-    if (pid == 0) {
-        posix.exit(7);
-    }
-
-    var siginfo: posix.siginfo_t = undefined;
-    _ = try ring.waitid(0, .PID, pid, &siginfo, posix.W.EXITED, 0);
-
-    try testing.expectEqual(1, try ring.submit());
-
-    const cqe_waitid = try ring.copy_cqe();
-    try testing.expectEqual(0, cqe_waitid.res);
-    try testing.expectEqual(pid, siginfo.fields.common.first.piduid.pid);
-    try testing.expectEqual(7, siginfo.fields.common.second.sigchld.status);
-}
-
 /// For use in tests. Returns SkipZigTest if kernel version is less than required.
 inline fn skipKernelLessThan(required: std.SemanticVersion) !void {
     if (!is_linux) return error.SkipZigTest;

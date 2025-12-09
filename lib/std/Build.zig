@@ -1706,7 +1706,7 @@ pub fn truncateFile(b: *Build, dest_path: []const u8) (Io.Dir.MakeError || Io.Di
     var src_file = cwd.createFile(io, dest_path, .{}) catch |err| switch (err) {
         error.FileNotFound => blk: {
             if (fs.path.dirname(dest_path)) |dirname| {
-                try cwd.makePath(dirname);
+                try cwd.makePath(io, dirname);
             }
             break :blk try cwd.createFile(io, dest_path, .{});
         },
@@ -2634,13 +2634,12 @@ pub const InstallDir = union(enum) {
 /// source of API breakage in the future, so keep that in mind when using this
 /// function.
 pub fn makeTempPath(b: *Build) []const u8 {
+    const io = b.graph.io;
     const rand_int = std.crypto.random.int(u64);
     const tmp_dir_sub_path = "tmp" ++ fs.path.sep_str ++ std.fmt.hex(rand_int);
     const result_path = b.cache_root.join(b.allocator, &.{tmp_dir_sub_path}) catch @panic("OOM");
-    b.cache_root.handle.makePath(tmp_dir_sub_path) catch |err| {
-        std.debug.print("unable to make tmp path '{s}': {s}\n", .{
-            result_path, @errorName(err),
-        });
+    b.cache_root.handle.makePath(io, tmp_dir_sub_path) catch |err| {
+        std.debug.print("unable to make tmp path '{s}': {t}\n", .{ result_path, err });
     };
     return result_path;
 }

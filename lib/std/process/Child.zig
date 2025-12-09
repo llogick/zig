@@ -1050,7 +1050,7 @@ fn forkChildErrReport(fd: i32, err: ChildProcess.SpawnError) noreturn {
         // The _exit(2) function does nothing but make the exit syscall, unlike exit(3)
         std.c._exit(1);
     }
-    posix.exit(1);
+    posix.system.exit(1);
 }
 
 fn writeIntFd(fd: i32, value: ErrInt) !void {

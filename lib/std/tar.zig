@@ -606,7 +606,7 @@ pub fn pipeToFileSystem(io: Io, dir: Io.Dir, reader: *Io.Reader, options: PipeOp
         switch (file.kind) {
             .directory => {
                 if (file_name.len > 0 and !options.exclude_empty_directories) {
-                    try dir.makePath(file_name);
+                    try dir.makePath(io, file_name);
                 }
             },
             .file => {
@@ -625,7 +625,7 @@ pub fn pipeToFileSystem(io: Io, dir: Io.Dir, reader: *Io.Reader, options: PipeOp
             },
             .sym_link => {
                 const link_name = file.link_name;
-                createDirAndSymlink(dir, link_name, file_name) catch |err| {
+                createDirAndSymlink(io, dir, link_name, file_name) catch |err| {
                     const d = options.diagnostics orelse return error.UnableToCreateSymLink;
                     try d.errors.append(d.allocator, .{ .unable_to_create_sym_link = .{
                         .code = err,
@@ -642,7 +642,7 @@ fn createDirAndFile(io: Io, dir: Io.Dir, file_name: []const u8, mode: Io.File.Mo
     const fs_file = dir.createFile(io, file_name, .{ .exclusive = true, .mode = mode }) catch |err| {
         if (err == error.FileNotFound) {
             if (std.fs.path.dirname(file_name)) |dir_name| {
-                try dir.makePath(dir_name);
+                try dir.makePath(io, dir_name);
                 return try dir.createFile(io, file_name, .{ .exclusive = true, .mode = mode });
             }
         }
@@ -652,11 +652,11 @@ fn createDirAndFile(io: Io, dir: Io.Dir, file_name: []const u8, mode: Io.File.Mo
 }
 
 // Creates a symbolic link at path `file_name` which points to `link_name`.
-fn createDirAndSymlink(dir: Io.Dir, link_name: []const u8, file_name: []const u8) !void {
+fn createDirAndSymlink(io: Io, dir: Io.Dir, link_name: []const u8, file_name: []const u8) !void {
     dir.symLink(link_name, file_name, .{}) catch |err| {
         if (err == error.FileNotFound) {
             if (std.fs.path.dirname(file_name)) |dir_name| {
-                try dir.makePath(dir_name);
+                try dir.makePath(io, dir_name);
                 return try dir.symLink(link_name, file_name, .{});
             }
         }
@@ -885,15 +885,15 @@ test "create file and symlink" {
     file = try createDirAndFile(io, root.dir, "a/b/c/file2", default_mode);
     file.close(io);
 
-    createDirAndSymlink(root.dir, "a/b/c/file2", "symlink1") catch |err| {
+    createDirAndSymlink(io, root.dir, "a/b/c/file2", "symlink1") catch |err| {
         // On Windows when developer mode is not enabled
         if (err == error.AccessDenied) return error.SkipZigTest;
         return err;
     };
-    try createDirAndSymlink(root.dir, "../../../file1", "d/e/f/symlink2");
+    try createDirAndSymlink(io, root.dir, "../../../file1", "d/e/f/symlink2");
 
     // Danglink symlnik, file created later
-    try createDirAndSymlink(root.dir, "../../../g/h/i/file4", "j/k/l/symlink3");
+    try createDirAndSymlink(io, root.dir, "../../../g/h/i/file4", "j/k/l/symlink3");
     file = try createDirAndFile(io, root.dir, "g/h/i/file4", default_mode);
     file.close(io);
 }

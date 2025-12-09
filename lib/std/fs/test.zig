@@ -674,7 +674,7 @@ test "Dir.Iterator but dir is deleted during iteration" {
     var iterator = subdir.iterate();
 
     // Create something to iterate over within the subdir
-    try tmp.dir.makePath("subdir" ++ fs.path.sep_str ++ "b");
+    try tmp.dir.makePath(io, "subdir" ++ fs.path.sep_str ++ "b");
 
     // Then, before iterating, delete the directory that we're iterating.
     // This is a contrived reproduction, but this could happen outside of the program, in another thread, etc.
@@ -1196,7 +1196,7 @@ test "deleteTree does not follow symlinks" {
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("b");
+    try tmp.dir.makePath(io, "b");
     {
         var a = try tmp.dir.makeOpenPath("a", .{});
         defer a.close(io);
@@ -1211,6 +1211,8 @@ test "deleteTree does not follow symlinks" {
 }
 
 test "deleteTree on a symlink" {
+    const io = testing.io;
+
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
@@ -1223,7 +1225,7 @@ test "deleteTree on a symlink" {
     try tmp.dir.access("file", .{});
 
     // Symlink to a directory
-    try tmp.dir.makePath("dir");
+    try tmp.dir.makePath(io, "dir");
     try setupSymlink(tmp.dir, "dir", "dirlink", .{ .is_directory = true });
 
     try tmp.dir.deleteTree("dirlink");
@@ -1238,7 +1240,7 @@ test "makePath, put some files in it, deleteTree" {
             const allocator = ctx.arena.allocator();
             const dir_path = try ctx.transformPath("os_test_tmp");
 
-            try ctx.dir.makePath(try fs.path.join(allocator, &.{ "os_test_tmp", "b", "c" }));
+            try ctx.dir.makePath(io, try fs.path.join(allocator, &.{ "os_test_tmp", "b", "c" }));
             try ctx.dir.writeFile(.{
                 .sub_path = try fs.path.join(allocator, &.{ "os_test_tmp", "b", "c", "file.txt" }),
                 .data = "nonsense",
@@ -1261,7 +1263,7 @@ test "makePath, put some files in it, deleteTreeMinStackSize" {
             const allocator = ctx.arena.allocator();
             const dir_path = try ctx.transformPath("os_test_tmp");
 
-            try ctx.dir.makePath(try fs.path.join(allocator, &.{ "os_test_tmp", "b", "c" }));
+            try ctx.dir.makePath(io, try fs.path.join(allocator, &.{ "os_test_tmp", "b", "c" }));
             try ctx.dir.writeFile(.{
                 .sub_path = try fs.path.join(allocator, &.{ "os_test_tmp", "b", "c", "file.txt" }),
                 .data = "nonsense",
@@ -1280,21 +1282,25 @@ test "makePath, put some files in it, deleteTreeMinStackSize" {
 test "makePath in a directory that no longer exists" {
     if (native_os == .windows) return error.SkipZigTest; // Windows returns FileBusy if attempting to remove an open dir
 
+    const io = testing.io;
+
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
     try tmp.parent_dir.deleteTree(&tmp.sub_path);
 
-    try testing.expectError(error.FileNotFound, tmp.dir.makePath("sub-path"));
+    try testing.expectError(error.FileNotFound, tmp.dir.makePath(io, "sub-path"));
 }
 
 test "makePath but sub_path contains pre-existing file" {
+    const io = testing.io;
+
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
     try tmp.dir.makeDir("foo");
     try tmp.dir.writeFile(.{ .sub_path = "foo/bar", .data = "" });
 
-    try testing.expectError(error.NotDir, tmp.dir.makePath("foo/bar/baz"));
+    try testing.expectError(error.NotDir, tmp.dir.makePath(io, "foo/bar/baz"));
 }
 
 fn expectDir(io: Io, dir: Dir, path: []const u8) !void {
@@ -1314,7 +1320,7 @@ test "makepath existing directories" {
     try tmpA.makeDir("B");
 
     const testPath = "A" ++ fs.path.sep_str ++ "B" ++ fs.path.sep_str ++ "C";
-    try tmp.dir.makePath(testPath);
+    try tmp.dir.makePath(io, testPath);
 
     try expectDir(io, tmp.dir, testPath);
 }
@@ -1328,7 +1334,7 @@ test "makepath through existing valid symlink" {
     try tmp.dir.makeDir("realfolder");
     try setupSymlink(tmp.dir, "." ++ fs.path.sep_str ++ "realfolder", "working-symlink", .{});
 
-    try tmp.dir.makePath("working-symlink" ++ fs.path.sep_str ++ "in-realfolder");
+    try tmp.dir.makePath(io, "working-symlink" ++ fs.path.sep_str ++ "in-realfolder");
 
     try expectDir(io, tmp.dir, "realfolder" ++ fs.path.sep_str ++ "in-realfolder");
 }
@@ -1344,7 +1350,7 @@ test "makepath relative walks" {
     });
     defer testing.allocator.free(relPath);
 
-    try tmp.dir.makePath(relPath);
+    try tmp.dir.makePath(io, relPath);
 
     // How .. is handled is different on Windows than non-Windows
     switch (native_os) {
@@ -1383,7 +1389,7 @@ test "makepath ignores '.'" {
     });
     defer testing.allocator.free(expectedPath);
 
-    try tmp.dir.makePath(dotPath);
+    try tmp.dir.makePath(io, dotPath);
 
     try expectDir(io, tmp.dir, expectedPath);
 }
@@ -1550,10 +1556,11 @@ test "setEndPos" {
 test "access file" {
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {
+            const io = ctx.io;
             const dir_path = try ctx.transformPath("os_test_tmp");
             const file_path = try ctx.transformPath("os_test_tmp" ++ fs.path.sep_str ++ "file.txt");
 
-            try ctx.dir.makePath(dir_path);
+            try ctx.dir.makePath(io, dir_path);
             try testing.expectError(error.FileNotFound, ctx.dir.access(file_path, .{}));
 
             try ctx.dir.writeFile(.{ .sub_path = file_path, .data = "" });
@@ -1569,7 +1576,7 @@ test "sendfile" {
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("os_test_tmp");
+    try tmp.dir.makePath(io, "os_test_tmp");
 
     var dir = try tmp.dir.openDir(io, "os_test_tmp", .{});
     defer dir.close(io);
@@ -1616,7 +1623,7 @@ test "sendfile with buffered data" {
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("os_test_tmp");
+    try tmp.dir.makePath(io, "os_test_tmp");
 
     var dir = try tmp.dir.openDir(io, "os_test_tmp", .{});
     defer dir.close(io);
@@ -1894,7 +1901,7 @@ test "walker" {
     });
 
     for (expected_paths.keys()) |key| {
-        try tmp.dir.makePath(key);
+        try tmp.dir.makePath(io, key);
     }
 
     var walker = try tmp.dir.walk(testing.allocator);
@@ -1956,7 +1963,7 @@ test "selective walker, skip entries that start with ." {
     });
 
     for (paths_to_create) |path| {
-        try tmp.dir.makePath(path);
+        try tmp.dir.makePath(io, path);
     }
 
     var walker = try tmp.dir.walkSelectively(testing.allocator);
@@ -1991,6 +1998,8 @@ test "selective walker, skip entries that start with ." {
 }
 
 test "walker without fully iterating" {
+    const io = testing.io;
+
     var tmp = tmpDir(.{ .iterate = true });
     defer tmp.cleanup();
 
@@ -2000,8 +2009,8 @@ test "walker without fully iterating" {
     // Create 2 directories inside the tmp directory, but then only iterate once before breaking.
     // This ensures that walker doesn't try to close the initial directory when not fully iterating.
 
-    try tmp.dir.makePath("a");
-    try tmp.dir.makePath("b");
+    try tmp.dir.makePath(io, "a");
+    try tmp.dir.makePath(io, "b");
 
     var num_walked: usize = 0;
     while (try walker.next()) |_| {

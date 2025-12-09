@@ -522,7 +522,7 @@ pub fn defaultPanic(
             }
             @trap();
         },
-        .cuda, .amdhsa => std.posix.abort(),
+        .cuda, .amdhsa => std.process.abort(),
         .plan9 => {
             var status: [std.os.plan9.ERRMAX]u8 = undefined;
             const len = @min(msg.len, status.len - 1);
@@ -575,12 +575,13 @@ pub fn defaultPanic(
             // A panic happened while trying to print a previous panic message.
             // We're still holding the mutex but that's fine as we're going to
             // call abort().
-            File.stderr().writeStreamingAll("aborting due to recursive panic\n") catch {};
+            const stderr, _ = lockStderrWriter(&.{});
+            stderr.writeAll("aborting due to recursive panic\n") catch {};
         },
         else => {}, // Panicked while printing the recursive panic message.
     }
 
-    posix.abort();
+    std.process.abort();
 }
 
 /// Must be called only after adding 1 to `panicking`. There are three callsites.
@@ -1596,7 +1597,8 @@ pub fn defaultHandleSegfault(addr: ?usize, name: []const u8, opt_ctx: ?CpuContex
             // A segfault happened while trying to print a previous panic message.
             // We're still holding the mutex but that's fine as we're going to
             // call abort().
-            File.stderr().writeAll("aborting due to recursive panic\n") catch {};
+            const stderr, _ = lockStderrWriter(&.{});
+            stderr().writeAll("aborting due to recursive panic\n") catch {};
         },
         else => {}, // Panicked while printing the recursive panic message.
     }
@@ -1604,7 +1606,7 @@ pub fn defaultHandleSegfault(addr: ?usize, name: []const u8, opt_ctx: ?CpuContex
     // We cannot allow the signal handler to return because when it runs the original instruction
     // again, the memory may be mapped and undefined behavior would occur rather than repeating
     // the segfault. So we simply abort here.
-    posix.abort();
+    std.process.abort();
 }
 
 pub fn dumpStackPointerAddr(prefix: []const u8) void {
