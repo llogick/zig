@@ -1,28 +1,29 @@
 const std = @import("std");
+const Io = std.Io;
 const mem = std.mem;
-const Allocator = mem.Allocator;
+const Allocator = std.mem.Allocator;
 const Target = std.Target;
 const Version = std.SemanticVersion;
 
 pub const macos = @import("darwin/macos.zig");
 
 /// Check if SDK is installed on Darwin without triggering CLT installation popup window.
-/// Note: simply invoking `xcrun` will inevitably trigger the CLT installation popup.
+///
+/// Simply invoking `xcrun` will inevitably trigger the CLT installation popup.
 /// Therefore, we resort to invoking `xcode-select --print-path` and checking
 /// if the status is nonzero.
+///
 /// stderr from xcode-select is ignored.
+///
 /// If error.OutOfMemory occurs in Allocator, this function returns null.
-pub fn isSdkInstalled(allocator: Allocator) bool {
-    const result = std.process.Child.run(.{
-        .allocator = allocator,
+pub fn isSdkInstalled(gpa: Allocator, io: Io) bool {
+    const result = std.process.Child.run(gpa, io, .{
         .argv = &.{ "xcode-select", "--print-path" },
     }) catch return false;
-
     defer {
-        allocator.free(result.stderr);
-        allocator.free(result.stdout);
+        gpa.free(result.stderr);
+        gpa.free(result.stdout);
     }
-
     return switch (result.term) {
         .Exited => |code| if (code == 0) result.stdout.len > 0 else false,
         else => false,
@@ -34,7 +35,7 @@ pub fn isSdkInstalled(allocator: Allocator) bool {
 /// Caller owns the memory.
 /// stderr from xcrun is ignored.
 /// If error.OutOfMemory occurs in Allocator, this function returns null.
-pub fn getSdk(allocator: Allocator, target: *const Target) ?[]const u8 {
+pub fn getSdk(gpa: Allocator, io: Io, target: *const Target) ?[]const u8 {
     const is_simulator_abi = target.abi == .simulator;
     const sdk = switch (target.os.tag) {
         .driverkit => "driverkit",
@@ -46,16 +47,16 @@ pub fn getSdk(allocator: Allocator, target: *const Target) ?[]const u8 {
         else => return null,
     };
     const argv = &[_][]const u8{ "xcrun", "--sdk", sdk, "--show-sdk-path" };
-    const result = std.process.Child.run(.{ .allocator = allocator, .argv = argv }) catch return null;
+    const result = std.process.Child.run(gpa, io, .{ .argv = argv }) catch return null;
     defer {
-        allocator.free(result.stderr);
-        allocator.free(result.stdout);
+        gpa.free(result.stderr);
+        gpa.free(result.stdout);
     }
     switch (result.term) {
         .Exited => |code| if (code != 0) return null,
         else => return null,
     }
-    return allocator.dupe(u8, mem.trimEnd(u8, result.stdout, "\r\n")) catch null;
+    return gpa.dupe(u8, mem.trimEnd(u8, result.stdout, "\r\n")) catch null;
 }
 
 test {

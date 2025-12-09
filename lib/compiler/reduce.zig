@@ -307,11 +307,8 @@ fn termToInteresting(term: std.process.Child.Term) Interestingness {
     };
 }
 
-fn runCheck(arena: std.mem.Allocator, argv: []const []const u8) !Interestingness {
-    const result = try std.process.Child.run(.{
-        .allocator = arena,
-        .argv = argv,
-    });
+fn runCheck(arena: Allocator, io: Io, argv: []const []const u8) !Interestingness {
+    const result = try std.process.Child.run(arena, io, .{ .argv = argv });
     if (result.stderr.len != 0)
         std.debug.print("{s}", .{result.stderr});
     return termToInteresting(result.term);

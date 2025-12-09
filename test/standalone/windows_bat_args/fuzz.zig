@@ -1,5 +1,7 @@
-const std = @import("std");
 const builtin = @import("builtin");
+
+const std = @import("std");
+const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
 pub fn main() anyerror!void {
@@ -78,13 +80,13 @@ pub fn main() anyerror!void {
     }
 }
 
-fn testExec(gpa: std.mem.Allocator, args: []const []const u8, env: ?*std.process.EnvMap) !void {
-    try testExecBat(gpa, "args1.bat", args, env);
-    try testExecBat(gpa, "args2.bat", args, env);
-    try testExecBat(gpa, "args3.bat", args, env);
+fn testExec(gpa: Allocator, io: Io, args: []const []const u8, env: ?*std.process.EnvMap) !void {
+    try testExecBat(gpa, io, "args1.bat", args, env);
+    try testExecBat(gpa, io, "args2.bat", args, env);
+    try testExecBat(gpa, io, "args3.bat", args, env);
 }
 
-fn testExecBat(gpa: std.mem.Allocator, bat: []const u8, args: []const []const u8, env: ?*std.process.EnvMap) !void {
+fn testExecBat(gpa: Allocator, io: Io, bat: []const u8, args: []const []const u8, env: ?*std.process.EnvMap) !void {
     const argv = try gpa.alloc([]const u8, 1 + args.len);
     defer gpa.free(argv);
     argv[0] = bat;
@@ -92,8 +94,7 @@ fn testExecBat(gpa: std.mem.Allocator, bat: []const u8, args: []const []const u8
 
     const can_have_trailing_empty_args = std.mem.eql(u8, bat, "args3.bat");
 
-    const result = try std.process.Child.run(.{
-        .allocator = gpa,
+    const result = try std.process.Child.run(gpa, io, .{
         .env_map = env,
         .argv = argv,
     });

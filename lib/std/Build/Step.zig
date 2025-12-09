@@ -350,6 +350,7 @@ pub fn captureChildProcess(
     argv: []const []const u8,
 ) !std.process.Child.RunResult {
     const arena = s.owner.allocator;
+    const io = s.owner.graph.io;
 
     // If an error occurs, it's happened in this command:
     assert(s.result_failed_command == null);
@@ -358,8 +359,7 @@ pub fn captureChildProcess(
     try handleChildProcUnsupported(s);
     try handleVerbose(s.owner, null, argv);
 
-    const result = std.process.Child.run(.{
-        .allocator = arena,
+    const result = std.process.Child.run(arena, io, .{
         .argv = argv,
         .progress_node = progress_node,
     }) catch |err| return s.fail("failed to run {s}: {t}", .{ argv[0], err });

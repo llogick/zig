@@ -4017,8 +4017,7 @@ fn createModule(
             any_name_queries_remaining)
         {
             if (create_module.libc_installation == null) {
-                create_module.libc_installation = LibCInstallation.findNative(.{
-                    .allocator = arena,
+                create_module.libc_installation = LibCInstallation.findNative(arena, io, .{
                     .verbose = true,
                     .target = target,
                 }) catch |err| {

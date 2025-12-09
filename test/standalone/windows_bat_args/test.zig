@@ -1,4 +1,6 @@
 const std = @import("std");
+const Io = std.Io;
+const Allocator = std.mem.Allocator;
 
 pub fn main() anyerror!void {
     var debug_alloc_inst: std.heap.DebugAllocator(.{}) = .init;
@@ -121,17 +123,17 @@ pub fn main() anyerror!void {
     try std.testing.expectError(error.FileNotFound, tmp.dir.access("file.txt", .{}));
 }
 
-fn testExecError(err: anyerror, gpa: std.mem.Allocator, args: []const []const u8) !void {
+fn testExecError(err: anyerror, gpa: Allocator, args: []const []const u8) !void {
     return std.testing.expectError(err, testExec(gpa, args, null));
 }
 
-fn testExec(gpa: std.mem.Allocator, args: []const []const u8, env: ?*std.process.EnvMap) !void {
+fn testExec(gpa: Allocator, args: []const []const u8, env: ?*std.process.EnvMap) !void {
     try testExecBat(gpa, "args1.bat", args, env);
     try testExecBat(gpa, "args2.bat", args, env);
     try testExecBat(gpa, "args3.bat", args, env);
 }
 
-fn testExecBat(gpa: std.mem.Allocator, bat: []const u8, args: []const []const u8, env: ?*std.process.EnvMap) !void {
+fn testExecBat(gpa: Allocator, io: Io, bat: []const u8, args: []const []const u8, env: ?*std.process.EnvMap) !void {
     const argv = try gpa.alloc([]const u8, 1 + args.len);
     defer gpa.free(argv);
     argv[0] = bat;
@@ -139,8 +141,7 @@ fn testExecBat(gpa: std.mem.Allocator, bat: []const u8, args: []const []const u8
 
     const can_have_trailing_empty_args = std.mem.eql(u8, bat, "args3.bat");
 
-    const result = try std.process.Child.run(.{
-        .allocator = gpa,
+    const result = try std.process.Child.run(gpa, io, .{
         .env_map = env,
         .argv = argv,
     });

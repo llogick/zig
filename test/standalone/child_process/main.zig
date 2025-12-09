@@ -57,7 +57,7 @@ pub fn main() !void {
     // Check that FileNotFound is consistent across platforms when trying to spawn an executable that doesn't exist
     const missing_child_path = try std.mem.concat(gpa, u8, &.{ child_path, "_intentionally_missing" });
     defer gpa.free(missing_child_path);
-    try std.testing.expectError(error.FileNotFound, std.process.Child.run(.{ .allocator = gpa, .argv = &.{missing_child_path} }));
+    try std.testing.expectError(error.FileNotFound, std.process.Child.run(gpa, io, .{ .argv = &.{missing_child_path} }));
 }
 
 var parent_test_error = false;

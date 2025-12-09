@@ -78,7 +78,7 @@ pub fn main() !void {
             if (input_file) |libc_file| {
                 const libc = try arena.create(LibCInstallation);
                 libc.* = LibCInstallation.parse(arena, libc_file, &target) catch |err| {
-                    fatal("unable to parse libc file at path {s}: {s}", .{ libc_file, @errorName(err) });
+                    fatal("unable to parse libc file at path {s}: {t}", .{ libc_file, err });
                 };
                 break :libc libc;
             } else {
@@ -97,7 +97,7 @@ pub fn main() !void {
             libc_installation,
         ) catch |err| {
             const zig_target = try target.zigTriple(arena);
-            fatal("unable to detect libc for target {s}: {s}", .{ zig_target, @errorName(err) });
+            fatal("unable to detect libc for target {s}: {t}", .{ zig_target, err });
         };
 
         if (libc_dirs.libc_include_dir_list.len == 0) {
@@ -115,19 +115,18 @@ pub fn main() !void {
 
     if (input_file) |libc_file| {
         var libc = LibCInstallation.parse(gpa, libc_file, &target) catch |err| {
-            fatal("unable to parse libc file at path {s}: {s}", .{ libc_file, @errorName(err) });
+            fatal("unable to parse libc file at path {s}: {t}", .{ libc_file, err });
         };
         defer libc.deinit(gpa);
     } else {
         if (!target_query.canDetectLibC()) {
             fatal("unable to detect libc for non-native target", .{});
         }
-        var libc = LibCInstallation.findNative(.{
-            .allocator = gpa,
+        var libc = LibCInstallation.findNative(gpa, io, .{
             .verbose = true,
             .target = &target,
         }) catch |err| {
-            fatal("unable to detect native libc: {s}", .{@errorName(err)});
+            fatal("unable to detect native libc: {t}", .{err});
         };
         defer libc.deinit(gpa);
 
