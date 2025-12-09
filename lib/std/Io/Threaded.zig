@@ -12,7 +12,7 @@ const std = @import("../std.zig");
 const Io = std.Io;
 const net = std.Io.net;
 const File = std.Io.File;
-const Dir = std.Dir;
+const Dir = std.Io.Dir;
 const HostName = std.Io.net.HostName;
 const IpAddress = std.Io.net.IpAddress;
 const Allocator = std.mem.Allocator;
@@ -1614,13 +1614,14 @@ fn dirMakeOpenPathPosix(
     userdata: ?*anyopaque,
     dir: Dir,
     sub_path: []const u8,
+    permissions: Dir.Permissions,
     options: Dir.OpenOptions,
 ) Dir.MakeOpenPathError!Dir {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const t_io = ioBasic(t);
-    return dirOpenDirPosix(t, dir, sub_path, options) catch |err| switch (err) {
+    return dirOpenDirPosix(t, dir, sub_path, permissions, options) catch |err| switch (err) {
         error.FileNotFound => {
-            try dir.makePath(t_io, sub_path);
+            _ = try dir.makePathStatus(t_io, sub_path, permissions);
             return dirOpenDirPosix(t, dir, sub_path, options);
         },
         else => |e| return e,
@@ -1631,11 +1632,14 @@ fn dirMakeOpenPathWindows(
     userdata: ?*anyopaque,
     dir: Dir,
     sub_path: []const u8,
+    permissions: Dir.Permissions,
     options: Dir.OpenOptions,
 ) Dir.MakeOpenPathError!Dir {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
     const w = windows;
+
+    _ = permissions; // TODO apply these permissions
 
     var it = std.fs.path.componentIterator(sub_path);
     // If there are no components in the path, then create a dummy component with the full path.
@@ -1746,13 +1750,14 @@ fn dirMakeOpenPathWasi(
     userdata: ?*anyopaque,
     dir: Dir,
     sub_path: []const u8,
+    permissions: Dir.Permissions,
     options: Dir.OpenOptions,
 ) Dir.MakeOpenPathError!Dir {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const t_io = ioBasic(t);
     return dirOpenDirWasi(t, dir, sub_path, options) catch |err| switch (err) {
         error.FileNotFound => {
-            try dir.makePath(t_io, sub_path);
+            _ = try dir.makePathStatus(t_io, sub_path, permissions);
             return dirOpenDirWasi(t, dir, sub_path, options);
         },
         else => |e| return e,

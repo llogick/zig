@@ -334,8 +334,8 @@ fn buildWasmBinary(
     });
     defer poller.deinit();
 
-    try sendMessage(child.stdin.?, .update);
-    try sendMessage(child.stdin.?, .exit);
+    try sendMessage(io, child.stdin.?, .update);
+    try sendMessage(io, child.stdin.?, .exit);
 
     var result: ?Cache.Path = null;
     var result_error_bundle = std.zig.ErrorBundle.empty;
@@ -421,12 +421,12 @@ fn buildWasmBinary(
     };
 }
 
-fn sendMessage(file: std.Io.File, tag: std.zig.Client.Message.Tag) !void {
+fn sendMessage(io: Io, file: std.Io.File, tag: std.zig.Client.Message.Tag) !void {
     const header: std.zig.Client.Message.Header = .{
         .tag = tag,
         .bytes_len = 0,
     };
-    var w = file.writer(&.{});
+    var w = file.writer(io, &.{});
     w.interface.writeStruct(header, .little) catch |err| switch (err) {
         error.WriteFailed => return w.err.?,
     };

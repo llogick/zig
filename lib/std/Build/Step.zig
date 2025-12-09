@@ -519,19 +519,21 @@ pub fn installFile(s: *Step, src_lazy_path: Build.LazyPath, dest_path: []const u
 /// Wrapper around `Io.Dir.makePathStatus` that handles verbose and error output.
 pub fn installDir(s: *Step, dest_path: []const u8) !Io.Dir.MakePathStatus {
     const b = s.owner;
+    const io = b.graph.io;
     try handleVerbose(b, null, &.{ "install", "-d", dest_path });
-    return Io.Dir.cwd().makePathStatus(dest_path) catch |err|
+    return Io.Dir.cwd().makePathStatus(io, dest_path, .default_dir) catch |err|
         return s.fail("unable to create dir '{s}': {t}", .{ dest_path, err });
 }
 
 fn zigProcessUpdate(s: *Step, zp: *ZigProcess, watch: bool, web_server: ?*Build.WebServer, gpa: Allocator) !?Path {
     const b = s.owner;
     const arena = b.allocator;
+    const io = b.graph.io;
 
     var timer = try std.time.Timer.start();
 
-    try sendMessage(zp.child.stdin.?, .update);
-    if (!watch) try sendMessage(zp.child.stdin.?, .exit);
+    try sendMessage(io, zp.child.stdin.?, .update);
+    if (!watch) try sendMessage(io, zp.child.stdin.?, .exit);
 
     var result: ?Path = null;
 
@@ -668,12 +670,12 @@ fn clearZigProcess(s: *Step, gpa: Allocator) void {
     }
 }
 
-fn sendMessage(file: Io.File, tag: std.zig.Client.Message.Tag) !void {
+fn sendMessage(io: Io, file: Io.File, tag: std.zig.Client.Message.Tag) !void {
     const header: std.zig.Client.Message.Header = .{
         .tag = tag,
         .bytes_len = 0,
     };
-    var w = file.writer(&.{});
+    var w = file.writer(io, &.{});
     w.interface.writeStruct(header, .little) catch |err| switch (err) {
         error.WriteFailed => return w.err.?,
     };

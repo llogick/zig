@@ -242,7 +242,7 @@ pub fn buildImportLib(comp: *Compilation, lib_name: []const u8) !void {
     defer arena_allocator.deinit();
     const arena = arena_allocator.allocator();
 
-    const def_file_path = findDef(arena, comp.getTarget(), comp.dirs.zig_lib, lib_name) catch |err| switch (err) {
+    const def_file_path = findDef(arena, io, comp.getTarget(), comp.dirs.zig_lib, lib_name) catch |err| switch (err) {
         error.FileNotFound => {
             log.debug("no {s}.def file available to make a DLL import {s}.lib", .{ lib_name, lib_name });
             // In this case we will end up putting foo.lib onto the linker line and letting the linker
@@ -402,11 +402,12 @@ pub fn buildImportLib(comp: *Compilation, lib_name: []const u8) !void {
 
 pub fn libExists(
     allocator: Allocator,
+    io: Io,
     target: *const std.Target,
     zig_lib_directory: Cache.Directory,
     lib_name: []const u8,
 ) !bool {
-    const s = findDef(allocator, target, zig_lib_directory, lib_name) catch |err| switch (err) {
+    const s = findDef(allocator, io, target, zig_lib_directory, lib_name) catch |err| switch (err) {
         error.FileNotFound => return false,
         else => |e| return e,
     };
@@ -418,6 +419,7 @@ pub fn libExists(
 /// see if a .def file exists.
 fn findDef(
     allocator: Allocator,
+    io: Io,
     target: *const std.Target,
     zig_lib_directory: Cache.Directory,
     lib_name: []const u8,
@@ -443,7 +445,7 @@ fn findDef(
         } else {
             try override_path.print(fmt_path, .{ lib_path, lib_name });
         }
-        if (Io.Dir.cwd().access(override_path.items, .{})) |_| {
+        if (Io.Dir.cwd().access(io, override_path.items, .{})) |_| {
             return override_path.toOwnedSlice();
         } else |err| switch (err) {
             error.FileNotFound => {},
@@ -460,7 +462,7 @@ fn findDef(
         } else {
             try override_path.print(fmt_path, .{lib_name});
         }
-        if (Io.Dir.cwd().access(override_path.items, .{})) |_| {
+        if (Io.Dir.cwd().access(io, override_path.items, .{})) |_| {
             return override_path.toOwnedSlice();
         } else |err| switch (err) {
             error.FileNotFound => {},
@@ -477,7 +479,7 @@ fn findDef(
         } else {
             try override_path.print(fmt_path, .{lib_name});
         }
-        if (Io.Dir.cwd().access(override_path.items, .{})) |_| {
+        if (Io.Dir.cwd().access(io, override_path.items, .{})) |_| {
             return override_path.toOwnedSlice();
         } else |err| switch (err) {
             error.FileNotFound => {},

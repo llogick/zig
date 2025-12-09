@@ -3208,6 +3208,7 @@ fn buildOutputType(
 
             for (create_module.framework_dirs.items) |framework_dir_path| {
                 if (try accessFrameworkPath(
+                    io,
                     &test_path,
                     &checked_paths,
                     framework_dir_path,
@@ -6626,7 +6627,7 @@ fn warnAboutForeignBinaries(
     const host_query: std.Target.Query = .{};
     const host_target = std.zig.resolveTargetQueryOrFatal(io, host_query);
 
-    switch (std.zig.system.getExternalExecutor(&host_target, target, .{ .link_libc = link_libc })) {
+    switch (std.zig.system.getExternalExecutor(io, &host_target, target, .{ .link_libc = link_libc })) {
         .native => return,
         .rosetta => {
             const host_name = try host_target.zigTriple(arena);
@@ -6832,6 +6833,7 @@ const ClangSearchSanitizer = struct {
 };
 
 fn accessFrameworkPath(
+    io: Io,
     test_path: *std.array_list.Managed(u8),
     checked_paths: *std.array_list.Managed(u8),
     framework_dir_path: []const u8,
@@ -6845,7 +6847,7 @@ fn accessFrameworkPath(
             framework_dir_path, framework_name, framework_name, ext,
         });
         try checked_paths.print("\n {s}", .{test_path.items});
-        Io.Dir.cwd().access(test_path.items, .{}) catch |err| switch (err) {
+        Io.Dir.cwd().access(io, test_path.items, .{}) catch |err| switch (err) {
             error.FileNotFound => continue,
             else => |e| fatal("unable to search for {s} framework '{s}': {s}", .{
                 ext, test_path.items, @errorName(e),
@@ -7280,7 +7282,7 @@ fn findBuildRoot(arena: Allocator, io: Io, options: FindBuildRootOptions) !Build
     var dirname: []const u8 = cwd_path;
     while (true) {
         const joined_path = try fs.path.join(arena, &[_][]const u8{ dirname, build_zig_basename });
-        if (Io.Dir.cwd().access(joined_path, .{})) |_| {
+        if (Io.Dir.cwd().access(io, joined_path, .{})) |_| {
             const dir = Io.Dir.cwd().openDir(io, dirname, .{}) catch |err| {
                 fatal("unable to open directory while searching for build.zig file, '{s}': {s}", .{ dirname, @errorName(err) });
             };

@@ -371,6 +371,7 @@ pub fn flush(self: *C, arena: Allocator, tid: Zcu.PerThread.Id, prog_node: std.P
     const comp = self.base.comp;
     const diags = &comp.link_diags;
     const gpa = comp.gpa;
+    const io = comp.io;
     const zcu = self.base.comp.zcu.?;
     const ip = &zcu.intern_pool;
     const pt: Zcu.PerThread = .activate(zcu, tid);
@@ -509,7 +510,7 @@ pub fn flush(self: *C, arena: Allocator, tid: Zcu.PerThread.Id, prog_node: std.P
 
     const file = self.base.file.?;
     file.setEndPos(f.file_size) catch |err| return diags.fail("failed to allocate file: {s}", .{@errorName(err)});
-    var fw = file.writer(&.{});
+    var fw = file.writer(io, &.{});
     var w = &fw.interface;
     w.writeVecAll(f.all_buffers.items) catch |err| switch (err) {
         error.WriteFailed => return diags.fail("failed to write to '{f}': {s}", .{

@@ -359,6 +359,7 @@ fn linkAsArchive(lld: *Lld, arena: Allocator) !void {
 fn coffLink(lld: *Lld, arena: Allocator) !void {
     const comp = lld.base.comp;
     const gpa = comp.gpa;
+    const io = comp.io;
     const base = &lld.base;
     const coff = &lld.ofmt.coff;
 
@@ -718,13 +719,13 @@ fn coffLink(lld: *Lld, arena: Allocator) !void {
                 argv.appendAssumeCapacity(try crt_file.full_object_path.toString(arena));
                 continue;
             }
-            if (try findLib(arena, lib_basename, coff.lib_directories)) |full_path| {
+            if (try findLib(arena, io, lib_basename, coff.lib_directories)) |full_path| {
                 argv.appendAssumeCapacity(full_path);
                 continue;
             }
             if (target.abi.isGnu()) {
                 const fallback_name = try allocPrint(arena, "lib{s}.dll.a", .{key});
-                if (try findLib(arena, fallback_name, coff.lib_directories)) |full_path| {
+                if (try findLib(arena, io, fallback_name, coff.lib_directories)) |full_path| {
                     argv.appendAssumeCapacity(full_path);
                     continue;
                 }
@@ -741,9 +742,9 @@ fn coffLink(lld: *Lld, arena: Allocator) !void {
         try spawnLld(comp, arena, argv.items);
     }
 }
-fn findLib(arena: Allocator, name: []const u8, lib_directories: []const Cache.Directory) !?[]const u8 {
+fn findLib(arena: Allocator, io: Io, name: []const u8, lib_directories: []const Cache.Directory) !?[]const u8 {
     for (lib_directories) |lib_directory| {
-        lib_directory.handle.access(name, .{}) catch |err| switch (err) {
+        lib_directory.handle.access(io, name, .{}) catch |err| switch (err) {
             error.FileNotFound => continue,
             else => |e| return e,
         };

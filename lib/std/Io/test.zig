@@ -30,7 +30,7 @@ test "write a file, read it, then delete it" {
         var file = try tmp.dir.createFile(io, tmp_file_name, .{});
         defer file.close(io);
 
-        var file_writer = file.writer(&.{});
+        var file_writer = file.writer(io, &.{});
         const st = &file_writer.interface;
         try st.print("begin", .{});
         try st.writeAll(&data);

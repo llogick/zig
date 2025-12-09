@@ -829,7 +829,8 @@ pub fn resolveLibSystem(
     comp: *Compilation,
     out_libs: anytype,
 ) !void {
-    const diags = &self.base.comp.link_diags;
+    const io = comp.io;
+    const diags = &comp.link_diags;
 
     var test_path = std.array_list.Managed(u8).init(arena);
     var checked_paths = std.array_list.Managed([]const u8).init(arena);
@@ -838,16 +839,16 @@ pub fn resolveLibSystem(
         if (self.sdk_layout) |sdk_layout| switch (sdk_layout) {
             .sdk => {
                 const dir = try fs.path.join(arena, &.{ comp.sysroot.?, "usr", "lib" });
-                if (try accessLibPath(arena, &test_path, &checked_paths, dir, "System")) break :success;
+                if (try accessLibPath(arena, io, &test_path, &checked_paths, dir, "System")) break :success;
             },
             .vendored => {
                 const dir = try comp.dirs.zig_lib.join(arena, &.{ "libc", "darwin" });
-                if (try accessLibPath(arena, &test_path, &checked_paths, dir, "System")) break :success;
+                if (try accessLibPath(arena, io, &test_path, &checked_paths, dir, "System")) break :success;
             },
         };
 
         for (self.lib_directories) |directory| {
-            if (try accessLibPath(arena, &test_path, &checked_paths, directory.path orelse ".", "System")) break :success;
+            if (try accessLibPath(arena, io, &test_path, &checked_paths, directory.path orelse ".", "System")) break :success;
         }
 
         diags.addMissingLibraryError(checked_paths.items, "unable to find libSystem system library", .{});
@@ -1074,6 +1075,7 @@ fn isHoisted(self: *MachO, install_name: []const u8) bool {
 /// TODO delete this, libraries must be instead resolved when instantiating the compilation pipeline
 fn accessLibPath(
     arena: Allocator,
+    io: Io,
     test_path: *std.array_list.Managed(u8),
     checked_paths: *std.array_list.Managed([]const u8),
     search_dir: []const u8,
@@ -1085,7 +1087,7 @@ fn accessLibPath(
         test_path.clearRetainingCapacity();
         try test_path.print("{s}" ++ sep ++ "lib{s}{s}", .{ search_dir, name, ext });
         try checked_paths.append(try arena.dupe(u8, test_path.items));
-        Io.Dir.cwd().access(test_path.items, .{}) catch |err| switch (err) {
+        Io.Dir.cwd().access(io, test_path.items, .{}) catch |err| switch (err) {
             error.FileNotFound => continue,
             else => |e| return e,
         };
@@ -1097,6 +1099,7 @@ fn accessLibPath(
 
 fn accessFrameworkPath(
     arena: Allocator,
+    io: Io,
     test_path: *std.array_list.Managed(u8),
     checked_paths: *std.array_list.Managed([]const u8),
     search_dir: []const u8,
@@ -1113,7 +1116,7 @@ fn accessFrameworkPath(
             ext,
         });
         try checked_paths.append(try arena.dupe(u8, test_path.items));
-        Io.Dir.cwd().access(test_path.items, .{}) catch |err| switch (err) {
+        Io.Dir.cwd().access(io, test_path.items, .{}) catch |err| switch (err) {
             error.FileNotFound => continue,
             else => |e| return e,
         };
@@ -1172,14 +1175,14 @@ fn parseDependentDylibs(self: *MachO) !void {
                     // Framework
                     for (framework_dirs) |dir| {
                         test_path.clearRetainingCapacity();
-                        if (try accessFrameworkPath(arena, &test_path, &checked_paths, dir, stem)) break :full_path test_path.items;
+                        if (try accessFrameworkPath(arena, io, &test_path, &checked_paths, dir, stem)) break :full_path test_path.items;
                     }
 
                     // Library
                     const lib_name = eatPrefix(stem, "lib") orelse stem;
                     for (lib_directories) |lib_directory| {
                         test_path.clearRetainingCapacity();
-                        if (try accessLibPath(arena, &test_path, &checked_paths, lib_directory.path orelse ".", lib_name)) break :full_path test_path.items;
+                        if (try accessLibPath(arena, io, &test_path, &checked_paths, lib_directory.path orelse ".", lib_name)) break :full_path test_path.items;
                     }
                 }
 
@@ -1194,7 +1197,7 @@ fn parseDependentDylibs(self: *MachO) !void {
                             try test_path.print("{s}{s}", .{ path, ext });
                         }
                         try checked_paths.append(try arena.dupe(u8, test_path.items));
-                        Io.Dir.cwd().access(test_path.items, .{}) catch |err| switch (err) {
+                        Io.Dir.cwd().access(io, test_path.items, .{}) catch |err| switch (err) {
                             error.FileNotFound => continue,
                             else => |e| return e,
                         };

@@ -376,7 +376,7 @@ test "mmap" {
         const file = try tmp.dir.createFile(io, test_out_file, .{});
         defer file.close(io);
 
-        var stream = file.writer(&.{});
+        var stream = file.writer(io, &.{});
 
         var i: usize = 0;
         while (i < alloc_size / @sizeOf(u32)) : (i += 1) {
@@ -741,6 +741,8 @@ test "access smoke test" {
     if (native_os == .windows) return error.SkipZigTest;
     if (native_os == .openbsd) return error.SkipZigTest;
 
+    const io = testing.io;
+
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
@@ -761,9 +763,9 @@ test "access smoke test" {
         const file_path = try fs.path.join(a, &.{ base_path, "some_file" });
         defer a.free(file_path);
         if (native_os == .windows) {
-            try posix.access(file_path, posix.F_OK);
+            try posix.access(io, file_path, posix.F_OK);
         } else {
-            try posix.access(file_path, posix.F_OK | posix.W_OK | posix.R_OK);
+            try posix.access(io, file_path, posix.F_OK | posix.W_OK | posix.R_OK);
         }
     }
 
@@ -771,7 +773,7 @@ test "access smoke test" {
         // Try to access() a non-existent file - should fail with error.FileNotFound
         const file_path = try fs.path.join(a, &.{ base_path, "some_other_file" });
         defer a.free(file_path);
-        try expectError(error.FileNotFound, posix.access(file_path, posix.F_OK));
+        try expectError(error.FileNotFound, posix.access(io, file_path, posix.F_OK));
     }
 
     {
@@ -786,7 +788,7 @@ test "access smoke test" {
         const file_path = try fs.path.join(a, &.{ base_path, "some_dir" });
         defer a.free(file_path);
 
-        try posix.access(file_path, posix.F_OK);
+        try posix.access(io, file_path, posix.F_OK);
     }
 }
 

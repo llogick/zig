@@ -71,7 +71,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
     defer src_dir.close(io);
     var it = try src_dir.walk(arena);
     var all_cached = true;
-    next_entry: while (try it.next()) |entry| {
+    next_entry: while (try it.next(io)) |entry| {
         for (install_dir.options.exclude_extensions) |ext| {
             if (mem.endsWith(u8, entry.path, ext)) continue :next_entry;
         }

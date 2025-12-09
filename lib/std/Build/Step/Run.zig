@@ -1310,7 +1310,7 @@ fn runCommand(
             const need_cross_libc = exe.is_linking_libc and
                 (root_target.isGnuLibC() or (root_target.isMuslLibC() and exe.linkage == .dynamic));
             const other_target = exe.root_module.resolved_target.?.result;
-            switch (std.zig.system.getExternalExecutor(&b.graph.host.result, &other_target, .{
+            switch (std.zig.system.getExternalExecutor(io, &b.graph.host.result, &other_target, .{
                 .qemu_fixes_dl = need_cross_libc and b.libc_runtimes_dir != null,
                 .link_libc = exe.is_linking_libc,
             })) {
@@ -1702,7 +1702,7 @@ fn evalZigTest(
         });
         var child_killed = false;
         defer if (!child_killed) {
-            _ = child.kill() catch {};
+            _ = child.kill(io) catch {};
             poller.deinit();
             run.step.result_peak_rss = @max(
                 run.step.result_peak_rss,
@@ -1732,7 +1732,7 @@ fn evalZigTest(
                 child.stdin = null;
                 poller.deinit();
                 child_killed = true;
-                const term = try child.wait();
+                const term = try child.wait(io);
                 run.step.result_peak_rss = @max(
                     run.step.result_peak_rss,
                     child.resource_usage_statistics.getMaxRss() orelse 0,
@@ -1752,7 +1752,7 @@ fn evalZigTest(
                 child.stdin = null;
                 poller.deinit();
                 child_killed = true;
-                const term = try child.wait();
+                const term = try child.wait(io);
                 run.step.result_peak_rss = @max(
                     run.step.result_peak_rss,
                     child.resource_usage_statistics.getMaxRss() orelse 0,
@@ -1840,6 +1840,7 @@ fn pollZigTest(
         switch (ctx.fuzz.mode) {
             .forever => {
                 sendRunFuzzTestMessage(
+                    io,
                     child.stdin.?,
                     ctx.unit_test_index,
                     .forever,
@@ -1848,6 +1849,7 @@ fn pollZigTest(
             },
             .limit => |limit| {
                 sendRunFuzzTestMessage(
+                    io,
                     child.stdin.?,
                     ctx.unit_test_index,
                     .iterations,
@@ -1857,11 +1859,11 @@ fn pollZigTest(
         }
     } else if (opt_metadata.*) |*md| {
         // Previous unit test process died or was killed; we're continuing where it left off
-        requestNextTest(child.stdin.?, md, &sub_prog_node) catch |err| return .{ .write_failed = err };
+        requestNextTest(io, child.stdin.?, md, &sub_prog_node) catch |err| return .{ .write_failed = err };
     } else {
         // Running unit tests normally
         run.fuzz_tests.clearRetainingCapacity();
-        sendMessage(child.stdin.?, .query_test_metadata) catch |err| return .{ .write_failed = err };
+        sendMessage(io, child.stdin.?, .query_test_metadata) catch |err| return .{ .write_failed = err };
     }
 
     var active_test_index: ?u32 = null;
@@ -1977,7 +1979,7 @@ fn pollZigTest(
                 active_test_index = null;
                 if (timer) |*t| t.reset();
 
-                requestNextTest(child.stdin.?, &opt_metadata.*.?, &sub_prog_node) catch |err| return .{ .write_failed = err };
+                requestNextTest(io, child.stdin.?, &opt_metadata.*.?, &sub_prog_node) catch |err| return .{ .write_failed = err };
             },
             .test_started => {
                 active_test_index = opt_metadata.*.?.next_index - 1;
@@ -2026,7 +2028,7 @@ fn pollZigTest(
                 active_test_index = null;
                 if (timer) |*t| md.ns_per_test[tr_hdr.index] = t.lap();
 
-                requestNextTest(child.stdin.?, md, &sub_prog_node) catch |err| return .{ .write_failed = err };
+                requestNextTest(io, child.stdin.?, md, &sub_prog_node) catch |err| return .{ .write_failed = err };
             },
             .coverage_id => {
                 coverage_id = body_r.takeInt(u64, .little) catch unreachable;
@@ -2097,7 +2099,7 @@ pub const CachedTestMetadata = struct {
     }
 };
 
-fn requestNextTest(in: Io.File, metadata: *TestMetadata, sub_prog_node: *?std.Progress.Node) !void {
+fn requestNextTest(io: Io, in: Io.File, metadata: *TestMetadata, sub_prog_node: *?std.Progress.Node) !void {
     while (metadata.next_index < metadata.names.len) {
         const i = metadata.next_index;
         metadata.next_index += 1;
@@ -2108,31 +2110,31 @@ fn requestNextTest(in: Io.File, metadata: *TestMetadata, sub_prog_node: *?std.Pr
         if (sub_prog_node.*) |n| n.end();
         sub_prog_node.* = metadata.prog_node.start(name, 0);
 
-        try sendRunTestMessage(in, .run_test, i);
+        try sendRunTestMessage(io, in, .run_test, i);
         return;
     } else {
         metadata.next_index = std.math.maxInt(u32); // indicate that all tests are done
-        try sendMessage(in, .exit);
+        try sendMessage(io, in, .exit);
     }
 }
 
-fn sendMessage(file: Io.File, tag: std.zig.Client.Message.Tag) !void {
+fn sendMessage(io: Io, file: Io.File, tag: std.zig.Client.Message.Tag) !void {
     const header: std.zig.Client.Message.Header = .{
         .tag = tag,
         .bytes_len = 0,
     };
-    var w = file.writer(&.{});
+    var w = file.writer(io, &.{});
     w.interface.writeStruct(header, .little) catch |err| switch (err) {
         error.WriteFailed => return w.err.?,
     };
 }
 
-fn sendRunTestMessage(file: Io.File, tag: std.zig.Client.Message.Tag, index: u32) !void {
+fn sendRunTestMessage(io: Io, file: Io.File, tag: std.zig.Client.Message.Tag, index: u32) !void {
     const header: std.zig.Client.Message.Header = .{
         .tag = tag,
         .bytes_len = 4,
     };
-    var w = file.writer(&.{});
+    var w = file.writer(io, &.{});
     w.interface.writeStruct(header, .little) catch |err| switch (err) {
         error.WriteFailed => return w.err.?,
     };
@@ -2142,6 +2144,7 @@ fn sendRunTestMessage(file: Io.File, tag: std.zig.Client.Message.Tag, index: u32
 }
 
 fn sendRunFuzzTestMessage(
+    io: Io,
     file: Io.File,
     index: u32,
     kind: std.Build.abi.fuzz.LimitKind,
@@ -2151,7 +2154,7 @@ fn sendRunFuzzTestMessage(
         .tag = .start_fuzzing,
         .bytes_len = 4 + 1 + 8,
     };
-    var w = file.writer(&.{});
+    var w = file.writer(io, &.{});
     w.interface.writeStruct(header, .little) catch |err| switch (err) {
         error.WriteFailed => return w.err.?,
     };
@@ -2172,14 +2175,14 @@ fn evalGeneric(run: *Run, child: *std.process.Child) !EvalGenericResult {
     const arena = b.allocator;
 
     try child.spawn();
-    errdefer _ = child.kill() catch {};
+    errdefer _ = child.kill(io) catch {};
 
     try child.waitForSpawn();
 
     switch (run.stdin) {
         .bytes => |bytes| {
-            child.stdin.?.writeAll(bytes) catch |err| {
-                return run.step.fail("unable to write stdin: {s}", .{@errorName(err)});
+            child.stdin.?.writeStreamingAll(io, bytes) catch |err| {
+                return run.step.fail("unable to write stdin: {t}", .{err});
             };
             child.stdin.?.close(io);
             child.stdin = null;
@@ -2187,14 +2190,14 @@ fn evalGeneric(run: *Run, child: *std.process.Child) !EvalGenericResult {
         .lazy_path => |lazy_path| {
             const path = lazy_path.getPath3(b, &run.step);
             const file = path.root_dir.handle.openFile(io, path.subPathOrDot(), .{}) catch |err| {
-                return run.step.fail("unable to open stdin file: {s}", .{@errorName(err)});
+                return run.step.fail("unable to open stdin file: {t}", .{err});
             };
             defer file.close(io);
             // TODO https://github.com/ziglang/zig/issues/23955
             var read_buffer: [1024]u8 = undefined;
             var file_reader = file.reader(io, &read_buffer);
             var write_buffer: [1024]u8 = undefined;
-            var stdin_writer = child.stdin.?.writer(&write_buffer);
+            var stdin_writer = child.stdin.?.writer(io, &write_buffer);
             _ = stdin_writer.interface.sendFileAll(&file_reader, .unlimited) catch |err| switch (err) {
                 error.ReadFailed => return run.step.fail("failed to read from {f}: {t}", .{
                     path, file_reader.err.?,
@@ -2267,7 +2270,7 @@ fn evalGeneric(run: *Run, child: *std.process.Child) !EvalGenericResult {
     run.step.result_peak_rss = child.resource_usage_statistics.getMaxRss() orelse 0;
 
     return .{
-        .term = try child.wait(),
+        .term = try child.wait(io),
         .stdout = stdout_bytes,
         .stderr = stderr_bytes,
     };

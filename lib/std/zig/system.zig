@@ -40,6 +40,7 @@ pub const GetExternalExecutorOptions = struct {
 /// Return whether or not the given host is capable of running executables of
 /// the other target.
 pub fn getExternalExecutor(
+    io: Io,
     host: *const std.Target,
     candidate: *const std.Target,
     options: GetExternalExecutorOptions,
@@ -70,7 +71,7 @@ pub fn getExternalExecutor(
     if (os_match and cpu_ok) native: {
         if (options.link_libc) {
             if (candidate.dynamic_linker.get()) |candidate_dl| {
-                Io.Dir.cwd().access(candidate_dl, .{}) catch {
+                Io.Dir.cwd().access(io, candidate_dl, .{}) catch {
                     bad_result = .{ .bad_dl = candidate_dl };
                     break :native;
                 };

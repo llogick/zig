@@ -501,7 +501,7 @@ pub fn addBuiltinIncludeDir(tc: *const Toolchain) !void {
     try d.includes.ensureUnusedCapacity(gpa, 1);
     if (d.resource_dir) |resource_dir| {
         const path = try std.fs.path.join(arena, &.{ resource_dir, "include" });
-        comp.cwd.access(path, .{}) catch {
+        comp.cwd.access(io, path, .{}) catch {
             return d.fatal("Aro builtin headers not found in provided -resource-dir", .{});
         };
         d.includes.appendAssumeCapacity(.{ .kind = .system, .path = path });
@@ -512,7 +512,7 @@ pub fn addBuiltinIncludeDir(tc: *const Toolchain) !void {
         var base_dir = d.comp.cwd.openDir(io, dirname, .{}) catch continue;
         defer base_dir.close(io);
 
-        base_dir.access("include/stddef.h", .{}) catch continue;
+        base_dir.access(io, "include/stddef.h", .{}) catch continue;
         const path = try std.fs.path.join(arena, &.{ dirname, "include" });
         d.includes.appendAssumeCapacity(.{ .kind = .system, .path = path });
         break;
@@ -524,12 +524,14 @@ pub fn addBuiltinIncludeDir(tc: *const Toolchain) !void {
 /// Otherwise returns a slice of `buf`. If the file is larger than `buf` partial contents are returned
 pub fn readFile(tc: *const Toolchain, path: []const u8, buf: []u8) ?[]const u8 {
     const comp = tc.driver.comp;
-    return comp.cwd.readFile(comp.io, path, buf) catch null;
+    const io = comp.io;
+    return comp.cwd.readFile(io, path, buf) catch null;
 }
 
 pub fn exists(tc: *const Toolchain, path: []const u8) bool {
     const comp = tc.driver.comp;
-    comp.cwd.access(comp.io, path, .{}) catch return false;
+    const io = comp.io;
+    comp.cwd.access(io, path, .{}) catch return false;
     return true;
 }
 
@@ -547,7 +549,8 @@ pub fn canExecute(tc: *const Toolchain, path: []const u8) bool {
     }
 
     const comp = tc.driver.comp;
-    comp.cwd.access(comp.io, path, .{ .execute = true }) catch return false;
+    const io = comp.io;
+    comp.cwd.access(io, path, .{ .execute = true }) catch return false;
     // Todo: ensure path is not a directory
     return true;
 }

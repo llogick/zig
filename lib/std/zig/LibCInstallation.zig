@@ -357,7 +357,7 @@ fn findNativeIncludeDirPosix(self: *LibCInstallation, args: FindNativeOptions) F
         }
 
         if (self.sys_include_dir == null) {
-            if (search_dir.access(sys_include_dir_example_file, .{})) |_| {
+            if (search_dir.access(io, sys_include_dir_example_file, .{})) |_| {
                 self.sys_include_dir = try allocator.dupeZ(u8, search_path);
             } else |err| switch (err) {
                 error.FileNotFound => {},
@@ -402,7 +402,7 @@ fn findNativeIncludeDirWindows(
         };
         defer dir.close(io);
 
-        dir.access("stdlib.h", .{}) catch |err| switch (err) {
+        dir.access(io, "stdlib.h", .{}) catch |err| switch (err) {
             error.FileNotFound => continue,
             else => return error.FileSystem,
         };
@@ -450,7 +450,7 @@ fn findNativeCrtDirWindows(
         };
         defer dir.close(io);
 
-        dir.access("ucrt.lib", .{}) catch |err| switch (err) {
+        dir.access(io, "ucrt.lib", .{}) catch |err| switch (err) {
             error.FileNotFound => continue,
             else => return error.FileSystem,
         };
@@ -518,7 +518,7 @@ fn findNativeKernel32LibDir(
         };
         defer dir.close(io);
 
-        dir.access("kernel32.lib", .{}) catch |err| switch (err) {
+        dir.access(io, "kernel32.lib", .{}) catch |err| switch (err) {
             error.FileNotFound => continue,
             else => return error.FileSystem,
         };
@@ -554,7 +554,7 @@ fn findNativeMsvcIncludeDir(
     };
     defer dir.close(io);
 
-    dir.access("vcruntime.h", .{}) catch |err| switch (err) {
+    dir.access(io, "vcruntime.h", .{}) catch |err| switch (err) {
         error.FileNotFound => return error.LibCStdLibHeaderNotFound,
         else => return error.FileSystem,
     };

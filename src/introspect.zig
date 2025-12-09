@@ -202,11 +202,11 @@ pub const default_local_zig_cache_basename = ".zig-cache";
 /// Searches upwards from `cwd` for a directory containing a `build.zig` file.
 /// If such a directory is found, returns the path to it joined to the `.zig_cache` name.
 /// Otherwise, returns `null`, indicating no suitable local cache location.
-pub fn resolveSuitableLocalCacheDir(arena: Allocator, cwd: []const u8) Allocator.Error!?[]u8 {
+pub fn resolveSuitableLocalCacheDir(arena: Allocator, io: Io, cwd: []const u8) Allocator.Error!?[]u8 {
     var cur_dir = cwd;
     while (true) {
         const joined = try fs.path.join(arena, &.{ cur_dir, Package.build_zig_basename });
-        if (Io.Dir.cwd().access(joined, .{})) |_| {
+        if (Io.Dir.cwd().access(io, joined, .{})) |_| {
             return try fs.path.join(arena, &.{ cur_dir, default_local_zig_cache_basename });
         } else |err| switch (err) {
             error.FileNotFound => {

@@ -788,7 +788,7 @@ pub const Directories = struct {
         const local_cache: Cache.Directory = switch (local_cache_strat) {
             .override => |path| openUnresolved(arena, io, cwd, path, .@"local cache"),
             .search => d: {
-                const maybe_path = introspect.resolveSuitableLocalCacheDir(arena, cwd) catch |err| {
+                const maybe_path = introspect.resolveSuitableLocalCacheDir(arena, io, cwd) catch |err| {
                     fatal("unable to resolve zig cache directory: {s}", .{@errorName(err)});
                 };
                 const path = maybe_path orelse break :d global_cache;

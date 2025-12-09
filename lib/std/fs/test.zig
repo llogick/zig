@@ -1206,8 +1206,8 @@ test "deleteTree does not follow symlinks" {
 
     try tmp.dir.deleteTree("a");
 
-    try testing.expectError(error.FileNotFound, tmp.dir.access("a", .{}));
-    try tmp.dir.access("b", .{});
+    try testing.expectError(error.FileNotFound, tmp.dir.access(io, "a", .{}));
+    try tmp.dir.access(io, "b", .{});
 }
 
 test "deleteTree on a symlink" {
@@ -1221,16 +1221,16 @@ test "deleteTree on a symlink" {
     try setupSymlink(tmp.dir, "file", "filelink", .{});
 
     try tmp.dir.deleteTree("filelink");
-    try testing.expectError(error.FileNotFound, tmp.dir.access("filelink", .{}));
-    try tmp.dir.access("file", .{});
+    try testing.expectError(error.FileNotFound, tmp.dir.access(io, "filelink", .{}));
+    try tmp.dir.access(io, "file", .{});
 
     // Symlink to a directory
     try tmp.dir.makePath(io, "dir");
     try setupSymlink(tmp.dir, "dir", "dirlink", .{ .is_directory = true });
 
     try tmp.dir.deleteTree("dirlink");
-    try testing.expectError(error.FileNotFound, tmp.dir.access("dirlink", .{}));
-    try tmp.dir.access("dir", .{});
+    try testing.expectError(error.FileNotFound, tmp.dir.access(io, "dirlink", .{}));
+    try tmp.dir.access(io, "dir", .{});
 }
 
 test "makePath, put some files in it, deleteTree" {
@@ -1358,8 +1358,8 @@ test "makepath relative walks" {
             // On Windows, .. is resolved before passing the path to NtCreateFile,
             // meaning everything except `first/C` drops out.
             try expectDir(io, tmp.dir, "first" ++ fs.path.sep_str ++ "C");
-            try testing.expectError(error.FileNotFound, tmp.dir.access("second", .{}));
-            try testing.expectError(error.FileNotFound, tmp.dir.access("third", .{}));
+            try testing.expectError(error.FileNotFound, tmp.dir.access(io, "second", .{}));
+            try testing.expectError(error.FileNotFound, tmp.dir.access(io, "third", .{}));
         },
         else => {
             try expectDir(io, tmp.dir, "first" ++ fs.path.sep_str ++ "A");
@@ -1561,10 +1561,10 @@ test "access file" {
             const file_path = try ctx.transformPath("os_test_tmp" ++ fs.path.sep_str ++ "file.txt");
 
             try ctx.dir.makePath(io, dir_path);
-            try testing.expectError(error.FileNotFound, ctx.dir.access(file_path, .{}));
+            try testing.expectError(error.FileNotFound, ctx.dir.access(io, file_path, .{}));
 
             try ctx.dir.writeFile(.{ .sub_path = file_path, .data = "" });
-            try ctx.dir.access(file_path, .{});
+            try ctx.dir.access(io, file_path, .{});
             try ctx.dir.deleteTree(dir_path);
         }
     }.impl);
@@ -2036,13 +2036,13 @@ test "'.' and '..' in Io.Dir functions" {
             const update_path = try ctx.transformPath("./subdir/../update");
 
             try ctx.dir.makeDir(subdir_path);
-            try ctx.dir.access(subdir_path, .{});
+            try ctx.dir.access(io, subdir_path, .{});
             var created_subdir = try ctx.dir.openDir(io, subdir_path, .{});
             created_subdir.close(io);
 
             const created_file = try ctx.dir.createFile(io, file_path, .{});
             created_file.close(io);
-            try ctx.dir.access(file_path, .{});
+            try ctx.dir.access(io, file_path, .{});
 
             try ctx.dir.copyFile(file_path, ctx.dir, copy_path, .{});
             try ctx.dir.rename(copy_path, rename_path);

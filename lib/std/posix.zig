@@ -2842,67 +2842,6 @@ pub fn msync(memory: []align(page_size_min) u8, flags: i32) MSyncError!void {
     }
 }
 
-pub const AccessError = error{
-    AccessDenied,
-    PermissionDenied,
-    FileNotFound,
-    NameTooLong,
-    InputOutput,
-    SystemResources,
-    FileBusy,
-    SymLinkLoop,
-    ReadOnlyFileSystem,
-    /// WASI: file paths must be valid UTF-8.
-    /// Windows: file paths provided by the user must be valid WTF-8.
-    /// https://wtf-8.codeberg.page/
-    BadPathName,
-    Canceled,
-} || UnexpectedError;
-
-/// check user's permissions for a file
-///
-/// * On Windows, asserts `path` is valid [WTF-8](https://wtf-8.codeberg.page/).
-/// * On WASI, invalid UTF-8 passed to `path` causes `error.BadPathName`.
-/// * On other platforms, `path` is an opaque sequence of bytes with no particular encoding.
-///
-/// On Windows, `mode` is ignored. This is a POSIX API that is only partially supported by
-/// Windows. See `fs` for the cross-platform file system API.
-pub fn access(path: []const u8, mode: u32) AccessError!void {
-    if (native_os == .windows) {
-        @compileError("use std.Io instead");
-    } else if (native_os == .wasi and !builtin.link_libc) {
-        @compileError("wasi doesn't support absolute paths");
-    }
-    const path_c = try toPosixPath(path);
-    return accessZ(&path_c, mode);
-}
-
-/// Same as `access` except `path` is null-terminated.
-pub fn accessZ(path: [*:0]const u8, mode: u32) AccessError!void {
-    if (native_os == .windows) {
-        @compileError("use std.Io instead");
-    } else if (native_os == .wasi and !builtin.link_libc) {
-        return access(mem.sliceTo(path, 0), mode);
-    }
-    switch (errno(system.access(path, mode))) {
-        .SUCCESS => return,
-        .ACCES => return error.AccessDenied,
-        .PERM => return error.PermissionDenied,
-        .ROFS => return error.ReadOnlyFileSystem,
-        .LOOP => return error.SymLinkLoop,
-        .TXTBSY => return error.FileBusy,
-        .NOTDIR => return error.FileNotFound,
-        .NOENT => return error.FileNotFound,
-        .NAMETOOLONG => return error.NameTooLong,
-        .INVAL => unreachable,
-        .FAULT => unreachable,
-        .IO => return error.InputOutput,
-        .NOMEM => return error.SystemResources,
-        .ILSEQ => return error.BadPathName,
-        else => |err| return unexpectedErrno(err),
-    }
-}
-
 pub const PipeError = error{
     SystemFdQuotaExceeded,
     ProcessFdQuotaExceeded,

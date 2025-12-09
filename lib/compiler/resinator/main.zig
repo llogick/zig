@@ -318,7 +318,7 @@ pub fn main() !void {
                     defer depfile.close(io);
 
                     var depfile_buffer: [1024]u8 = undefined;
-                    var depfile_writer = depfile.writer(&depfile_buffer);
+                    var depfile_writer = depfile.writer(io, &depfile_buffer);
                     switch (options.depfile_fmt) {
                         .json => {
                             var write_stream: std.json.Stringify = .{
@@ -521,9 +521,9 @@ const IoStream = struct {
             }
         };
 
-        pub fn writer(source: *Source, allocator: Allocator, buffer: []u8) Writer {
+        pub fn writer(source: *Source, allocator: Allocator, io: Io, buffer: []u8) Writer {
             return switch (source.*) {
-                .file, .stdio => |file| .{ .file = file.writer(buffer) },
+                .file, .stdio => |file| .{ .file = file.writer(io, buffer) },
                 .memory => |*list| .{ .allocating = .fromArrayList(allocator, list) },
                 .closed => unreachable,
             };

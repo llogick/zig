@@ -418,7 +418,7 @@ pub fn run(f: *Fetch) RunError!void {
         const prefixed_pkg_sub_path = prefixed_pkg_sub_path_buffer[0 .. 2 + hash_slice.len];
         const prefix_len: usize = if (f.job_queue.read_only) "p/".len else 0;
         const pkg_sub_path = prefixed_pkg_sub_path[prefix_len..];
-        if (cache_root.handle.access(pkg_sub_path, .{})) |_| {
+        if (cache_root.handle.access(io, pkg_sub_path, .{})) |_| {
             assert(f.lazy_status != .unavailable);
             f.package_root = .{
                 .root_dir = cache_root,
@@ -637,8 +637,9 @@ pub fn computedPackageHash(f: *const Fetch) Package.Hash {
 /// `computeHash` gets a free check for the existence of `build.zig`, but when
 /// not computing a hash, we need to do a syscall to check for it.
 fn checkBuildFileExistence(f: *Fetch) RunError!void {
+    const io = f.job_queue.io;
     const eb = &f.error_bundle;
-    if (f.package_root.access(Package.build_zig_basename, .{})) |_| {
+    if (f.package_root.access(io, Package.build_zig_basename, .{})) |_| {
         f.has_build_zig = true;
     } else |err| switch (err) {
         error.FileNotFound => {},

@@ -250,13 +250,13 @@ pub const Options = struct {
     /// worlds' situation where we'll be compatible with most use-cases
     /// of the .rc extension being omitted from the CLI args, but still
     /// work fine if the file itself does not have an extension.
-    pub fn maybeAppendRC(options: *Options, cwd: Io.Dir) !void {
+    pub fn maybeAppendRC(options: *Options, io: Io, cwd: Io.Dir) !void {
         switch (options.input_source) {
             .stdio => return,
             .filename => {},
         }
         if (options.input_format == .rc and std.fs.path.extension(options.input_source.filename).len == 0) {
-            cwd.access(options.input_source.filename, .{}) catch |err| switch (err) {
+            cwd.access(io, options.input_source.filename, .{}) catch |err| switch (err) {
                 error.FileNotFound => {
                     var filename_bytes = try options.allocator.alloc(u8, options.input_source.filename.len + 3);
                     @memcpy(filename_bytes[0..options.input_source.filename.len], options.input_source.filename);
@@ -2005,19 +2005,19 @@ test "maybeAppendRC" {
     // appended.
     var file = try tmp.dir.createFile(io, "foo", .{});
     file.close(io);
-    try options.maybeAppendRC(tmp.dir);
+    try options.maybeAppendRC(io, tmp.dir);
     try std.testing.expectEqualStrings("foo", options.input_source.filename);
 
     // Now delete the file and try again. But this time change the input format
     // to non-rc.
     try tmp.dir.deleteFile("foo");
     options.input_format = .res;
-    try options.maybeAppendRC(tmp.dir);
+    try options.maybeAppendRC(io, tmp.dir);
     try std.testing.expectEqualStrings("foo", options.input_source.filename);
 
     // Finally, reset the input format to rc. Since the verbatim name is no longer found
     // and the input filename does not have an extension, .rc should get appended.
     options.input_format = .rc;
-    try options.maybeAppendRC(tmp.dir);
+    try options.maybeAppendRC(io, tmp.dir);
     try std.testing.expectEqualStrings("foo.rc", options.input_source.filename);
 }

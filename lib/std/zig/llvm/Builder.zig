@@ -9589,8 +9589,8 @@ pub fn printToFilePath(b: *Builder, io: Io, dir: Io.Dir, path: []const u8) !void
     try b.printToFile(io, file, &buffer);
 }
 
-pub fn printToFile(b: *Builder, file: Io.File, buffer: []u8) !void {
-    var fw = file.writer(buffer);
+pub fn printToFile(b: *Builder, io: Io, file: Io.File, buffer: []u8) !void {
+    var fw = file.writer(io, buffer);
     try print(b, &fw.interface);
     try fw.interface.flush();
 }

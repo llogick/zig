@@ -1333,7 +1333,7 @@ fn processSource(
             Io.File.stdout();
         defer if (dep_file_name != null) file.close(io);
 
-        var file_writer = file.writer(&writer_buf);
+        var file_writer = file.writer(io, &writer_buf);
         dep_file.write(&file_writer.interface) catch
             return d.fatal("unable to write dependency file: {s}", .{errorDescription(file_writer.err.?)});
     }
@@ -1358,7 +1358,7 @@ fn processSource(
             Io.File.stdout();
         defer if (d.output_name != null) file.close(io);
 
-        var file_writer = file.writer(&writer_buf);
+        var file_writer = file.writer(io, &writer_buf);
         pp.prettyPrintTokens(&file_writer.interface, dump_mode) catch
             return d.fatal("unable to write result: {s}", .{errorDescription(file_writer.err.?)});
 
@@ -1459,7 +1459,7 @@ fn processSource(
             return d.fatal("unable to create output file '{s}': {s}", .{ out_file_name, errorDescription(er) });
         defer out_file.close(io);
 
-        var file_writer = out_file.writer(&writer_buf);
+        var file_writer = out_file.writer(io, &writer_buf);
         obj.finish(&file_writer.interface) catch
             return d.fatal("could not output to object file '{s}': {s}", .{ out_file_name, errorDescription(file_writer.err.?) });
     }

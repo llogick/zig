@@ -232,7 +232,7 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8, zig_integration
             Io.File.stdout();
         defer if (dep_file_name != null) file.close(io);
 
-        var file_writer = file.writer(&out_buf);
+        var file_writer = file.writer(io, &out_buf);
         dep_file.write(&file_writer.interface) catch
             return d.fatal("unable to write dependency file: {s}", .{aro.Driver.errorDescription(file_writer.err.?)});
     }
@@ -263,7 +263,7 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8, zig_integration
         out_file_path = path;
     }
 
-    var out_writer = out_file.writer(&out_buf);
+    var out_writer = out_file.writer(io, &out_buf);
     out_writer.interface.writeAll(rendered_zig) catch {};
     out_writer.interface.flush() catch {};
     if (out_writer.err) |write_err|

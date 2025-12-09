@@ -228,7 +228,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
 
         var it = try src_dir.walk(gpa);
         defer it.deinit();
-        while (try it.next()) |entry| {
+        while (try it.next(io)) |entry| {
             if (!dir.options.pathIncluded(entry.path)) continue;
 
             switch (entry.kind) {
@@ -259,11 +259,8 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
 
     write_file.generated_directory.path = try b.cache_root.join(arena, &.{ "o", &digest });
 
-    var cache_dir = b.cache_root.handle.makeOpenPath(cache_path, .{}) catch |err| {
-        return step.fail("unable to make path '{f}{s}': {s}", .{
-            b.cache_root, cache_path, @errorName(err),
-        });
-    };
+    var cache_dir = b.cache_root.handle.makeOpenPath(io, cache_path, .{}) catch |err|
+        return step.fail("unable to make path '{f}{s}': {t}", .{ b.cache_root, cache_path, err });
     defer cache_dir.close(io);
 
     for (write_file.files.items) |file| {

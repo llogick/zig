@@ -191,7 +191,7 @@ pub const SelectiveWalker = struct {
         while (self.stack.items.len > 0) {
             const top = &self.stack.items[self.stack.items.len - 1];
             var dirname_len = top.dirname_len;
-            if (top.iter.next() catch |err| {
+            if (top.iter.next(io) catch |err| {
                 // If we get an error, then we want the user to be able to continue
                 // walking if they want, which means that we need to pop the directory
                 // that errored from the stack. Otherwise, all future `next` calls would
@@ -302,7 +302,7 @@ pub const Walker = struct {
         dir: Dir,
         basename: [:0]const u8,
         path: [:0]const u8,
-        kind: Dir.Entry.Kind,
+        kind: File.Kind,
 
         /// Returns the depth of the entry relative to the initial directory.
         /// Returns 1 for a direct child of the initial directory, 2 for an entry
@@ -320,10 +320,10 @@ pub const Walker = struct {
     /// After each call to this function, and on deinit(), the memory returned
     /// from this function becomes invalid. A copy must be made in order to keep
     /// a reference to the path.
-    pub fn next(self: *Walker) !?Walker.Entry {
-        const entry = try self.inner.next();
+    pub fn next(self: *Walker, io: Io) !?Walker.Entry {
+        const entry = try self.inner.next(io);
         if (entry != null and entry.?.kind == .directory) {
-            try self.inner.enter(entry.?);
+            try self.inner.enter(io, entry.?);
         }
         return entry;
     }
@@ -495,7 +495,7 @@ pub const WriteFileOptions = struct {
     flags: File.CreateFlags = .{},
 };
 
-pub const WriteFileError = File.WriteError || File.OpenError;
+pub const WriteFileError = File.Writer.Error || File.OpenError;
 
 /// Writes content to the file system, using the file creation flags provided.
 pub fn writeFile(dir: Dir, io: Io, options: WriteFileOptions) WriteFileError!void {
@@ -556,11 +556,11 @@ pub fn updateFile(
     }
 
     if (path.dirname(dest_path)) |dirname| {
-        try dest_dir.makePath(io, dirname, .default_dir);
+        try dest_dir.makePath(io, dirname);
     }
 
     var buffer: [1000]u8 = undefined; // Used only when direct fd-to-fd is not available.
-    var atomic_file = try Dir.atomicFile(dest_dir, dest_path, .{
+    var atomic_file = try dest_dir.atomicFile(io, dest_path, .{
         .permissions = actual_permissions,
         .write_buffer = &buffer,
     });

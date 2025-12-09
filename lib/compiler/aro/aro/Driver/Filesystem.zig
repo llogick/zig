@@ -57,8 +57,8 @@ fn existsFake(entries: []const Filesystem.Entry, path: []const u8) bool {
     return false;
 }
 
-fn canExecutePosix(path: []const u8) bool {
-    std.posix.access(path, std.posix.X_OK) catch return false;
+fn canExecutePosix(io: Io, path: []const u8) bool {
+    Io.Dir.accessAbsolute(io, path, .{ .execute = true }) catch return false;
     // Todo: ensure path is not a directory
     return true;
 }
@@ -172,10 +172,10 @@ pub const Filesystem = union(enum) {
         }
     };
 
-    pub fn exists(fs: Filesystem, path: []const u8) bool {
+    pub fn exists(fs: Filesystem, io: Io, path: []const u8) bool {
         switch (fs) {
             .real => |cwd| {
-                cwd.access(path, .{}) catch return false;
+                cwd.access(io, path, .{}) catch return false;
                 return true;
             },
             .fake => |paths| return existsFake(paths, path),

@@ -1279,7 +1279,7 @@ test printLineFromFile {
 
         const overlap = 10;
         var buf: [16]u8 = undefined;
-        var file_writer = file.writer(&buf);
+        var file_writer = file.writer(io, &buf);
         const writer = &file_writer.interface;
         try writer.splatByteAll('a', std.heap.page_size_min - overlap);
         try writer.writeByte('\n');
@@ -1296,7 +1296,7 @@ test printLineFromFile {
         const path = try fs.path.join(gpa, &.{ test_dir_path, "file_ends_on_page_boundary.zig" });
         defer gpa.free(path);
 
-        var file_writer = file.writer(&.{});
+        var file_writer = file.writer(io, &.{});
         const writer = &file_writer.interface;
         try writer.splatByteAll('a', std.heap.page_size_max);
 
@@ -1310,7 +1310,7 @@ test printLineFromFile {
         const path = try fs.path.join(gpa, &.{ test_dir_path, "very_long_first_line_spanning_multiple_pages.zig" });
         defer gpa.free(path);
 
-        var file_writer = file.writer(&.{});
+        var file_writer = file.writer(io, &.{});
         const writer = &file_writer.interface;
         try writer.splatByteAll('a', 3 * std.heap.page_size_max);
 
@@ -1336,7 +1336,7 @@ test printLineFromFile {
         const path = try fs.path.join(gpa, &.{ test_dir_path, "file_of_newlines.zig" });
         defer gpa.free(path);
 
-        var file_writer = file.writer(&.{});
+        var file_writer = file.writer(io, &.{});
         const writer = &file_writer.interface;
         const real_file_start = 3 * std.heap.page_size_min;
         try writer.splatByteAll('\n', real_file_start);
