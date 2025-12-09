@@ -264,7 +264,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
         });
     };
 
-    b.cache_root.handle.writeFile(.{ .sub_path = sub_path, .data = output }) catch |err| {
+    b.cache_root.handle.writeFile(io, .{ .sub_path = sub_path, .data = output }) catch |err| {
         return step.fail("unable to write file '{f}{s}': {s}", .{
             b.cache_root, sub_path, @errorName(err),
         });

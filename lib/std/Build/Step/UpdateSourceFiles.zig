@@ -84,7 +84,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
         }
         switch (output_source_file.contents) {
             .bytes => |bytes| {
-                b.build_root.handle.writeFile(.{ .sub_path = output_source_file.sub_path, .data = bytes }) catch |err| {
+                b.build_root.handle.writeFile(io, .{ .sub_path = output_source_file.sub_path, .data = bytes }) catch |err| {
                     return step.fail("unable to write file '{f}{s}': {t}", .{
                         b.build_root, output_source_file.sub_path, err,
                     });

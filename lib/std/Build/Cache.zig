@@ -1276,30 +1276,6 @@ pub const Manifest = struct {
     }
 };
 
-/// On operating systems that support symlinks, does a readlink. On other operating systems,
-/// uses the file contents. Windows supports symlinks but only with elevated privileges, so
-/// it is treated as not supporting symlinks.
-pub fn readSmallFile(dir: Io.Dir, sub_path: []const u8, buffer: []u8) ![]u8 {
-    if (builtin.os.tag == .windows) {
-        return dir.readFile(sub_path, buffer);
-    } else {
-        return dir.readLink(sub_path, buffer);
-    }
-}
-
-/// On operating systems that support symlinks, does a symlink. On other operating systems,
-/// uses the file contents. Windows supports symlinks but only with elevated privileges, so
-/// it is treated as not supporting symlinks.
-/// `data` must be a valid UTF-8 encoded file path and 255 bytes or fewer.
-pub fn writeSmallFile(dir: Io.Dir, sub_path: []const u8, data: []const u8) !void {
-    assert(data.len <= 255);
-    if (builtin.os.tag == .windows) {
-        return dir.writeFile(.{ .sub_path = sub_path, .data = data });
-    } else {
-        return dir.symLink(data, sub_path, .{});
-    }
-}
-
 fn hashFile(io: Io, file: Io.File, bin_digest: *[Hasher.mac_length]u8) Io.File.ReadPositionalError!void {
     var buffer: [2048]u8 = undefined;
     var hasher = hasher_init;
@@ -1338,7 +1314,7 @@ test "cache file and then recall it" {
     const temp_file = "test.txt";
     const temp_manifest_dir = "temp_manifest_dir";
 
-    try tmp.dir.writeFile(.{ .sub_path = temp_file, .data = "Hello, world!\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = temp_file, .data = "Hello, world!\n" });
 
     // Wait for file timestamps to tick
     const initial_time = try testGetCurrentFileTimestamp(io, tmp.dir);
@@ -1404,7 +1380,7 @@ test "check that changing a file makes cache fail" {
     const original_temp_file_contents = "Hello, world!\n";
     const updated_temp_file_contents = "Hello, world; but updated!\n";
 
-    try tmp.dir.writeFile(.{ .sub_path = temp_file, .data = original_temp_file_contents });
+    try tmp.dir.writeFile(io, .{ .sub_path = temp_file, .data = original_temp_file_contents });
 
     // Wait for file timestamps to tick
     const initial_time = try testGetCurrentFileTimestamp(tmp.dir);
@@ -1441,7 +1417,7 @@ test "check that changing a file makes cache fail" {
             try ch.writeManifest();
         }
 
-        try tmp.dir.writeFile(.{ .sub_path = temp_file, .data = updated_temp_file_contents });
+        try tmp.dir.writeFile(io, .{ .sub_path = temp_file, .data = updated_temp_file_contents });
 
         {
             var ch = cache.obtain();
@@ -1521,8 +1497,8 @@ test "Manifest with files added after initial hash work" {
     const temp_file2 = "cache_hash_post_file_test2.txt";
     const temp_manifest_dir = "cache_hash_post_file_manifest_dir";
 
-    try tmp.dir.writeFile(.{ .sub_path = temp_file1, .data = "Hello, world!\n" });
-    try tmp.dir.writeFile(.{ .sub_path = temp_file2, .data = "Hello world the second!\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = temp_file1, .data = "Hello, world!\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = temp_file2, .data = "Hello world the second!\n" });
 
     // Wait for file timestamps to tick
     const initial_time = try testGetCurrentFileTimestamp(tmp.dir);
@@ -1573,7 +1549,7 @@ test "Manifest with files added after initial hash work" {
         try testing.expect(mem.eql(u8, &digest1, &digest2));
 
         // Modify the file added after initial hash
-        try tmp.dir.writeFile(.{ .sub_path = temp_file2, .data = "Hello world the second, updated\n" });
+        try tmp.dir.writeFile(io, .{ .sub_path = temp_file2, .data = "Hello world the second, updated\n" });
 
         // Wait for file timestamps to tick
         const initial_time2 = try testGetCurrentFileTimestamp(tmp.dir);

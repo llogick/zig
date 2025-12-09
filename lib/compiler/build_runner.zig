@@ -459,7 +459,7 @@ pub fn main() !void {
         }
         const s = std.fs.path.sep_str;
         const tmp_sub_path = "tmp" ++ s ++ (output_tmp_nonce orelse fatal("missing -Z arg", .{}));
-        local_cache_directory.handle.writeFile(.{
+        local_cache_directory.handle.writeFile(io, .{
             .sub_path = tmp_sub_path,
             .data = buffer.items,
             .flags = .{ .exclusive = true },

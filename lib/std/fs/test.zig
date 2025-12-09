@@ -184,7 +184,7 @@ test "Dir.readLink" {
         fn impl(ctx: *TestContext) !void {
             // Create some targets
             const file_target_path = try ctx.transformPath("file.txt");
-            try ctx.dir.writeFile(.{ .sub_path = file_target_path, .data = "nonsense" });
+            try ctx.dir.writeFile(io, .{ .sub_path = file_target_path, .data = "nonsense" });
             const dir_target_path = try ctx.transformPath("subdir");
             try ctx.dir.makeDir(dir_target_path);
 
@@ -487,11 +487,13 @@ test "readLinkAbsolute" {
     if (native_os == .wasi) return error.SkipZigTest;
     if (native_os == .openbsd) return error.SkipZigTest;
 
+    const io = testing.io;
+
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
     // Create some targets
-    try tmp.dir.writeFile(.{ .sub_path = "file.txt", .data = "nonsense" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "file.txt", .data = "nonsense" });
     try tmp.dir.makeDir("subdir");
 
     // Get base abs path
@@ -708,6 +710,7 @@ test "Dir.realpath smoke test" {
 
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {
+            const io = ctx.io;
             const allocator = ctx.arena.allocator();
             const test_file_path = try ctx.transformPath("test_file");
             const test_dir_path = try ctx.transformPath("test_dir");
@@ -720,7 +723,7 @@ test "Dir.realpath smoke test" {
             try testing.expectError(error.FileNotFound, ctx.dir.realpath(test_dir_path, &buf));
 
             // Now create the file and dir
-            try ctx.dir.writeFile(.{ .sub_path = test_file_path, .data = "" });
+            try ctx.dir.writeFile(io, .{ .sub_path = test_file_path, .data = "" });
             try ctx.dir.makeDir(test_dir_path);
 
             const base_path = try ctx.transformPath(".");
@@ -803,11 +806,12 @@ test "readFileAlloc" {
 test "Dir.statFile" {
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {
+            const io = ctx.io;
             const test_file_name = try ctx.transformPath("test_file");
 
             try testing.expectError(error.FileNotFound, ctx.dir.statFile(test_file_name));
 
-            try ctx.dir.writeFile(.{ .sub_path = test_file_name, .data = "" });
+            try ctx.dir.writeFile(io, .{ .sub_path = test_file_name, .data = "" });
 
             const stat = try ctx.dir.statFile(test_file_name);
             try testing.expectEqual(File.Kind.file, stat.kind);
@@ -925,6 +929,7 @@ test "makeOpenPath parent dirs do not exist" {
 test "deleteDir" {
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {
+            const io = ctx.io;
             const test_dir_path = try ctx.transformPath("test_dir");
             const test_file_path = try ctx.transformPath("test_dir" ++ fs.path.sep_str ++ "test_file");
 
@@ -933,7 +938,7 @@ test "deleteDir" {
 
             // deleting a non-empty directory
             try ctx.dir.makeDir(test_dir_path);
-            try ctx.dir.writeFile(.{ .sub_path = test_file_path, .data = "" });
+            try ctx.dir.writeFile(io, .{ .sub_path = test_file_path, .data = "" });
             try testing.expectError(error.DirNotEmpty, ctx.dir.deleteDir(test_dir_path));
 
             // deleting an empty directory
@@ -1217,7 +1222,7 @@ test "deleteTree on a symlink" {
     defer tmp.cleanup();
 
     // Symlink to a file
-    try tmp.dir.writeFile(.{ .sub_path = "file", .data = "" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "file", .data = "" });
     try setupSymlink(tmp.dir, "file", "filelink", .{});
 
     try tmp.dir.deleteTree("filelink");
@@ -1241,11 +1246,11 @@ test "makePath, put some files in it, deleteTree" {
             const dir_path = try ctx.transformPath("os_test_tmp");
 
             try ctx.dir.makePath(io, try fs.path.join(allocator, &.{ "os_test_tmp", "b", "c" }));
-            try ctx.dir.writeFile(.{
+            try ctx.dir.writeFile(io, .{
                 .sub_path = try fs.path.join(allocator, &.{ "os_test_tmp", "b", "c", "file.txt" }),
                 .data = "nonsense",
             });
-            try ctx.dir.writeFile(.{
+            try ctx.dir.writeFile(io, .{
                 .sub_path = try fs.path.join(allocator, &.{ "os_test_tmp", "b", "file2.txt" }),
                 .data = "blah",
             });
@@ -1264,11 +1269,11 @@ test "makePath, put some files in it, deleteTreeMinStackSize" {
             const dir_path = try ctx.transformPath("os_test_tmp");
 
             try ctx.dir.makePath(io, try fs.path.join(allocator, &.{ "os_test_tmp", "b", "c" }));
-            try ctx.dir.writeFile(.{
+            try ctx.dir.writeFile(io, .{
                 .sub_path = try fs.path.join(allocator, &.{ "os_test_tmp", "b", "c", "file.txt" }),
                 .data = "nonsense",
             });
-            try ctx.dir.writeFile(.{
+            try ctx.dir.writeFile(io, .{
                 .sub_path = try fs.path.join(allocator, &.{ "os_test_tmp", "b", "file2.txt" }),
                 .data = "blah",
             });
@@ -1298,7 +1303,7 @@ test "makePath but sub_path contains pre-existing file" {
     defer tmp.cleanup();
 
     try tmp.dir.makeDir("foo");
-    try tmp.dir.writeFile(.{ .sub_path = "foo/bar", .data = "" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "foo/bar", .data = "" });
 
     try testing.expectError(error.NotDir, tmp.dir.makePath(io, "foo/bar/baz"));
 }
@@ -1400,7 +1405,7 @@ fn testFilenameLimits(io: Io, iterable_dir: Dir, maxed_filename: []const u8) !vo
         var maxed_dir = try iterable_dir.makeOpenPath(maxed_filename, .{});
         defer maxed_dir.close(io);
 
-        try maxed_dir.writeFile(.{ .sub_path = maxed_filename, .data = "" });
+        try maxed_dir.writeFile(io, .{ .sub_path = maxed_filename, .data = "" });
 
         var walker = try iterable_dir.walk(testing.allocator);
         defer walker.deinit();
@@ -1513,7 +1518,7 @@ test "setEndPos" {
     defer tmp.cleanup();
 
     const file_name = "afile.txt";
-    try tmp.dir.writeFile(.{ .sub_path = file_name, .data = "ninebytes" });
+    try tmp.dir.writeFile(io, .{ .sub_path = file_name, .data = "ninebytes" });
     const f = try tmp.dir.openFile(io, file_name, .{ .mode = .read_write });
     defer f.close(io);
 
@@ -1563,7 +1568,7 @@ test "access file" {
             try ctx.dir.makePath(io, dir_path);
             try testing.expectError(error.FileNotFound, ctx.dir.access(io, file_path, .{}));
 
-            try ctx.dir.writeFile(.{ .sub_path = file_path, .data = "" });
+            try ctx.dir.writeFile(io, .{ .sub_path = file_path, .data = "" });
             try ctx.dir.access(io, file_path, .{});
             try ctx.dir.deleteTree(dir_path);
         }
@@ -1659,12 +1664,13 @@ test "sendfile with buffered data" {
 test "copyFile" {
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {
+            const io = ctx.io;
             const data = "u6wj+JmdF3qHsFPE BUlH2g4gJCmEz0PP";
             const src_file = try ctx.transformPath("tmp_test_copy_file.txt");
             const dest_file = try ctx.transformPath("tmp_test_copy_file2.txt");
             const dest_file2 = try ctx.transformPath("tmp_test_copy_file3.txt");
 
-            try ctx.dir.writeFile(.{ .sub_path = src_file, .data = data });
+            try ctx.dir.writeFile(io, .{ .sub_path = src_file, .data = data });
             defer ctx.dir.deleteFile(src_file) catch {};
 
             try ctx.dir.copyFile(src_file, ctx.dir, dest_file, .{});
@@ -2050,7 +2056,7 @@ test "'.' and '..' in Io.Dir functions" {
             renamed_file.close(io);
             try ctx.dir.deleteFile(rename_path);
 
-            try ctx.dir.writeFile(.{ .sub_path = update_path, .data = "something" });
+            try ctx.dir.writeFile(io, .{ .sub_path = update_path, .data = "something" });
             var dir = ctx.dir;
             const prev_status = try dir.updateFile(io, file_path, dir, update_path, .{});
             try testing.expectEqual(Io.Dir.PrevStatus.stale, prev_status);
@@ -2187,7 +2193,7 @@ test "invalid UTF-8/WTF-8 paths" {
             try testing.expectError(expected_err, ctx.dir.deleteTree(invalid_path));
             try testing.expectError(expected_err, ctx.dir.deleteTreeMinStackSize(invalid_path));
 
-            try testing.expectError(expected_err, ctx.dir.writeFile(.{ .sub_path = invalid_path, .data = "" }));
+            try testing.expectError(expected_err, ctx.dir.writeFile(io, .{ .sub_path = invalid_path, .data = "" }));
 
             try testing.expectError(expected_err, ctx.dir.access(invalid_path, .{}));
 
@@ -2304,7 +2310,7 @@ test "seekBy" {
     var tmp_dir = testing.tmpDir(.{});
     defer tmp_dir.cleanup();
 
-    try tmp_dir.dir.writeFile(.{ .sub_path = "blah.txt", .data = "let's test seekBy" });
+    try tmp_dir.dir.writeFile(io, .{ .sub_path = "blah.txt", .data = "let's test seekBy" });
     const f = try tmp_dir.dir.openFile(io, "blah.txt", .{ .mode = .read_only });
     defer f.close(io);
     var reader = f.readerStreaming(io, &.{});
@@ -2350,7 +2356,7 @@ test "File.Writer sendfile with buffered contents" {
     defer tmp_dir.cleanup();
 
     {
-        try tmp_dir.dir.writeFile(.{ .sub_path = "a", .data = "bcd" });
+        try tmp_dir.dir.writeFile(io, .{ .sub_path = "a", .data = "bcd" });
         const in = try tmp_dir.dir.openFile(io, "a", .{});
         defer in.close(io);
         const out = try tmp_dir.dir.createFile(io, "b", .{});
@@ -2391,11 +2397,13 @@ fn testReadlink(target_path: []const u8, symlink_path: []const u8) !void {
 }
 
 test "readlinkat" {
+    const io = testing.io;
+
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
     // create file
-    try tmp.dir.writeFile(.{ .sub_path = "file.txt", .data = "nonsense" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "file.txt", .data = "nonsense" });
 
     // create a symbolic link
     if (native_os == .windows) {

@@ -523,7 +523,7 @@ pub fn serveTarFile(ws: *WebServer, request: *http.Server.Request, paths: []cons
             if (cached_cwd_path == null) cached_cwd_path = try std.process.getCwdAlloc(gpa);
             break :cwd cached_cwd_path.?;
         };
-        try archiver.writeFile(path.sub_path, &file_reader, @intCast(stat.mtime.toSeconds()));
+        try archiver.writeFile(io, path.sub_path, &file_reader, @intCast(stat.mtime.toSeconds()));
     }
 
     // intentionally not calling `archiver.finishPedantically`

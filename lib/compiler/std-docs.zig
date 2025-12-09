@@ -233,7 +233,7 @@ fn serveSourcesTar(request: *std.http.Server.Request, context: *Context) !void {
             .interface = std.Io.File.Reader.initInterface(&.{}),
             .size = stat.size,
         };
-        try archiver.writeFile(entry.path, &file_reader, stat.mtime);
+        try archiver.writeFile(io, entry.path, &file_reader, stat.mtime);
     }
 
     {

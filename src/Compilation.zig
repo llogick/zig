@@ -5715,7 +5715,7 @@ pub fn translateC(
             const out_h_sub_path = tmp_sub_path ++ fs.path.sep_str ++ cimport_basename;
             const out_h_path = try comp.dirs.local_cache.join(arena, &.{out_h_sub_path});
             if (comp.verbose_cimport) log.info("writing C import source to {s}", .{out_h_path});
-            try cache_dir.writeFile(.{ .sub_path = out_h_sub_path, .data = c_src });
+            try cache_dir.writeFile(io, .{ .sub_path = out_h_sub_path, .data = c_src });
             break :path out_h_path;
         },
         .path => |p| p,
@@ -6572,7 +6572,7 @@ fn updateWin32Resource(comp: *Compilation, win32_resource: *Win32Resource, win32
                 resource_id, resource_type, fmtRcEscape(src_path),
             });
 
-            try o_dir.writeFile(.{ .sub_path = rc_basename, .data = input });
+            try o_dir.writeFile(io, .{ .sub_path = rc_basename, .data = input });
 
             var argv = std.array_list.Managed([]const u8).init(comp.gpa);
             defer argv.deinit();

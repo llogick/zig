@@ -55,6 +55,10 @@ pub fn main() !void {
     var general_purpose_allocator: std.heap.GeneralPurposeAllocator(.{}) = .init;
     const gpa = general_purpose_allocator.allocator();
 
+    var threaded: std.Io.Threaded = .init(gpa);
+    defer threaded.deinit();
+    const io = threaded.io();
+
     const args = try std.process.argsAlloc(arena);
 
     var opt_checker_path: ?[]const u8 = null;
@@ -233,12 +237,12 @@ pub fn main() !void {
                 }
             }
 
-            try Io.Dir.cwd().writeFile(.{ .sub_path = root_source_file_path, .data = rendered.written() });
+            try Io.Dir.cwd().writeFile(io, .{ .sub_path = root_source_file_path, .data = rendered.written() });
             // std.debug.print("trying this code:\n{s}\n", .{rendered.items});
 
             const interestingness = try runCheck(arena, interestingness_argv.items);
-            std.debug.print("{d} random transformations: {s}. {d}/{d}\n", .{
-                subset_size, @tagName(interestingness), start_index, transformations.items.len,
+            std.debug.print("{d} random transformations: {t}. {d}/{d}\n", .{
+                subset_size, interestingness, start_index, transformations.items.len,
             });
             switch (interestingness) {
                 .interesting => {
@@ -274,7 +278,7 @@ pub fn main() !void {
         fixups.clearRetainingCapacity();
         rendered.clearRetainingCapacity();
         try tree.render(gpa, &rendered.writer, fixups);
-        try Io.Dir.cwd().writeFile(.{ .sub_path = root_source_file_path, .data = rendered.written() });
+        try Io.Dir.cwd().writeFile(io, .{ .sub_path = root_source_file_path, .data = rendered.written() });
 
         return std.process.cleanExit();
     }

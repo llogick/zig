@@ -273,7 +273,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
         }
         switch (file.contents) {
             .bytes => |bytes| {
-                cache_dir.writeFile(.{ .sub_path = file.sub_path, .data = bytes }) catch |err| {
+                cache_dir.writeFile(io, .{ .sub_path = file.sub_path, .data = bytes }) catch |err| {
                     return step.fail("unable to write file '{f}{s}{c}{s}': {t}", .{
                         b.cache_root, cache_path, fs.path.sep, file.sub_path, err,
                     });

@@ -1243,7 +1243,7 @@ test printLineFromFile {
     {
         const path = try join(gpa, &.{ test_dir_path, "one_line.zig" });
         defer gpa.free(path);
-        try test_dir.dir.writeFile(.{ .sub_path = "one_line.zig", .data = "no new lines in this file, but one is printed anyway" });
+        try test_dir.dir.writeFile(io, .{ .sub_path = "one_line.zig", .data = "no new lines in this file, but one is printed anyway" });
 
         try expectError(error.EndOfFile, printLineFromFile(io, output_stream, .{ .file_name = path, .line = 2, .column = 0 }));
 
@@ -1254,7 +1254,7 @@ test printLineFromFile {
     {
         const path = try fs.path.join(gpa, &.{ test_dir_path, "three_lines.zig" });
         defer gpa.free(path);
-        try test_dir.dir.writeFile(.{
+        try test_dir.dir.writeFile(io, .{
             .sub_path = "three_lines.zig",
             .data =
             \\1

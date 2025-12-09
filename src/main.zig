@@ -7164,7 +7164,7 @@ fn cmdFetch(
     try ast.render(gpa, &aw.writer, fixups);
     const rendered = aw.written();
 
-    build_root.directory.handle.writeFile(.{ .sub_path = Package.Manifest.basename, .data = rendered }) catch |err| {
+    build_root.directory.handle.writeFile(io, .{ .sub_path = Package.Manifest.basename, .data = rendered }) catch |err| {
         fatal("unable to write {s} file: {t}", .{ Package.Manifest.basename, err });
     };
 
@@ -7207,7 +7207,7 @@ fn createDependenciesModule(
     {
         var tmp_dir = try dirs.local_cache.handle.makeOpenPath(tmp_dir_sub_path, .{});
         defer tmp_dir.close(io);
-        try tmp_dir.writeFile(.{ .sub_path = basename, .data = source });
+        try tmp_dir.writeFile(io, .{ .sub_path = basename, .data = source });
     }
 
     var hh: Cache.HashHelper = .{};
@@ -7438,7 +7438,7 @@ const Templates = struct {
             i += 1;
         }
 
-        return out_dir.writeFile(.{
+        return out_dir.writeFile(io, .{
             .sub_path = template_path,
             .data = templates.buffer.items,
             .flags = .{ .exclusive = true },

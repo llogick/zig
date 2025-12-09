@@ -212,7 +212,7 @@ pub fn main() !void {
                 try output_file.writeAll(full_input);
             },
             .filename => |output_filename| {
-                try Io.Dir.cwd().writeFile(.{ .sub_path = output_filename, .data = full_input });
+                try Io.Dir.cwd().writeFile(io, .{ .sub_path = output_filename, .data = full_input });
             },
         }
         return;

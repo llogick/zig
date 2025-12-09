@@ -145,7 +145,7 @@ test "linkat with different directories" {
     const subdir = try tmp.dir.makeOpenPath("subdir", .{});
 
     defer tmp.dir.deleteFile(target_name) catch {};
-    try tmp.dir.writeFile(.{ .sub_path = target_name, .data = "example" });
+    try tmp.dir.writeFile(io, .{ .sub_path = target_name, .data = "example" });
 
     // Test 1: link from file in subdir back up to target in parent directory
     try posix.linkat(tmp.dir.handle, target_name, subdir.handle, link_name, 0);

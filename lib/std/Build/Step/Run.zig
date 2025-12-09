@@ -1482,7 +1482,7 @@ fn runCommand(
                 .leading => mem.trimStart(u8, stream.bytes.?, &std.ascii.whitespace),
                 .trailing => mem.trimEnd(u8, stream.bytes.?, &std.ascii.whitespace),
             };
-            b.cache_root.handle.writeFile(.{ .sub_path = sub_path, .data = data }) catch |err| {
+            b.cache_root.handle.writeFile(io, .{ .sub_path = sub_path, .data = data }) catch |err| {
                 return step.fail("unable to write file '{f}{s}': {s}", .{
                     b.cache_root, sub_path, @errorName(err),
                 });
