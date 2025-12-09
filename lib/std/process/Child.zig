@@ -435,8 +435,7 @@ pub const RunError = posix.GetCwdError || posix.ReadError || SpawnError || posix
 
 /// Spawns a child process, waits for it, collecting stdout and stderr, and then returns.
 /// If it succeeds, the caller owns result.stdout and result.stderr memory.
-pub fn run(args: struct {
-    allocator: mem.Allocator,
+pub fn run(allocator: Allocator, io: Io, args: struct {
     argv: []const []const u8,
     cwd: ?[]const u8 = null,
     cwd_dir: ?Io.Dir = null,
@@ -447,7 +446,7 @@ pub fn run(args: struct {
     expand_arg0: Arg0Expand = .no_expand,
     progress_node: std.Progress.Node = std.Progress.Node.none,
 }) RunError!RunResult {
-    var child = ChildProcess.init(args.argv, args.allocator);
+    var child = ChildProcess.init(args.argv, allocator);
     child.stdin_behavior = .Ignore;
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = .Pipe;
@@ -458,19 +457,19 @@ pub fn run(args: struct {
     child.progress_node = args.progress_node;
 
     var stdout: ArrayList(u8) = .empty;
-    defer stdout.deinit(args.allocator);
+    defer stdout.deinit(allocator);
     var stderr: ArrayList(u8) = .empty;
-    defer stderr.deinit(args.allocator);
+    defer stderr.deinit(allocator);
 
     try child.spawn();
     errdefer {
-        _ = child.kill() catch {};
+        _ = child.kill(io) catch {};
     }
-    try child.collectOutput(args.allocator, &stdout, &stderr, args.max_output_bytes);
+    try child.collectOutput(allocator, &stdout, &stderr, args.max_output_bytes);
 
     return .{
-        .stdout = try stdout.toOwnedSlice(args.allocator),
-        .stderr = try stderr.toOwnedSlice(args.allocator),
+        .stdout = try stdout.toOwnedSlice(allocator),
+        .stderr = try stderr.toOwnedSlice(allocator),
         .term = try child.wait(),
     };
 }

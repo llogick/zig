@@ -41,13 +41,13 @@ pub fn main() !void {
     var read_buf: [1024]u8 = undefined;
     var write_buf: [1024]u8 = undefined;
 
-    const in_file = try std.fs.cwd().openFile(args[1], .{});
-    defer in_file.close();
+    const in_file = try std.Io.Dir.cwd().openFile(io, args[1], .{});
+    defer in_file.close(io);
 
     const out_file: std.Io.File = .stdout();
 
     var in_fr = in_file.reader(io, &read_buf);
-    var out_fw = out_file.writer(&write_buf);
+    var out_fw = out_file.writer(io, &write_buf);
 
     const w = &out_fw.interface;
 

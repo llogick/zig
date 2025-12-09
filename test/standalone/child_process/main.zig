@@ -1,4 +1,5 @@
 const std = @import("std");
+const Io = std.Io;
 
 pub fn main() !void {
     // make sure safety checks are enabled even in release modes
@@ -20,7 +21,7 @@ pub fn main() !void {
     };
     defer if (needs_free) gpa.free(child_path);
 
-    var threaded: std.Io.Threaded = .init(gpa);
+    var threaded: Io.Threaded = .init(gpa);
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -31,7 +32,7 @@ pub fn main() !void {
     try child.spawn();
     const child_stdin = child.stdin.?;
     try child_stdin.writeAll("hello from stdin"); // verified in child
-    child_stdin.close();
+    child_stdin.close(io);
     child.stdin = null;
 
     const hello_stdout = "hello from stdout";
@@ -39,17 +40,17 @@ pub fn main() !void {
     var stdout_reader = child.stdout.?.readerStreaming(io, &.{});
     const n = try stdout_reader.interface.readSliceShort(&buf);
     if (!std.mem.eql(u8, buf[0..n], hello_stdout)) {
-        testError("child stdout: '{s}'; want '{s}'", .{ buf[0..n], hello_stdout });
+        testError(io, "child stdout: '{s}'; want '{s}'", .{ buf[0..n], hello_stdout });
     }
 
     switch (try child.wait()) {
         .Exited => |code| {
             const child_ok_code = 42; // set by child if no test errors
             if (code != child_ok_code) {
-                testError("child exit code: {d}; want {d}", .{ code, child_ok_code });
+                testError(io, "child exit code: {d}; want {d}", .{ code, child_ok_code });
             }
         },
-        else => |term| testError("abnormal child exit: {}", .{term}),
+        else => |term| testError(io, "abnormal child exit: {}", .{term}),
     }
     if (parent_test_error) return error.ParentTestError;
 
@@ -61,8 +62,8 @@ pub fn main() !void {
 
 var parent_test_error = false;
 
-fn testError(comptime fmt: []const u8, args: anytype) void {
-    var stderr_writer = std.Io.File.stderr().writer(&.{});
+fn testError(io: Io, comptime fmt: []const u8, args: anytype) void {
+    var stderr_writer = Io.File.stderr().writer(io, &.{});
     const stderr = &stderr_writer.interface;
     stderr.print("PARENT TEST ERROR: ", .{}) catch {};
     stderr.print(fmt, args) catch {};

@@ -26,14 +26,17 @@ fn run(allocator: std.mem.Allocator) !void {
         return error.BadUsage;
     };
 
-    const dir_path = std.fs.path.dirname(path) orelse unreachable;
-    const basename = std.fs.path.basename(path);
+    const dir_path = std.Io.Dir.path.dirname(path) orelse unreachable;
+    const basename = std.Io.Dir.path.basename(path);
 
-    var dir = try std.fs.cwd().openDir(dir_path, .{});
-    defer dir.close();
+    var threaded: std.Io.Threaded = .init_single_threaded;
+    const io = threaded.io();
 
-    _ = dir.statFile(basename) catch {
-        var file = try dir.createFile(basename, .{});
-        file.close();
+    var dir = try std.Io.Dir.cwd().openDir(io, dir_path, .{});
+    defer dir.close(io);
+
+    _ = dir.statFile(io, basename) catch {
+        var file = try dir.createFile(io, basename, .{});
+        file.close(io);
     };
 }

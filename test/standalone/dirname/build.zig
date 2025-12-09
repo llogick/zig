@@ -59,13 +59,15 @@ pub fn build(b: *std.Build) void {
 
     // Absolute path:
     const abs_path = setup_abspath: {
+        // TODO this is a bad pattern, don't do this
+        const io = b.graph.io;
         const temp_dir = b.makeTempPath();
 
-        var dir = std.fs.cwd().openDir(temp_dir, .{}) catch @panic("failed to open temp dir");
-        defer dir.close();
+        var dir = std.Io.Dir.cwd().openDir(io, temp_dir, .{}) catch @panic("failed to open temp dir");
+        defer dir.close(io);
 
-        var file = dir.createFile("foo.txt", .{}) catch @panic("failed to create file");
-        file.close();
+        var file = dir.createFile(io, "foo.txt", .{}) catch @panic("failed to create file");
+        file.close(io);
 
         break :setup_abspath std.Build.LazyPath{ .cwd_relative = temp_dir };
     };

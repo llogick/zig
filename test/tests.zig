@@ -2024,6 +2024,7 @@ pub fn addLinkTests(
 pub fn addCliTests(b: *std.Build) *Step {
     const step = b.step("test-cli", "Test the command line interface");
     const s = std.fs.path.sep_str;
+    const io = b.graph.io;
 
     {
         // Test `zig init`.
@@ -2132,13 +2133,13 @@ pub fn addCliTests(b: *std.Build) *Step {
         const tmp_path = b.makeTempPath();
         const unformatted_code = "    // no reason for indent";
 
-        var dir = std.fs.cwd().openDir(tmp_path, .{}) catch @panic("unhandled");
-        defer dir.close();
+        var dir = std.Io.Dir.cwd().openDir(io, tmp_path, .{}) catch @panic("unhandled");
+        defer dir.close(io);
         dir.writeFile(.{ .sub_path = "fmt1.zig", .data = unformatted_code }) catch @panic("unhandled");
         dir.writeFile(.{ .sub_path = "fmt2.zig", .data = unformatted_code }) catch @panic("unhandled");
         dir.makeDir("subdir") catch @panic("unhandled");
-        var subdir = dir.openDir("subdir", .{}) catch @panic("unhandled");
-        defer subdir.close();
+        var subdir = dir.openDir(io, "subdir", .{}) catch @panic("unhandled");
+        defer subdir.close(io);
         subdir.writeFile(.{ .sub_path = "fmt3.zig", .data = unformatted_code }) catch @panic("unhandled");
 
         // Test zig fmt affecting only the appropriate files.
@@ -2634,7 +2635,7 @@ pub fn addCases(
     var cases = @import("src/Cases.zig").init(gpa, arena);
 
     var dir = try b.build_root.handle.openDir(io, "test/cases", .{ .iterate = true });
-    defer dir.close();
+    defer dir.close(io);
 
     cases.addFromDir(dir, b);
     try @import("cases.zig").addCases(&cases, build_options, b);
@@ -2680,6 +2681,8 @@ pub fn addDebuggerTests(b: *std.Build, options: DebuggerContext.Options) ?*Step 
 }
 
 pub fn addIncrementalTests(b: *std.Build, test_step: *Step) !void {
+    const io = b.graph.io;
+
     const incr_check = b.addExecutable(.{
         .name = "incr-check",
         .root_module = b.createModule(.{
@@ -2689,11 +2692,11 @@ pub fn addIncrementalTests(b: *std.Build, test_step: *Step) !void {
         }),
     });
 
-    var dir = try b.build_root.handle.openDir("test/incremental", .{ .iterate = true });
-    defer dir.close();
+    var dir = try b.build_root.handle.openDir(io, "test/incremental", .{ .iterate = true });
+    defer dir.close(io);
 
     var it = try dir.walk(b.graph.arena);
-    while (try it.next()) |entry| {
+    while (try it.next(io)) |entry| {
         if (entry.kind != .file) continue;
 
         const run = b.addRunArtifact(incr_check);

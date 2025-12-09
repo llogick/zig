@@ -34,8 +34,11 @@ fn run(allocator: std.mem.Allocator) !void {
         return error.BadUsage;
     };
 
-    var dir = try std.fs.cwd().openDir(dir_path, .{});
-    defer dir.close();
+    var threaded: std.Io.Threaded = .init_single_threaded;
+    const io = threaded.io();
 
-    _ = try dir.statFile(relpath);
+    var dir = try std.Io.Dir.cwd().openDir(io, dir_path, .{});
+    defer dir.close(io);
+
+    _ = try dir.statFile(io, relpath);
 }

@@ -18,7 +18,7 @@ pub fn main() !void {
     const exe = args[0];
     var catted_anything = false;
     var stdout_buffer: [4096]u8 = undefined;
-    var stdout_writer = Io.File.stdout().writerStreaming(&stdout_buffer);
+    var stdout_writer = Io.File.stdout().writerStreaming(io, &stdout_buffer);
     const stdout = &stdout_writer.interface;
     var stdin_reader = Io.File.stdin().readerStreaming(io, &.{});
 
@@ -32,8 +32,8 @@ pub fn main() !void {
         } else if (mem.startsWith(u8, arg, "-")) {
             return usage(exe);
         } else {
-            const file = cwd.openFile(arg, .{}) catch |err| fatal("unable to open file: {t}\n", .{err});
-            defer file.close();
+            const file = cwd.openFile(io, arg, .{}) catch |err| fatal("unable to open file: {t}\n", .{err});
+            defer file.close(io);
 
             catted_anything = true;
             var file_reader = file.reader(io, &.{});

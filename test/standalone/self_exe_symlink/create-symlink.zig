@@ -14,5 +14,9 @@ pub fn main() anyerror!void {
     // If `exe_path` is relative to our cwd, we need to convert it to be relative to the dirname of `symlink_path`.
     const exe_rel_path = try std.fs.path.relative(allocator, std.fs.path.dirname(symlink_path) orelse ".", exe_path);
     defer allocator.free(exe_rel_path);
-    try std.fs.cwd().symLink(exe_rel_path, symlink_path, .{});
+
+    var threaded: std.Io.Threaded = .init_single_threaded;
+    const io = threaded.io();
+
+    try std.Io.Dir.cwd().symLink(io, exe_rel_path, symlink_path, .{});
 }

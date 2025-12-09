@@ -1,8 +1,10 @@
 // Test relative paths through POSIX APIS.  These tests have to change the cwd, so
 // they shouldn't be Zig unit tests.
 
-const std = @import("std");
 const builtin = @import("builtin");
+
+const std = @import("std");
+const Io = std.Io;
 
 pub fn main() !void {
     if (builtin.target.os.tag == .wasi) return; // Can link, but can't change into tmpDir
@@ -11,6 +13,11 @@ pub fn main() !void {
     const a = Allocator.allocator();
     defer std.debug.assert(Allocator.deinit() == .ok);
 
+    var threaded: std.Io.Threaded = .init_single_threaded;
+    const io = threaded.io();
+
+    // TODO this API isn't supposed to be used outside of unit testing. make it compilation error if used
+    // outside of unit testing.
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
@@ -18,7 +25,7 @@ pub fn main() !void {
     try tmp.dir.setAsCwd();
 
     try test_symlink(a, tmp);
-    try test_link(tmp);
+    try test_link(io, tmp);
 }
 
 fn test_symlink(a: std.mem.Allocator, tmp: std.testing.TmpDir) !void {
@@ -65,7 +72,7 @@ fn getLinkInfo(fd: std.posix.fd_t) !struct { std.posix.ino_t, std.posix.nlink_t 
     return .{ st.ino, st.nlink };
 }
 
-fn test_link(tmp: std.testing.TmpDir) !void {
+fn test_link(io: Io, tmp: std.testing.TmpDir) !void {
     switch (builtin.target.os.tag) {
         .linux, .illumos => {},
         else => return,
@@ -74,17 +81,17 @@ fn test_link(tmp: std.testing.TmpDir) !void {
     const target_name = "link-target";
     const link_name = "newlink";
 
-    try tmp.dir.writeFile(.{ .sub_path = target_name, .data = "example" });
+    try tmp.dir.writeFile(io, .{ .sub_path = target_name, .data = "example" });
 
     // Test 1: create the relative link from inside tmp
     try std.posix.link(target_name, link_name);
 
     // Verify
-    const efd = try tmp.dir.openFile(target_name, .{});
-    defer efd.close();
+    const efd = try tmp.dir.openFile(io, target_name, .{});
+    defer efd.close(io);
 
-    const nfd = try tmp.dir.openFile(link_name, .{});
-    defer nfd.close();
+    const nfd = try tmp.dir.openFile(io, link_name, .{});
+    defer nfd.close(io);
 
     {
         const eino, _ = try getLinkInfo(efd.handle);

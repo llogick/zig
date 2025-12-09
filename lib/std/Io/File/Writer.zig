@@ -56,8 +56,9 @@ pub const WriteFileError = error{
 
 pub const SeekError = Io.File.SeekError;
 
-pub fn init(file: File, buffer: []u8) Writer {
+pub fn init(file: File, io: Io, buffer: []u8) Writer {
     return .{
+        .io = io,
         .file = file,
         .interface = initInterface(buffer),
         .mode = .positional,
@@ -67,8 +68,9 @@ pub fn init(file: File, buffer: []u8) Writer {
 /// Positional is more threadsafe, since the global seek position is not
 /// affected, but when such syscalls are not available, preemptively
 /// initializing in streaming mode will skip a failed syscall.
-pub fn initStreaming(file: File, buffer: []u8) Writer {
+pub fn initStreaming(file: File, io: Io, buffer: []u8) Writer {
     return .{
+        .io = io,
         .file = file,
         .interface = initInterface(buffer),
         .mode = .streaming,

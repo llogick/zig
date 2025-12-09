@@ -1,10 +1,12 @@
 const std = @import("std");
 
 pub fn main() !void {
+    var threaded: std.Io.Threaded = .init_single_threaded;
+    const io = threaded.io();
     var args = try std.process.argsWithAllocator(std.heap.page_allocator);
     _ = args.skip();
     const dir_name = args.next().?;
-    const dir = try std.fs.cwd().openDir(if (std.mem.startsWith(u8, dir_name, "--dir="))
+    const dir = try std.Io.Dir.cwd().openDir(io, if (std.mem.startsWith(u8, dir_name, "--dir="))
         dir_name["--dir=".len..]
     else
         dir_name, .{});
