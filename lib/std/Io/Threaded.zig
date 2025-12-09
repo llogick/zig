@@ -771,6 +771,7 @@ pub fn io(t: *Threaded) Io {
                 .windows => netWriteWindows,
                 else => netWritePosix,
             },
+            .netWriteFile = netWriteFile,
             .netSend = switch (native_os) {
                 .windows => netSendWindows,
                 else => netSendPosix,
@@ -872,6 +873,7 @@ pub fn ioBasic(t: *Threaded) Io {
             .netClose = netCloseUnavailable,
             .netRead = netReadUnavailable,
             .netWrite = netWriteUnavailable,
+            .netWriteFile = netWriteFileUnavailable,
             .netSend = netSendUnavailable,
             .netReceive = netReceiveUnavailable,
             .netInterfaceNameResolve = netInterfaceNameResolveUnavailable,
@@ -6782,7 +6784,7 @@ fn netWriteFile(
     header: []const u8,
     file_reader: *File.Reader,
     limit: Io.Limit,
-) net.Stream.WriteFileError!usize {
+) net.Stream.Writer.WriteFileError!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     _ = t;
     _ = socket_handle;
@@ -6790,6 +6792,22 @@ fn netWriteFile(
     _ = file_reader;
     _ = limit;
     return error.Unimplemented; // TODO
+}
+
+fn netWriteFileUnavailable(
+    userdata: ?*anyopaque,
+    socket_handle: net.Socket.Handle,
+    header: []const u8,
+    file_reader: *File.Reader,
+    limit: Io.Limit,
+) net.Stream.Writer.WriteFileError!usize {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    _ = t;
+    _ = socket_handle;
+    _ = header;
+    _ = file_reader;
+    _ = limit;
+    return error.NetworkDown;
 }
 
 fn fileWriteFilePositional(

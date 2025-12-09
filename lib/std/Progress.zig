@@ -458,13 +458,16 @@ pub fn start(options: Options) Node {
     if (noop_impl)
         return Node.none;
 
+    const io = static_threaded_io.io();
+
     if (std.process.parseEnvVarInt("ZIG_PROGRESS", u31, 10)) |ipc_fd| {
         global_progress.update_thread = std.Thread.spawn(.{}, ipcThreadRun, .{
-            @as(posix.fd_t, switch (@typeInfo(posix.fd_t)) {
+            io,
+            @as(Io.File, .{ .handle = switch (@typeInfo(posix.fd_t)) {
                 .int => ipc_fd,
                 .pointer => @ptrFromInt(ipc_fd),
                 else => @compileError("unsupported fd_t of " ++ @typeName(posix.fd_t)),
-            }),
+            } }),
         }) catch |err| {
             std.log.warn("failed to spawn IPC thread for communicating progress to parent: {s}", .{@errorName(err)});
             return Node.none;
@@ -476,9 +479,9 @@ pub fn start(options: Options) Node {
             }
             const stderr: Io.File = .stderr();
             global_progress.terminal = stderr;
-            if (stderr.enableAnsiEscapeCodes()) |_| {
+            if (stderr.enableAnsiEscapeCodes(io)) |_| {
                 global_progress.terminal_mode = .ansi_escape_codes;
-            } else |_| if (is_windows and stderr.isTty()) {
+            } else |_| if (is_windows and stderr.isTty(io)) {
                 global_progress.terminal_mode = TerminalMode{ .windows_api = .{
                     .code_page = windows.kernel32.GetConsoleOutputCP(),
                 } };
@@ -499,8 +502,8 @@ pub fn start(options: Options) Node {
 
             if (switch (global_progress.terminal_mode) {
                 .off => unreachable, // handled a few lines above
-                .ansi_escape_codes => std.Thread.spawn(.{}, updateThreadRun, .{}),
-                .windows_api => if (is_windows) std.Thread.spawn(.{}, windowsApiUpdateThreadRun, .{}) else unreachable,
+                .ansi_escape_codes => std.Thread.spawn(.{}, updateThreadRun, .{io}),
+                .windows_api => if (is_windows) std.Thread.spawn(.{}, windowsApiUpdateThreadRun, .{io}) else unreachable,
             }) |thread| {
                 global_progress.update_thread = thread;
             } else |err| {
@@ -531,7 +534,7 @@ fn wait(timeout_ns: u64) bool {
     return resize_flag or (global_progress.cols == 0);
 }
 
-fn updateThreadRun() void {
+fn updateThreadRun(io: Io) void {
     // Store this data in the thread so that it does not need to be part of the
     // linker data of the main executable.
     var serialized_buffer: Serialized.Buffer = undefined;
@@ -544,7 +547,7 @@ fn updateThreadRun() void {
         const buffer, _ = computeRedraw(&serialized_buffer);
         if (stderr_mutex.tryLock()) {
             defer stderr_mutex.unlock();
-            write(buffer) catch return;
+            write(io, buffer) catch return;
             global_progress.need_clear = true;
         }
     }
@@ -555,7 +558,7 @@ fn updateThreadRun() void {
         if (@atomicLoad(bool, &global_progress.done, .monotonic)) {
             stderr_mutex.lock();
             defer stderr_mutex.unlock();
-            return clearWrittenWithEscapeCodes() catch {};
+            return clearWrittenWithEscapeCodes(io) catch {};
         }
 
         maybeUpdateSize(resize_flag);
@@ -563,7 +566,7 @@ fn updateThreadRun() void {
         const buffer, _ = computeRedraw(&serialized_buffer);
         if (stderr_mutex.tryLock()) {
             defer stderr_mutex.unlock();
-            write(buffer) catch return;
+            write(io, buffer) catch return;
             global_progress.need_clear = true;
         }
     }
@@ -577,7 +580,7 @@ fn windowsApiWriteMarker() void {
     _ = windows.kernel32.WriteConsoleW(handle, &[_]u16{windows_api_start_marker}, 1, &num_chars_written, null);
 }
 
-fn windowsApiUpdateThreadRun() void {
+fn windowsApiUpdateThreadRun(io: Io) void {
     var serialized_buffer: Serialized.Buffer = undefined;
 
     {
@@ -589,7 +592,7 @@ fn windowsApiUpdateThreadRun() void {
         if (stderr_mutex.tryLock()) {
             defer stderr_mutex.unlock();
             windowsApiWriteMarker();
-            write(buffer) catch return;
+            write(io, buffer) catch return;
             global_progress.need_clear = true;
             windowsApiMoveToMarker(nl_n) catch return;
         }
@@ -611,7 +614,7 @@ fn windowsApiUpdateThreadRun() void {
             defer stderr_mutex.unlock();
             clearWrittenWindowsApi() catch return;
             windowsApiWriteMarker();
-            write(buffer) catch return;
+            write(io, buffer) catch return;
             global_progress.need_clear = true;
             windowsApiMoveToMarker(nl_n) catch return;
         }
@@ -624,8 +627,9 @@ fn windowsApiUpdateThreadRun() void {
 ///
 /// The lock is recursive; the same thread may hold the lock multiple times.
 pub fn lockStdErr() void {
+    const io = stderr_file_writer.io;
     stderr_mutex.lock();
-    clearWrittenWithEscapeCodes() catch {};
+    clearWrittenWithEscapeCodes(io) catch {};
 }
 
 pub fn unlockStdErr() void {
@@ -636,10 +640,12 @@ pub fn unlockStdErr() void {
 const stderr_writer: *Writer = &stderr_file_writer.interface;
 /// Protected by `stderr_mutex`.
 var stderr_file_writer: Io.File.Writer = .{
+    .io = static_threaded_io.io(),
     .interface = Io.File.Writer.initInterface(&.{}),
     .file = if (is_windows) undefined else .stderr(),
     .mode = .streaming,
 };
+var static_threaded_io: Io.Threaded = .init_single_threaded;
 
 /// Allows the caller to freely write to the returned `Writer`,
 /// initialized with `buffer`, until `unlockStderrWriter` is called.
@@ -647,9 +653,10 @@ var stderr_file_writer: Io.File.Writer = .{
 /// During the lock, any `std.Progress` information is cleared from the terminal.
 ///
 /// The lock is recursive; the same thread may hold the lock multiple times.
-pub fn lockStderrWriter(buffer: []u8) *Writer {
+pub fn lockStderrWriter(buffer: []u8) *Io.Writer {
+    const io = stderr_file_writer.io;
     stderr_mutex.lock();
-    clearWrittenWithEscapeCodes() catch {};
+    clearWrittenWithEscapeCodes(io) catch {};
     if (is_windows) stderr_file_writer.file = .stderr();
     stderr_writer.flush() catch {};
     stderr_writer.buffer = buffer;
@@ -663,7 +670,7 @@ pub fn unlockStderrWriter() void {
     stderr_mutex.unlock();
 }
 
-fn ipcThreadRun(fd: posix.fd_t) anyerror!void {
+fn ipcThreadRun(io: Io, file: Io.File) anyerror!void {
     // Store this data in the thread so that it does not need to be part of the
     // linker data of the main executable.
     var serialized_buffer: Serialized.Buffer = undefined;
@@ -675,7 +682,7 @@ fn ipcThreadRun(fd: posix.fd_t) anyerror!void {
             return;
 
         const serialized = serialize(&serialized_buffer);
-        writeIpc(fd, serialized) catch |err| switch (err) {
+        writeIpc(io, file, serialized) catch |err| switch (err) {
             error.BrokenPipe => return,
         };
     }
@@ -687,7 +694,7 @@ fn ipcThreadRun(fd: posix.fd_t) anyerror!void {
             return;
 
         const serialized = serialize(&serialized_buffer);
-        writeIpc(fd, serialized) catch |err| switch (err) {
+        writeIpc(io, file, serialized) catch |err| switch (err) {
             error.BrokenPipe => return,
         };
     }
@@ -786,11 +793,11 @@ fn appendTreeSymbol(symbol: TreeSymbol, buf: []u8, start_i: usize) usize {
     }
 }
 
-fn clearWrittenWithEscapeCodes() anyerror!void {
+fn clearWrittenWithEscapeCodes(io: Io) anyerror!void {
     if (noop_impl or !global_progress.need_clear) return;
 
     global_progress.need_clear = false;
-    try write(clear ++ progress_remove);
+    try write(io, clear ++ progress_remove);
 }
 
 /// U+25BA or ►
@@ -1417,13 +1424,13 @@ fn withinRowLimit(p: *Progress, nl_n: usize) bool {
     return nl_n + 2 < p.rows;
 }
 
-fn write(buf: []const u8) anyerror!void {
-    try global_progress.terminal.writeAll(buf);
+fn write(io: Io, buf: []const u8) anyerror!void {
+    try global_progress.terminal.writeStreamingAll(io, buf);
 }
 
 var remaining_write_trash_bytes: usize = 0;
 
-fn writeIpc(fd: posix.fd_t, serialized: Serialized) error{BrokenPipe}!void {
+fn writeIpc(io: Io, file: Io.File, serialized: Serialized) error{BrokenPipe}!void {
     // Byteswap if necessary to ensure little endian over the pipe. This is
     // needed because the parent or child process might be running in qemu.
     if (is_big_endian) for (serialized.storage) |*s| s.byteSwap();
@@ -1434,11 +1441,7 @@ fn writeIpc(fd: posix.fd_t, serialized: Serialized) error{BrokenPipe}!void {
     const storage = std.mem.sliceAsBytes(serialized.storage);
     const parents = std.mem.sliceAsBytes(serialized.parents);
 
-    var vecs: [3]posix.iovec_const = .{
-        .{ .base = header.ptr, .len = header.len },
-        .{ .base = storage.ptr, .len = storage.len },
-        .{ .base = parents.ptr, .len = parents.len },
-    };
+    var vecs: [3][]const u8 = .{ header, storage, parents };
 
     // Ensures the packet can fit in the pipe buffer.
     const upper_bound_msg_len = 1 + node_storage_buffer_len * @sizeOf(Node.Storage) +
@@ -1449,7 +1452,7 @@ fn writeIpc(fd: posix.fd_t, serialized: Serialized) error{BrokenPipe}!void {
         // We do this in a separate write call to give a better chance for the
         // writev below to be in a single packet.
         const n = @min(parents.len, remaining_write_trash_bytes);
-        if (posix.write(fd, parents[0..n])) |written| {
+        if (io.vtable.fileWriteStreaming(io.userdata, file, &.{}, &.{parents[0..n]}, 1)) |written| {
             remaining_write_trash_bytes -= written;
             continue;
         } else |err| switch (err) {
@@ -1464,7 +1467,7 @@ fn writeIpc(fd: posix.fd_t, serialized: Serialized) error{BrokenPipe}!void {
 
     // If this write would block we do not want to keep trying, but we need to
     // know if a partial message was written.
-    if (writevNonblock(fd, &vecs)) |written| {
+    if (writevNonblock(io, file, &vecs)) |written| {
         const total = header.len + storage.len + parents.len;
         if (written < total) {
             remaining_write_trash_bytes = total - written;
@@ -1479,7 +1482,7 @@ fn writeIpc(fd: posix.fd_t, serialized: Serialized) error{BrokenPipe}!void {
     }
 }
 
-fn writevNonblock(fd: posix.fd_t, iov: []posix.iovec_const) posix.WriteError!usize {
+fn writevNonblock(io: Io, file: Io.File, iov: [][]const u8) Io.File.Writer.Error!usize {
     var iov_index: usize = 0;
     var written: usize = 0;
     var total_written: usize = 0;
@@ -1488,9 +1491,9 @@ fn writevNonblock(fd: posix.fd_t, iov: []posix.iovec_const) posix.WriteError!usi
             written >= iov[iov_index].len
         else
             return total_written) : (iov_index += 1) written -= iov[iov_index].len;
-        iov[iov_index].base += written;
+        iov[iov_index].ptr += written;
         iov[iov_index].len -= written;
-        written = try posix.writev(fd, iov[iov_index..]);
+        written = try io.vtable.fileWriteStreaming(io.userdata, file, &.{}, iov, 1);
         if (written == 0) return total_written;
         total_written += written;
     }

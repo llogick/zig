@@ -286,13 +286,12 @@ pub fn unlockStdErr() void {
 pub fn lockStderrWriter(buffer: []u8) struct { *Writer, tty.Config } {
     const global = struct {
         var conf: ?tty.Config = null;
-        var single_threaded_io: Io.Threaded = .init_single_threaded;
     };
-    const io = global.single_threaded_io.io();
     const w = std.Progress.lockStderrWriter(buffer);
+    const file_writer: *File.Writer = @fieldParentPtr("interface", w);
     // The stderr lock also locks access to `global.conf`.
     if (global.conf == null) {
-        global.conf = .detect(io, .stderr());
+        global.conf = .detect(file_writer.io, .stderr());
     }
     return .{ w, global.conf.? };
 }
@@ -619,13 +618,15 @@ pub const StackUnwindOptions = struct {
 ///
 /// See `writeCurrentStackTrace` to immediately print the trace instead of capturing it.
 pub noinline fn captureCurrentStackTrace(options: StackUnwindOptions, addr_buf: []usize) StackTrace {
-    var threaded: Io.Threaded = .init_single_threaded;
-    const io = threaded.ioBasic();
     const empty_trace: StackTrace = .{ .index = 0, .instruction_addresses = &.{} };
     if (!std.options.allow_stack_tracing) return empty_trace;
     var it: StackIterator = .init(options.context);
     defer it.deinit();
     if (!it.stratOk(options.allow_unsafe_unwind)) return empty_trace;
+
+    var threaded: Io.Threaded = .init_single_threaded;
+    const io = threaded.ioBasic();
+
     var total_frames: usize = 0;
     var index: usize = 0;
     var wait_for = options.first_address;
