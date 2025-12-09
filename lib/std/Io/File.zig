@@ -280,7 +280,7 @@ pub fn sync(file: File, io: Io) SyncError!void {
 /// See also:
 /// * `enableAnsiEscapeCodes`
 /// * `supportsAnsiEscapeCodes`.
-pub fn isTty(file: File, io: Io) bool {
+pub fn isTty(file: File, io: Io) Io.Cancelable!bool {
     return io.vtable.fileIsTty(io.userdata, file);
 }
 

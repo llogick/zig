@@ -629,12 +629,12 @@ pub fn tmpDir(opts: Io.Dir.OpenOptions) TmpDir {
     _ = std.fs.base64_encoder.encode(&sub_path, &random_bytes);
 
     const cwd = Io.Dir.cwd();
-    var cache_dir = cwd.makeOpenPath(".zig-cache", .{}) catch
+    var cache_dir = cwd.makeOpenPath(io, ".zig-cache", .{}) catch
         @panic("unable to make tmp dir for testing: unable to make and open .zig-cache dir");
     defer cache_dir.close(io);
-    const parent_dir = cache_dir.makeOpenPath("tmp", .{}) catch
+    const parent_dir = cache_dir.makeOpenPath(io, "tmp", .{}) catch
         @panic("unable to make tmp dir for testing: unable to make and open .zig-cache/tmp dir");
-    const dir = parent_dir.makeOpenPath(&sub_path, opts) catch
+    const dir = parent_dir.makeOpenPath(io, &sub_path, .{ .open_options = opts }) catch
         @panic("unable to make tmp dir for testing: unable to make and open the tmp dir");
 
     return .{

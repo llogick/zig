@@ -75,7 +75,7 @@ pub fn main() void {
 fn mainServer() !void {
     @disableInstrumentation();
     var stdin_reader = Io.File.stdin().readerStreaming(runner_threaded_io.io(), &stdin_buffer);
-    var stdout_writer = Io.File.stdout().writerStreaming(&stdout_buffer);
+    var stdout_writer = Io.File.stdout().writerStreaming(runner_threaded_io.io(), &stdout_buffer);
     var server = try std.zig.Server.init(.{
         .in = &stdin_reader.interface,
         .out = &stdout_writer.interface,
@@ -228,7 +228,7 @@ fn mainTerminal() void {
         .root_name = "Test",
         .estimated_total_items = test_fn_list.len,
     });
-    const have_tty = Io.File.stderr().isTty();
+    const have_tty = Io.File.stderr().isTty(runner_threaded_io.io()) catch unreachable;
 
     var leaks: usize = 0;
     for (test_fn_list, 0..) |test_fn, i| {

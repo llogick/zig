@@ -1207,9 +1207,8 @@ fn printLineFromFile(io: Io, writer: *Writer, source_location: SourceLocation) !
 
     var buffer: [4096]u8 = undefined;
     var file_reader: File.Reader = .init(file, io, &buffer);
-    const r = &file_reader.interface;
     var line_index: usize = 0;
-    while (r.takeDelimiterExclusive('\n')) |line| {
+    while (try file_reader.interface.takeDelimiter('\n')) |line| {
         line_index += 1;
         if (line_index == source_location.line) {
             // TODO delete hard tabs from the language
@@ -1219,9 +1218,8 @@ fn printLineFromFile(io: Io, writer: *Writer, source_location: SourceLocation) !
             try writer.writeByte('\n');
             return;
         }
-    } else |err| {
-        return err;
     }
+    return error.EndOfStream;
 }
 
 test printLineFromFile {
@@ -1248,7 +1246,7 @@ test printLineFromFile {
         defer gpa.free(path);
         try test_dir.dir.writeFile(io, .{ .sub_path = "one_line.zig", .data = "no new lines in this file, but one is printed anyway" });
 
-        try expectError(error.EndOfFile, printLineFromFile(io, output_stream, .{ .file_name = path, .line = 2, .column = 0 }));
+        try expectError(error.EndOfStream, printLineFromFile(io, output_stream, .{ .file_name = path, .line = 2, .column = 0 }));
 
         try printLineFromFile(io, output_stream, .{ .file_name = path, .line = 1, .column = 0 });
         try expectEqualStrings("no new lines in this file, but one is printed anyway\n", aw.written());
@@ -1317,7 +1315,7 @@ test printLineFromFile {
         const writer = &file_writer.interface;
         try writer.splatByteAll('a', 3 * std.heap.page_size_max);
 
-        try expectError(error.EndOfFile, printLineFromFile(io, output_stream, .{ .file_name = path, .line = 2, .column = 0 }));
+        try expectError(error.EndOfStream, printLineFromFile(io, output_stream, .{ .file_name = path, .line = 2, .column = 0 }));
 
         try printLineFromFile(io, output_stream, .{ .file_name = path, .line = 1, .column = 0 });
         try expectEqualStrings(("a" ** (3 * std.heap.page_size_max)) ++ "\n", aw.written());
