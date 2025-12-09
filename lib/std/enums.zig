@@ -22,7 +22,7 @@ pub fn fromInt(comptime E: type, integer: anytype) ?E {
     // without requiring an inline loop.
     // This generates better machine code.
     for (values(E)) |value| {
-        if (@intFromEnum(value) == integer) return @enumFromInt(integer);
+        if (@intFromEnum(value) == integer) return value;
     }
     return null;
 }
@@ -213,6 +213,7 @@ test fromInt {
         B,
     };
     const E3 = enum(i8) { A, _ };
+    const E4 = enum(u8) { A };
 
     var zero: u8 = 0;
     var one: u16 = 1;
@@ -226,6 +227,10 @@ test fromInt {
     try testing.expectEqual(null, fromInt(E1, one));
     try testing.expectEqual(null, fromInt(E3, 128));
     try testing.expectEqual(null, fromInt(E3, -129));
+
+    // `fromInt` used to produce a compiler error instead of `null` if trying to convert an integer
+    // that wasn't out of range, but also wasn't a valid value.
+    try testing.expectEqual(null, fromInt(E4, 1));
 }
 
 /// A set of enum elements, backed by a bitfield.  If the enum
