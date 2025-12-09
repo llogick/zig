@@ -767,7 +767,7 @@ test "readFileAlloc" {
     var file = try tmp_dir.dir.createFile(io, "test_file", .{ .read = true });
     defer file.close(io);
 
-    const buf1 = try tmp_dir.dir.readFileAlloc("test_file", testing.allocator, .limited(1024));
+    const buf1 = try tmp_dir.dir.readFileAlloc(io, "test_file", testing.allocator, .limited(1024));
     defer testing.allocator.free(buf1);
     try testing.expectEqualStrings("", buf1);
 
@@ -776,7 +776,7 @@ test "readFileAlloc" {
 
     {
         // max_bytes > file_size
-        const buf2 = try tmp_dir.dir.readFileAlloc("test_file", testing.allocator, .limited(1024));
+        const buf2 = try tmp_dir.dir.readFileAlloc(io, "test_file", testing.allocator, .limited(1024));
         defer testing.allocator.free(buf2);
         try testing.expectEqualStrings(write_buf, buf2);
     }
@@ -785,13 +785,13 @@ test "readFileAlloc" {
         // max_bytes == file_size
         try testing.expectError(
             error.StreamTooLong,
-            tmp_dir.dir.readFileAlloc("test_file", testing.allocator, .limited(write_buf.len)),
+            tmp_dir.dir.readFileAlloc(io, "test_file", testing.allocator, .limited(write_buf.len)),
         );
     }
 
     {
         // max_bytes == file_size + 1
-        const buf2 = try tmp_dir.dir.readFileAlloc("test_file", testing.allocator, .limited(write_buf.len + 1));
+        const buf2 = try tmp_dir.dir.readFileAlloc(io, "test_file", testing.allocator, .limited(write_buf.len + 1));
         defer testing.allocator.free(buf2);
         try testing.expectEqualStrings(write_buf, buf2);
     }
@@ -799,7 +799,7 @@ test "readFileAlloc" {
     // max_bytes < file_size
     try testing.expectError(
         error.StreamTooLong,
-        tmp_dir.dir.readFileAlloc("test_file", testing.allocator, .limited(write_buf.len - 1)),
+        tmp_dir.dir.readFileAlloc(io, "test_file", testing.allocator, .limited(write_buf.len - 1)),
     );
 }
 
@@ -877,16 +877,16 @@ test "file operations on directories" {
             switch (native_os) {
                 .dragonfly, .netbsd => {
                     // no error when reading a directory. See https://github.com/ziglang/zig/issues/5732
-                    const buf = try ctx.dir.readFileAlloc(test_dir_name, testing.allocator, .unlimited);
+                    const buf = try ctx.dir.readFileAlloc(io, test_dir_name, testing.allocator, .unlimited);
                     testing.allocator.free(buf);
                 },
                 .wasi => {
                     // WASI return EBADF, which gets mapped to NotOpenForReading.
                     // See https://github.com/bytecodealliance/wasmtime/issues/1935
-                    try testing.expectError(error.NotOpenForReading, ctx.dir.readFileAlloc(test_dir_name, testing.allocator, .unlimited));
+                    try testing.expectError(error.NotOpenForReading, ctx.dir.readFileAlloc(io, test_dir_name, testing.allocator, .unlimited));
                 },
                 else => {
-                    try testing.expectError(error.IsDir, ctx.dir.readFileAlloc(test_dir_name, testing.allocator, .unlimited));
+                    try testing.expectError(error.IsDir, ctx.dir.readFileAlloc(io, test_dir_name, testing.allocator, .unlimited));
                 },
             }
 
@@ -1679,14 +1679,14 @@ test "copyFile" {
             try ctx.dir.copyFile(src_file, ctx.dir, dest_file2, .{ .override_mode = File.default_mode });
             defer ctx.dir.deleteFile(dest_file2) catch {};
 
-            try expectFileContents(ctx.dir, dest_file, data);
-            try expectFileContents(ctx.dir, dest_file2, data);
+            try expectFileContents(io, ctx.dir, dest_file, data);
+            try expectFileContents(io, ctx.dir, dest_file2, data);
         }
     }.impl);
 }
 
-fn expectFileContents(dir: Dir, file_path: []const u8, data: []const u8) !void {
-    const contents = try dir.readFileAlloc(file_path, testing.allocator, .limited(1000));
+fn expectFileContents(io: Io, dir: Dir, file_path: []const u8, data: []const u8) !void {
+    const contents = try dir.readFileAlloc(io, file_path, testing.allocator, .limited(1000));
     defer testing.allocator.free(contents);
 
     try testing.expectEqualSlices(u8, data, contents);
@@ -1695,6 +1695,7 @@ fn expectFileContents(dir: Dir, file_path: []const u8, data: []const u8) !void {
 test "AtomicFile" {
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {
+            const io = ctx.io;
             const allocator = ctx.arena.allocator();
             const test_out_file = try ctx.transformPath("tmp_atomic_file_test_dest.txt");
             const test_content =
@@ -1709,7 +1710,7 @@ test "AtomicFile" {
                 try af.file_writer.interface.writeAll(test_content);
                 try af.finish();
             }
-            const content = try ctx.dir.readFileAlloc(test_out_file, allocator, .limited(9999));
+            const content = try ctx.dir.readFileAlloc(io, test_out_file, allocator, .limited(9999));
             try testing.expectEqualStrings(test_content, content);
 
             try ctx.dir.deleteFile(test_out_file);

@@ -624,12 +624,12 @@ pub const File = struct {
                         try emit.root_dir.handle.rename(tmp_sub_path, emit.root_dir.handle, emit.sub_path, io);
                         switch (builtin.os.tag) {
                             .linux => std.posix.ptrace(std.os.linux.PTRACE.ATTACH, pid, 0, 0) catch |err| {
-                                log.warn("ptrace failure: {s}", .{@errorName(err)});
+                                log.warn("ptrace failure: {t}", .{err});
                             },
                             .maccatalyst, .macos => {
                                 const macho_file = base.cast(.macho).?;
                                 macho_file.ptraceAttach(pid) catch |err| {
-                                    log.warn("attaching failed with error: {s}", .{@errorName(err)});
+                                    log.warn("attaching failed with error: {t}", .{err});
                                 };
                             },
                             .windows => unreachable,

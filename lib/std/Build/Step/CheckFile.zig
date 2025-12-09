@@ -51,11 +51,12 @@ pub fn setName(check_file: *CheckFile, name: []const u8) void {
 fn make(step: *Step, options: Step.MakeOptions) !void {
     _ = options;
     const b = step.owner;
+    const io = b.graph.io;
     const check_file: *CheckFile = @fieldParentPtr("step", step);
     try step.singleUnchangingWatchInput(check_file.source);
 
     const src_path = check_file.source.getPath2(b, step);
-    const contents = Io.Dir.cwd().readFileAlloc(src_path, b.allocator, .limited(check_file.max_bytes)) catch |err| {
+    const contents = Io.Dir.cwd().readFileAlloc(io, src_path, b.allocator, .limited(check_file.max_bytes)) catch |err| {
         return step.fail("unable to read '{s}': {s}", .{
             src_path, @errorName(err),
         });

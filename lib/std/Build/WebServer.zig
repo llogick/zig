@@ -469,11 +469,12 @@ pub fn serveFile(
     content_type: []const u8,
 ) !void {
     const gpa = ws.gpa;
+    const io = ws.graph.io;
     // The desired API is actually sendfile, which will require enhancing http.Server.
     // We load the file with every request so that the user can make changes to the file
     // and refresh the HTML page without restarting this server.
-    const file_contents = path.root_dir.handle.readFileAlloc(path.sub_path, gpa, .limited(10 * 1024 * 1024)) catch |err| {
-        log.err("failed to read '{f}': {s}", .{ path, @errorName(err) });
+    const file_contents = path.root_dir.handle.readFileAlloc(io, path.sub_path, gpa, .limited(10 * 1024 * 1024)) catch |err| {
+        log.err("failed to read '{f}': {t}", .{ path, err });
         return error.AlreadyReported;
     };
     defer gpa.free(file_contents);

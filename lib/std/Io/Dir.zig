@@ -1117,10 +1117,10 @@ pub fn readLink(dir: Dir, io: Io, sub_path: []const u8, buffer: []u8) ReadLinkEr
 /// On other platforms, `path` is an opaque sequence of bytes with no particular encoding.
 pub fn readLinkAbsolute(io: Io, absolute_path: []const u8, buffer: []u8) ReadLinkError!usize {
     assert(path.isAbsolute(absolute_path));
-    return io.vtable.dirReadLink(io.userdata, .cwd(), path, buffer);
+    return io.vtable.dirReadLink(io.userdata, .cwd(), absolute_path, buffer);
 }
 
-pub const ReadFileAllocError = File.OpenError || File.ReadError || Allocator.Error || error{
+pub const ReadFileAllocError = File.OpenError || File.Reader.Error || Allocator.Error || error{
     /// File size reached or exceeded the provided limit.
     StreamTooLong,
 };
@@ -1603,7 +1603,7 @@ pub const CopyFileOptions = struct {
 
 pub const CopyFileError = File.OpenError || File.StatError ||
     File.Atomic.InitError || File.Atomic.FinishError ||
-    File.ReadError || File.WriteError || error{InvalidFileName};
+    File.Reader.Error || File.WriteError || error{InvalidFileName};
 
 /// Atomically creates a new file at `dest_path` within `dest_dir` with the
 /// same contents as `source_path` within `source_dir`, overwriting any already

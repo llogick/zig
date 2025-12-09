@@ -1029,9 +1029,8 @@ fn buildOutputType(
                 if (mem.cutPrefix(u8, arg, "@")) |resp_file_path| {
                     // This is a "compiler response file". We must parse the file and treat its
                     // contents as command line parameters.
-                    args_iter.resp_file = initArgIteratorResponseFile(arena, resp_file_path) catch |err| {
-                        fatal("unable to read response file '{s}': {s}", .{ resp_file_path, @errorName(err) });
-                    };
+                    args_iter.resp_file = initArgIteratorResponseFile(arena, io, resp_file_path) catch |err|
+                        fatal("unable to read response file '{s}': {t}", .{ resp_file_path, err });
                 } else if (mem.startsWith(u8, arg, "-")) {
                     if (mem.eql(u8, arg, "-h") or mem.eql(u8, arg, "--help")) {
                         try Io.File.stdout().writeAll(usage_build_generic);
@@ -5441,7 +5440,7 @@ fn cmdBuild(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) 
                         // that are missing.
                         const s = fs.path.sep_str;
                         const tmp_sub_path = "tmp" ++ s ++ results_tmp_file_nonce;
-                        const stdout = dirs.local_cache.handle.readFileAlloc(tmp_sub_path, arena, .limited(50 * 1024 * 1024)) catch |err| {
+                        const stdout = dirs.local_cache.handle.readFileAlloc(io, tmp_sub_path, arena, .limited(50 * 1024 * 1024)) catch |err| {
                             fatal("unable to read results of configure phase from '{f}{s}': {s}", .{
                                 dirs.local_cache, tmp_sub_path, @errorName(err),
                             });
@@ -5822,9 +5821,9 @@ pub fn lldMain(
 const ArgIteratorResponseFile = process.ArgIteratorGeneral(.{ .comments = true, .single_quotes = true });
 
 /// Initialize the arguments from a Response File. "*.rsp"
-fn initArgIteratorResponseFile(allocator: Allocator, resp_file_path: []const u8) !ArgIteratorResponseFile {
+fn initArgIteratorResponseFile(allocator: Allocator, io: Io, resp_file_path: []const u8) !ArgIteratorResponseFile {
     const max_bytes = 10 * 1024 * 1024; // 10 MiB of command line arguments is a reasonable limit
-    const cmd_line = try Io.Dir.cwd().readFileAlloc(resp_file_path, allocator, .limited(max_bytes));
+    const cmd_line = try Io.Dir.cwd().readFileAlloc(io, resp_file_path, allocator, .limited(max_bytes));
     errdefer allocator.free(cmd_line);
 
     return ArgIteratorResponseFile.initTakeOwnership(allocator, cmd_line);
@@ -5952,7 +5951,7 @@ pub const ClangArgIterator = struct {
         };
     }
 
-    fn next(self: *ClangArgIterator) !void {
+    fn next(self: *ClangArgIterator, io: Io) !void {
         assert(self.has_next);
         assert(self.next_index < self.argv.len);
         // In this state we know that the parameter we are looking at is a root parameter
@@ -5970,10 +5969,8 @@ pub const ClangArgIterator = struct {
             const arena = self.arena;
             const resp_file_path = arg[1..];
 
-            self.arg_iterator_response_file =
-                initArgIteratorResponseFile(arena, resp_file_path) catch |err| {
-                    fatal("unable to read response file '{s}': {s}", .{ resp_file_path, @errorName(err) });
-                };
+            self.arg_iterator_response_file = initArgIteratorResponseFile(arena, io, resp_file_path) catch |err|
+                fatal("unable to read response file '{s}': {t}", .{ resp_file_path, err });
             // NOTE: The ArgIteratorResponseFile returns tokens from next() that are slices of an
             // internal buffer. This internal buffer is arena allocated, so it is not cleaned up here.
 
@@ -7405,7 +7402,7 @@ const Templates = struct {
         }
 
         const max_bytes = 10 * 1024 * 1024;
-        const contents = templates.dir.readFileAlloc(template_path, arena, .limited(max_bytes)) catch |err| {
+        const contents = templates.dir.readFileAlloc(io, template_path, arena, .limited(max_bytes)) catch |err| {
             fatal("unable to read template file '{s}': {t}", .{ template_path, err });
         };
         templates.buffer.clearRetainingCapacity();

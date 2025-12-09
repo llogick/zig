@@ -37,11 +37,7 @@ pub const FindError = error{
     ZigIsTheCCompiler,
 };
 
-pub fn parse(
-    allocator: Allocator,
-    libc_file: []const u8,
-    target: *const std.Target,
-) !LibCInstallation {
+pub fn parse(allocator: Allocator, io: Io, libc_file: []const u8, target: *const std.Target) !LibCInstallation {
     var self: LibCInstallation = .{};
 
     const fields = std.meta.fields(LibCInstallation);
@@ -57,7 +53,7 @@ pub fn parse(
         }
     }
 
-    const contents = try Io.Dir.cwd().readFileAlloc(libc_file, allocator, .limited(std.math.maxInt(usize)));
+    const contents = try Io.Dir.cwd().readFileAlloc(io, libc_file, allocator, .limited(std.math.maxInt(usize)));
     defer allocator.free(contents);
 
     var it = std.mem.tokenizeScalar(u8, contents, '\n');

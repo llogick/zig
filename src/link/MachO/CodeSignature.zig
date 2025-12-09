@@ -17,6 +17,12 @@ const MachO = @import("../MachO.zig");
 
 const hash_size = Sha256.digest_length;
 
+page_size: u16,
+code_directory: CodeDirectory,
+requirements: ?Requirements = null,
+entitlements: ?Entitlements = null,
+signature: ?Signature = null,
+
 const Blob = union(enum) {
     code_directory: *CodeDirectory,
     requirements: *Requirements,
@@ -220,12 +226,6 @@ const Signature = struct {
     }
 };
 
-page_size: u16,
-code_directory: CodeDirectory,
-requirements: ?Requirements = null,
-entitlements: ?Entitlements = null,
-signature: ?Signature = null,
-
 pub fn init(page_size: u16) CodeSignature {
     return .{
         .page_size = page_size,
@@ -246,8 +246,8 @@ pub fn deinit(self: *CodeSignature, allocator: Allocator) void {
     }
 }
 
-pub fn addEntitlements(self: *CodeSignature, allocator: Allocator, path: []const u8) !void {
-    const inner = try Io.Dir.cwd().readFileAlloc(path, allocator, .limited(std.math.maxInt(u32)));
+pub fn addEntitlements(self: *CodeSignature, allocator: Allocator, io: Io, path: []const u8) !void {
+    const inner = try Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(std.math.maxInt(u32)));
     self.entitlements = .{ .inner = inner };
 }
 

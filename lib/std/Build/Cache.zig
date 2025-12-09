@@ -1075,7 +1075,8 @@ pub const Manifest = struct {
 
     fn addDepFileMaybePost(self: *Manifest, dir: Io.Dir, dep_file_sub_path: []const u8) !void {
         const gpa = self.cache.gpa;
-        const dep_file_contents = try dir.readFileAlloc(dep_file_sub_path, gpa, .limited(manifest_file_size_max));
+        const io = self.cache.io;
+        const dep_file_contents = try dir.readFileAlloc(io, dep_file_sub_path, gpa, .limited(manifest_file_size_max));
         defer gpa.free(dep_file_contents);
 
         var error_buf: std.ArrayList(u8) = .empty;

@@ -4347,11 +4347,13 @@ fn inferSdkVersion(comp: *Compilation, sdk_layout: SdkLayout) ?std.SemanticVersi
     defer arena_allocator.deinit();
     const arena = arena_allocator.allocator();
 
+    const io = comp.io;
+
     const sdk_dir = switch (sdk_layout) {
         .sdk => comp.sysroot.?,
         .vendored => fs.path.join(arena, &.{ comp.dirs.zig_lib.path.?, "libc", "darwin" }) catch return null,
     };
-    if (readSdkVersionFromSettings(arena, sdk_dir)) |ver| {
+    if (readSdkVersionFromSettings(arena, io, sdk_dir)) |ver| {
         return parseSdkVersion(ver);
     } else |_| {
         // Read from settings should always succeed when vendored.
@@ -4374,9 +4376,9 @@ fn inferSdkVersion(comp: *Compilation, sdk_layout: SdkLayout) ?std.SemanticVersi
 // Official Apple SDKs ship with a `SDKSettings.json` located at the top of SDK fs layout.
 // Use property `MinimalDisplayName` to determine version.
 // The file/property is also available with vendored libc.
-fn readSdkVersionFromSettings(arena: Allocator, dir: []const u8) ![]const u8 {
+fn readSdkVersionFromSettings(arena: Allocator, io: Io, dir: []const u8) ![]const u8 {
     const sdk_path = try fs.path.join(arena, &.{ dir, "SDKSettings.json" });
-    const contents = try Io.Dir.cwd().readFileAlloc(sdk_path, arena, .limited(std.math.maxInt(u16)));
+    const contents = try Io.Dir.cwd().readFileAlloc(io, sdk_path, arena, .limited(std.math.maxInt(u16)));
     const parsed = try std.json.parseFromSlice(std.json.Value, arena, contents, .{});
     if (parsed.value.object.get("MinimalDisplayName")) |ver| return ver.string;
     return error.SdkVersionFailure;

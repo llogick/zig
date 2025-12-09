@@ -17,9 +17,8 @@ pub fn rescanMac(cb: *Bundle, gpa: Allocator, io: Io, now: Io.Timestamp) RescanM
         "/Library/Keychains/System.keychain",
     };
 
-    _ = io; // TODO migrate file system to use std.Io
     for (keychain_paths) |keychain_path| {
-        const bytes = Io.Dir.cwd().readFileAlloc(keychain_path, gpa, .limited(std.math.maxInt(u32))) catch |err| switch (err) {
+        const bytes = Io.Dir.cwd().readFileAlloc(io, keychain_path, gpa, .limited(std.math.maxInt(u32))) catch |err| switch (err) {
             error.StreamTooLong => return error.FileTooBig,
             else => |e| return e,
         };
