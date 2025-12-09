@@ -123,6 +123,7 @@ pub const LoadError = error{
 
 pub fn load(
     gpa: Allocator,
+    io: Io,
     elf_file: Io.File,
     opt_build_id: ?[]const u8,
     di_search_paths: *const DebugInfoSearchPaths,
@@ -131,7 +132,7 @@ pub fn load(
     errdefer arena_instance.deinit();
     const arena = arena_instance.allocator();
 
-    var result = loadInner(arena, elf_file, null) catch |err| switch (err) {
+    var result = loadInner(arena, io, elf_file, null) catch |err| switch (err) {
         error.CrcMismatch => unreachable, // we passed crc as null
         else => |e| return e,
     };
@@ -156,7 +157,7 @@ pub fn load(
             if (build_id.len < 3) break :build_id;
 
             for (di_search_paths.global_debug) |global_debug| {
-                if (try loadSeparateDebugFile(arena, &result, null, "{s}/.build-id/{x}/{x}.debug", .{
+                if (try loadSeparateDebugFile(arena, io, &result, null, "{s}/.build-id/{x}/{x}.debug", .{
                     global_debug,
                     build_id[0..1],
                     build_id[1..],
@@ -164,7 +165,7 @@ pub fn load(
             }
 
             if (di_search_paths.debuginfod_client) |components| {
-                if (try loadSeparateDebugFile(arena, &result, null, "{s}{s}/{x}/debuginfo", .{
+                if (try loadSeparateDebugFile(arena, io, &result, null, "{s}{s}/{x}/debuginfo", .{
                     components[0],
                     components[1],
                     build_id,
@@ -181,18 +182,18 @@ pub fn load(
 
             const exe_dir = di_search_paths.exe_dir orelse break :debug_link;
 
-            if (try loadSeparateDebugFile(arena, &result, debug_crc, "{s}/{s}", .{
+            if (try loadSeparateDebugFile(arena, io, &result, debug_crc, "{s}/{s}", .{
                 exe_dir,
                 debug_filename,
             })) |mapped| break :load_di mapped;
-            if (try loadSeparateDebugFile(arena, &result, debug_crc, "{s}/.debug/{s}", .{
+            if (try loadSeparateDebugFile(arena, io, &result, debug_crc, "{s}/.debug/{s}", .{
                 exe_dir,
                 debug_filename,
             })) |mapped| break :load_di mapped;
             for (di_search_paths.global_debug) |global_debug| {
                 // This looks like a bug; it isn't. They really do embed the absolute path to the
                 // exe's dirname, *under* the global debug path.
-                if (try loadSeparateDebugFile(arena, &result, debug_crc, "{s}/{s}/{s}", .{
+                if (try loadSeparateDebugFile(arena, io, &result, debug_crc, "{s}/{s}/{s}", .{
                     global_debug,
                     exe_dir,
                     debug_filename,
@@ -378,7 +379,7 @@ fn loadSeparateDebugFile(
     const elf_file = Io.Dir.cwd().openFile(io, path, .{}) catch return null;
     defer elf_file.close(io);
 
-    const result = loadInner(arena, elf_file, opt_crc) catch |err| switch (err) {
+    const result = loadInner(arena, io, elf_file, opt_crc) catch |err| switch (err) {
         error.OutOfMemory => |e| return e,
         error.CrcMismatch => return null,
         else => return null,
@@ -423,13 +424,14 @@ const LoadInnerResult = struct {
 };
 fn loadInner(
     arena: Allocator,
+    io: Io,
     elf_file: Io.File,
     opt_crc: ?u32,
 ) (LoadError || error{ CrcMismatch, Streaming, Canceled })!LoadInnerResult {
     const mapped_mem: []align(std.heap.page_size_min) const u8 = mapped: {
         const file_len = std.math.cast(
             usize,
-            elf_file.getEndPos() catch |err| switch (err) {
+            elf_file.length(io) catch |err| switch (err) {
                 error.PermissionDenied => unreachable, // not asking for PROT_EXEC
                 else => |e| return e,
             },

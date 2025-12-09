@@ -520,7 +520,7 @@ fn mapDebugInfoFile(io: Io, path: []const u8) ![]align(std.heap.page_size_min) c
 
     const file_len = std.math.cast(
         usize,
-        file.getEndPos() catch return error.ReadFailed,
+        file.length(io) catch return error.ReadFailed,
     ) orelse return error.ReadFailed;
 
     return posix.mmap(

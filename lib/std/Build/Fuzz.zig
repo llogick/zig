@@ -413,7 +413,7 @@ fn prepareTables(fuzz: *Fuzz, run_step: *Step.Run, coverage_id: u64) error{ OutO
     };
     defer coverage_file.close(io);
 
-    const file_size = coverage_file.getEndPos() catch |err| {
+    const file_size = coverage_file.length(io) catch |err| {
         log.err("unable to check len of coverage file '{f}': {t}", .{ coverage_file_path, err });
         return error.AlreadyReported;
     };

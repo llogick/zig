@@ -47,7 +47,7 @@ test "write a file, read it, then delete it" {
         var file = try tmp.dir.openFile(io, tmp_file_name, .{});
         defer file.close(io);
 
-        const file_size = try file.getEndPos();
+        const file_size = try file.length(io);
         const expected_file_size: u64 = "begin".len + data.len + "end".len;
         try expectEqual(expected_file_size, file_size);
 
@@ -77,7 +77,7 @@ test "File seek ops" {
 
     // Seek to the end
     try file.seekFromEnd(0);
-    try expect((try file.getPos()) == try file.getEndPos());
+    try expect((try file.getPos()) == try file.length(io));
     // Negative delta
     try file.seekBy(-4096);
     try expect((try file.getPos()) == 4096);
@@ -100,17 +100,17 @@ test "setEndPos" {
     defer file.close(io);
 
     // Verify that the file size changes and the file offset is not moved
-    try expect((try file.getEndPos()) == 0);
+    try expect((try file.length(io)) == 0);
     try expect((try file.getPos()) == 0);
     try file.setEndPos(8192);
-    try expect((try file.getEndPos()) == 8192);
+    try expect((try file.length(io)) == 8192);
     try expect((try file.getPos()) == 0);
     try file.seekTo(100);
     try file.setEndPos(4096);
-    try expect((try file.getEndPos()) == 4096);
+    try expect((try file.length(io)) == 4096);
     try expect((try file.getPos()) == 100);
     try file.setEndPos(0);
-    try expect((try file.getEndPos()) == 0);
+    try expect((try file.length(io)) == 0);
     try expect((try file.getPos()) == 100);
 }
 

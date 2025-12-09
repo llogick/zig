@@ -622,7 +622,7 @@ fn mapDebugInfoFile(io: Io, path: []const u8) ![]align(std.heap.page_size_min) c
     };
     defer file.close(io);
 
-    const file_end_pos = file.getEndPos() catch |err| switch (err) {
+    const file_end_pos = file.length(io) catch |err| switch (err) {
         error.Unexpected => |e| return e,
         else => return error.ReadFailed,
     };

@@ -558,9 +558,9 @@ pub fn defaultPanic(
                 stderr.print("{s}\n", .{msg}) catch break :trace;
 
                 if (@errorReturnTrace()) |t| if (t.index > 0) {
-                    stderr.writeStreamingAll("error return context:\n") catch break :trace;
+                    stderr.writeAll("error return context:\n") catch break :trace;
                     writeStackTrace(t, stderr, tty_config) catch break :trace;
-                    stderr.writeStreamingAll("\nstack trace:\n") catch break :trace;
+                    stderr.writeAll("\nstack trace:\n") catch break :trace;
                 };
                 writeCurrentStackTrace(.{
                     .first_address = first_trace_addr orelse @returnAddress(),
@@ -617,6 +617,8 @@ pub const StackUnwindOptions = struct {
 ///
 /// See `writeCurrentStackTrace` to immediately print the trace instead of capturing it.
 pub noinline fn captureCurrentStackTrace(options: StackUnwindOptions, addr_buf: []usize) StackTrace {
+    var threaded: Io.Threaded = .init_single_threaded;
+    const io = threaded.ioBasic();
     const empty_trace: StackTrace = .{ .index = 0, .instruction_addresses = &.{} };
     if (!std.options.allow_stack_tracing) return empty_trace;
     var it: StackIterator = .init(options.context);
@@ -628,7 +630,7 @@ pub noinline fn captureCurrentStackTrace(options: StackUnwindOptions, addr_buf: 
     // Ideally, we would iterate the whole stack so that the `index` in the returned trace was
     // indicative of how many frames were skipped. However, this has a significant runtime cost
     // in some cases, so at least for now, we don't do that.
-    while (index < addr_buf.len) switch (it.next()) {
+    while (index < addr_buf.len) switch (it.next(io)) {
         .switch_to_fp => if (!it.stratOk(options.allow_unsafe_unwind)) break,
         .end => break,
         .frame => |ret_addr| {
@@ -684,7 +686,7 @@ pub noinline fn writeCurrentStackTrace(options: StackUnwindOptions, writer: *Wri
     var total_frames: usize = 0;
     var wait_for = options.first_address;
     var printed_any_frame = false;
-    while (true) switch (it.next()) {
+    while (true) switch (it.next(io)) {
         .switch_to_fp => |unwind_error| {
             switch (StackIterator.fp_usability) {
                 .useless, .unsafe => {},
@@ -1196,54 +1198,26 @@ fn printLineFromFile(io: Io, writer: *Writer, source_location: SourceLocation) !
     // Need this to always block even in async I/O mode, because this could potentially
     // be called from e.g. the event loop code crashing.
     const cwd: Io.Dir = .cwd();
-    var f = try cwd.openFile(io, source_location.file_name, .{});
-    defer f.close(io);
+    var file = try cwd.openFile(io, source_location.file_name, .{});
+    defer file.close(io);
     // TODO fstat and make sure that the file has the correct size
 
-    var buf: [4096]u8 = undefined;
-    var amt_read = try f.read(buf[0..]);
-    const line_start = seek: {
-        var current_line_start: usize = 0;
-        var next_line: usize = 1;
-        while (next_line != source_location.line) {
-            const slice = buf[current_line_start..amt_read];
-            if (mem.findScalar(u8, slice, '\n')) |pos| {
-                next_line += 1;
-                if (pos == slice.len - 1) {
-                    amt_read = try f.read(buf[0..]);
-                    current_line_start = 0;
-                } else current_line_start += pos + 1;
-            } else if (amt_read < buf.len) {
-                return error.EndOfFile;
-            } else {
-                amt_read = try f.read(buf[0..]);
-                current_line_start = 0;
-            }
+    var buffer: [4096]u8 = undefined;
+    var file_reader: File.Reader = .init(file, io, &buffer);
+    const r = &file_reader.interface;
+    var line_index: usize = 0;
+    while (r.takeDelimiterExclusive('\n')) |line| {
+        line_index += 1;
+        if (line_index == source_location.line) {
+            // TODO delete hard tabs from the language
+            mem.replaceScalar(u8, line, '\t', ' ');
+            try writer.writeAll(line);
+            // Make sure printing last line of file inserts extra newline.
+            try writer.writeByte('\n');
+            return;
         }
-        break :seek current_line_start;
-    };
-    const slice = buf[line_start..amt_read];
-    if (mem.findScalar(u8, slice, '\n')) |pos| {
-        const line = slice[0 .. pos + 1];
-        mem.replaceScalar(u8, line, '\t', ' ');
-        return writer.writeAll(line);
-    } else { // Line is the last inside the buffer, and requires another read to find delimiter. Alternatively the file ends.
-        mem.replaceScalar(u8, slice, '\t', ' ');
-        try writer.writeAll(slice);
-        while (amt_read == buf.len) {
-            amt_read = try f.read(buf[0..]);
-            if (mem.findScalar(u8, buf[0..amt_read], '\n')) |pos| {
-                const line = buf[0 .. pos + 1];
-                mem.replaceScalar(u8, line, '\t', ' ');
-                return writer.writeAll(line);
-            } else {
-                const line = buf[0..amt_read];
-                mem.replaceScalar(u8, line, '\t', ' ');
-                try writer.writeAll(line);
-            }
-        }
-        // Make sure printing last line of file inserts extra newline
-        try writer.writeByte('\n');
+    } else |err| {
+        return err;
     }
 }
 
@@ -1598,7 +1572,7 @@ pub fn defaultHandleSegfault(addr: ?usize, name: []const u8, opt_ctx: ?CpuContex
             // We're still holding the mutex but that's fine as we're going to
             // call abort().
             const stderr, _ = lockStderrWriter(&.{});
-            stderr().writeAll("aborting due to recursive panic\n") catch {};
+            stderr.writeAll("aborting due to recursive panic\n") catch {};
         },
         else => {}, // Panicked while printing the recursive panic message.
     }
