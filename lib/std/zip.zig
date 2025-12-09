@@ -570,7 +570,7 @@ pub const Iterator = struct {
             };
             defer out_file.close(io);
             var out_file_buffer: [1024]u8 = undefined;
-            var file_writer = out_file.writer(&out_file_buffer);
+            var file_writer = out_file.writer(io, &out_file_buffer);
             const local_data_file_offset: u64 =
                 @as(u64, self.file_offset) +
                 @as(u64, @sizeOf(LocalFileHeader)) +

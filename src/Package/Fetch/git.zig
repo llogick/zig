@@ -1594,7 +1594,7 @@ fn runRepositoryTest(io: Io, comptime format: Oid.Format, head_commit: []const u
     var index_file = try git_dir.dir.createFile(io, "testrepo.idx", .{ .read = true });
     defer index_file.close(io);
     var index_file_buffer: [2000]u8 = undefined;
-    var index_file_writer = index_file.writer(&index_file_buffer);
+    var index_file_writer = index_file.writer(io, &index_file_buffer);
     try indexPack(testing.allocator, format, &pack_file_reader, &index_file_writer);
 
     // Arbitrary size limit on files read while checking the repository contents
@@ -1730,7 +1730,7 @@ pub fn main() !void {
     var index_file = try git_dir.createFile(io, "idx", .{ .read = true });
     defer index_file.close(io);
     var index_file_buffer: [4096]u8 = undefined;
-    var index_file_writer = index_file.writer(&index_file_buffer);
+    var index_file_writer = index_file.writer(io, &index_file_buffer);
     try indexPack(allocator, format, &pack_file_reader, &index_file_writer);
 
     std.debug.print("Starting checkout...\n", .{});

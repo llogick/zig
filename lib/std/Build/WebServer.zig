@@ -523,7 +523,7 @@ pub fn serveTarFile(ws: *WebServer, request: *http.Server.Request, paths: []cons
             if (cached_cwd_path == null) cached_cwd_path = try std.process.getCwdAlloc(gpa);
             break :cwd cached_cwd_path.?;
         };
-        try archiver.writeFile(io, path.sub_path, &file_reader, @intCast(stat.mtime.toSeconds()));
+        try archiver.writeFile(path.sub_path, &file_reader, @intCast(stat.mtime.toSeconds()));
     }
 
     // intentionally not calling `archiver.finishPedantically`
@@ -587,7 +587,7 @@ fn buildClientWasm(ws: *WebServer, arena: Allocator, optimize: std.builtin.Optim
     });
     defer poller.deinit();
 
-    try child.stdin.?.writeAll(@ptrCast(@as([]const std.zig.Client.Message.Header, &.{
+    try child.stdin.?.writeStreamingAll(io, @ptrCast(@as([]const std.zig.Client.Message.Header, &.{
         .{ .tag = .update, .bytes_len = 0 },
         .{ .tag = .exit, .bytes_len = 0 },
     })));
@@ -638,7 +638,7 @@ fn buildClientWasm(ws: *WebServer, arena: Allocator, optimize: std.builtin.Optim
     child.stdin.?.close(io);
     child.stdin = null;
 
-    switch (try child.wait()) {
+    switch (try child.wait(io)) {
         .Exited => |code| {
             if (code != 0) {
                 log.err(

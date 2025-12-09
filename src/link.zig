@@ -621,7 +621,7 @@ pub const File = struct {
                         });
                         defer gpa.free(tmp_sub_path);
                         try emit.root_dir.handle.copyFile(emit.sub_path, emit.root_dir.handle, tmp_sub_path, .{});
-                        try emit.root_dir.handle.rename(tmp_sub_path, emit.sub_path);
+                        try emit.root_dir.handle.rename(tmp_sub_path, emit.root_dir.handle, emit.sub_path, io);
                         switch (builtin.os.tag) {
                             .linux => std.posix.ptrace(std.os.linux.PTRACE.ATTACH, pid, 0, 0) catch |err| {
                                 log.warn("ptrace failure: {s}", .{@errorName(err)});

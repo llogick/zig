@@ -1134,13 +1134,13 @@ pub const Manifest = struct {
     /// lock from exclusive to shared.
     pub fn writeManifest(self: *Manifest) !void {
         assert(self.have_exclusive_lock);
-
+        const io = self.cache.io;
         const manifest_file = self.manifest_file.?;
         if (self.manifest_dirty) {
             self.manifest_dirty = false;
 
             var buffer: [4000]u8 = undefined;
-            var fw = manifest_file.writer(&buffer);
+            var fw = manifest_file.writer(io, &buffer);
             writeDirtyManifestToStream(self, &fw) catch |err| switch (err) {
                 error.WriteFailed => return fw.err.?,
                 else => |e| return e,

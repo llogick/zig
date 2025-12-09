@@ -3412,7 +3412,7 @@ fn buildOutputType(
         const sub_path = try std.fmt.allocPrint(arena, "tmp" ++ sep ++ "{x}-stdin{s}", .{
             &bin_digest, ext.canonicalName(target),
         });
-        try dirs.local_cache.handle.rename(dump_path, sub_path);
+        try dirs.local_cache.handle.rename(dump_path, dirs.local_cache.handle, sub_path, io);
 
         // Convert `sub_path` to be relative to current working directory.
         src.src_path = try dirs.local_cache.join(arena, &.{sub_path});
@@ -7216,11 +7216,7 @@ fn createDependenciesModule(
     const hex_digest = hh.final();
 
     const o_dir_sub_path = try arena.dupe(u8, "o" ++ fs.path.sep_str ++ hex_digest);
-    try Package.Fetch.renameTmpIntoCache(
-        dirs.local_cache.handle,
-        tmp_dir_sub_path,
-        o_dir_sub_path,
-    );
+    try Package.Fetch.renameTmpIntoCache(io, dirs.local_cache.handle, tmp_dir_sub_path, o_dir_sub_path);
 
     const deps_mod = try Package.Module.create(arena, .{
         .paths = .{

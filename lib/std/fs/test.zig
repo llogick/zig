@@ -961,14 +961,14 @@ test "Dir.rename files" {
             const missing_file_path = try ctx.transformPath("missing_file_name");
             const something_else_path = try ctx.transformPath("something_else");
 
-            try testing.expectError(error.FileNotFound, ctx.dir.rename(missing_file_path, something_else_path));
+            try testing.expectError(error.FileNotFound, ctx.dir.rename(missing_file_path, ctx.dir, something_else_path, io));
 
             // Renaming files
             const test_file_name = try ctx.transformPath("test_file");
             const renamed_test_file_name = try ctx.transformPath("test_file_renamed");
             var file = try ctx.dir.createFile(io, test_file_name, .{ .read = true });
             file.close(io);
-            try ctx.dir.rename(test_file_name, renamed_test_file_name);
+            try ctx.dir.rename(test_file_name, ctx.dir, renamed_test_file_name, io);
 
             // Ensure the file was renamed
             try testing.expectError(error.FileNotFound, ctx.dir.openFile(io, test_file_name, .{}));
@@ -976,13 +976,13 @@ test "Dir.rename files" {
             file.close(io);
 
             // Rename to self succeeds
-            try ctx.dir.rename(renamed_test_file_name, renamed_test_file_name);
+            try ctx.dir.rename(renamed_test_file_name, ctx.dir, renamed_test_file_name, io);
 
             // Rename to existing file succeeds
             const existing_file_path = try ctx.transformPath("existing_file");
             var existing_file = try ctx.dir.createFile(io, existing_file_path, .{ .read = true });
             existing_file.close(io);
-            try ctx.dir.rename(renamed_test_file_name, existing_file_path);
+            try ctx.dir.rename(renamed_test_file_name, ctx.dir, existing_file_path, io);
 
             try testing.expectError(error.FileNotFound, ctx.dir.openFile(io, renamed_test_file_name, .{}));
             file = try ctx.dir.openFile(io, existing_file_path, .{});
@@ -1007,7 +1007,7 @@ test "Dir.rename directories" {
 
             // Renaming directories
             try ctx.dir.makeDir(test_dir_path);
-            try ctx.dir.rename(test_dir_path, test_dir_renamed_path);
+            try ctx.dir.rename(test_dir_path, ctx.dir, test_dir_renamed_path, io);
 
             // Ensure the directory was renamed
             try testing.expectError(error.FileNotFound, ctx.dir.openDir(io, test_dir_path, .{}));
@@ -1019,7 +1019,7 @@ test "Dir.rename directories" {
             dir.close(io);
 
             const test_dir_renamed_again_path = try ctx.transformPath("test_dir_renamed_again");
-            try ctx.dir.rename(test_dir_renamed_path, test_dir_renamed_again_path);
+            try ctx.dir.rename(test_dir_renamed_path, ctx.dir, test_dir_renamed_again_path, io);
 
             // Ensure the directory was renamed and the file still exists in it
             try testing.expectError(error.FileNotFound, ctx.dir.openDir(io, test_dir_renamed_path, .{}));
@@ -1044,7 +1044,7 @@ test "Dir.rename directory onto empty dir" {
 
             try ctx.dir.makeDir(test_dir_path);
             try ctx.dir.makeDir(target_dir_path);
-            try ctx.dir.rename(test_dir_path, target_dir_path);
+            try ctx.dir.rename(test_dir_path, ctx.dir, target_dir_path, io);
 
             // Ensure the directory was renamed
             try testing.expectError(error.FileNotFound, ctx.dir.openDir(io, test_dir_path, .{}));
@@ -1072,7 +1072,7 @@ test "Dir.rename directory onto non-empty dir" {
             target_dir.close(io);
 
             // Rename should fail with PathAlreadyExists if target_dir is non-empty
-            try testing.expectError(error.PathAlreadyExists, ctx.dir.rename(test_dir_path, target_dir_path));
+            try testing.expectError(error.PathAlreadyExists, ctx.dir.rename(test_dir_path, ctx.dir, target_dir_path, io));
 
             // Ensure the directory was not renamed
             var dir = try ctx.dir.openDir(io, test_dir_path, .{});
@@ -1094,8 +1094,8 @@ test "Dir.rename file <-> dir" {
             var file = try ctx.dir.createFile(io, test_file_path, .{ .read = true });
             file.close(io);
             try ctx.dir.makeDir(test_dir_path);
-            try testing.expectError(error.IsDir, ctx.dir.rename(test_file_path, test_dir_path));
-            try testing.expectError(error.NotDir, ctx.dir.rename(test_dir_path, test_file_path));
+            try testing.expectError(error.IsDir, ctx.dir.rename(test_file_path, ctx.dir, test_dir_path, io));
+            try testing.expectError(error.NotDir, ctx.dir.rename(test_dir_path, ctx.dir, test_file_path, io));
         }
     }.impl);
 }
@@ -1114,7 +1114,7 @@ test "rename" {
     const renamed_test_file_name = "test_file_renamed";
     var file = try tmp_dir1.dir.createFile(io, test_file_name, .{ .read = true });
     file.close(io);
-    try fs.rename(tmp_dir1.dir, test_file_name, tmp_dir2.dir, renamed_test_file_name);
+    try Dir.rename(tmp_dir1.dir, test_file_name, tmp_dir2.dir, renamed_test_file_name, io);
 
     // ensure the file was renamed
     try testing.expectError(error.FileNotFound, tmp_dir1.dir.openFile(io, test_file_name, .{}));
@@ -1492,7 +1492,7 @@ test "pwritev, preadv" {
     var src_file = try tmp.dir.createFile(io, "test.txt", .{ .read = true });
     defer src_file.close(io);
 
-    var writer = src_file.writer(&.{});
+    var writer = src_file.writer(io, &.{});
 
     try writer.seekTo(16);
     try writer.interface.writeVecAll(&lines);
@@ -1593,7 +1593,7 @@ test "sendfile" {
     var src_file = try dir.createFile(io, "sendfile1.txt", .{ .read = true });
     defer src_file.close(io);
     {
-        var fw = src_file.writer(&.{});
+        var fw = src_file.writer(io, &.{});
         try fw.interface.writeVecAll(&vecs);
     }
 
@@ -1610,7 +1610,7 @@ test "sendfile" {
     var written_buf: [100]u8 = undefined;
     var file_reader = src_file.reader(io, &.{});
     var fallback_buffer: [50]u8 = undefined;
-    var file_writer = dest_file.writer(&fallback_buffer);
+    var file_writer = dest_file.writer(io, &fallback_buffer);
     try file_writer.interface.writeVecAll(&headers);
     try file_reader.seekTo(1);
     try testing.expectEqual(10, try file_writer.interface.sendFileAll(&file_reader, .limited(10)));
@@ -1648,7 +1648,7 @@ test "sendfile with buffered data" {
     try file_reader.interface.fill(8);
 
     var fallback_buffer: [32]u8 = undefined;
-    var file_writer = dest_file.writer(&fallback_buffer);
+    var file_writer = dest_file.writer(io, &fallback_buffer);
 
     try std.testing.expectEqual(4, try file_writer.interface.sendFileAll(&file_reader, .limited(4)));
 
@@ -2051,7 +2051,7 @@ test "'.' and '..' in Io.Dir functions" {
             try ctx.dir.access(io, file_path, .{});
 
             try ctx.dir.copyFile(file_path, ctx.dir, copy_path, .{});
-            try ctx.dir.rename(copy_path, rename_path);
+            try ctx.dir.rename(copy_path, ctx.dir, rename_path, io);
             const renamed_file = try ctx.dir.openFile(io, rename_path, .{});
             renamed_file.close(io);
             try ctx.dir.deleteFile(rename_path);
@@ -2175,7 +2175,7 @@ test "invalid UTF-8/WTF-8 paths" {
 
             try testing.expectError(expected_err, ctx.dir.deleteDir(invalid_path));
 
-            try testing.expectError(expected_err, ctx.dir.rename(invalid_path, invalid_path));
+            try testing.expectError(expected_err, ctx.dir.rename(invalid_path, ctx.dir, invalid_path, io));
 
             try testing.expectError(expected_err, ctx.dir.symLink(invalid_path, invalid_path, .{}));
             if (native_os == .wasi) {
@@ -2208,7 +2208,7 @@ test "invalid UTF-8/WTF-8 paths" {
                 try testing.expectError(expected_err, ctx.dir.realpathAlloc(testing.allocator, invalid_path));
             }
 
-            try testing.expectError(expected_err, fs.rename(ctx.dir, invalid_path, ctx.dir, invalid_path));
+            try testing.expectError(expected_err, Dir.rename(ctx.dir, invalid_path, ctx.dir, invalid_path, io));
 
             if (native_os != .wasi and ctx.path_type != .relative) {
                 try testing.expectError(expected_err, Dir.copyFileAbsolute(invalid_path, invalid_path, .{}));
@@ -2334,7 +2334,7 @@ test "seekTo flushes buffered data" {
     defer file.close(io);
     {
         var buf: [16]u8 = undefined;
-        var file_writer = File.writer(file, &buf);
+        var file_writer = file.writer(io, file, &buf);
 
         try file_writer.interface.writeAll(contents);
         try file_writer.seekTo(8);

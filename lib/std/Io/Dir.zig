@@ -501,7 +501,7 @@ pub const WriteFileError = File.Writer.Error || File.OpenError;
 pub fn writeFile(dir: Dir, io: Io, options: WriteFileOptions) WriteFileError!void {
     var file = try dir.createFile(io, options.sub_path, options.flags);
     defer file.close(io);
-    try file.writeAll(io, options.data);
+    try file.writeStreamingAll(io, options.data);
 }
 
 pub const PrevStatus = enum {
@@ -955,6 +955,13 @@ pub fn rename(
     return io.vtable.dirRename(io.userdata, old_dir, old_sub_path, new_dir, new_sub_path);
 }
 
+pub fn renameAbsolute(io: Io, old_path: []const u8, new_path: []const u8) RenameError!void {
+    assert(path.isAbsolute(old_path));
+    assert(path.isAbsolute(new_path));
+    const my_cwd = cwd();
+    return io.vtable.dirRename(io.userdata, my_cwd, old_path, my_cwd, new_path);
+}
+
 /// Use with `Dir.symLink`, `Dir.symLinkAtomic`, and `symLinkAbsolute` to
 /// specify whether the symlink will point to a file or a directory. This value
 /// is ignored on all hosts except Windows where creating symlinks to different
@@ -1053,7 +1060,7 @@ pub fn symLinkAtomic(
         temp_path[dirname.len + 1 ..][0..rand_len].* = std.fmt.hex(random_integer);
 
         if (dir.symLink(io, target_path, temp_path, flags)) {
-            return dir.rename(temp_path, dir, io, sym_link_path);
+            return dir.rename(temp_path, dir, sym_link_path, io);
         } else |err| switch (err) {
             error.PathAlreadyExists => continue,
             else => |e| return e,

@@ -183,7 +183,7 @@ fn cmdObjCopy(gpa: Allocator, arena: Allocator, args: []const []const u8) !void 
     var output_file = try Io.Dir.cwd().createFile(io, output, .{ .mode = mode });
     defer output_file.close(io);
 
-    var out = output_file.writer(&output_buffer);
+    var out = output_file.writer(io, &output_buffer);
 
     switch (out_fmt) {
         .hex, .raw => {

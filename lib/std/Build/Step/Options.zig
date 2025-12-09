@@ -498,7 +498,7 @@ fn make(step: *Step, make_options: Step.MakeOptions) !void {
                 });
             };
 
-            b.cache_root.handle.rename(io, tmp_sub_path, sub_path) catch |err| switch (err) {
+            b.cache_root.handle.rename(tmp_sub_path, b.cache_root.handle, sub_path, io) catch |err| switch (err) {
                 error.PathAlreadyExists => {
                     // Other process beat us to it. Clean up the temp file.
                     b.cache_root.handle.deleteFile(io, tmp_sub_path) catch |e| {

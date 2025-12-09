@@ -1709,7 +1709,7 @@ fn getZigArgs(compile: *Compile, fuzz: bool) ![][]const u8 {
                 defer b.cache_root.handle.deleteFile(io, tmp_path) catch {
                     // It's fine if the temporary file can't be cleaned up.
                 };
-                b.cache_root.handle.rename(io, tmp_path, args_file) catch |rename_err| switch (rename_err) {
+                b.cache_root.handle.rename(tmp_path, b.cache_root.handle, args_file, io) catch |rename_err| switch (rename_err) {
                     error.PathAlreadyExists => {
                         // The args file was created by another concurrent build process.
                     },
@@ -1827,14 +1827,14 @@ pub fn doAtomicSymLinks(
     // sym link for libfoo.so.1 to libfoo.so.1.2.3
     const major_only_path = b.pathJoin(&.{ out_dir, filename_major_only });
     const cwd: Io.Dir = .cwd();
-    cwd.atomicSymLink(io, out_basename, major_only_path, .{}) catch |err| {
+    cwd.symLinkAtomic(io, out_basename, major_only_path, .{}) catch |err| {
         return step.fail("unable to symlink {s} -> {s}: {s}", .{
             major_only_path, out_basename, @errorName(err),
         });
     };
     // sym link for libfoo.so to libfoo.so.1
     const name_only_path = b.pathJoin(&.{ out_dir, filename_name_only });
-    cwd.atomicSymLink(io, filename_major_only, name_only_path, .{}) catch |err| {
+    cwd.symLinkAtomic(io, filename_major_only, name_only_path, .{}) catch |err| {
         return step.fail("Unable to symlink {s} -> {s}: {s}", .{
             name_only_path, filename_major_only, @errorName(err),
         });

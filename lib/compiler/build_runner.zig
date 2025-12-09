@@ -478,14 +478,14 @@ pub fn main() !void {
     validateSystemLibraryOptions(builder);
 
     if (help_menu) {
-        var w = initStdoutWriter();
+        var w = initStdoutWriter(io);
         printUsage(builder, w) catch return stdout_writer_allocation.err.?;
         w.flush() catch return stdout_writer_allocation.err.?;
         return;
     }
 
     if (steps_menu) {
-        var w = initStdoutWriter();
+        var w = initStdoutWriter(io);
         printSteps(builder, w) catch return stdout_writer_allocation.err.?;
         w.flush() catch return stdout_writer_allocation.err.?;
         return;
@@ -1847,7 +1847,7 @@ fn createModuleDependenciesForStep(step: *Step) Allocator.Error!void {
 var stdio_buffer_allocation: [256]u8 = undefined;
 var stdout_writer_allocation: Io.File.Writer = undefined;
 
-fn initStdoutWriter() *Writer {
-    stdout_writer_allocation = Io.File.stdout().writerStreaming(&stdio_buffer_allocation);
+fn initStdoutWriter(io: Io) *Writer {
+    stdout_writer_allocation = Io.File.stdout().writerStreaming(io, &stdio_buffer_allocation);
     return &stdout_writer_allocation.interface;
 }

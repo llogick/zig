@@ -278,18 +278,18 @@ pub fn updateFile(
         switch (file.getMode()) {
             .zig => {
                 file.zir = try AstGen.generate(gpa, file.tree.?);
-                Zcu.saveZirCache(gpa, cache_file, stat, file.zir.?) catch |err| switch (err) {
+                Zcu.saveZirCache(gpa, io, cache_file, stat, file.zir.?) catch |err| switch (err) {
                     error.OutOfMemory => |e| return e,
-                    else => log.warn("unable to write cached ZIR code for {f} to {f}{s}: {s}", .{
-                        file.path.fmt(comp), cache_directory, &hex_digest, @errorName(err),
+                    else => log.warn("unable to write cached ZIR code for {f} to {f}{s}: {t}", .{
+                        file.path.fmt(comp), cache_directory, &hex_digest, err,
                     }),
                 };
             },
             .zon => {
                 file.zoir = try ZonGen.generate(gpa, file.tree.?, .{});
-                Zcu.saveZoirCache(cache_file, stat, file.zoir.?) catch |err| {
-                    log.warn("unable to write cached ZOIR code for {f} to {f}{s}: {s}", .{
-                        file.path.fmt(comp), cache_directory, &hex_digest, @errorName(err),
+                Zcu.saveZoirCache(io, cache_file, stat, file.zoir.?) catch |err| {
+                    log.warn("unable to write cached ZOIR code for {f} to {f}{s}: {t}", .{
+                        file.path.fmt(comp), cache_directory, &hex_digest, err,
                     });
                 };
             },

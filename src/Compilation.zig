@@ -5303,7 +5303,7 @@ fn docsCopyFallible(comp: *Compilation) anyerror!void {
     defer tar_file.close(io);
 
     var buffer: [1024]u8 = undefined;
-    var tar_file_writer = tar_file.writer(&buffer);
+    var tar_file_writer = tar_file.writer(io, &buffer);
 
     var seen_table: std.AutoArrayHashMapUnmanaged(*Package.Module, []const u8) = .empty;
     defer seen_table.deinit(comp.gpa);
@@ -6448,7 +6448,7 @@ fn updateCObject(comp: *Compilation, c_object: *CObject, c_obj_prog_node: std.Pr
         var o_dir = try comp.dirs.local_cache.handle.makeOpenPath(o_sub_path, .{});
         defer o_dir.close(io);
         const tmp_basename = fs.path.basename(out_obj_path);
-        try fs.rename(zig_cache_tmp_dir, tmp_basename, o_dir, o_basename);
+        try Io.Dir.rename(zig_cache_tmp_dir, tmp_basename, o_dir, o_basename, io);
         break :blk digest;
     };
 
@@ -6696,7 +6696,7 @@ fn updateWin32Resource(comp: *Compilation, win32_resource: *Win32Resource, win32
         var o_dir = try comp.dirs.local_cache.handle.makeOpenPath(o_sub_path, .{});
         defer o_dir.close(io);
         const tmp_basename = fs.path.basename(out_res_path);
-        try fs.rename(zig_cache_tmp_dir, tmp_basename, o_dir, res_filename);
+        try Io.Dir.rename(zig_cache_tmp_dir, tmp_basename, o_dir, res_filename, io);
         break :blk digest;
     };
 

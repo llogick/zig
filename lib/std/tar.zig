@@ -612,7 +612,7 @@ pub fn pipeToFileSystem(io: Io, dir: Io.Dir, reader: *Io.Reader, options: PipeOp
             .file => {
                 if (createDirAndFile(io, dir, file_name, fileMode(file.mode, options))) |fs_file| {
                     defer fs_file.close(io);
-                    var file_writer = fs_file.writer(&file_contents_buffer);
+                    var file_writer = fs_file.writer(io, &file_contents_buffer);
                     try it.streamRemaining(file, &file_writer.interface);
                     try file_writer.interface.flush();
                 } else |err| {

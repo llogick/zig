@@ -1631,7 +1631,7 @@ fn spawnLld(comp: *Compilation, arena: Allocator, argv: []const []const u8) !voi
                 {
                     defer rsp_file.close(io);
                     var rsp_file_buffer: [1024]u8 = undefined;
-                    var rsp_file_writer = rsp_file.writer(&rsp_file_buffer);
+                    var rsp_file_writer = rsp_file.writer(io, &rsp_file_buffer);
                     const rsp_writer = &rsp_file_writer.interface;
                     for (argv[2..]) |arg| {
                         try rsp_writer.writeByte('"');

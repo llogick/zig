@@ -567,7 +567,7 @@ fn runResource(
         .root_dir = cache_root,
         .sub_path = try std.fmt.allocPrint(arena, "p" ++ s ++ "{s}", .{computed_package_hash.toSlice()}),
     };
-    renameTmpIntoCache(cache_root.handle, package_sub_path, f.package_root.sub_path) catch |err| {
+    renameTmpIntoCache(io, cache_root.handle, package_sub_path, f.package_root.sub_path) catch |err| {
         const src = try cache_root.join(arena, &.{tmp_dir_sub_path});
         const dest = try cache_root.join(arena, &.{f.package_root.sub_path});
         try eb.addRootErrorMessage(.{ .msg = try eb.printString(
@@ -1319,7 +1319,7 @@ fn unzip(
     defer zip_file.close(io);
     var zip_file_buffer: [4096]u8 = undefined;
     var zip_file_reader = b: {
-        var zip_file_writer = zip_file.writer(&zip_file_buffer);
+        var zip_file_writer = zip_file.writer(io, &zip_file_buffer);
 
         _ = reader.streamRemaining(&zip_file_writer.interface) catch |err| switch (err) {
             error.ReadFailed => return error.ReadFailed,
@@ -1370,7 +1370,7 @@ fn unpackGitPack(f: *Fetch, out_dir: Io.Dir, resource: *Resource.Git) anyerror!U
         defer pack_file.close(io);
         var pack_file_buffer: [4096]u8 = undefined;
         var pack_file_reader = b: {
-            var pack_file_writer = pack_file.writer(&pack_file_buffer);
+            var pack_file_writer = pack_file.writer(io, &pack_file_buffer);
             const fetch_reader = &resource.fetch_stream.reader;
             _ = try fetch_reader.streamRemaining(&pack_file_writer.interface);
             try pack_file_writer.interface.flush();
@@ -1380,7 +1380,7 @@ fn unpackGitPack(f: *Fetch, out_dir: Io.Dir, resource: *Resource.Git) anyerror!U
         var index_file = try pack_dir.createFile(io, "pkg.idx", .{ .read = true });
         defer index_file.close(io);
         var index_file_buffer: [2000]u8 = undefined;
-        var index_file_writer = index_file.writer(&index_file_buffer);
+        var index_file_writer = index_file.writer(io, &index_file_buffer);
         {
             const index_prog_node = f.prog_node.start("Index pack", 0);
             defer index_prog_node.end();
@@ -1454,11 +1454,11 @@ fn recursiveDirectoryCopy(f: *Fetch, dir: Io.Dir, tmp_dir: Io.Dir) anyerror!void
     }
 }
 
-pub fn renameTmpIntoCache(cache_dir: Io.Dir, tmp_dir_sub_path: []const u8, dest_dir_sub_path: []const u8) !void {
+pub fn renameTmpIntoCache(io: Io, cache_dir: Io.Dir, tmp_dir_sub_path: []const u8, dest_dir_sub_path: []const u8) !void {
     assert(dest_dir_sub_path[1] == fs.path.sep);
     var handled_missing_dir = false;
     while (true) {
-        cache_dir.rename(tmp_dir_sub_path, dest_dir_sub_path) catch |err| switch (err) {
+        cache_dir.rename(tmp_dir_sub_path, cache_dir, dest_dir_sub_path, io) catch |err| switch (err) {
             error.FileNotFound => {
                 if (handled_missing_dir) return err;
                 cache_dir.makeDir(dest_dir_sub_path[0..1]) catch |mkd_err| switch (mkd_err) {

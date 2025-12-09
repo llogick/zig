@@ -389,6 +389,7 @@ fn prepareTables(fuzz: *Fuzz, run_step: *Step.Run, coverage_id: u64) error{ OutO
     const target = run_step.producer.?.rootModuleTarget();
     var debug_info = std.debug.Info.load(
         fuzz.gpa,
+        io,
         rebuilt_exe_path,
         &gop.value_ptr.coverage,
         target.ofmt,

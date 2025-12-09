@@ -380,7 +380,7 @@ pub fn buildImportLib(comp: *Compilation, lib_name: []const u8) !void {
         const lib_final_file = try o_dir.createFile(io, final_lib_basename, .{ .truncate = true });
         defer lib_final_file.close(io);
         var buffer: [1024]u8 = undefined;
-        var file_writer = lib_final_file.writer(&buffer);
+        var file_writer = lib_final_file.writer(io, &buffer);
         try implib.writeCoffArchive(gpa, &file_writer.interface, members);
         try file_writer.interface.flush();
     }
