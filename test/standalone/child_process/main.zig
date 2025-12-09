@@ -62,7 +62,7 @@ pub fn main() !void {
 var parent_test_error = false;
 
 fn testError(comptime fmt: []const u8, args: anytype) void {
-    var stderr_writer = std.fs.File.stderr().writer(&.{});
+    var stderr_writer = std.Io.File.stderr().writer(&.{});
     const stderr = &stderr_writer.interface;
     stderr.print("PARENT TEST ERROR: ", .{}) catch {};
     stderr.print(fmt, args) catch {};

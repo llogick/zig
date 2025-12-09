@@ -1,6 +1,8 @@
 const Cases = @This();
 const builtin = @import("builtin");
+
 const std = @import("std");
+const Io = std.Io;
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const getExternalExecutor = std.zig.system.getExternalExecutor;
@@ -313,7 +315,7 @@ pub fn addCompile(
 /// Each file should include a test manifest as a contiguous block of comments at
 /// the end of the file. The first line should be the test type, followed by a set of
 /// key-value config values, followed by a blank line, then the expected output.
-pub fn addFromDir(ctx: *Cases, dir: std.fs.Dir, b: *std.Build) void {
+pub fn addFromDir(ctx: *Cases, dir: Io.Dir, b: *std.Build) void {
     var current_file: []const u8 = "none";
     ctx.addFromDirInner(dir, &current_file, b) catch |err| {
         std.debug.panicExtra(
@@ -326,7 +328,7 @@ pub fn addFromDir(ctx: *Cases, dir: std.fs.Dir, b: *std.Build) void {
 
 fn addFromDirInner(
     ctx: *Cases,
-    iterable_dir: std.fs.Dir,
+    iterable_dir: Io.Dir,
     /// This is kept up to date with the currently being processed file so
     /// that if any errors occur the caller knows it happened during this file.
     current_file: *[]const u8,

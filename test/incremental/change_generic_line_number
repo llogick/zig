@@ -7,7 +7,7 @@ const std = @import("std");
 fn Printer(message: []const u8) type {
     return struct {
         fn print() !void {
-            try std.fs.File.stdout().writeAll(message);
+            try std.Io.File.stdout().writeAll(message);
         }
     };
 }
@@ -23,7 +23,7 @@ const std = @import("std");
 fn Printer(message: []const u8) type {
     return struct {
         fn print() !void {
-            try std.fs.File.stdout().writeAll(message);
+            try std.Io.File.stdout().writeAll(message);
         }
     };
 }

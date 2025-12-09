@@ -13,7 +13,7 @@ pub fn main() !void {
     const relative = try std.fs.path.relative(allocator, args[1], args[2]);
     defer allocator.free(relative);
 
-    var stdout_writer = std.fs.File.stdout().writerStreaming(&.{});
+    var stdout_writer = std.Io.File.stdout().writerStreaming(&.{});
     const stdout = &stdout_writer.interface;
     try stdout.writeAll(relative);
 }

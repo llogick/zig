@@ -1,4 +1,5 @@
 const std = @import("std");
+const Io = std.Io;
 
 const windows = std.os.windows;
 const utf16Literal = std.unicode.utf8ToUtf16LeStringLiteral;
@@ -218,7 +219,7 @@ fn testExecWithCwd(allocator: std.mem.Allocator, command: []const u8, cwd: ?[]co
     try std.testing.expectEqualStrings(expected_stdout, result.stdout);
 }
 
-fn renameExe(dir: std.fs.Dir, old_sub_path: []const u8, new_sub_path: []const u8) !void {
+fn renameExe(dir: Io.Dir, old_sub_path: []const u8, new_sub_path: []const u8) !void {
     var attempt: u5 = 0;
     while (true) break dir.rename(old_sub_path, new_sub_path) catch |err| switch (err) {
         error.AccessDenied => {

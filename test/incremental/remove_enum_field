@@ -10,7 +10,7 @@ const MyEnum = enum(u8) {
     bar = 2,
 };
 pub fn main() !void {
-    var stdout_writer = std.fs.File.stdout().writerStreaming(&.{});
+    var stdout_writer = std.Io.File.stdout().writerStreaming(&.{});
     try stdout_writer.interface.print("{}\n", .{@intFromEnum(MyEnum.foo)});
 }
 const std = @import("std");
@@ -22,7 +22,7 @@ const MyEnum = enum(u8) {
     bar = 2,
 };
 pub fn main() !void {
-    var stdout_writer = std.fs.File.stdout().writerStreaming(&.{});
+    var stdout_writer = std.Io.File.stdout().writerStreaming(&.{});
     try stdout_writer.interface.print("{}\n", .{@intFromEnum(MyEnum.foo)});
 }
 const std = @import("std");

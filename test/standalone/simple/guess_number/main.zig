@@ -2,9 +2,9 @@ const builtin = @import("builtin");
 const std = @import("std");
 
 pub fn main() !void {
-    var stdout_writer = std.fs.File.stdout().writerStreaming(&.{});
+    var stdout_writer = std.Io.File.stdout().writerStreaming(&.{});
     const out = &stdout_writer.interface;
-    const stdin: std.fs.File = .stdin();
+    const stdin: std.Io.File = .stdin();
 
     try out.writeAll("Welcome to the Guess Number Game in Zig.\n");
 

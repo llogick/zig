@@ -5,7 +5,7 @@ pub const std_options: std.Options = .{
 pub fn main() !void {
     var st_buf: [8]usize = undefined;
     var buf: [1024]u8 = undefined;
-    var stdout = std.fs.File.stdout().writer(&buf);
+    var stdout = std.Io.File.stdout().writer(&buf);
 
     const captured_st = try foo(&stdout.interface, &st_buf);
     try std.debug.writeStackTrace(&captured_st, &stdout.interface, .no_color);

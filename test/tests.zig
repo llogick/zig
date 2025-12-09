@@ -2629,10 +2629,11 @@ pub fn addCases(
 ) !void {
     const arena = b.allocator;
     const gpa = b.allocator;
+    const io = b.graph.io;
 
     var cases = @import("src/Cases.zig").init(gpa, arena);
 
-    var dir = try b.build_root.handle.openDir("test/cases", .{ .iterate = true });
+    var dir = try b.build_root.handle.openDir(io, "test/cases", .{ .iterate = true });
     defer dir.close();
 
     cases.addFromDir(dir, b);

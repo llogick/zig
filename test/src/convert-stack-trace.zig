@@ -44,7 +44,7 @@ pub fn main() !void {
     const in_file = try std.fs.cwd().openFile(args[1], .{});
     defer in_file.close();
 
-    const out_file: std.fs.File = .stdout();
+    const out_file: std.Io.File = .stdout();
 
     var in_fr = in_file.reader(io, &read_buf);
     var out_fw = out_file.writer(&write_buf);

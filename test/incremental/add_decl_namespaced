@@ -7,7 +7,7 @@
 #file=main.zig
 const std = @import("std");
 pub fn main() !void {
-    try std.fs.File.stdout().writeAll(@This().foo);
+    try std.Io.File.stdout().writeAll(@This().foo);
 }
 const foo = "good morning\n";
 #expect_stdout="good morning\n"
@@ -16,7 +16,7 @@ const foo = "good morning\n";
 #file=main.zig
 const std = @import("std");
 pub fn main() !void {
-    try std.fs.File.stdout().writeAll(@This().foo);
+    try std.Io.File.stdout().writeAll(@This().foo);
 }
 const foo = "good morning\n";
 const bar = "good evening\n";
@@ -26,7 +26,7 @@ const bar = "good evening\n";
 #file=main.zig
 const std = @import("std");
 pub fn main() !void {
-    try std.fs.File.stdout().writeAll(@This().bar);
+    try std.Io.File.stdout().writeAll(@This().bar);
 }
 const foo = "good morning\n";
 const bar = "good evening\n";
@@ -36,7 +36,7 @@ const bar = "good evening\n";
 #file=main.zig
 const std = @import("std");
 pub fn main() !void {
-    try std.fs.File.stdout().writeAll(@This().qux);
+    try std.Io.File.stdout().writeAll(@This().qux);
 }
 const foo = "good morning\n";
 const bar = "good evening\n";
@@ -47,7 +47,7 @@ const bar = "good evening\n";
 #file=main.zig
 const std = @import("std");
 pub fn main() !void {
-    try std.fs.File.stdout().writeAll(@This().qux);
+    try std.Io.File.stdout().writeAll(@This().qux);
 }
 const foo = "good morning\n";
 const bar = "good evening\n";
@@ -58,7 +58,7 @@ const qux = "good night\n";
 #file=main.zig
 const std = @import("std");
 pub fn main() !void {
-    try std.fs.File.stdout().writeAll(@This().qux);
+    try std.Io.File.stdout().writeAll(@This().qux);
 }
 const qux = "good night\n";
 #expect_stdout="good night\n"

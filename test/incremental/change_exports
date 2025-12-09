@@ -17,7 +17,7 @@ pub fn main() !void {
         extern const bar: u32;
     };
     S.foo();
-    var stdout_writer = std.fs.File.stdout().writerStreaming(&.{});
+    var stdout_writer = std.Io.File.stdout().writerStreaming(&.{});
     try stdout_writer.interface.print("{}\n", .{S.bar});
 }
 const std = @import("std");
@@ -39,7 +39,7 @@ pub fn main() !void {
         extern const other: u32;
     };
     S.foo();
-    var stdout_writer = std.fs.File.stdout().writerStreaming(&.{});
+    var stdout_writer = std.Io.File.stdout().writerStreaming(&.{});
     try stdout_writer.interface.print("{} {}\n", .{ S.bar, S.other });
 }
 const std = @import("std");
@@ -62,7 +62,7 @@ pub fn main() !void {
         extern const other: u32;
     };
     S.foo();
-    var stdout_writer = std.fs.File.stdout().writerStreaming(&.{});
+    var stdout_writer = std.Io.File.stdout().writerStreaming(&.{});
     try stdout_writer.interface.print("{} {}\n", .{ S.bar, S.other });
 }
 const std = @import("std");
@@ -87,7 +87,7 @@ pub fn main() !void {
         extern const other: u32;
     };
     S.foo();
-    var stdout_writer = std.fs.File.stdout().writerStreaming(&.{});
+    var stdout_writer = std.Io.File.stdout().writerStreaming(&.{});
     try stdout_writer.interface.print("{} {}\n", .{ S.bar, S.other });
 }
 const std = @import("std");
@@ -133,7 +133,7 @@ pub fn main() !void {
         extern const other: u32;
     };
     S.foo();
-    var stdout_writer = std.fs.File.stdout().writerStreaming(&.{});
+    var stdout_writer = std.Io.File.stdout().writerStreaming(&.{});
     try stdout_writer.interface.print("{} {}\n", .{ S.bar, S.other });
 }
 const std = @import("std");
@@ -158,7 +158,7 @@ pub fn main() !void {
         extern const other: u32;
     };
     S.foo();
-    var stdout_writer = std.fs.File.stdout().writerStreaming(&.{});
+    var stdout_writer = std.Io.File.stdout().writerStreaming(&.{});
     try stdout_writer.interface.print("{} {}\n", .{ S.bar, S.other });
 }
 const std = @import("std");

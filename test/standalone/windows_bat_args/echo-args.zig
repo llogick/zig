@@ -5,7 +5,7 @@ pub fn main() !void {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var stdout_writer = std.fs.File.stdout().writerStreaming(&.{});
+    var stdout_writer = std.Io.File.stdout().writerStreaming(&.{});
     const stdout = &stdout_writer.interface;
     var args = try std.process.argsAlloc(arena);
     for (args[1..], 1..) |arg, i| {

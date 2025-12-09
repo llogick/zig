@@ -8,7 +8,7 @@
 const std = @import("std");
 const message: []const u8 = @import("message.zon");
 pub fn main() !void {
-    try std.fs.File.stdout().writeAll(message);
+    try std.Io.File.stdout().writeAll(message);
 }
 #file=message.zon
 "Hello, World!\n"
@@ -29,7 +29,7 @@ pub fn main() !void {
 const std = @import("std");
 const message: []const u8 = @import("message.zon");
 pub fn main() !void {
-    try std.fs.File.stdout().writeAll("a hardcoded string\n");
+    try std.Io.File.stdout().writeAll("a hardcoded string\n");
 }
 #expect_error=message.zon:1:1: error: unable to load 'message.zon': FileNotFound
 #expect_error=main.zig:2:37: note: file imported here
@@ -44,6 +44,6 @@ pub fn main() !void {
 const std = @import("std");
 const message: []const u8 = @import("message.zon");
 pub fn main() !void {
-    try std.fs.File.stdout().writeAll(message);
+    try std.Io.File.stdout().writeAll(message);
 }
 #expect_stdout="We're back, World!\n"

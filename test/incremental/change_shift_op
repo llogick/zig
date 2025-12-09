@@ -9,7 +9,7 @@ pub fn main() !void {
     try foo(0x1300);
 }
 fn foo(x: u16) !void {
-    var stdout_writer = std.fs.File.stdout().writerStreaming(&.{});
+    var stdout_writer = std.Io.File.stdout().writerStreaming(&.{});
     try stdout_writer.interface.print("0x{x}\n", .{x << 4});
 }
 const std = @import("std");
@@ -20,7 +20,7 @@ pub fn main() !void {
     try foo(0x1300);
 }
 fn foo(x: u16) !void {
-    var stdout_writer = std.fs.File.stdout().writerStreaming(&.{});
+    var stdout_writer = std.Io.File.stdout().writerStreaming(&.{});
     try stdout_writer.interface.print("0x{x}\n", .{x >> 4});
 }
 const std = @import("std");
