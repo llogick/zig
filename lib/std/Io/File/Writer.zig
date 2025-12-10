@@ -52,14 +52,14 @@ pub const Mode = union(enum) {
         return switch (m) {
             .positional, .positional_simple => .positional_simple,
             .streaming, .streaming_simple => .streaming_simple,
-            inline else => |x| x,
+            inline else => |_, x| x,
         };
     }
 
     pub fn toUnescaped(m: @This()) @This() {
         return switch (m) {
             .terminal_escaped => .streaming_simple,
-            inline else => |x| x,
+            inline else => |_, x| x,
         };
     }
 
@@ -469,13 +469,13 @@ pub fn restoreEscape(w: *Writer, mode: Mode) void {
     w.mode = mode;
 }
 
-pub fn writeAllUnescaped(w: *Writer, bytes: []const u8) Io.Error!void {
+pub fn writeAllUnescaped(w: *Writer, bytes: []const u8) Io.Writer.Error!void {
     const prev_mode = w.disableEscape();
     defer w.restoreEscape(prev_mode);
     return w.interface.writeAll(bytes);
 }
 
-pub fn printUnescaped(w: *Writer, comptime fmt: []const u8, args: anytype) Io.Error!void {
+pub fn printUnescaped(w: *Writer, comptime fmt: []const u8, args: anytype) Io.Writer.Error!void {
     const prev_mode = w.disableEscape();
     defer w.restoreEscape(prev_mode);
     return w.interface.print(fmt, args);

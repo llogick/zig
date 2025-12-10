@@ -52,6 +52,8 @@ node_freelist: Freelist,
 /// value may at times temporarily exceed the node count.
 node_end_index: u32,
 
+start_failure: StartFailure,
+
 pub const Status = enum {
     /// Indicates the application is progressing towards completion of a task.
     /// Unless the application is interactive, this is the only status the
@@ -448,6 +450,8 @@ const noop_impl = builtin.single_threaded or switch (builtin.os.tag) {
 /// Asserts there is only one global Progress instance.
 ///
 /// Call `Node.end` when done.
+///
+/// If an error occurs, `start_failure` will be populated.
 pub fn start(options: Options, io: Io) Node {
     // Ensure there is only 1 global Progress object.
     if (global_progress.node_end_index != 0) {
@@ -757,7 +761,7 @@ fn appendTreeSymbol(symbol: TreeSymbol, buf: []u8, start_i: usize) usize {
 
 pub fn clearWrittenWithEscapeCodes(file_writer: *Io.File.Writer) anyerror!void {
     if (noop_impl or !global_progress.need_clear) return;
-    try file_writer.interface.writeAllUnescaped(clear ++ progress_remove);
+    try file_writer.writeAllUnescaped(clear ++ progress_remove);
     global_progress.need_clear = false;
 }
 
