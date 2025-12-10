@@ -13,16 +13,18 @@ const assert = std.debug.assert;
 const posix = std.posix;
 const Writer = std.Io.Writer;
 
-/// `null` if the current node (and its children) should
-/// not print on update()
+/// Currently this API only supports this value being set to stderr, which
+/// happens automatically inside `start`.
 terminal: Io.File,
+
+io: Io,
 
 terminal_mode: TerminalMode,
 
-update_thread: ?std.Thread,
+update_worker: ?Io.Future(void),
 
 /// Atomically set by SIGWINCH as well as the root done() function.
-redraw_event: std.Thread.ResetEvent,
+redraw_event: Io.ResetEvent,
 /// Indicates a request to shut down and reset global state.
 /// Accessed atomically.
 done: bool,
@@ -95,9 +97,9 @@ pub const Options = struct {
     /// Must be at least 200 bytes.
     draw_buffer: []u8 = &default_draw_buffer,
     /// How many nanoseconds between writing updates to the terminal.
-    refresh_rate_ns: u64 = 80 * std.time.ns_per_ms,
+    refresh_rate_ns: Io.Duration = .fromMilliseconds(80),
     /// How many nanoseconds to keep the output hidden
-    initial_delay_ns: u64 = 200 * std.time.ns_per_ms,
+    initial_delay_ns: Io.Duration = .fromMilliseconds(200),
     /// If provided, causes the progress item to have a denominator.
     /// 0 means unknown.
     estimated_total_items: usize = 0,
@@ -330,7 +332,7 @@ pub const Node = struct {
         } else {
             @atomicStore(bool, &global_progress.done, true, .monotonic);
             global_progress.redraw_event.set();
-            if (global_progress.update_thread) |thread| thread.join();
+            if (global_progress.update_worker) |worker| worker.await(global_progress.io);
         }
     }
 
@@ -391,9 +393,10 @@ pub const Node = struct {
 };
 
 var global_progress: Progress = .{
+    .io = undefined,
     .terminal = undefined,
     .terminal_mode = .off,
-    .update_thread = null,
+    .update_worker = null,
     .redraw_event = .unset,
     .refresh_rate_ns = undefined,
     .initial_delay_ns = undefined,
@@ -403,12 +406,20 @@ var global_progress: Progress = .{
     .done = false,
     .need_clear = false,
     .status = .working,
+    .start_failure = .unstarted,
 
     .node_parents = &node_parents_buffer,
     .node_storage = &node_storage_buffer,
     .node_freelist_next = &node_freelist_next_buffer,
     .node_freelist = .{ .head = .none, .generation = 0 },
     .node_end_index = 0,
+};
+
+pub const StartFailure = union(enum) {
+    unstarted,
+    spawn_ipc_worker: error{ConcurrencyUnavailable},
+    spawn_update_worker: error{ConcurrencyUnavailable},
+    parse_env_var: error{},
 };
 
 const node_storage_buffer_len = 83;
@@ -437,7 +448,7 @@ const noop_impl = builtin.single_threaded or switch (builtin.os.tag) {
 /// Asserts there is only one global Progress instance.
 ///
 /// Call `Node.end` when done.
-pub fn start(options: Options) Node {
+pub fn start(options: Options, io: Io) Node {
     // Ensure there is only 1 global Progress object.
     if (global_progress.node_end_index != 0) {
         debug_start_trace.dump();
@@ -458,10 +469,10 @@ pub fn start(options: Options) Node {
     if (noop_impl)
         return Node.none;
 
-    const io = static_threaded_io.io();
+    global_progress.io = io;
 
     if (std.process.parseEnvVarInt("ZIG_PROGRESS", u31, 10)) |ipc_fd| {
-        global_progress.update_thread = std.Thread.spawn(.{}, ipcThreadRun, .{
+        global_progress.update_worker = io.concurrent(ipcThreadRun, .{
             io,
             @as(Io.File, .{ .handle = switch (@typeInfo(posix.fd_t)) {
                 .int => ipc_fd,
@@ -469,7 +480,7 @@ pub fn start(options: Options) Node {
                 else => @compileError("unsupported fd_t of " ++ @typeName(posix.fd_t)),
             } }),
         }) catch |err| {
-            std.log.warn("failed to spawn IPC thread for communicating progress to parent: {s}", .{@errorName(err)});
+            global_progress.start_failure = .{ .spawn_ipc_worker = err };
             return Node.none;
         };
     } else |env_err| switch (env_err) {
@@ -502,17 +513,17 @@ pub fn start(options: Options) Node {
 
             if (switch (global_progress.terminal_mode) {
                 .off => unreachable, // handled a few lines above
-                .ansi_escape_codes => std.Thread.spawn(.{}, updateThreadRun, .{io}),
-                .windows_api => if (is_windows) std.Thread.spawn(.{}, windowsApiUpdateThreadRun, .{io}) else unreachable,
-            }) |thread| {
-                global_progress.update_thread = thread;
+                .ansi_escape_codes => io.concurrent(updateThreadRun, .{io}),
+                .windows_api => if (is_windows) io.concurrent(windowsApiUpdateThreadRun, .{io}) else unreachable,
+            }) |future| {
+                global_progress.update_worker = future;
             } else |err| {
-                std.log.warn("unable to spawn thread for printing progress to terminal: {s}", .{@errorName(err)});
+                global_progress.start_failure = .{ .spawn_update_worker = err };
                 return Node.none;
             }
         },
         else => |e| {
-            std.log.warn("invalid ZIG_PROGRESS file descriptor integer: {s}", .{@errorName(e)});
+            global_progress.start_failure = .{ .parse_env_var = e };
             return Node.none;
         },
     }
@@ -545,10 +556,10 @@ fn updateThreadRun(io: Io) void {
         maybeUpdateSize(resize_flag);
 
         const buffer, _ = computeRedraw(&serialized_buffer);
-        if (stderr_mutex.tryLock()) {
-            defer stderr_mutex.unlock();
-            write(io, buffer) catch return;
+        if (io.tryLockStderrWriter(&.{})) |w| {
+            defer io.unlockStderrWriter();
             global_progress.need_clear = true;
+            w.writeAll(buffer) catch return;
         }
     }
 
@@ -556,18 +567,18 @@ fn updateThreadRun(io: Io) void {
         const resize_flag = wait(global_progress.refresh_rate_ns);
 
         if (@atomicLoad(bool, &global_progress.done, .monotonic)) {
-            stderr_mutex.lock();
-            defer stderr_mutex.unlock();
-            return clearWrittenWithEscapeCodes(io) catch {};
+            const w = io.lockStderrWriter(&.{}) catch return;
+            defer io.unlockStderrWriter();
+            return clearWrittenWithEscapeCodes(w) catch {};
         }
 
         maybeUpdateSize(resize_flag);
 
         const buffer, _ = computeRedraw(&serialized_buffer);
-        if (stderr_mutex.tryLock()) {
-            defer stderr_mutex.unlock();
-            write(io, buffer) catch return;
+        if (io.tryLockStderrWriter(&.{})) |w| {
+            defer io.unlockStderrWriter();
             global_progress.need_clear = true;
+            w.writeAll(buffer) catch return;
         }
     }
 }
@@ -589,11 +600,11 @@ fn windowsApiUpdateThreadRun(io: Io) void {
         maybeUpdateSize(resize_flag);
 
         const buffer, const nl_n = computeRedraw(&serialized_buffer);
-        if (stderr_mutex.tryLock()) {
-            defer stderr_mutex.unlock();
+        if (io.tryLockStderrWriter()) |w| {
+            defer io.unlockStderrWriter();
             windowsApiWriteMarker();
-            write(io, buffer) catch return;
             global_progress.need_clear = true;
+            w.writeAll(buffer) catch return;
             windowsApiMoveToMarker(nl_n) catch return;
         }
     }
@@ -602,72 +613,23 @@ fn windowsApiUpdateThreadRun(io: Io) void {
         const resize_flag = wait(global_progress.refresh_rate_ns);
 
         if (@atomicLoad(bool, &global_progress.done, .monotonic)) {
-            stderr_mutex.lock();
-            defer stderr_mutex.unlock();
+            _ = io.lockStderrWriter() catch return;
+            defer io.unlockStderrWriter();
             return clearWrittenWindowsApi() catch {};
         }
 
         maybeUpdateSize(resize_flag);
 
         const buffer, const nl_n = computeRedraw(&serialized_buffer);
-        if (stderr_mutex.tryLock()) {
-            defer stderr_mutex.unlock();
+        if (io.tryLockStderrWriter()) |w| {
+            defer io.unlockStderrWriter();
             clearWrittenWindowsApi() catch return;
             windowsApiWriteMarker();
-            write(io, buffer) catch return;
             global_progress.need_clear = true;
+            w.writeAll(buffer) catch return;
             windowsApiMoveToMarker(nl_n) catch return;
         }
     }
-}
-
-/// Allows the caller to freely write to stderr until `unlockStdErr` is called.
-///
-/// During the lock, any `std.Progress` information is cleared from the terminal.
-///
-/// The lock is recursive; the same thread may hold the lock multiple times.
-pub fn lockStdErr() void {
-    const io = stderr_file_writer.io;
-    stderr_mutex.lock();
-    clearWrittenWithEscapeCodes(io) catch {};
-}
-
-pub fn unlockStdErr() void {
-    stderr_mutex.unlock();
-}
-
-/// Protected by `stderr_mutex`.
-const stderr_writer: *Writer = &stderr_file_writer.interface;
-/// Protected by `stderr_mutex`.
-var stderr_file_writer: Io.File.Writer = .{
-    .io = static_threaded_io.io(),
-    .interface = Io.File.Writer.initInterface(&.{}),
-    .file = if (is_windows) undefined else .stderr(),
-    .mode = .streaming,
-};
-var static_threaded_io: Io.Threaded = .init_single_threaded;
-
-/// Allows the caller to freely write to the returned `Writer`,
-/// initialized with `buffer`, until `unlockStderrWriter` is called.
-///
-/// During the lock, any `std.Progress` information is cleared from the terminal.
-///
-/// The lock is recursive; the same thread may hold the lock multiple times.
-pub fn lockStderrWriter(buffer: []u8) *Io.Writer {
-    const io = stderr_file_writer.io;
-    stderr_mutex.lock();
-    clearWrittenWithEscapeCodes(io) catch {};
-    if (is_windows) stderr_file_writer.file = .stderr();
-    stderr_writer.flush() catch {};
-    stderr_writer.buffer = buffer;
-    return stderr_writer;
-}
-
-pub fn unlockStderrWriter() void {
-    stderr_writer.flush() catch {};
-    stderr_writer.end = 0;
-    stderr_writer.buffer = &.{};
-    stderr_mutex.unlock();
 }
 
 fn ipcThreadRun(io: Io, file: Io.File) anyerror!void {
@@ -793,11 +755,11 @@ fn appendTreeSymbol(symbol: TreeSymbol, buf: []u8, start_i: usize) usize {
     }
 }
 
-fn clearWrittenWithEscapeCodes(io: Io) anyerror!void {
+fn clearWrittenWithEscapeCodes(w: *Io.Writer) anyerror!void {
     if (noop_impl or !global_progress.need_clear) return;
 
+    try w.writeAll(clear ++ progress_remove);
     global_progress.need_clear = false;
-    try write(io, clear ++ progress_remove);
 }
 
 /// U+25BA or ►
@@ -997,7 +959,7 @@ fn serializeIpc(start_serialized_len: usize, serialized_buffer: *Serialized.Buff
             const n = posix.read(fd, pipe_buf[bytes_read..]) catch |err| switch (err) {
                 error.WouldBlock => break,
                 else => |e| {
-                    std.log.debug("failed to read child progress data: {s}", .{@errorName(e)});
+                    std.log.debug("failed to read child progress data: {t}", .{e});
                     main_storage.completed_count = 0;
                     main_storage.estimated_total_count = 0;
                     continue :main_loop;
@@ -1424,10 +1386,6 @@ fn withinRowLimit(p: *Progress, nl_n: usize) bool {
     return nl_n + 2 < p.rows;
 }
 
-fn write(io: Io, buf: []const u8) anyerror!void {
-    try global_progress.terminal.writeStreamingAll(io, buf);
-}
-
 var remaining_write_trash_bytes: usize = 0;
 
 fn writeIpc(io: Io, file: Io.File, serialized: Serialized) error{BrokenPipe}!void {
@@ -1459,7 +1417,7 @@ fn writeIpc(io: Io, file: Io.File, serialized: Serialized) error{BrokenPipe}!voi
             error.WouldBlock => return,
             error.BrokenPipe => return error.BrokenPipe,
             else => |e| {
-                std.log.debug("failed to send progress to parent process: {s}", .{@errorName(e)});
+                std.log.debug("failed to send progress to parent process: {t}", .{e});
                 return error.BrokenPipe;
             },
         }
@@ -1476,7 +1434,7 @@ fn writeIpc(io: Io, file: Io.File, serialized: Serialized) error{BrokenPipe}!voi
         error.WouldBlock => {},
         error.BrokenPipe => return error.BrokenPipe,
         else => |e| {
-            std.log.debug("failed to send progress to parent process: {s}", .{@errorName(e)});
+            std.log.debug("failed to send progress to parent process: {t}", .{e});
             return error.BrokenPipe;
         },
     }
@@ -1567,11 +1525,6 @@ const have_sigwinch = switch (builtin.os.tag) {
 
     else => false,
 };
-
-/// The primary motivation for recursive mutex here is so that a panic while
-/// stderr mutex is held still dumps the stack trace and other debug
-/// information.
-var stderr_mutex = std.Thread.Mutex.Recursive.init;
 
 fn copyAtomicStore(dest: []align(@alignOf(usize)) u8, src: []const u8) void {
     assert(dest.len == src.len);

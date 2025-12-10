@@ -80,6 +80,8 @@ pub fn logEnabled(comptime level: Level, comptime scope: @EnumLiteral()) bool {
     return @intFromEnum(level) <= @intFromEnum(std.options.log_level);
 }
 
+var static_threaded_io: std.Io.Threaded = .init_single_threaded;
+
 /// The default implementation for the log function. Custom log functions may
 /// forward log messages to this function.
 ///
@@ -91,9 +93,19 @@ pub fn defaultLog(
     comptime format: []const u8,
     args: anytype,
 ) void {
+    return defaultLogIo(level, scope, format, args, static_threaded_io.io());
+}
+
+pub fn defaultLogIo(
+    comptime level: Level,
+    comptime scope: @EnumLiteral(),
+    comptime format: []const u8,
+    args: anytype,
+    io: std.Io,
+) void {
     var buffer: [64]u8 = undefined;
-    const stderr, const ttyconf = std.debug.lockStderrWriter(&buffer);
-    defer std.debug.unlockStderrWriter();
+    const stderr, const ttyconf = io.lockStderrWriter(&buffer);
+    defer io.unlockStderrWriter();
     ttyconf.setColor(stderr, switch (level) {
         .err => .red,
         .warn => .yellow,

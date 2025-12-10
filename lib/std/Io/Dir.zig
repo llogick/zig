@@ -342,7 +342,7 @@ pub const Walker = struct {
 
 /// Recursively iterates over a directory.
 ///
-/// `dir` must have been opened with `OpenOptions{.iterate = true}`.
+/// `dir` must have been opened with `OpenOptions.iterate` set to `true`.
 ///
 /// `Walker.deinit` releases allocated memory and directory handles.
 ///
@@ -350,7 +350,8 @@ pub const Walker = struct {
 ///
 /// `dir` will not be closed after walking it.
 ///
-/// See also `walkSelectively`.
+/// See also:
+/// * `walkSelectively`
 pub fn walk(dir: Dir, allocator: Allocator) Allocator.Error!Walker {
     return .{ .inner = try walkSelectively(dir, allocator) };
 }

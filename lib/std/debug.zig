@@ -262,17 +262,6 @@ pub const sys_can_stack_trace = switch (builtin.cpu.arch) {
     else => true,
 };
 
-/// Allows the caller to freely write to stderr until `unlockStdErr` is called.
-///
-/// During the lock, any `std.Progress` information is cleared from the terminal.
-pub fn lockStdErr() void {
-    std.Progress.lockStdErr();
-}
-
-pub fn unlockStdErr() void {
-    std.Progress.unlockStdErr();
-}
-
 /// Allows the caller to freely write to stderr until `unlockStderrWriter` is called.
 ///
 /// During the lock, any `std.Progress` information is cleared from the terminal.
@@ -281,17 +270,21 @@ pub fn unlockStdErr() void {
 /// times. The primary motivation is that this allows the panic handler to safely dump the stack
 /// trace and panic message even if the mutex was held at the panic site.
 ///
-/// The returned `Writer` does not need to be manually flushed: flushing is performed automatically
-/// when the matching `unlockStderrWriter` call occurs.
+/// The returned `Writer` does not need to be manually flushed: flushing is
+/// performed automatically when the matching `unlockStderrWriter` call occurs.
+///
+/// This is a low-level debugging primitive that bypasses the `Io` interface,
+/// writing directly to stderr using the most basic syscalls available. This
+/// function does not switch threads, switch stacks, or suspend.
+///
+/// Alternatively, use the higher-level `Io.lockStderrWriter` to integrate with
+/// the application's chosen `Io` implementation.
 pub fn lockStderrWriter(buffer: []u8) struct { *Writer, tty.Config } {
-    const global = struct {
-        var conf: ?tty.Config = null;
-    };
+    Io.stderr_thread_mutex.lock();
     const w = std.Progress.lockStderrWriter(buffer);
-    const file_writer: *File.Writer = @fieldParentPtr("interface", w);
     // The stderr lock also locks access to `global.conf`.
-    if (global.conf == null) {
-        global.conf = .detect(file_writer.io, .stderr());
+    if (StderrWriter.singleton.tty_config == null) {
+        StderrWriter.singleton.tty_config = .detect(io, .stderr());
     }
     return .{ w, global.conf.? };
 }
@@ -300,17 +293,51 @@ pub fn unlockStderrWriter() void {
     std.Progress.unlockStderrWriter();
 }
 
-/// Print to stderr, silently returning on failure. Intended for use in "printf
-/// debugging". Use `std.log` functions for proper logging.
+/// Writes to stderr, ignoring errors.
+///
+/// This is a low-level debugging primitive that bypasses the `Io` interface,
+/// writing directly to stderr using the most basic syscalls available. This
+/// function does not switch threads, switch stacks, or suspend.
 ///
 /// Uses a 64-byte buffer for formatted printing which is flushed before this
 /// function returns.
+///
+/// Alternatively, use the higher-level `std.log` or `Io.lockStderrWriter` to
+/// integrate with the application's chosen `Io` implementation.
 pub fn print(comptime fmt: []const u8, args: anytype) void {
     var buffer: [64]u8 = undefined;
     const bw, _ = lockStderrWriter(&buffer);
     defer unlockStderrWriter();
     nosuspend bw.print(fmt, args) catch return;
 }
+
+const StderrWriter = struct {
+    interface: Writer,
+    tty_config: ?tty.Config,
+
+    var singleton: StderrWriter = .{
+        .interface = .{
+            .buffer = &.{},
+            .vtable = &.{ .drain = drain },
+        },
+        .tty_config = null,
+    };
+
+    fn drain(io_w: *Writer, data: []const []const u8, splat: usize) Writer.Error!usize {
+        const w: *Writer = @alignCast(@fieldParentPtr("interface", io_w));
+        var n: usize = 0;
+        const header = w.interface.buffered();
+        if (header.len != 0) n += try std.Io.Threaded.debugWrite(header);
+        for (data[0 .. data.len - 1]) |d| {
+            if (d.len != 0) n += try std.Io.Threaded.debugWrite(d);
+        }
+        const pattern = data[data.len - 1];
+        if (pattern.len != 0) {
+            for (0..splat) |_| n += try std.Io.Threaded.debugWrite(pattern);
+        }
+        return io_w.consume(n);
+    }
+};
 
 /// Marked `inline` to propagate a comptime-known error to callers.
 pub inline fn getSelfDebugInfo() !*SelfInfo {
@@ -767,7 +794,7 @@ pub const FormatStackTrace = struct {
     stack_trace: StackTrace,
     tty_config: tty.Config,
 
-    pub fn format(context: @This(), writer: *Io.Writer) Io.Writer.Error!void {
+    pub fn format(context: @This(), writer: *Writer) Writer.Error!void {
         try writer.writeAll("\n");
         try writeStackTrace(&context.stack_trace, writer, context.tty_config);
     }
@@ -1608,7 +1635,7 @@ test "manage resources correctly" {
     const gpa = std.testing.allocator;
     var threaded: Io.Threaded = .init_single_threaded;
     const io = threaded.ioBasic();
-    var discarding: Io.Writer.Discarding = .init(&.{});
+    var discarding: Writer.Discarding = .init(&.{});
     var di: SelfInfo = .init;
     defer di.deinit(gpa);
     try printSourceAtAddress(

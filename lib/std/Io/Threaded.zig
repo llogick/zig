@@ -77,6 +77,8 @@ use_sendfile: UseSendfile = .default,
 use_copy_file_range: UseCopyFileRange = .default,
 use_fcopyfile: UseFcopyfile = .default,
 
+stderr_writer: Io.Writer,
+
 pub const RobustCancel = if (std.Thread.use_pthreads or native_os == .linux) enum {
     enabled,
     disabled,
@@ -9512,6 +9514,36 @@ fn netLookupFallible(
     }
 
     return error.OptionUnsupported;
+}
+
+fn lockStderrWriter(userdata: ?*anyopaque, buffer: []u8) Io.Cancelable!*Io.Writer {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    // Only global mutex since this is Threaded.
+    Io.stderr_thread_mutex.lock();
+    if (is_windows) t.stderr_writer.file = .stderr();
+    std.Progress.clearWrittenWithEscapeCodes(&t.stderr_writer) catch {};
+    t.stderr_writer.flush() catch {};
+    t.stderr_writer.buffer = buffer;
+    return &t.stderr_writer;
+}
+
+fn tryLockStderrWriter(userdata: ?*anyopaque, buffer: []u8) ?*Io.Writer {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    // Only global mutex since this is Threaded.
+    if (!Io.stderr_thread_mutex.tryLock()) return null;
+    std.Progress.clearWrittenWithEscapeCodes(t.io()) catch {};
+    if (is_windows) t.stderr_writer.file = .stderr();
+    t.stderr_writer.flush() catch {};
+    t.stderr_writer.buffer = buffer;
+    return &t.stderr_writer;
+}
+
+fn unlockStderrWriter(userdata: ?*anyopaque) void {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    t.stderr_writer.flush() catch {};
+    t.stderr_writer.end = 0;
+    t.stderr_writer.buffer = &.{};
+    Io.stderr_thread_mutex.unlock();
 }
 
 pub const PosixAddress = extern union {

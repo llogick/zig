@@ -560,6 +560,13 @@ pub const net = @import("Io/net.zig");
 userdata: ?*anyopaque,
 vtable: *const VTable,
 
+/// This is the global, process-wide protection to coordinate stderr writes.
+///
+/// The primary motivation for recursive mutex here is so that a panic while
+/// stderr mutex is held still dumps the stack trace and other debug
+/// information.
+pub var stderr_thread_mutex: std.Thread.Mutex.Recursive = .init;
+
 pub const VTable = struct {
     /// If it returns `null` it means `result` has been already populated and
     /// `await` will be a no-op.
@@ -733,6 +740,10 @@ pub const VTable = struct {
     netInterfaceNameResolve: *const fn (?*anyopaque, *const net.Interface.Name) net.Interface.Name.ResolveError!net.Interface,
     netInterfaceName: *const fn (?*anyopaque, net.Interface) net.Interface.NameError!net.Interface.Name,
     netLookup: *const fn (?*anyopaque, net.HostName, *Queue(net.HostName.LookupResult), net.HostName.LookupOptions) net.HostName.LookupError!void,
+
+    lockStderrWriter: *const fn (?*anyopaque, buffer: []u8) Cancelable!*Writer,
+    tryLockStderrWriter: *const fn (?*anyopaque, buffer: []u8) ?*Writer,
+    unlockStderrWriter: *const fn (?*anyopaque) void,
 };
 
 pub const Cancelable = error{
@@ -2166,4 +2177,24 @@ pub fn select(io: Io, s: anytype) Cancelable!SelectUnion(@TypeOf(s)) {
         },
         else => unreachable,
     }
+}
+
+/// For doing application-level writes to the standard error stream.
+/// Coordinates also with debug-level writes that are ignorant of Io interface
+/// and implementations. When this returns, `stderr_thread_mutex` will be
+/// locked.
+///
+/// See also:
+/// * `tryLockStderrWriter`
+pub fn lockStderrWriter(io: Io, buffer: []u8) Cancelable!*Writer {
+    return io.vtable.lockStderrWriter(io.userdata, buffer);
+}
+
+/// Same as `lockStderrWriter` but uncancelable and non-blocking.
+pub fn tryLockStderrWriter(io: Io, buffer: []u8) ?*Writer {
+    return io.vtable.tryLockStderrWriter(io.userdata, buffer);
+}
+
+pub fn unlockStderrWriter(io: Io) void {
+    return io.vtable.unlockStderrWriter(io.userdata);
 }
