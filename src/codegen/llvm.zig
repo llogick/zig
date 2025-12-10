@@ -1787,6 +1787,22 @@ pub const Object = struct {
                 global_index.toConst(),
             );
             try alias_index.rename(exp_name, &o.builder);
+
+            const alias_global_index = alias_index.ptrConst(&o.builder).global;
+            alias_global_index.setUnnamedAddr(.default, &o.builder);
+            if (comp.config.dll_export_fns)
+                alias_global_index.setDllStorageClass(.dllexport, &o.builder);
+            alias_global_index.setLinkage(switch (first_export.opts.linkage) {
+                .internal => unreachable,
+                .strong => .external,
+                .weak => .weak_odr,
+                .link_once => .linkonce_odr,
+            }, &o.builder);
+            alias_global_index.setVisibility(switch (first_export.opts.visibility) {
+                .default => .default,
+                .hidden => .hidden,
+                .protected => .protected,
+            }, &o.builder);
         }
     }
 
