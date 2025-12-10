@@ -15,7 +15,7 @@
 //!
 //! For an example implementation of the `logFn` function, see `defaultLog`,
 //! which is the default implementation. It outputs to stderr, using color if
-//! the detected `std.Io.tty.Config` supports it. Its output looks like this:
+//! supported. Its output looks like this:
 //! ```
 //! error: this is an error
 //! error(scope): this is an error with a non-default scope
@@ -80,8 +80,6 @@ pub fn logEnabled(comptime level: Level, comptime scope: @EnumLiteral()) bool {
     return @intFromEnum(level) <= @intFromEnum(std.options.log_level);
 }
 
-var static_threaded_io: std.Io.Threaded = .init_single_threaded;
-
 /// The default implementation for the log function. Custom log functions may
 /// forward log messages to this function.
 ///
@@ -93,36 +91,64 @@ pub fn defaultLog(
     comptime format: []const u8,
     args: anytype,
 ) void {
-    return defaultLogIo(level, scope, format, args, static_threaded_io.io());
+    var buffer: [64]u8 = undefined;
+    const stderr = std.debug.lockStderrWriter(&buffer);
+    defer std.debug.unlockStderrWriter();
+    return defaultLogFileWriter(level, scope, format, args, stderr);
 }
 
-pub fn defaultLogIo(
+pub fn defaultLogFileWriter(
     comptime level: Level,
     comptime scope: @EnumLiteral(),
     comptime format: []const u8,
     args: anytype,
-    io: std.Io,
+    fw: *std.Io.File.Writer,
 ) void {
-    var buffer: [64]u8 = undefined;
-    const stderr, const ttyconf = io.lockStderrWriter(&buffer);
-    defer io.unlockStderrWriter();
-    ttyconf.setColor(stderr, switch (level) {
+    fw.setColor(switch (level) {
         .err => .red,
         .warn => .yellow,
         .info => .green,
         .debug => .magenta,
     }) catch {};
-    ttyconf.setColor(stderr, .bold) catch {};
-    stderr.writeAll(level.asText()) catch return;
-    ttyconf.setColor(stderr, .reset) catch {};
-    ttyconf.setColor(stderr, .dim) catch {};
-    ttyconf.setColor(stderr, .bold) catch {};
+    fw.setColor(.bold) catch {};
+    fw.interface.writeAll(level.asText()) catch return;
+    fw.setColor(.reset) catch {};
+    fw.setColor(.dim) catch {};
+    fw.setColor(.bold) catch {};
     if (scope != .default) {
-        stderr.print("({s})", .{@tagName(scope)}) catch return;
+        fw.interface.print("({s})", .{@tagName(scope)}) catch return;
     }
-    stderr.writeAll(": ") catch return;
-    ttyconf.setColor(stderr, .reset) catch {};
-    stderr.print(format ++ "\n", args) catch return;
+    fw.interface.writeAll(": ") catch return;
+    fw.setColor(.reset) catch {};
+    fw.interface.print(format ++ "\n", decorateArgs(args, fw.mode)) catch return;
+}
+
+fn DecorateArgs(comptime Args: type) type {
+    const fields = @typeInfo(Args).@"struct".fields;
+    var new_fields: [fields.len]type = undefined;
+    for (fields, &new_fields) |old, *new| {
+        if (old.type == std.debug.FormatStackTrace) {
+            new.* = std.debug.FormatStackTrace.Decorated;
+        } else {
+            new.* = old.type;
+        }
+    }
+    return @Tuple(&new_fields);
+}
+
+fn decorateArgs(args: anytype, file_writer_mode: std.Io.File.Writer.Mode) DecorateArgs(@TypeOf(args)) {
+    var new_args: DecorateArgs(@TypeOf(args)) = undefined;
+    inline for (args, &new_args) |old, *new| {
+        if (@TypeOf(old) == std.debug.FormatStackTrace) {
+            new.* = .{
+                .stack_trace = old.stack_trace,
+                .file_writer_mode = file_writer_mode,
+            };
+        } else {
+            new.* = old;
+        }
+    }
+    return new_args;
 }
 
 /// Returns a scoped logging namespace that logs all messages using the scope

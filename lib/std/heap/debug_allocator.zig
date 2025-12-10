@@ -179,8 +179,6 @@ pub fn DebugAllocator(comptime config: Config) type {
         total_requested_bytes: @TypeOf(total_requested_bytes_init) = total_requested_bytes_init,
         requested_memory_limit: @TypeOf(requested_memory_limit_init) = requested_memory_limit_init,
         mutex: @TypeOf(mutex_init) = mutex_init,
-        /// Set this value differently to affect how errors and leaks are logged.
-        tty_config: std.Io.tty.Config = .no_color,
 
         const Self = @This();
 
@@ -427,7 +425,6 @@ pub fn DebugAllocator(comptime config: Config) type {
             bucket: *BucketHeader,
             size_class_index: usize,
             used_bits_count: usize,
-            tty_config: std.Io.tty.Config,
         ) usize {
             const size_class = @as(usize, 1) << @as(Log2USize, @intCast(size_class_index));
             const slot_count = slot_counts[size_class_index];
@@ -444,11 +441,7 @@ pub fn DebugAllocator(comptime config: Config) type {
                             const page_addr = @intFromPtr(bucket) & ~(page_size - 1);
                             const addr = page_addr + slot_index * size_class;
                             log.err("memory address 0x{x} leaked: {f}", .{
-                                addr,
-                                std.debug.FormatStackTrace{
-                                    .stack_trace = stack_trace,
-                                    .tty_config = tty_config,
-                                },
+                                addr, std.debug.FormatStackTrace{ .stack_trace = stack_trace },
                             });
                             leaks += 1;
                         }
@@ -460,8 +453,6 @@ pub fn DebugAllocator(comptime config: Config) type {
 
         /// Emits log messages for leaks and then returns the number of detected leaks (0 if no leaks were detected).
         pub fn detectLeaks(self: *Self) usize {
-            const tty_config = self.tty_config;
-
             var leaks: usize = 0;
 
             for (self.buckets, 0..) |init_optional_bucket, size_class_index| {
@@ -469,7 +460,7 @@ pub fn DebugAllocator(comptime config: Config) type {
                 const slot_count = slot_counts[size_class_index];
                 const used_bits_count = usedBitsCount(slot_count);
                 while (optional_bucket) |bucket| {
-                    leaks += detectLeaksInBucket(bucket, size_class_index, used_bits_count, tty_config);
+                    leaks += detectLeaksInBucket(bucket, size_class_index, used_bits_count);
                     optional_bucket = bucket.prev;
                 }
             }
@@ -480,10 +471,7 @@ pub fn DebugAllocator(comptime config: Config) type {
                 const stack_trace = large_alloc.getStackTrace(.alloc);
                 log.err("memory address 0x{x} leaked: {f}", .{
                     @intFromPtr(large_alloc.bytes.ptr),
-                    std.debug.FormatStackTrace{
-                        .stack_trace = stack_trace,
-                        .tty_config = tty_config,
-                    },
+                    std.debug.FormatStackTrace{ .stack_trace = stack_trace },
                 });
                 leaks += 1;
             }
@@ -535,28 +523,14 @@ pub fn DebugAllocator(comptime config: Config) type {
             @memset(addr_buf[@min(st.index, addr_buf.len)..], 0);
         }
 
-        fn reportDoubleFree(
-            tty_config: std.Io.tty.Config,
-            ret_addr: usize,
-            alloc_stack_trace: StackTrace,
-            free_stack_trace: StackTrace,
-        ) void {
+        fn reportDoubleFree(ret_addr: usize, alloc_stack_trace: StackTrace, free_stack_trace: StackTrace) void {
             @branchHint(.cold);
             var addr_buf: [stack_n]usize = undefined;
             const second_free_stack_trace = std.debug.captureCurrentStackTrace(.{ .first_address = ret_addr }, &addr_buf);
             log.err("Double free detected. Allocation: {f} First free: {f} Second free: {f}", .{
-                std.debug.FormatStackTrace{
-                    .stack_trace = alloc_stack_trace,
-                    .tty_config = tty_config,
-                },
-                std.debug.FormatStackTrace{
-                    .stack_trace = free_stack_trace,
-                    .tty_config = tty_config,
-                },
-                std.debug.FormatStackTrace{
-                    .stack_trace = second_free_stack_trace,
-                    .tty_config = tty_config,
-                },
+                std.debug.FormatStackTrace{ .stack_trace = alloc_stack_trace },
+                std.debug.FormatStackTrace{ .stack_trace = free_stack_trace },
+                std.debug.FormatStackTrace{ .stack_trace = second_free_stack_trace },
             });
         }
 
@@ -587,7 +561,7 @@ pub fn DebugAllocator(comptime config: Config) type {
 
             if (config.retain_metadata and entry.value_ptr.freed) {
                 if (config.safety) {
-                    reportDoubleFree(self.tty_config, ret_addr, entry.value_ptr.getStackTrace(.alloc), entry.value_ptr.getStackTrace(.free));
+                    reportDoubleFree(ret_addr, entry.value_ptr.getStackTrace(.alloc), entry.value_ptr.getStackTrace(.free));
                     @panic("Unrecoverable double free");
                 } else {
                     unreachable;
@@ -598,18 +572,11 @@ pub fn DebugAllocator(comptime config: Config) type {
                 @branchHint(.cold);
                 var addr_buf: [stack_n]usize = undefined;
                 const free_stack_trace = std.debug.captureCurrentStackTrace(.{ .first_address = ret_addr }, &addr_buf);
-                const tty_config = self.tty_config;
                 log.err("Allocation size {d} bytes does not match free size {d}. Allocation: {f} Free: {f}", .{
                     entry.value_ptr.bytes.len,
                     old_mem.len,
-                    std.debug.FormatStackTrace{
-                        .stack_trace = entry.value_ptr.getStackTrace(.alloc),
-                        .tty_config = tty_config,
-                    },
-                    std.debug.FormatStackTrace{
-                        .stack_trace = free_stack_trace,
-                        .tty_config = tty_config,
-                    },
+                    std.debug.FormatStackTrace{ .stack_trace = entry.value_ptr.getStackTrace(.alloc) },
+                    std.debug.FormatStackTrace{ .stack_trace = free_stack_trace },
                 });
             }
 
@@ -701,7 +668,7 @@ pub fn DebugAllocator(comptime config: Config) type {
 
             if (config.retain_metadata and entry.value_ptr.freed) {
                 if (config.safety) {
-                    reportDoubleFree(self.tty_config, ret_addr, entry.value_ptr.getStackTrace(.alloc), entry.value_ptr.getStackTrace(.free));
+                    reportDoubleFree(ret_addr, entry.value_ptr.getStackTrace(.alloc), entry.value_ptr.getStackTrace(.free));
                     return;
                 } else {
                     unreachable;
@@ -712,18 +679,11 @@ pub fn DebugAllocator(comptime config: Config) type {
                 @branchHint(.cold);
                 var addr_buf: [stack_n]usize = undefined;
                 const free_stack_trace = std.debug.captureCurrentStackTrace(.{ .first_address = ret_addr }, &addr_buf);
-                const tty_config = self.tty_config;
                 log.err("Allocation size {d} bytes does not match free size {d}. Allocation: {f} Free: {f}", .{
                     entry.value_ptr.bytes.len,
                     old_mem.len,
-                    std.debug.FormatStackTrace{
-                        .stack_trace = entry.value_ptr.getStackTrace(.alloc),
-                        .tty_config = tty_config,
-                    },
-                    std.debug.FormatStackTrace{
-                        .stack_trace = free_stack_trace,
-                        .tty_config = tty_config,
-                    },
+                    std.debug.FormatStackTrace{ .stack_trace = entry.value_ptr.getStackTrace(.alloc) },
+                    std.debug.FormatStackTrace{ .stack_trace = free_stack_trace },
                 });
             }
 
@@ -924,7 +884,6 @@ pub fn DebugAllocator(comptime config: Config) type {
             if (!is_used) {
                 if (config.safety) {
                     reportDoubleFree(
-                        self.tty_config,
                         return_address,
                         bucketStackTrace(bucket, slot_count, slot_index, .alloc),
                         bucketStackTrace(bucket, slot_count, slot_index, .free),
@@ -946,34 +905,24 @@ pub fn DebugAllocator(comptime config: Config) type {
                     const free_stack_trace = std.debug.captureCurrentStackTrace(.{ .first_address = return_address }, &addr_buf);
                     if (old_memory.len != requested_size) {
                         @branchHint(.cold);
-                        const tty_config = self.tty_config;
                         log.err("Allocation size {d} bytes does not match free size {d}. Allocation: {f} Free: {f}", .{
                             requested_size,
                             old_memory.len,
                             std.debug.FormatStackTrace{
                                 .stack_trace = bucketStackTrace(bucket, slot_count, slot_index, .alloc),
-                                .tty_config = tty_config,
                             },
-                            std.debug.FormatStackTrace{
-                                .stack_trace = free_stack_trace,
-                                .tty_config = tty_config,
-                            },
+                            std.debug.FormatStackTrace{ .stack_trace = free_stack_trace },
                         });
                     }
                     if (alignment != slot_alignment) {
                         @branchHint(.cold);
-                        const tty_config = self.tty_config;
                         log.err("Allocation alignment {d} does not match free alignment {d}. Allocation: {f} Free: {f}", .{
                             slot_alignment.toByteUnits(),
                             alignment.toByteUnits(),
                             std.debug.FormatStackTrace{
                                 .stack_trace = bucketStackTrace(bucket, slot_count, slot_index, .alloc),
-                                .tty_config = tty_config,
                             },
-                            std.debug.FormatStackTrace{
-                                .stack_trace = free_stack_trace,
-                                .tty_config = tty_config,
-                            },
+                            std.debug.FormatStackTrace{ .stack_trace = free_stack_trace },
                         });
                     }
                 }
@@ -1040,7 +989,6 @@ pub fn DebugAllocator(comptime config: Config) type {
             const is_used = @as(u1, @truncate(used_byte.* >> used_bit_index)) != 0;
             if (!is_used) {
                 reportDoubleFree(
-                    self.tty_config,
                     return_address,
                     bucketStackTrace(bucket, slot_count, slot_index, .alloc),
                     bucketStackTrace(bucket, slot_count, slot_index, .free),
@@ -1058,34 +1006,24 @@ pub fn DebugAllocator(comptime config: Config) type {
                 const free_stack_trace = std.debug.captureCurrentStackTrace(.{ .first_address = return_address }, &addr_buf);
                 if (memory.len != requested_size) {
                     @branchHint(.cold);
-                    const tty_config = self.tty_config;
                     log.err("Allocation size {d} bytes does not match free size {d}. Allocation: {f} Free: {f}", .{
                         requested_size,
                         memory.len,
                         std.debug.FormatStackTrace{
                             .stack_trace = bucketStackTrace(bucket, slot_count, slot_index, .alloc),
-                            .tty_config = tty_config,
                         },
-                        std.debug.FormatStackTrace{
-                            .stack_trace = free_stack_trace,
-                            .tty_config = tty_config,
-                        },
+                        std.debug.FormatStackTrace{ .stack_trace = free_stack_trace },
                     });
                 }
                 if (alignment != slot_alignment) {
                     @branchHint(.cold);
-                    const tty_config = self.tty_config;
                     log.err("Allocation alignment {d} does not match free alignment {d}. Allocation: {f} Free: {f}", .{
                         slot_alignment.toByteUnits(),
                         alignment.toByteUnits(),
                         std.debug.FormatStackTrace{
                             .stack_trace = bucketStackTrace(bucket, slot_count, slot_index, .alloc),
-                            .tty_config = tty_config,
                         },
-                        std.debug.FormatStackTrace{
-                            .stack_trace = free_stack_trace,
-                            .tty_config = tty_config,
-                        },
+                        std.debug.FormatStackTrace{ .stack_trace = free_stack_trace },
                     });
                 }
             }

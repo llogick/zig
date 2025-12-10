@@ -247,8 +247,6 @@ fn mainArgs(gpa: Allocator, arena: Allocator, args: []const []const u8) !void {
     threaded.stack_size = thread_stack_size;
     const io = threaded.io();
 
-    debug_allocator.tty_config = .detect(io, .stderr());
-
     const cmd = args[1];
     const cmd_args = args[2..];
     if (mem.eql(u8, cmd, "build-exe")) {

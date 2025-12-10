@@ -1,7 +1,6 @@
 const std = @import("std.zig");
 const Io = std.Io;
 const Writer = std.Io.Writer;
-const tty = std.Io.tty;
 const math = std.math;
 const mem = std.mem;
 const posix = std.posix;
@@ -262,6 +261,10 @@ pub const sys_can_stack_trace = switch (builtin.cpu.arch) {
     else => true,
 };
 
+/// This is used for debug information and debug printing. It is intentionally
+/// separate from the application's `Io` instance.
+var static_single_threaded_io: Io.Threaded = .init_single_threaded;
+
 /// Allows the caller to freely write to stderr until `unlockStderrWriter` is called.
 ///
 /// During the lock, any `std.Progress` information is cleared from the terminal.
@@ -279,18 +282,12 @@ pub const sys_can_stack_trace = switch (builtin.cpu.arch) {
 ///
 /// Alternatively, use the higher-level `Io.lockStderrWriter` to integrate with
 /// the application's chosen `Io` implementation.
-pub fn lockStderrWriter(buffer: []u8) struct { *Writer, tty.Config } {
-    Io.stderr_thread_mutex.lock();
-    const w = std.Progress.lockStderrWriter(buffer);
-    // The stderr lock also locks access to `global.conf`.
-    if (StderrWriter.singleton.tty_config == null) {
-        StderrWriter.singleton.tty_config = .detect(io, .stderr());
-    }
-    return .{ w, global.conf.? };
+pub fn lockStderrWriter(buffer: []u8) *File.Writer {
+    return static_single_threaded_io.ioBasic().lockStderrWriter(buffer) catch unreachable;
 }
 
 pub fn unlockStderrWriter() void {
-    std.Progress.unlockStderrWriter();
+    static_single_threaded_io.ioBasic().unlockStderrWriter();
 }
 
 /// Writes to stderr, ignoring errors.
@@ -305,39 +302,13 @@ pub fn unlockStderrWriter() void {
 /// Alternatively, use the higher-level `std.log` or `Io.lockStderrWriter` to
 /// integrate with the application's chosen `Io` implementation.
 pub fn print(comptime fmt: []const u8, args: anytype) void {
-    var buffer: [64]u8 = undefined;
-    const bw, _ = lockStderrWriter(&buffer);
-    defer unlockStderrWriter();
-    nosuspend bw.print(fmt, args) catch return;
-}
-
-const StderrWriter = struct {
-    interface: Writer,
-    tty_config: ?tty.Config,
-
-    var singleton: StderrWriter = .{
-        .interface = .{
-            .buffer = &.{},
-            .vtable = &.{ .drain = drain },
-        },
-        .tty_config = null,
-    };
-
-    fn drain(io_w: *Writer, data: []const []const u8, splat: usize) Writer.Error!usize {
-        const w: *Writer = @alignCast(@fieldParentPtr("interface", io_w));
-        var n: usize = 0;
-        const header = w.interface.buffered();
-        if (header.len != 0) n += try std.Io.Threaded.debugWrite(header);
-        for (data[0 .. data.len - 1]) |d| {
-            if (d.len != 0) n += try std.Io.Threaded.debugWrite(d);
-        }
-        const pattern = data[data.len - 1];
-        if (pattern.len != 0) {
-            for (0..splat) |_| n += try std.Io.Threaded.debugWrite(pattern);
-        }
-        return io_w.consume(n);
+    nosuspend {
+        var buffer: [64]u8 = undefined;
+        const stderr = lockStderrWriter(&buffer);
+        defer unlockStderrWriter();
+        stderr.interface.print(fmt, args) catch return;
     }
-};
+}
 
 /// Marked `inline` to propagate a comptime-known error to callers.
 pub inline fn getSelfDebugInfo() !*SelfInfo {
@@ -357,16 +328,16 @@ pub fn dumpHex(bytes: []const u8) void {
 }
 
 /// Prints a hexadecimal view of the bytes, returning any error that occurs.
-pub fn dumpHexFallible(bw: *Writer, tty_config: tty.Config, bytes: []const u8) !void {
+pub fn dumpHexFallible(bw: *Writer, fwm: File.Writer.Mode, bytes: []const u8) !void {
     var chunks = mem.window(u8, bytes, 16, 16);
     while (chunks.next()) |window| {
         // 1. Print the address.
         const address = (@intFromPtr(bytes.ptr) + 0x10 * (std.math.divCeil(usize, chunks.index orelse bytes.len, 16) catch unreachable)) - 0x10;
-        try tty_config.setColor(bw, .dim);
+        try fwm.setColor(bw, .dim);
         // We print the address in lowercase and the bytes in uppercase hexadecimal to distinguish them more.
         // Also, make sure all lines are aligned by padding the address.
         try bw.print("{x:0>[1]}  ", .{ address, @sizeOf(usize) * 2 });
-        try tty_config.setColor(bw, .reset);
+        try fwm.setColor(bw, .reset);
 
         // 2. Print the bytes.
         for (window, 0..) |byte, index| {
@@ -386,7 +357,7 @@ pub fn dumpHexFallible(bw: *Writer, tty_config: tty.Config, bytes: []const u8) !
                 try bw.writeByte(byte);
             } else {
                 // Related: https://github.com/ziglang/zig/issues/7600
-                if (tty_config == .windows_api) {
+                if (fwm == .terminal_winapi) {
                     try bw.writeByte('.');
                     continue;
                 }
@@ -408,11 +379,11 @@ pub fn dumpHexFallible(bw: *Writer, tty_config: tty.Config, bytes: []const u8) !
 
 test dumpHexFallible {
     const bytes: []const u8 = &.{ 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x01, 0x12, 0x13 };
-    var aw: Writer.Allocating = .init(std.testing.allocator);
+    var aw: Writer.Allocating = .init(testing.allocator);
     defer aw.deinit();
 
     try dumpHexFallible(&aw.writer, .no_color, bytes);
-    const expected = try std.fmt.allocPrint(std.testing.allocator,
+    const expected = try std.fmt.allocPrint(testing.allocator,
         \\{x:0>[2]}  00 11 22 33 44 55 66 77  88 99 AA BB CC DD EE FF  .."3DUfw........
         \\{x:0>[2]}  01 12 13                                          ...
         \\
@@ -421,8 +392,8 @@ test dumpHexFallible {
         @intFromPtr(bytes.ptr) + 16,
         @sizeOf(usize) * 2,
     });
-    defer std.testing.allocator.free(expected);
-    try std.testing.expectEqualStrings(expected, aw.written());
+    defer testing.allocator.free(expected);
+    try testing.expectEqualStrings(expected, aw.written());
 }
 
 /// The pointer through which a `cpu_context.Native` is received from callers of stack tracing logic.
@@ -437,7 +408,7 @@ pub const CpuContextPtr = if (cpu_context.Native == noreturn) noreturn else *con
 /// away, and in fact the optimizer is able to use the assertion in its
 /// heuristics.
 ///
-/// Inside a test block, it is best to use the `std.testing` module rather than
+/// Inside a test block, it is best to use the `testing` module rather than
 /// this function, because this function may not detect a test failure in
 /// ReleaseFast and ReleaseSmall mode. Outside of a test block, this assert
 /// function is the correct function to use.
@@ -574,26 +545,26 @@ pub fn defaultPanic(
             _ = panicking.fetchAdd(1, .seq_cst);
 
             trace: {
-                const stderr, const tty_config = lockStderrWriter(&.{});
+                const stderr = lockStderrWriter(&.{});
                 defer unlockStderrWriter();
 
                 if (builtin.single_threaded) {
-                    stderr.print("panic: ", .{}) catch break :trace;
+                    stderr.interface.print("panic: ", .{}) catch break :trace;
                 } else {
                     const current_thread_id = std.Thread.getCurrentId();
-                    stderr.print("thread {d} panic: ", .{current_thread_id}) catch break :trace;
+                    stderr.interface.print("thread {d} panic: ", .{current_thread_id}) catch break :trace;
                 }
-                stderr.print("{s}\n", .{msg}) catch break :trace;
+                stderr.interface.print("{s}\n", .{msg}) catch break :trace;
 
                 if (@errorReturnTrace()) |t| if (t.index > 0) {
-                    stderr.writeAll("error return context:\n") catch break :trace;
-                    writeStackTrace(t, stderr, tty_config) catch break :trace;
-                    stderr.writeAll("\nstack trace:\n") catch break :trace;
+                    stderr.interface.writeAll("error return context:\n") catch break :trace;
+                    writeStackTrace(t, &stderr.interface, stderr.mode) catch break :trace;
+                    stderr.interface.writeAll("\nstack trace:\n") catch break :trace;
                 };
                 writeCurrentStackTrace(.{
                     .first_address = first_trace_addr orelse @returnAddress(),
                     .allow_unsafe_unwind = true, // we're crashing anyway, give it our all!
-                }, stderr, tty_config) catch break :trace;
+                }, &stderr.interface, stderr.mode) catch break :trace;
             }
 
             waitForOtherThreadToFinishPanicking();
@@ -603,8 +574,8 @@ pub fn defaultPanic(
             // A panic happened while trying to print a previous panic message.
             // We're still holding the mutex but that's fine as we're going to
             // call abort().
-            const stderr, _ = lockStderrWriter(&.{});
-            stderr.writeAll("aborting due to recursive panic\n") catch {};
+            const stderr = lockStderrWriter(&.{});
+            stderr.interface.writeAll("aborting due to recursive panic\n") catch {};
         },
         else => {}, // Panicked while printing the recursive panic message.
     }
@@ -651,8 +622,7 @@ pub noinline fn captureCurrentStackTrace(options: StackUnwindOptions, addr_buf: 
     defer it.deinit();
     if (!it.stratOk(options.allow_unsafe_unwind)) return empty_trace;
 
-    var threaded: Io.Threaded = .init_single_threaded;
-    const io = threaded.ioBasic();
+    const io = static_single_threaded_io.ioBasic();
 
     var total_frames: usize = 0;
     var index: usize = 0;
@@ -686,36 +656,34 @@ pub noinline fn captureCurrentStackTrace(options: StackUnwindOptions, addr_buf: 
 /// Write the current stack trace to `writer`, annotated with source locations.
 ///
 /// See `captureCurrentStackTrace` to capture the trace addresses into a buffer instead of printing.
-pub noinline fn writeCurrentStackTrace(options: StackUnwindOptions, writer: *Writer, tty_config: tty.Config) Writer.Error!void {
-    var threaded: Io.Threaded = .init_single_threaded;
-    const io = threaded.ioBasic();
-
+pub noinline fn writeCurrentStackTrace(options: StackUnwindOptions, writer: *Writer, fwm: File.Writer.Mode) Writer.Error!void {
     if (!std.options.allow_stack_tracing) {
-        tty_config.setColor(writer, .dim) catch {};
+        fwm.setColor(writer, .dim) catch {};
         try writer.print("Cannot print stack trace: stack tracing is disabled\n", .{});
-        tty_config.setColor(writer, .reset) catch {};
+        fwm.setColor(writer, .reset) catch {};
         return;
     }
     const di_gpa = getDebugInfoAllocator();
     const di = getSelfDebugInfo() catch |err| switch (err) {
         error.UnsupportedTarget => {
-            tty_config.setColor(writer, .dim) catch {};
+            fwm.setColor(writer, .dim) catch {};
             try writer.print("Cannot print stack trace: debug info unavailable for target\n", .{});
-            tty_config.setColor(writer, .reset) catch {};
+            fwm.setColor(writer, .reset) catch {};
             return;
         },
     };
     var it: StackIterator = .init(options.context);
     defer it.deinit();
     if (!it.stratOk(options.allow_unsafe_unwind)) {
-        tty_config.setColor(writer, .dim) catch {};
+        fwm.setColor(writer, .dim) catch {};
         try writer.print("Cannot print stack trace: safe unwind unavailable for target\n", .{});
-        tty_config.setColor(writer, .reset) catch {};
+        fwm.setColor(writer, .reset) catch {};
         return;
     }
     var total_frames: usize = 0;
     var wait_for = options.first_address;
     var printed_any_frame = false;
+    const io = static_single_threaded_io.ioBasic();
     while (true) switch (it.next(io)) {
         .switch_to_fp => |unwind_error| {
             switch (StackIterator.fp_usability) {
@@ -733,31 +701,31 @@ pub noinline fn writeCurrentStackTrace(options: StackUnwindOptions, writer: *Wri
                 error.Unexpected => "unexpected error",
             };
             if (it.stratOk(options.allow_unsafe_unwind)) {
-                tty_config.setColor(writer, .dim) catch {};
+                fwm.setColor(writer, .dim) catch {};
                 try writer.print(
                     "Unwind error at address `{s}:0x{x}` ({s}), remaining frames may be incorrect\n",
                     .{ module_name, unwind_error.address, caption },
                 );
-                tty_config.setColor(writer, .reset) catch {};
+                fwm.setColor(writer, .reset) catch {};
             } else {
-                tty_config.setColor(writer, .dim) catch {};
+                fwm.setColor(writer, .dim) catch {};
                 try writer.print(
                     "Unwind error at address `{s}:0x{x}` ({s}), stopping trace early\n",
                     .{ module_name, unwind_error.address, caption },
                 );
-                tty_config.setColor(writer, .reset) catch {};
+                fwm.setColor(writer, .reset) catch {};
                 return;
             }
         },
         .end => break,
         .frame => |ret_addr| {
             if (total_frames > 10_000) {
-                tty_config.setColor(writer, .dim) catch {};
+                fwm.setColor(writer, .dim) catch {};
                 try writer.print(
                     "Stopping trace after {d} frames (large frame count may indicate broken debug info)\n",
                     .{total_frames},
                 );
-                tty_config.setColor(writer, .reset) catch {};
+                fwm.setColor(writer, .reset) catch {};
                 return;
             }
             total_frames += 1;
@@ -767,7 +735,7 @@ pub noinline fn writeCurrentStackTrace(options: StackUnwindOptions, writer: *Wri
             }
             // `ret_addr` is the return address, which is *after* the function call.
             // Subtract 1 to get an address *in* the function call for a better source location.
-            try printSourceAtAddress(di_gpa, io, di, writer, ret_addr -| StackIterator.ra_call_offset, tty_config);
+            try printSourceAtAddress(di_gpa, io, di, writer, ret_addr -| StackIterator.ra_call_offset, fwm);
             printed_any_frame = true;
         },
     };
@@ -775,7 +743,7 @@ pub noinline fn writeCurrentStackTrace(options: StackUnwindOptions, writer: *Wri
 }
 /// A thin wrapper around `writeCurrentStackTrace` which writes to stderr and ignores write errors.
 pub fn dumpCurrentStackTrace(options: StackUnwindOptions) void {
-    const stderr, const tty_config = lockStderrWriter(&.{});
+    const stderr = lockStderrWriter(&.{});
     defer unlockStderrWriter();
     writeCurrentStackTrace(.{
         .first_address = a: {
@@ -785,33 +753,40 @@ pub fn dumpCurrentStackTrace(options: StackUnwindOptions) void {
         },
         .context = options.context,
         .allow_unsafe_unwind = options.allow_unsafe_unwind,
-    }, stderr, tty_config) catch |err| switch (err) {
+    }, &stderr.interface, stderr.mode) catch |err| switch (err) {
         error.WriteFailed => {},
     };
 }
 
 pub const FormatStackTrace = struct {
     stack_trace: StackTrace,
-    tty_config: tty.Config,
 
-    pub fn format(context: @This(), writer: *Writer) Writer.Error!void {
-        try writer.writeAll("\n");
-        try writeStackTrace(&context.stack_trace, writer, context.tty_config);
+    pub const Decorated = struct {
+        stack_trace: StackTrace,
+        file_writer_mode: File.Writer.Mode,
+
+        pub fn format(decorated: Decorated, writer: *Writer) Writer.Error!void {
+            try writer.writeByte('\n');
+            try writeStackTrace(&decorated.stack_trace, writer, decorated.file_writer_mode);
+        }
+    };
+
+    pub fn format(context: FormatStackTrace, writer: *Writer) Writer.Error!void {
+        return Decorated.format(.{
+            .stack_trace = context.stack_trace,
+            .file_writer_mode = .streaming,
+        }, writer);
     }
 };
 
 /// Write a previously captured stack trace to `writer`, annotated with source locations.
-pub fn writeStackTrace(st: *const StackTrace, writer: *Writer, tty_config: tty.Config) Writer.Error!void {
+pub fn writeStackTrace(st: *const StackTrace, writer: *Writer, fwm: File.Writer.Mode) Writer.Error!void {
     if (!std.options.allow_stack_tracing) {
-        tty_config.setColor(writer, .dim) catch {};
+        fwm.setColor(writer, .dim) catch {};
         try writer.print("Cannot print stack trace: stack tracing is disabled\n", .{});
-        tty_config.setColor(writer, .reset) catch {};
+        fwm.setColor(writer, .reset) catch {};
         return;
     }
-    // We use an independent Io implementation here in case there was a problem
-    // with the application's Io implementation itself.
-    var threaded: Io.Threaded = .init_single_threaded;
-    const io = threaded.ioBasic();
 
     // Fetch `st.index` straight away. Aside from avoiding redundant loads, this prevents issues if
     // `st` is `@errorReturnTrace()` and errors are encountered while writing the stack trace.
@@ -820,22 +795,23 @@ pub fn writeStackTrace(st: *const StackTrace, writer: *Writer, tty_config: tty.C
     const di_gpa = getDebugInfoAllocator();
     const di = getSelfDebugInfo() catch |err| switch (err) {
         error.UnsupportedTarget => {
-            tty_config.setColor(writer, .dim) catch {};
+            fwm.setColor(writer, .dim) catch {};
             try writer.print("Cannot print stack trace: debug info unavailable for target\n\n", .{});
-            tty_config.setColor(writer, .reset) catch {};
+            fwm.setColor(writer, .reset) catch {};
             return;
         },
     };
+    const io = static_single_threaded_io.ioBasic();
     const captured_frames = @min(n_frames, st.instruction_addresses.len);
     for (st.instruction_addresses[0..captured_frames]) |ret_addr| {
         // `ret_addr` is the return address, which is *after* the function call.
         // Subtract 1 to get an address *in* the function call for a better source location.
-        try printSourceAtAddress(di_gpa, io, di, writer, ret_addr -| StackIterator.ra_call_offset, tty_config);
+        try printSourceAtAddress(di_gpa, io, di, writer, ret_addr -| StackIterator.ra_call_offset, fwm);
     }
     if (n_frames > captured_frames) {
-        tty_config.setColor(writer, .bold) catch {};
+        fwm.setColor(writer, .bold) catch {};
         try writer.print("({d} additional stack frames skipped...)\n", .{n_frames - captured_frames});
-        tty_config.setColor(writer, .reset) catch {};
+        fwm.setColor(writer, .reset) catch {};
     }
 }
 /// A thin wrapper around `writeStackTrace` which writes to stderr and ignores write errors.
@@ -1143,7 +1119,7 @@ fn printSourceAtAddress(
     debug_info: *SelfInfo,
     writer: *Writer,
     address: usize,
-    tty_config: tty.Config,
+    fwm: File.Writer.Mode,
 ) Writer.Error!void {
     const symbol: Symbol = debug_info.getSymbol(gpa, io, address) catch |err| switch (err) {
         error.MissingDebugInfo,
@@ -1151,15 +1127,15 @@ fn printSourceAtAddress(
         error.InvalidDebugInfo,
         => .unknown,
         error.ReadFailed, error.Unexpected, error.Canceled => s: {
-            tty_config.setColor(writer, .dim) catch {};
+            fwm.setColor(writer, .dim) catch {};
             try writer.print("Failed to read debug info from filesystem, trace may be incomplete\n\n", .{});
-            tty_config.setColor(writer, .reset) catch {};
+            fwm.setColor(writer, .reset) catch {};
             break :s .unknown;
         },
         error.OutOfMemory => s: {
-            tty_config.setColor(writer, .dim) catch {};
+            fwm.setColor(writer, .dim) catch {};
             try writer.print("Ran out of memory loading debug info, trace may be incomplete\n\n", .{});
-            tty_config.setColor(writer, .reset) catch {};
+            fwm.setColor(writer, .reset) catch {};
             break :s .unknown;
         },
     };
@@ -1171,7 +1147,7 @@ fn printSourceAtAddress(
         address,
         symbol.name orelse "???",
         symbol.compile_unit_name orelse debug_info.getModuleName(gpa, address) catch "???",
-        tty_config,
+        fwm,
     );
 }
 fn printLineInfo(
@@ -1181,10 +1157,10 @@ fn printLineInfo(
     address: usize,
     symbol_name: []const u8,
     compile_unit_name: []const u8,
-    tty_config: tty.Config,
+    fwm: File.Writer.Mode,
 ) Writer.Error!void {
     nosuspend {
-        tty_config.setColor(writer, .bold) catch {};
+        fwm.setColor(writer, .bold) catch {};
 
         if (source_location) |*sl| {
             try writer.print("{s}:{d}:{d}", .{ sl.file_name, sl.line, sl.column });
@@ -1192,11 +1168,11 @@ fn printLineInfo(
             try writer.writeAll("???:?:?");
         }
 
-        tty_config.setColor(writer, .reset) catch {};
+        fwm.setColor(writer, .reset) catch {};
         try writer.writeAll(": ");
-        tty_config.setColor(writer, .dim) catch {};
+        fwm.setColor(writer, .dim) catch {};
         try writer.print("0x{x} in {s} ({s})", .{ address, symbol_name, compile_unit_name });
-        tty_config.setColor(writer, .reset) catch {};
+        fwm.setColor(writer, .reset) catch {};
         try writer.writeAll("\n");
 
         // Show the matching source code line if possible
@@ -1207,9 +1183,9 @@ fn printLineInfo(
                     const space_needed = @as(usize, @intCast(sl.column - 1));
 
                     try writer.splatByteAll(' ', space_needed);
-                    tty_config.setColor(writer, .green) catch {};
+                    fwm.setColor(writer, .green) catch {};
                     try writer.writeAll("^");
-                    tty_config.setColor(writer, .reset) catch {};
+                    fwm.setColor(writer, .reset) catch {};
                 }
                 try writer.writeAll("\n");
             } else |_| {
@@ -1250,18 +1226,18 @@ fn printLineFromFile(io: Io, writer: *Writer, source_location: SourceLocation) !
 }
 
 test printLineFromFile {
-    const io = std.testing.io;
-    const gpa = std.testing.allocator;
+    const io = testing.io;
+    const gpa = testing.allocator;
 
     var aw: Writer.Allocating = .init(gpa);
     defer aw.deinit();
     const output_stream = &aw.writer;
 
     const join = std.fs.path.join;
-    const expectError = std.testing.expectError;
-    const expectEqualStrings = std.testing.expectEqualStrings;
+    const expectError = testing.expectError;
+    const expectEqualStrings = testing.expectEqualStrings;
 
-    var test_dir = std.testing.tmpDir(.{});
+    var test_dir = testing.tmpDir(.{});
     defer test_dir.cleanup();
     // Relies on testing.tmpDir internals which is not ideal, but SourceLocation requires paths.
     const test_dir_path = try join(gpa, &.{ ".zig-cache", "tmp", test_dir.sub_path[0..] });
@@ -1578,19 +1554,19 @@ pub fn defaultHandleSegfault(addr: ?usize, name: []const u8, opt_ctx: ?CpuContex
             _ = panicking.fetchAdd(1, .seq_cst);
 
             trace: {
-                const stderr, const tty_config = lockStderrWriter(&.{});
+                const stderr = lockStderrWriter(&.{});
                 defer unlockStderrWriter();
 
                 if (addr) |a| {
-                    stderr.print("{s} at address 0x{x}\n", .{ name, a }) catch break :trace;
+                    stderr.interface.print("{s} at address 0x{x}\n", .{ name, a }) catch break :trace;
                 } else {
-                    stderr.print("{s} (no address available)\n", .{name}) catch break :trace;
+                    stderr.interface.print("{s} (no address available)\n", .{name}) catch break :trace;
                 }
                 if (opt_ctx) |context| {
                     writeCurrentStackTrace(.{
                         .context = context,
                         .allow_unsafe_unwind = true, // we're crashing anyway, give it our all!
-                    }, stderr, tty_config) catch break :trace;
+                    }, &stderr.interface, stderr.mode) catch break :trace;
                 }
             }
         },
@@ -1599,8 +1575,8 @@ pub fn defaultHandleSegfault(addr: ?usize, name: []const u8, opt_ctx: ?CpuContex
             // A segfault happened while trying to print a previous panic message.
             // We're still holding the mutex but that's fine as we're going to
             // call abort().
-            const stderr, _ = lockStderrWriter(&.{});
-            stderr.writeAll("aborting due to recursive panic\n") catch {};
+            const stderr = lockStderrWriter(&.{});
+            stderr.interface.writeAll("aborting due to recursive panic\n") catch {};
         },
         else => {}, // Panicked while printing the recursive panic message.
     }
@@ -1632,9 +1608,9 @@ test "manage resources correctly" {
             return @returnAddress();
         }
     };
-    const gpa = std.testing.allocator;
-    var threaded: Io.Threaded = .init_single_threaded;
-    const io = threaded.ioBasic();
+    const gpa = testing.allocator;
+    const io = testing.io;
+
     var discarding: Writer.Discarding = .init(&.{});
     var di: SelfInfo = .init;
     defer di.deinit(gpa);

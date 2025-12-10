@@ -82,8 +82,6 @@ pub const Limit = enum(usize) {
 pub const Reader = @import("Io/Reader.zig");
 pub const Writer = @import("Io/Writer.zig");
 
-pub const tty = @import("Io/tty.zig");
-
 pub fn poll(
     gpa: Allocator,
     comptime StreamEnum: type,
@@ -535,7 +533,6 @@ test {
     _ = net;
     _ = Reader;
     _ = Writer;
-    _ = tty;
     _ = Evented;
     _ = Threaded;
     _ = @import("Io/test.zig");
@@ -720,6 +717,9 @@ pub const VTable = struct {
 
     processExecutableOpen: *const fn (?*anyopaque, File.OpenFlags) std.process.OpenExecutableError!File,
     processExecutablePath: *const fn (?*anyopaque, buffer: []u8) std.process.ExecutablePathError!usize,
+    lockStderrWriter: *const fn (?*anyopaque, buffer: []u8) Cancelable!*File.Writer,
+    tryLockStderrWriter: *const fn (?*anyopaque, buffer: []u8) ?*File.Writer,
+    unlockStderrWriter: *const fn (?*anyopaque) void,
 
     now: *const fn (?*anyopaque, Clock) Clock.Error!Timestamp,
     sleep: *const fn (?*anyopaque, Timeout) SleepError!void,
@@ -740,10 +740,6 @@ pub const VTable = struct {
     netInterfaceNameResolve: *const fn (?*anyopaque, *const net.Interface.Name) net.Interface.Name.ResolveError!net.Interface,
     netInterfaceName: *const fn (?*anyopaque, net.Interface) net.Interface.NameError!net.Interface.Name,
     netLookup: *const fn (?*anyopaque, net.HostName, *Queue(net.HostName.LookupResult), net.HostName.LookupOptions) net.HostName.LookupError!void,
-
-    lockStderrWriter: *const fn (?*anyopaque, buffer: []u8) Cancelable!*Writer,
-    tryLockStderrWriter: *const fn (?*anyopaque, buffer: []u8) ?*Writer,
-    unlockStderrWriter: *const fn (?*anyopaque) void,
 };
 
 pub const Cancelable = error{
@@ -2186,13 +2182,17 @@ pub fn select(io: Io, s: anytype) Cancelable!SelectUnion(@TypeOf(s)) {
 ///
 /// See also:
 /// * `tryLockStderrWriter`
-pub fn lockStderrWriter(io: Io, buffer: []u8) Cancelable!*Writer {
-    return io.vtable.lockStderrWriter(io.userdata, buffer);
+pub fn lockStderrWriter(io: Io, buffer: []u8) Cancelable!*File.Writer {
+    const result = try io.vtable.lockStderrWriter(io.userdata, buffer);
+    result.io = io;
+    return result;
 }
 
 /// Same as `lockStderrWriter` but uncancelable and non-blocking.
-pub fn tryLockStderrWriter(io: Io, buffer: []u8) ?*Writer {
-    return io.vtable.tryLockStderrWriter(io.userdata, buffer);
+pub fn tryLockStderrWriter(io: Io, buffer: []u8) ?*File.Writer {
+    const result = io.vtable.tryLockStderrWriter(io.userdata, buffer) orelse return null;
+    result.io = io;
+    return result;
 }
 
 pub fn unlockStderrWriter(io: Io) void {

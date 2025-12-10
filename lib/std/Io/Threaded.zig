@@ -77,7 +77,13 @@ use_sendfile: UseSendfile = .default,
 use_copy_file_range: UseCopyFileRange = .default,
 use_fcopyfile: UseFcopyfile = .default,
 
-stderr_writer: Io.Writer,
+stderr_writer: File.Writer = .{
+    .io = undefined,
+    .interface = Io.File.Writer.initInterface(&.{}),
+    .file = if (is_windows) undefined else .stderr(),
+    .mode = undefined,
+},
+stderr_writer_initialized: bool = false,
 
 pub const RobustCancel = if (std.Thread.use_pthreads or native_os == .linux) enum {
     enabled,
@@ -737,6 +743,9 @@ pub fn io(t: *Threaded) Io {
 
             .processExecutableOpen = processExecutableOpen,
             .processExecutablePath = processExecutablePath,
+            .lockStderrWriter = lockStderrWriter,
+            .tryLockStderrWriter = tryLockStderrWriter,
+            .unlockStderrWriter = unlockStderrWriter,
 
             .now = now,
             .sleep = sleep,
@@ -864,6 +873,9 @@ pub fn ioBasic(t: *Threaded) Io {
 
             .processExecutableOpen = processExecutableOpen,
             .processExecutablePath = processExecutablePath,
+            .lockStderrWriter = lockStderrWriter,
+            .tryLockStderrWriter = tryLockStderrWriter,
+            .unlockStderrWriter = unlockStderrWriter,
 
             .now = now,
             .sleep = sleep,
@@ -9516,33 +9528,42 @@ fn netLookupFallible(
     return error.OptionUnsupported;
 }
 
-fn lockStderrWriter(userdata: ?*anyopaque, buffer: []u8) Io.Cancelable!*Io.Writer {
+fn lockStderrWriter(userdata: ?*anyopaque, buffer: []u8) Io.Cancelable!*File.Writer {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     // Only global mutex since this is Threaded.
     Io.stderr_thread_mutex.lock();
-    if (is_windows) t.stderr_writer.file = .stderr();
+    if (!t.stderr_writer_initialized) {
+        if (is_windows) t.stderr_writer.file = .stderr();
+        t.stderr_writer.mode = try .detect(ioBasic(t), t.stderr_writer.file, true, .streaming_simple);
+        t.stderr_writer_initialized = true;
+    }
     std.Progress.clearWrittenWithEscapeCodes(&t.stderr_writer) catch {};
-    t.stderr_writer.flush() catch {};
-    t.stderr_writer.buffer = buffer;
+    t.stderr_writer.interface.flush() catch {};
+    t.stderr_writer.interface.buffer = buffer;
     return &t.stderr_writer;
 }
 
-fn tryLockStderrWriter(userdata: ?*anyopaque, buffer: []u8) ?*Io.Writer {
+fn tryLockStderrWriter(userdata: ?*anyopaque, buffer: []u8) ?*File.Writer {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     // Only global mutex since this is Threaded.
     if (!Io.stderr_thread_mutex.tryLock()) return null;
-    std.Progress.clearWrittenWithEscapeCodes(t.io()) catch {};
-    if (is_windows) t.stderr_writer.file = .stderr();
-    t.stderr_writer.flush() catch {};
-    t.stderr_writer.buffer = buffer;
+    if (!t.stderr_writer_initialized) {
+        if (is_windows) t.stderr_writer.file = .stderr();
+        t.stderr_writer.mode = File.Writer.Mode.detect(ioBasic(t), t.stderr_writer.file, true, .streaming_simple) catch
+            return null;
+        t.stderr_writer_initialized = true;
+    }
+    std.Progress.clearWrittenWithEscapeCodes(&t.stderr_writer) catch {};
+    t.stderr_writer.interface.flush() catch {};
+    t.stderr_writer.interface.buffer = buffer;
     return &t.stderr_writer;
 }
 
 fn unlockStderrWriter(userdata: ?*anyopaque) void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    t.stderr_writer.flush() catch {};
-    t.stderr_writer.end = 0;
-    t.stderr_writer.buffer = &.{};
+    t.stderr_writer.interface.flush() catch {};
+    t.stderr_writer.interface.end = 0;
+    t.stderr_writer.interface.buffer = &.{};
     Io.stderr_thread_mutex.unlock();
 }
 

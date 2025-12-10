@@ -439,25 +439,25 @@ pub fn getEnvVarOwned(allocator: Allocator, key: []const u8) GetEnvVarOwnedError
 }
 
 /// On Windows, `key` must be valid WTF-8.
-pub fn hasEnvVarConstant(comptime key: []const u8) bool {
+pub inline fn hasEnvVarConstant(comptime key: []const u8) bool {
     if (native_os == .windows) {
         const key_w = comptime unicode.wtf8ToWtf16LeStringLiteral(key);
         return getenvW(key_w) != null;
     } else if (native_os == .wasi and !builtin.link_libc) {
-        @compileError("hasEnvVarConstant is not supported for WASI without libc");
+        return false;
     } else {
         return posix.getenv(key) != null;
     }
 }
 
 /// On Windows, `key` must be valid WTF-8.
-pub fn hasNonEmptyEnvVarConstant(comptime key: []const u8) bool {
+pub inline fn hasNonEmptyEnvVarConstant(comptime key: []const u8) bool {
     if (native_os == .windows) {
         const key_w = comptime unicode.wtf8ToWtf16LeStringLiteral(key);
         const value = getenvW(key_w) orelse return false;
         return value.len != 0;
     } else if (native_os == .wasi and !builtin.link_libc) {
-        @compileError("hasNonEmptyEnvVarConstant is not supported for WASI without libc");
+        return false;
     } else {
         const value = posix.getenv(key) orelse return false;
         return value.len != 0;
