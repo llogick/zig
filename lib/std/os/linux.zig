@@ -9627,6 +9627,7 @@ pub const PERF = struct {
         pub const PERIOD = 1074275332;
         pub const SET_OUTPUT = 9221;
         pub const SET_FILTER = 1074275334;
+        pub const ID = 2148017159;
         pub const SET_BPF = 1074013192;
         pub const PAUSE_OUTPUT = 1074013193;
         pub const QUERY_BPF = 3221758986;
