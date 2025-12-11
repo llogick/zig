@@ -473,6 +473,7 @@ pub fn build(b: *std.Build) !void {
             .linux => switch (b.graph.host.result.cpu.arch) {
                 .aarch64 => 659_809_075,
                 .loongarch64 => 598_902_374,
+                .powerpc64le => 550_656_409,
                 .riscv64 => 731_258_880,
                 .s390x => 580_596_121,
                 .x86_64 => 3_290_894_745,
@@ -520,6 +521,7 @@ pub fn build(b: *std.Build) !void {
             .linux => switch (b.graph.host.result.cpu.arch) {
                 .aarch64 => 639_565_414,
                 .loongarch64 => 598_884_352,
+                .powerpc64le => 597_897_625,
                 .riscv64 => 636_429_516,
                 .s390x => 574_166_630,
                 .x86_64 => 868_445_388,
@@ -567,6 +569,7 @@ pub fn build(b: *std.Build) !void {
             .linux => switch (b.graph.host.result.cpu.arch) {
                 .aarch64 => 615_302_758,
                 .loongarch64 => 598_974_464,
+                .powerpc64le => 587_845_632,
                 .riscv64 => 382_786_764,
                 .s390x => 395_555_635,
                 .x86_64 => 871_883_161,
@@ -613,6 +616,7 @@ pub fn build(b: *std.Build) !void {
             .linux => switch (b.graph.host.result.cpu.arch) {
                 .aarch64 => 6_732_817_203,
                 .loongarch64 => 3_216_349_593,
+                .powerpc64le => 3_090_179_276,
                 .riscv64 => 3_570_899_763,
                 .s390x => 3_652_514_201,
                 .x86_64 => 3_249_546_854,
@@ -651,6 +655,7 @@ pub fn build(b: *std.Build) !void {
             .linux => switch (b.graph.host.result.cpu.arch) {
                 .aarch64 => 1_991_934_771,
                 .loongarch64 => 1_844_538_572,
+                .powerpc64le => 1_793_035_059,
                 .riscv64 => 2_459_003_289,
                 .s390x => 1_781_248_409,
                 .x86_64 => 977_192_550,
@@ -699,6 +704,7 @@ pub fn build(b: *std.Build) !void {
             .linux => switch (b.graph.host.result.cpu.arch) {
                 .aarch64 => 1_318_185_369,
                 .loongarch64 => 1_422_904_524,
+                .powerpc64le => 560_870_604,
                 .riscv64 => 449_924_710,
                 .s390x => 1_946_743_603,
                 .x86_64 => 2_139_993_292,
@@ -877,6 +883,7 @@ fn addCompilerStep(b: *std.Build, options: AddCompilerModOptions) *std.Build.Ste
             .linux => switch (b.graph.host.result.cpu.arch) {
                 .aarch64 => 6_240_805_683,
                 .loongarch64 => 5_024_158_515,
+                .powerpc64le => 5_224_914_534,
                 .riscv64 => 6_996_309_196,
                 .s390x => 4_997_174_476,
                 .x86_64 => 6_664_025_702,
