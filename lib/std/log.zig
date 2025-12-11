@@ -120,35 +120,7 @@ pub fn defaultLogFileWriter(
     }
     fw.interface.writeAll(": ") catch return;
     fw.setColor(.reset) catch {};
-    fw.interface.print(format ++ "\n", decorateArgs(args, fw.mode)) catch return;
-}
-
-fn DecorateArgs(comptime Args: type) type {
-    const fields = @typeInfo(Args).@"struct".fields;
-    var new_fields: [fields.len]type = undefined;
-    for (fields, &new_fields) |old, *new| {
-        if (old.type == std.debug.FormatStackTrace) {
-            new.* = std.debug.FormatStackTrace.Decorated;
-        } else {
-            new.* = old.type;
-        }
-    }
-    return @Tuple(&new_fields);
-}
-
-fn decorateArgs(args: anytype, file_writer_mode: std.Io.File.Writer.Mode) DecorateArgs(@TypeOf(args)) {
-    var new_args: DecorateArgs(@TypeOf(args)) = undefined;
-    inline for (args, &new_args) |old, *new| {
-        if (@TypeOf(old) == std.debug.FormatStackTrace) {
-            new.* = .{
-                .stack_trace = old.stack_trace,
-                .file_writer_mode = file_writer_mode,
-            };
-        } else {
-            new.* = old;
-        }
-    }
-    return new_args;
+    fw.interface.print(format ++ "\n", fw.mode.decorateArgs(args)) catch return;
 }
 
 /// Returns a scoped logging namespace that logs all messages using the scope

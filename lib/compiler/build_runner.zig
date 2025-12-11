@@ -14,7 +14,6 @@ const WebServer = std.Build.WebServer;
 const Allocator = std.mem.Allocator;
 const fatal = std.process.fatal;
 const Writer = std.Io.Writer;
-const tty = std.Io.tty;
 
 pub const root = @import("@build");
 pub const dependencies = @import("@dependencies");
@@ -435,9 +434,7 @@ pub fn main() !void {
         if (builtin.single_threaded) fatal("'--webui' is not yet supported on single-threaded hosts", .{});
     }
 
-    const ttyconf = color.detectTtyConf(io);
-
-    const main_progress_node = std.Progress.start(.{
+    const main_progress_node = std.Progress.start(io, .{
         .disable_printing = (color == .off),
     });
     defer main_progress_node.end();
@@ -509,8 +506,6 @@ pub fn main() !void {
         .error_style = error_style,
         .multiline_errors = multiline_errors,
         .summary = summary orelse if (watch or webui_listen != null) .line else .failures,
-
-        .ttyconf = ttyconf,
     };
     defer {
         run.memory_blocked_steps.deinit(gpa);
@@ -524,10 +519,10 @@ pub fn main() !void {
 
     prepare(arena, builder, targets.items, &run, graph.random_seed) catch |err| switch (err) {
         error.DependencyLoopDetected => {
-            // Perhaps in the future there could be an Advanced Options flag such as
-            // --debug-build-runner-leaks which would make this code return instead of
-            // calling exit.
-            std.debug.lockStdErr();
+            // Perhaps in the future there could be an Advanced Options flag
+            // such as --debug-build-runner-leaks which would make this code
+            // return instead of calling exit.
+            _ = std.debug.lockStderrWriter(&.{});
             process.exit(1);
         },
         else => |e| return e,
@@ -545,7 +540,6 @@ pub fn main() !void {
         if (builtin.single_threaded) unreachable; // `fatal` above
         break :ws .init(.{
             .gpa = gpa,
-            .ttyconf = ttyconf,
             .graph = &graph,
             .all_steps = run.step_stack.keys(),
             .root_prog_node = main_progress_node,
@@ -560,9 +554,9 @@ pub fn main() !void {
     }
 
     rebuild: while (true) : (if (run.error_style.clearOnUpdate()) {
-        const bw, _ = std.debug.lockStderrWriter(&stdio_buffer_allocation);
+        const stderr = std.debug.lockStderrWriter(&stdio_buffer_allocation);
         defer std.debug.unlockStderrWriter();
-        try bw.writeAll("\x1B[2J\x1B[3J\x1B[H");
+        try stderr.writeAllUnescaped("\x1B[2J\x1B[3J\x1B[H");
     }) {
         if (run.web_server) |*ws| ws.startBuild();
 
@@ -663,9 +657,6 @@ const Run = struct {
     memory_blocked_steps: std.ArrayList(*Step),
     /// Allocated into `gpa`.
     step_stack: std.AutoArrayHashMapUnmanaged(*Step, void),
-    /// Similar to the `tty.Config` returned by `std.debug.lockStderrWriter`,
-    /// but also respects the '--color' flag.
-    ttyconf: tty.Config,
 
     claimed_rss: usize,
     error_style: ErrorStyle,
@@ -839,7 +830,6 @@ fn runStepNames(
         var f = std.Build.Fuzz.init(
             gpa,
             io,
-            run.ttyconf,
             step_stack.keys(),
             parent_prog_node,
             mode,
@@ -866,18 +856,20 @@ fn runStepNames(
             .none => break :summary,
         }
 
-        const w, _ = std.debug.lockStderrWriter(&stdio_buffer_allocation);
+        const stderr = std.debug.lockStderrWriter(&stdio_buffer_allocation);
         defer std.debug.unlockStderrWriter();
-        const ttyconf = run.ttyconf;
+
+        const w = &stderr.interface;
+        const fwm = stderr.mode;
 
         const total_count = success_count + failure_count + pending_count + skipped_count;
-        ttyconf.setColor(w, .cyan) catch {};
-        ttyconf.setColor(w, .bold) catch {};
+        fwm.setColor(w, .cyan) catch {};
+        fwm.setColor(w, .bold) catch {};
         w.writeAll("Build Summary: ") catch {};
-        ttyconf.setColor(w, .reset) catch {};
+        fwm.setColor(w, .reset) catch {};
         w.print("{d}/{d} steps succeeded", .{ success_count, total_count }) catch {};
         {
-            ttyconf.setColor(w, .dim) catch {};
+            fwm.setColor(w, .dim) catch {};
             var first = true;
             if (skipped_count > 0) {
                 w.print("{s}{d} skipped", .{ if (first) " (" else ", ", skipped_count }) catch {};
@@ -888,12 +880,12 @@ fn runStepNames(
                 first = false;
             }
             if (!first) w.writeByte(')') catch {};
-            ttyconf.setColor(w, .reset) catch {};
+            fwm.setColor(w, .reset) catch {};
         }
 
         if (test_count > 0) {
             w.print("; {d}/{d} tests passed", .{ test_pass_count, test_count }) catch {};
-            ttyconf.setColor(w, .dim) catch {};
+            fwm.setColor(w, .dim) catch {};
             var first = true;
             if (test_skip_count > 0) {
                 w.print("{s}{d} skipped", .{ if (first) " (" else ", ", test_skip_count }) catch {};
@@ -912,7 +904,7 @@ fn runStepNames(
                 first = false;
             }
             if (!first) w.writeByte(')') catch {};
-            ttyconf.setColor(w, .reset) catch {};
+            fwm.setColor(w, .reset) catch {};
         }
 
         w.writeAll("\n") catch {};
@@ -926,7 +918,7 @@ fn runStepNames(
         var print_node: PrintNode = .{ .parent = null };
         if (step_names.len == 0) {
             print_node.last = true;
-            printTreeStep(b, b.default_step, run, w, ttyconf, &print_node, &step_stack_copy) catch {};
+            printTreeStep(b, b.default_step, run, w, fwm, &print_node, &step_stack_copy) catch {};
         } else {
             const last_index = if (run.summary == .all) b.top_level_steps.count() else blk: {
                 var i: usize = step_names.len;
@@ -945,7 +937,7 @@ fn runStepNames(
             for (step_names, 0..) |step_name, i| {
                 const tls = b.top_level_steps.get(step_name).?;
                 print_node.last = i + 1 == last_index;
-                printTreeStep(b, &tls.step, run, w, ttyconf, &print_node, &step_stack_copy) catch {};
+                printTreeStep(b, &tls.step, run, w, fwm, &print_node, &step_stack_copy) catch {};
             }
         }
         w.writeByte('\n') catch {};
@@ -962,7 +954,7 @@ fn runStepNames(
         if (run.error_style.verboseContext()) break :code 1; // failure; print build command
         break :code 2; // failure; do not print build command
     };
-    std.debug.lockStdErr();
+    _ = std.debug.lockStderrWriter(&.{});
     process.exit(code);
 }
 
@@ -971,31 +963,31 @@ const PrintNode = struct {
     last: bool = false,
 };
 
-fn printPrefix(node: *PrintNode, stderr: *Writer, ttyconf: tty.Config) !void {
+fn printPrefix(node: *PrintNode, w: *Writer, fwm: File.Writer.Mode) !void {
     const parent = node.parent orelse return;
     if (parent.parent == null) return;
-    try printPrefix(parent, stderr, ttyconf);
+    try printPrefix(parent, w, fwm);
     if (parent.last) {
-        try stderr.writeAll("   ");
+        try w.writeAll("   ");
     } else {
-        try stderr.writeAll(switch (ttyconf) {
-            .no_color, .windows_api => "|  ",
-            .escape_codes => "\x1B\x28\x30\x78\x1B\x28\x42  ", // │
+        try w.writeAll(switch (fwm) {
+            .terminal_escaped => "\x1B\x28\x30\x78\x1B\x28\x42  ", // │
+            else => "|  ",
         });
     }
 }
 
-fn printChildNodePrefix(stderr: *Writer, ttyconf: tty.Config) !void {
-    try stderr.writeAll(switch (ttyconf) {
-        .no_color, .windows_api => "+- ",
-        .escape_codes => "\x1B\x28\x30\x6d\x71\x1B\x28\x42 ", // └─
+fn printChildNodePrefix(w: *Writer, fwm: File.Writer.Mode) !void {
+    try w.writeAll(switch (fwm) {
+        .terminal_escaped => "\x1B\x28\x30\x6d\x71\x1B\x28\x42 ", // └─
+        else => "+- ",
     });
 }
 
 fn printStepStatus(
     s: *Step,
     stderr: *Writer,
-    ttyconf: tty.Config,
+    fwm: File.Writer.Mode,
     run: *const Run,
 ) !void {
     switch (s.state) {
@@ -1005,13 +997,13 @@ fn printStepStatus(
         .running => unreachable,
 
         .dependency_failure => {
-            try ttyconf.setColor(stderr, .dim);
+            try fwm.setColor(stderr, .dim);
             try stderr.writeAll(" transitive failure\n");
-            try ttyconf.setColor(stderr, .reset);
+            try fwm.setColor(stderr, .reset);
         },
 
         .success => {
-            try ttyconf.setColor(stderr, .green);
+            try fwm.setColor(stderr, .green);
             if (s.result_cached) {
                 try stderr.writeAll(" cached");
             } else if (s.test_results.test_count > 0) {
@@ -1019,19 +1011,19 @@ fn printStepStatus(
                 assert(s.test_results.test_count == pass_count + s.test_results.skip_count);
                 try stderr.print(" {d} pass", .{pass_count});
                 if (s.test_results.skip_count > 0) {
-                    try ttyconf.setColor(stderr, .reset);
+                    try fwm.setColor(stderr, .reset);
                     try stderr.writeAll(", ");
-                    try ttyconf.setColor(stderr, .yellow);
+                    try fwm.setColor(stderr, .yellow);
                     try stderr.print("{d} skip", .{s.test_results.skip_count});
                 }
-                try ttyconf.setColor(stderr, .reset);
+                try fwm.setColor(stderr, .reset);
                 try stderr.print(" ({d} total)", .{s.test_results.test_count});
             } else {
                 try stderr.writeAll(" success");
             }
-            try ttyconf.setColor(stderr, .reset);
+            try fwm.setColor(stderr, .reset);
             if (s.result_duration_ns) |ns| {
-                try ttyconf.setColor(stderr, .dim);
+                try fwm.setColor(stderr, .dim);
                 if (ns >= std.time.ns_per_min) {
                     try stderr.print(" {d}m", .{ns / std.time.ns_per_min});
                 } else if (ns >= std.time.ns_per_s) {
@@ -1043,11 +1035,11 @@ fn printStepStatus(
                 } else {
                     try stderr.print(" {d}ns", .{ns});
                 }
-                try ttyconf.setColor(stderr, .reset);
+                try fwm.setColor(stderr, .reset);
             }
             if (s.result_peak_rss != 0) {
                 const rss = s.result_peak_rss;
-                try ttyconf.setColor(stderr, .dim);
+                try fwm.setColor(stderr, .dim);
                 if (rss >= 1000_000_000) {
                     try stderr.print(" MaxRSS:{d}G", .{rss / 1000_000_000});
                 } else if (rss >= 1000_000) {
@@ -1057,25 +1049,25 @@ fn printStepStatus(
                 } else {
                     try stderr.print(" MaxRSS:{d}B", .{rss});
                 }
-                try ttyconf.setColor(stderr, .reset);
+                try fwm.setColor(stderr, .reset);
             }
             try stderr.writeAll("\n");
         },
         .skipped, .skipped_oom => |skip| {
-            try ttyconf.setColor(stderr, .yellow);
+            try fwm.setColor(stderr, .yellow);
             try stderr.writeAll(" skipped");
             if (skip == .skipped_oom) {
                 try stderr.writeAll(" (not enough memory)");
-                try ttyconf.setColor(stderr, .dim);
+                try fwm.setColor(stderr, .dim);
                 try stderr.print(" upper bound of {d} exceeded runner limit ({d})", .{ s.max_rss, run.max_rss });
-                try ttyconf.setColor(stderr, .yellow);
+                try fwm.setColor(stderr, .yellow);
             }
             try stderr.writeAll("\n");
-            try ttyconf.setColor(stderr, .reset);
+            try fwm.setColor(stderr, .reset);
         },
         .failure => {
-            try printStepFailure(s, stderr, ttyconf, false);
-            try ttyconf.setColor(stderr, .reset);
+            try printStepFailure(s, stderr, fwm, false);
+            try fwm.setColor(stderr, .reset);
         },
     }
 }
@@ -1083,48 +1075,48 @@ fn printStepStatus(
 fn printStepFailure(
     s: *Step,
     stderr: *Writer,
-    ttyconf: tty.Config,
+    fwm: File.Writer.Mode,
     dim: bool,
 ) !void {
     if (s.result_error_bundle.errorMessageCount() > 0) {
-        try ttyconf.setColor(stderr, .red);
+        try fwm.setColor(stderr, .red);
         try stderr.print(" {d} errors\n", .{
             s.result_error_bundle.errorMessageCount(),
         });
     } else if (!s.test_results.isSuccess()) {
         // These first values include all of the test "statuses". Every test is either passsed,
         // skipped, failed, crashed, or timed out.
-        try ttyconf.setColor(stderr, .green);
+        try fwm.setColor(stderr, .green);
         try stderr.print(" {d} pass", .{s.test_results.passCount()});
-        try ttyconf.setColor(stderr, .reset);
-        if (dim) try ttyconf.setColor(stderr, .dim);
+        try fwm.setColor(stderr, .reset);
+        if (dim) try fwm.setColor(stderr, .dim);
         if (s.test_results.skip_count > 0) {
             try stderr.writeAll(", ");
-            try ttyconf.setColor(stderr, .yellow);
+            try fwm.setColor(stderr, .yellow);
             try stderr.print("{d} skip", .{s.test_results.skip_count});
-            try ttyconf.setColor(stderr, .reset);
-            if (dim) try ttyconf.setColor(stderr, .dim);
+            try fwm.setColor(stderr, .reset);
+            if (dim) try fwm.setColor(stderr, .dim);
         }
         if (s.test_results.fail_count > 0) {
             try stderr.writeAll(", ");
-            try ttyconf.setColor(stderr, .red);
+            try fwm.setColor(stderr, .red);
             try stderr.print("{d} fail", .{s.test_results.fail_count});
-            try ttyconf.setColor(stderr, .reset);
-            if (dim) try ttyconf.setColor(stderr, .dim);
+            try fwm.setColor(stderr, .reset);
+            if (dim) try fwm.setColor(stderr, .dim);
         }
         if (s.test_results.crash_count > 0) {
             try stderr.writeAll(", ");
-            try ttyconf.setColor(stderr, .red);
+            try fwm.setColor(stderr, .red);
             try stderr.print("{d} crash", .{s.test_results.crash_count});
-            try ttyconf.setColor(stderr, .reset);
-            if (dim) try ttyconf.setColor(stderr, .dim);
+            try fwm.setColor(stderr, .reset);
+            if (dim) try fwm.setColor(stderr, .dim);
         }
         if (s.test_results.timeout_count > 0) {
             try stderr.writeAll(", ");
-            try ttyconf.setColor(stderr, .red);
+            try fwm.setColor(stderr, .red);
             try stderr.print("{d} timeout", .{s.test_results.timeout_count});
-            try ttyconf.setColor(stderr, .reset);
-            if (dim) try ttyconf.setColor(stderr, .dim);
+            try fwm.setColor(stderr, .reset);
+            if (dim) try fwm.setColor(stderr, .dim);
         }
         try stderr.print(" ({d} total)", .{s.test_results.test_count});
 
@@ -1134,10 +1126,10 @@ fn printStepFailure(
         //   2 pass, 1 skip, 2 fail (5 total); 2 leaks
         if (s.test_results.leak_count > 0) {
             try stderr.writeAll("; ");
-            try ttyconf.setColor(stderr, .red);
+            try fwm.setColor(stderr, .red);
             try stderr.print("{d} leaks", .{s.test_results.leak_count});
-            try ttyconf.setColor(stderr, .reset);
-            if (dim) try ttyconf.setColor(stderr, .dim);
+            try fwm.setColor(stderr, .reset);
+            if (dim) try fwm.setColor(stderr, .dim);
         }
 
         // It's usually not helpful to know how many error logs there were because they tend to
@@ -1151,19 +1143,19 @@ fn printStepFailure(
         };
         if (show_err_logs) {
             try stderr.writeAll("; ");
-            try ttyconf.setColor(stderr, .red);
+            try fwm.setColor(stderr, .red);
             try stderr.print("{d} error logs", .{s.test_results.log_err_count});
-            try ttyconf.setColor(stderr, .reset);
-            if (dim) try ttyconf.setColor(stderr, .dim);
+            try fwm.setColor(stderr, .reset);
+            if (dim) try fwm.setColor(stderr, .dim);
         }
 
         try stderr.writeAll("\n");
     } else if (s.result_error_msgs.items.len > 0) {
-        try ttyconf.setColor(stderr, .red);
+        try fwm.setColor(stderr, .red);
         try stderr.writeAll(" failure\n");
     } else {
         assert(s.result_stderr.len > 0);
-        try ttyconf.setColor(stderr, .red);
+        try fwm.setColor(stderr, .red);
         try stderr.writeAll(" stderr\n");
     }
 }
@@ -1173,7 +1165,7 @@ fn printTreeStep(
     s: *Step,
     run: *const Run,
     stderr: *Writer,
-    ttyconf: tty.Config,
+    fwm: File.Writer.Mode,
     parent_node: *PrintNode,
     step_stack: *std.AutoArrayHashMapUnmanaged(*Step, void),
 ) !void {
@@ -1186,26 +1178,26 @@ fn printTreeStep(
         .failures => s.state == .success,
     };
     if (skip) return;
-    try printPrefix(parent_node, stderr, ttyconf);
+    try printPrefix(parent_node, stderr, fwm);
 
     if (parent_node.parent != null) {
         if (parent_node.last) {
-            try printChildNodePrefix(stderr, ttyconf);
+            try printChildNodePrefix(stderr, fwm);
         } else {
-            try stderr.writeAll(switch (ttyconf) {
-                .no_color, .windows_api => "+- ",
-                .escape_codes => "\x1B\x28\x30\x74\x71\x1B\x28\x42 ", // ├─
+            try stderr.writeAll(switch (fwm) {
+                .terminal_escaped => "\x1B\x28\x30\x74\x71\x1B\x28\x42 ", // ├─
+                else => "+- ",
             });
         }
     }
 
-    if (!first) try ttyconf.setColor(stderr, .dim);
+    if (!first) try fwm.setColor(stderr, .dim);
 
     // dep_prefix omitted here because it is redundant with the tree.
     try stderr.writeAll(s.name);
 
     if (first) {
-        try printStepStatus(s, stderr, ttyconf, run);
+        try printStepStatus(s, stderr, fwm, run);
 
         const last_index = if (summary == .all) s.dependencies.items.len -| 1 else blk: {
             var i: usize = s.dependencies.items.len;
@@ -1227,7 +1219,7 @@ fn printTreeStep(
                 .parent = parent_node,
                 .last = i == last_index,
             };
-            try printTreeStep(b, dep, run, stderr, ttyconf, &print_node, step_stack);
+            try printTreeStep(b, dep, run, stderr, fwm, &print_node, step_stack);
         }
     } else {
         if (s.dependencies.items.len == 0) {
@@ -1237,7 +1229,7 @@ fn printTreeStep(
                 s.dependencies.items.len,
             });
         }
-        try ttyconf.setColor(stderr, .reset);
+        try fwm.setColor(stderr, .reset);
     }
 }
 
@@ -1368,7 +1360,6 @@ fn workerMakeOneStep(
         .progress_node = sub_prog_node,
         .watch = run.watch,
         .web_server = if (run.web_server) |*ws| ws else null,
-        .ttyconf = run.ttyconf,
         .unit_test_timeout_ns = run.unit_test_timeout_ns,
         .gpa = gpa,
     });
@@ -1378,10 +1369,9 @@ fn workerMakeOneStep(
     const show_error_msgs = s.result_error_msgs.items.len > 0;
     const show_stderr = s.result_stderr.len > 0;
     if (show_error_msgs or show_compile_errors or show_stderr) {
-        const bw, _ = std.debug.lockStderrWriter(&stdio_buffer_allocation);
+        const stderr = std.debug.lockStderrWriter(&stdio_buffer_allocation);
         defer std.debug.unlockStderrWriter();
-        const ttyconf = run.ttyconf;
-        printErrorMessages(gpa, s, .{}, bw, ttyconf, run.error_style, run.multiline_errors) catch {};
+        printErrorMessages(gpa, s, .{}, &stderr.interface, stderr.mode, run.error_style, run.multiline_errors) catch {};
     }
 
     handle_result: {
@@ -1449,7 +1439,7 @@ pub fn printErrorMessages(
     failing_step: *Step,
     options: std.zig.ErrorBundle.RenderOptions,
     stderr: *Writer,
-    ttyconf: tty.Config,
+    fwm: File.Writer.Mode,
     error_style: ErrorStyle,
     multiline_errors: MultilineErrors,
 ) !void {
@@ -1464,29 +1454,29 @@ pub fn printErrorMessages(
         }
 
         // Now, `step_stack` has the subtree that we want to print, in reverse order.
-        try ttyconf.setColor(stderr, .dim);
+        try fwm.setColor(stderr, .dim);
         var indent: usize = 0;
         while (step_stack.pop()) |s| : (indent += 1) {
             if (indent > 0) {
                 try stderr.splatByteAll(' ', (indent - 1) * 3);
-                try printChildNodePrefix(stderr, ttyconf);
+                try printChildNodePrefix(stderr, fwm);
             }
 
             try stderr.writeAll(s.name);
 
             if (s == failing_step) {
-                try printStepFailure(s, stderr, ttyconf, true);
+                try printStepFailure(s, stderr, fwm, true);
             } else {
                 try stderr.writeAll("\n");
             }
         }
-        try ttyconf.setColor(stderr, .reset);
+        try fwm.setColor(stderr, .reset);
     } else {
         // Just print the failing step itself.
-        try ttyconf.setColor(stderr, .dim);
+        try fwm.setColor(stderr, .dim);
         try stderr.writeAll(failing_step.name);
-        try printStepFailure(failing_step, stderr, ttyconf, true);
-        try ttyconf.setColor(stderr, .reset);
+        try printStepFailure(failing_step, stderr, fwm, true);
+        try fwm.setColor(stderr, .reset);
     }
 
     if (failing_step.result_stderr.len > 0) {
@@ -1496,12 +1486,12 @@ pub fn printErrorMessages(
         }
     }
 
-    try failing_step.result_error_bundle.renderToWriter(options, stderr, ttyconf);
+    try failing_step.result_error_bundle.renderToWriter(options, stderr, fwm);
 
     for (failing_step.result_error_msgs.items) |msg| {
-        try ttyconf.setColor(stderr, .red);
+        try fwm.setColor(stderr, .red);
         try stderr.writeAll("error:");
-        try ttyconf.setColor(stderr, .reset);
+        try fwm.setColor(stderr, .reset);
         if (std.mem.indexOfScalar(u8, msg, '\n') == null) {
             try stderr.print(" {s}\n", .{msg});
         } else switch (multiline_errors) {
@@ -1519,9 +1509,9 @@ pub fn printErrorMessages(
 
     if (error_style.verboseContext()) {
         if (failing_step.result_failed_command) |cmd_str| {
-            try ttyconf.setColor(stderr, .red);
+            try fwm.setColor(stderr, .red);
             try stderr.writeAll("failed command: ");
-            try ttyconf.setColor(stderr, .reset);
+            try fwm.setColor(stderr, .reset);
             try stderr.writeAll(cmd_str);
             try stderr.writeByte('\n');
         }

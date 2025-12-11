@@ -5,9 +5,8 @@ const std = @import("std.zig");
 const Io = std.Io;
 const fs = std.fs;
 const mem = std.mem;
-const debug = std.debug;
 const panic = std.debug.panic;
-const assert = debug.assert;
+const assert = std.debug.assert;
 const log = std.log;
 const StringHashMap = std.StringHashMap;
 const Allocator = std.mem.Allocator;
@@ -2090,7 +2089,7 @@ pub fn dependencyFromBuildZig(
     }
 
     const full_path = b.pathFromRoot("build.zig.zon");
-    debug.panic("'{}' is not a build.zig struct of a dependency in '{s}'", .{ build_zig, full_path });
+    std.debug.panic("'{}' is not a build.zig struct of a dependency in '{s}'", .{ build_zig, full_path });
 }
 
 fn userValuesAreSame(lhs: UserValue, rhs: UserValue) bool {
@@ -2249,9 +2248,9 @@ pub const GeneratedFile = struct {
 
     pub fn getPath2(gen: GeneratedFile, src_builder: *Build, asking_step: ?*Step) []const u8 {
         return gen.path orelse {
-            const w, const ttyconf = debug.lockStderrWriter(&.{});
-            dumpBadGetPathHelp(gen.step, w, ttyconf, src_builder, asking_step) catch {};
-            debug.unlockStderrWriter();
+            const stderr = std.debug.lockStderrWriter(&.{});
+            dumpBadGetPathHelp(gen.step, &stderr.interface, stderr.mode, src_builder, asking_step) catch {};
+            std.debug.unlockStderrWriter();
             @panic("misconfigured build script");
         };
     }
@@ -2458,9 +2457,9 @@ pub const LazyPath = union(enum) {
                 var file_path: Cache.Path = .{
                     .root_dir = Cache.Directory.cwd(),
                     .sub_path = gen.file.path orelse {
-                        const w, const ttyconf = debug.lockStderrWriter(&.{});
-                        dumpBadGetPathHelp(gen.file.step, w, ttyconf, src_builder, asking_step) catch {};
-                        debug.unlockStderrWriter();
+                        const stderr = std.debug.lockStderrWriter(&.{});
+                        dumpBadGetPathHelp(gen.file.step, &stderr.interface, stderr.mode, src_builder, asking_step) catch {};
+                        std.debug.unlockStderrWriter();
                         @panic("misconfigured build script");
                     },
                 };
@@ -2550,37 +2549,40 @@ fn dumpBadDirnameHelp(
     comptime msg: []const u8,
     args: anytype,
 ) anyerror!void {
-    const w, const tty_config = debug.lockStderrWriter(&.{});
-    defer debug.unlockStderrWriter();
+    const stderr = std.debug.lockStderrWriter(&.{});
+    defer std.debug.unlockStderrWriter();
+
+    const w = &stderr.interface;
+    const fwm = stderr.mode;
 
     try w.print(msg, args);
 
     if (fail_step) |s| {
-        tty_config.setColor(w, .red) catch {};
+        fwm.setColor(w, .red) catch {};
         try w.writeAll("    The step was created by this stack trace:\n");
-        tty_config.setColor(w, .reset) catch {};
+        fwm.setColor(w, .reset) catch {};
 
-        s.dump(w, tty_config);
+        s.dump(w, fwm);
     }
 
     if (asking_step) |as| {
-        tty_config.setColor(w, .red) catch {};
+        fwm.setColor(w, .red) catch {};
         try w.print("    The step '{s}' that is missing a dependency on the above step was created by this stack trace:\n", .{as.name});
-        tty_config.setColor(w, .reset) catch {};
+        fwm.setColor(w, .reset) catch {};
 
-        as.dump(w, tty_config);
+        as.dump(w, fwm);
     }
 
-    tty_config.setColor(w, .red) catch {};
+    fwm.setColor(w, .red) catch {};
     try w.writeAll("    Hope that helps. Proceeding to panic.\n");
-    tty_config.setColor(w, .reset) catch {};
+    fwm.setColor(w, .reset) catch {};
 }
 
 /// In this function the stderr mutex has already been locked.
 pub fn dumpBadGetPathHelp(
     s: *Step,
-    w: *std.Io.Writer,
-    tty_config: std.Io.tty.Config,
+    w: *Io.Writer,
+    fwm: File.Writer.Mode,
     src_builder: *Build,
     asking_step: ?*Step,
 ) anyerror!void {
@@ -2594,21 +2596,21 @@ pub fn dumpBadGetPathHelp(
         s.name,
     });
 
-    tty_config.setColor(w, .red) catch {};
+    fwm.setColor(w, .red) catch {};
     try w.writeAll("    The step was created by this stack trace:\n");
-    tty_config.setColor(w, .reset) catch {};
+    fwm.setColor(w, .reset) catch {};
 
-    s.dump(w, tty_config);
+    s.dump(w, fwm);
     if (asking_step) |as| {
-        tty_config.setColor(w, .red) catch {};
+        fwm.setColor(w, .red) catch {};
         try w.print("    The step '{s}' that is missing a dependency on the above step was created by this stack trace:\n", .{as.name});
-        tty_config.setColor(w, .reset) catch {};
+        fwm.setColor(w, .reset) catch {};
 
-        as.dump(w, tty_config);
+        as.dump(w, fwm);
     }
-    tty_config.setColor(w, .red) catch {};
+    fwm.setColor(w, .red) catch {};
     try w.writeAll("    Hope that helps. Proceeding to panic.\n");
-    tty_config.setColor(w, .reset) catch {};
+    fwm.setColor(w, .reset) catch {};
 }
 
 pub const InstallDir = union(enum) {

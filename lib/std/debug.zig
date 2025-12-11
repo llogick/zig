@@ -306,7 +306,7 @@ pub fn print(comptime fmt: []const u8, args: anytype) void {
         var buffer: [64]u8 = undefined;
         const stderr = lockStderrWriter(&buffer);
         defer unlockStderrWriter();
-        stderr.interface.print(fmt, args) catch return;
+        stderr.interface.print(fmt, stderr.mode.decorateArgs(args)) catch return;
     }
 }
 

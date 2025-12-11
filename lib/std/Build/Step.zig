@@ -117,7 +117,6 @@ pub const MakeOptions = struct {
         // it currently breaks because `std.net.Address` doesn't work there. Work around for now.
         .wasm32 => void,
     },
-    ttyconf: std.Io.tty.Config,
     /// If set, this is a timeout to enforce on all individual unit tests, in nanoseconds.
     unit_test_timeout_ns: ?u64,
     /// Not to be confused with `Build.allocator`, which is an alias of `Build.graph.arena`.
@@ -329,16 +328,16 @@ pub fn cast(step: *Step, comptime T: type) ?*T {
 }
 
 /// For debugging purposes, prints identifying information about this Step.
-pub fn dump(step: *Step, w: *Io.Writer, tty_config: Io.tty.Config) void {
+pub fn dump(step: *Step, w: *Io.Writer, fwm: Io.File.Writer.Mode) void {
     if (step.debug_stack_trace.instruction_addresses.len > 0) {
         w.print("name: '{s}'. creation stack trace:\n", .{step.name}) catch {};
-        std.debug.writeStackTrace(&step.debug_stack_trace, w, tty_config) catch {};
+        std.debug.writeStackTrace(&step.debug_stack_trace, w, fwm) catch {};
     } else {
         const field = "debug_stack_frames_count";
         comptime assert(@hasField(Build, field));
-        tty_config.setColor(w, .yellow) catch {};
+        fwm.setColor(w, .yellow) catch {};
         w.print("name: '{s}'. no stack trace collected for this step, see std.Build." ++ field ++ "\n", .{step.name}) catch {};
-        tty_config.setColor(w, .reset) catch {};
+        fwm.setColor(w, .reset) catch {};
     }
 }
 

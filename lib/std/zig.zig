@@ -53,18 +53,18 @@ pub const Color = enum {
     /// Assume stderr is a terminal.
     on,
 
-    pub fn getTtyConf(color: Color, detected: Io.tty.Config) Io.tty.Config {
+    pub fn getTtyConf(color: Color, detected: Io.File.Writer.Mode) Io.File.Writer.Mode {
         return switch (color) {
             .auto => detected,
-            .on => .escape_codes,
-            .off => .no_color,
+            .on => .terminal_escaped,
+            .off => .streaming,
         };
     }
-    pub fn detectTtyConf(color: Color, io: Io) Io.tty.Config {
+    pub fn detectTtyConf(color: Color, io: Io) Io.File.Writer.Mode {
         return switch (color) {
             .auto => .detect(io, .stderr()),
-            .on => .escape_codes,
-            .off => .no_color,
+            .on => .terminal_escaped,
+            .off => .streaming,
         };
     }
 };

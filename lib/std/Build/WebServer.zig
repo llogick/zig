@@ -2,7 +2,6 @@ gpa: Allocator,
 graph: *const Build.Graph,
 all_steps: []const *Build.Step,
 listen_address: net.IpAddress,
-ttyconf: Io.tty.Config,
 root_prog_node: std.Progress.Node,
 watch: bool,
 
@@ -52,7 +51,6 @@ pub fn notifyUpdate(ws: *WebServer) void {
 
 pub const Options = struct {
     gpa: Allocator,
-    ttyconf: Io.tty.Config,
     graph: *const std.Build.Graph,
     all_steps: []const *Build.Step,
     root_prog_node: std.Progress.Node,
@@ -98,7 +96,6 @@ pub fn init(opts: Options) WebServer {
 
     return .{
         .gpa = opts.gpa,
-        .ttyconf = opts.ttyconf,
         .graph = opts.graph,
         .all_steps = all_steps,
         .listen_address = opts.listen_address,
@@ -233,7 +230,6 @@ pub fn finishBuild(ws: *WebServer, opts: struct {
         ws.fuzz = Fuzz.init(
             ws.gpa,
             ws.graph.io,
-            ws.ttyconf,
             ws.all_steps,
             ws.root_prog_node,
             .{ .forever = .{ .ws = ws } },

@@ -99,7 +99,7 @@ pub const Mode = union(enum) {
 
     pub const SetColorError = std.os.windows.SetConsoleTextAttributeError || Io.Writer.Error;
 
-    pub fn setColor(mode: Mode, io_w: *Io.Writer, color: Color) Mode.SetColorError!void {
+    pub fn setColor(mode: Mode, io_w: *Io.Writer, color: Color) SetColorError!void {
         switch (mode) {
             .streaming, .positional, .streaming_simple, .positional_simple, .failure => return,
             .terminal_escaped => {
@@ -154,6 +154,34 @@ pub const Mode = union(enum) {
                 try windows.SetConsoleTextAttribute(ctx.handle, attributes);
             },
         }
+    }
+
+    fn DecorateArgs(comptime Args: type) type {
+        const fields = @typeInfo(Args).@"struct".fields;
+        var new_fields: [fields.len]type = undefined;
+        for (fields, &new_fields) |old, *new| {
+            if (old.type == std.debug.FormatStackTrace) {
+                new.* = std.debug.FormatStackTrace.Decorated;
+            } else {
+                new.* = old.type;
+            }
+        }
+        return @Tuple(&new_fields);
+    }
+
+    pub fn decorateArgs(file_writer_mode: std.Io.File.Writer.Mode, args: anytype) DecorateArgs(@TypeOf(args)) {
+        var new_args: DecorateArgs(@TypeOf(args)) = undefined;
+        inline for (args, &new_args) |old, *new| {
+            if (@TypeOf(old) == std.debug.FormatStackTrace) {
+                new.* = .{
+                    .stack_trace = old.stack_trace,
+                    .file_writer_mode = file_writer_mode,
+                };
+            } else {
+                new.* = old;
+            }
+        }
+        return new_args;
     }
 };
 
@@ -426,6 +454,8 @@ pub fn end(w: *Writer) EndError!void {
 
         .streaming,
         .streaming_simple,
+        .terminal_escaped,
+        .terminal_winapi,
         .failure,
         => {},
     }
@@ -453,10 +483,11 @@ pub const Color = enum {
     reset,
 };
 
-pub const SetColorError = Mode.SetColorError;
-
-pub fn setColor(w: *Writer, color: Color) SetColorError!void {
-    return w.mode.setColor(&w.interface, color);
+pub fn setColor(w: *Writer, color: Color) Io.Writer.Error!void {
+    return w.mode.setColor(&w.interface, color) catch |err| switch (err) {
+        error.WriteFailed => |e| return e,
+        else => |e| w.err = e,
+    };
 }
 
 pub fn disableEscape(w: *Writer) Mode {

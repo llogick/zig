@@ -5,7 +5,7 @@ const std = @import("std");
 const Io = std.Io;
 const Build = std.Build;
 const Step = std.Build.Step;
-const fs = std.fs;
+const Dir = std.Io.Dir;
 const mem = std.mem;
 const process = std.process;
 const EnvMap = std.process.EnvMap;
@@ -26,19 +26,7 @@ cwd: ?Build.LazyPath,
 env_map: ?*EnvMap,
 
 /// Controls the `NO_COLOR` and `CLICOLOR_FORCE` environment variables.
-color: enum {
-    /// `CLICOLOR_FORCE` is set, and `NO_COLOR` is unset.
-    enable,
-    /// `NO_COLOR` is set, and `CLICOLOR_FORCE` is unset.
-    disable,
-    /// If the build runner is using color, equivalent to `.enable`. Otherwise, equivalent to `.disable`.
-    inherit,
-    /// If stderr is captured or checked, equivalent to `.disable`. Otherwise, equivalent to `.inherit`.
-    auto,
-    /// The build runner does not modify the `CLICOLOR_FORCE` or `NO_COLOR` environment variables.
-    /// They are treated like normal variables, so can be controlled through `setEnvironmentVariable`.
-    manual,
-} = .auto,
+color: Color = .auto,
 
 /// When `true` prevents `ZIG_PROGRESS` environment variable from being passed
 /// to the child process, which otherwise would be used for the child to send
@@ -111,6 +99,20 @@ rebuilt_executable: ?Path,
 
 /// If this Run step was produced by a Compile step, it is tracked here.
 producer: ?*Step.Compile,
+
+pub const Color = enum {
+    /// `CLICOLOR_FORCE` is set, and `NO_COLOR` is unset.
+    enable,
+    /// `NO_COLOR` is set, and `CLICOLOR_FORCE` is unset.
+    disable,
+    /// If the build runner is using color, equivalent to `.enable`. Otherwise, equivalent to `.disable`.
+    inherit,
+    /// If stderr is captured or checked, equivalent to `.disable`. Otherwise, equivalent to `.inherit`.
+    auto,
+    /// The build runner does not modify the `CLICOLOR_FORCE` or `NO_COLOR` environment variables.
+    /// They are treated like normal variables, so can be controlled through `setEnvironmentVariable`.
+    manual,
+};
 
 pub const StdIn = union(enum) {
     none,
@@ -565,7 +567,7 @@ pub fn addPathDir(run: *Run, search_path: []const u8) void {
     if (prev_path) |pp| {
         const new_path = b.fmt("{s}{c}{s}", .{
             pp,
-            if (use_wine) fs.path.delimiter_windows else fs.path.delimiter,
+            if (use_wine) Dir.path.delimiter_windows else Dir.path.delimiter,
             search_path,
         });
         env_map.put(key, new_path) catch @panic("OOM");
@@ -748,7 +750,7 @@ fn checksContainStderr(checks: []const StdIo.Check) bool {
 fn convertPathArg(run: *Run, path: Build.Cache.Path) []const u8 {
     const b = run.step.owner;
     const path_str = path.toString(b.graph.arena) catch @panic("OOM");
-    if (std.fs.path.isAbsolute(path_str)) {
+    if (Dir.path.isAbsolute(path_str)) {
         // Absolute paths don't need changing.
         return path_str;
     }
@@ -756,19 +758,19 @@ fn convertPathArg(run: *Run, path: Build.Cache.Path) []const u8 {
         const child_lazy_cwd = run.cwd orelse break :rel path_str;
         const child_cwd = child_lazy_cwd.getPath3(b, &run.step).toString(b.graph.arena) catch @panic("OOM");
         // Convert it from relative to *our* cwd, to relative to the *child's* cwd.
-        break :rel std.fs.path.relative(b.graph.arena, child_cwd, path_str) catch @panic("OOM");
+        break :rel Dir.path.relative(b.graph.arena, child_cwd, path_str) catch @panic("OOM");
     };
     // Not every path can be made relative, e.g. if the path and the child cwd are on different
     // disk designators on Windows. In that case, `relative` will return an absolute path which we can
     // just return.
-    if (std.fs.path.isAbsolute(child_cwd_rel)) {
+    if (Dir.path.isAbsolute(child_cwd_rel)) {
         return child_cwd_rel;
     }
     // We're not done yet. In some cases this path must be prefixed with './':
     // * On POSIX, the executable name cannot be a single component like 'foo'
     // * Some executables might treat a leading '-' like a flag, which we must avoid
     // There's no harm in it, so just *always* apply this prefix.
-    return std.fs.path.join(b.graph.arena, &.{ ".", child_cwd_rel }) catch @panic("OOM");
+    return Dir.path.join(b.graph.arena, &.{ ".", child_cwd_rel }) catch @panic("OOM");
 }
 
 const IndexedOutput = struct {
@@ -965,11 +967,11 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
             &digest,
         );
 
-        const output_dir_path = "o" ++ fs.path.sep_str ++ &digest;
+        const output_dir_path = "o" ++ Dir.path.sep_str ++ &digest;
         for (output_placeholders.items) |placeholder| {
             const output_sub_path = b.pathJoin(&.{ output_dir_path, placeholder.output.basename });
             const output_sub_dir_path = switch (placeholder.tag) {
-                .output_file => fs.path.dirname(output_sub_path).?,
+                .output_file => Dir.path.dirname(output_sub_path).?,
                 .output_directory => output_sub_path,
                 else => unreachable,
             };
@@ -995,13 +997,13 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
 
     // We do not know the final output paths yet, use temp paths to run the command.
     const rand_int = std.crypto.random.int(u64);
-    const tmp_dir_path = "tmp" ++ fs.path.sep_str ++ std.fmt.hex(rand_int);
+    const tmp_dir_path = "tmp" ++ Dir.path.sep_str ++ std.fmt.hex(rand_int);
 
     for (output_placeholders.items) |placeholder| {
         const output_components = .{ tmp_dir_path, placeholder.output.basename };
         const output_sub_path = b.pathJoin(&output_components);
         const output_sub_dir_path = switch (placeholder.tag) {
-            .output_file => fs.path.dirname(output_sub_path).?,
+            .output_file => Dir.path.dirname(output_sub_path).?,
             .output_directory => output_sub_path,
             else => unreachable,
         };
@@ -1023,7 +1025,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
 
     try runCommand(run, argv_list.items, has_side_effects, tmp_dir_path, options, null);
 
-    const dep_file_dir = Io.Dir.cwd();
+    const dep_file_dir = Dir.cwd();
     const dep_file_basename = dep_output_file.generated_file.getPath2(b, step);
     if (has_side_effects)
         try man.addDepFile(dep_file_dir, dep_file_basename)
@@ -1040,7 +1042,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
 
     // Rename into place
     if (any_output) {
-        const o_sub_path = "o" ++ fs.path.sep_str ++ &digest;
+        const o_sub_path = "o" ++ Dir.path.sep_str ++ &digest;
 
         b.cache_root.handle.rename(tmp_dir_path, b.cache_root.handle, o_sub_path, io) catch |err| {
             if (err == error.PathAlreadyExists) {
@@ -1139,12 +1141,11 @@ pub fn rerunInFuzzMode(
 
     const has_side_effects = false;
     const rand_int = std.crypto.random.int(u64);
-    const tmp_dir_path = "tmp" ++ fs.path.sep_str ++ std.fmt.hex(rand_int);
+    const tmp_dir_path = "tmp" ++ Dir.path.sep_str ++ std.fmt.hex(rand_int);
     try runCommand(run, argv_list.items, has_side_effects, tmp_dir_path, .{
         .progress_node = prog_node,
         .watch = undefined, // not used by `runCommand`
         .web_server = null, // only needed for time reports
-        .ttyconf = fuzz.ttyconf,
         .unit_test_timeout_ns = null, // don't time out fuzz tests for now
         .gpa = fuzz.gpa,
     }, .{
@@ -1266,10 +1267,7 @@ fn runCommand(
             try env_map.put("NO_COLOR", "1");
             env_map.remove("CLICOLOR_FORCE");
         },
-        .inherit => switch (options.ttyconf) {
-            .no_color, .windows_api => continue :color .disable,
-            .escape_codes => continue :color .enable,
-        },
+        .inherit => {},
         .auto => {
             const capture_stderr = run.captured_stderr != null or switch (run.stdio) {
                 .check => |checks| checksContainStderr(checks.items),
@@ -1464,7 +1462,7 @@ fn runCommand(
             captured.output.generated_file.path = output_path;
 
             const sub_path = b.pathJoin(&output_components);
-            const sub_path_dirname = fs.path.dirname(sub_path).?;
+            const sub_path_dirname = Dir.path.dirname(sub_path).?;
             b.cache_root.handle.makePath(io, sub_path_dirname) catch |err| {
                 return step.fail("unable to make path '{f}{s}': {s}", .{
                     b.cache_root, sub_path_dirname, @errorName(err),
@@ -1650,8 +1648,8 @@ fn spawnChildAndCollect(
         if (!run.disable_zig_progress and !inherit) {
             child.progress_node = options.progress_node;
         }
-        if (inherit) std.debug.lockStdErr();
-        defer if (inherit) std.debug.unlockStdErr();
+        if (inherit) _ = std.debug.lockStderrWriter(&.{});
+        defer if (inherit) std.debug.unlockStderrWriter();
         var timer = try std.time.Timer.start();
         const res = try evalGeneric(run, &child);
         run.step.result_duration_ns = timer.read();
@@ -2277,7 +2275,7 @@ fn addPathForDynLibs(run: *Run, artifact: *Step.Compile) void {
         if (compile.root_module.resolved_target.?.result.os.tag == .windows and
             compile.isDynamicLibrary())
         {
-            addPathDir(run, fs.path.dirname(compile.getEmittedBin().getPath2(b, &run.step)).?);
+            addPathDir(run, Dir.path.dirname(compile.getEmittedBin().getPath2(b, &run.step)).?);
         }
     }
 }

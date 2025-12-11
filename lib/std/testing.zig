@@ -354,11 +354,10 @@ test expectApproxEqRel {
     }
 }
 
-/// This function is intended to be used only in tests. When the two slices are not
-/// equal, prints diagnostics to stderr to show exactly how they are not equal (with
-/// the differences highlighted in red), then returns a test failure error.
-/// The colorized output is optional and controlled by the return of `Io.tty.Config.detect`.
-/// If your inputs are UTF-8 encoded strings, consider calling `expectEqualStrings` instead.
+/// This function is intended to be used only in tests. When the two slices are
+/// not equal, prints diagnostics to stderr to show exactly how they are not
+/// equal (with the differences highlighted in red), then returns a test
+/// failure error.
 pub fn expectEqualSlices(comptime T: type, expected: []const T, actual: []const T) !void {
     const diff_index: usize = diff_index: {
         const shortest = @min(expected.len, actual.len);
@@ -369,20 +368,13 @@ pub fn expectEqualSlices(comptime T: type, expected: []const T, actual: []const 
         break :diff_index if (expected.len == actual.len) return else shortest;
     };
     if (!backend_can_print) return error.TestExpectedEqual;
-    const stderr_w, const ttyconf = std.debug.lockStderrWriter(&.{});
+    const stderr = std.debug.lockStderrWriter(&.{});
     defer std.debug.unlockStderrWriter();
-    failEqualSlices(T, expected, actual, diff_index, stderr_w, ttyconf) catch {};
+    failEqualSlices(T, expected, actual, diff_index, &stderr.interface, stderr.mode) catch {};
     return error.TestExpectedEqual;
 }
 
-fn failEqualSlices(
-    comptime T: type,
-    expected: []const T,
-    actual: []const T,
-    diff_index: usize,
-    w: *Io.Writer,
-    ttyconf: Io.tty.Config,
-) !void {
+fn failEqualSlices(comptime T: type, expected: []const T, actual: []const T, diff_index: usize, w: *Io.Writer, fwm: Io.File.Writer.Mode) !void {
     try w.print("slices differ. first difference occurs at index {d} (0x{X})\n", .{ diff_index, diff_index });
 
     // TODO: Should this be configurable by the caller?
@@ -404,12 +396,12 @@ fn failEqualSlices(
     var differ = if (T == u8) BytesDiffer{
         .expected = expected_window,
         .actual = actual_window,
-        .ttyconf = ttyconf,
+        .file_writer_mode = fwm,
     } else SliceDiffer(T){
         .start_index = window_start,
         .expected = expected_window,
         .actual = actual_window,
-        .ttyconf = ttyconf,
+        .file_writer_mode = fwm,
     };
 
     // Print indexes as hex for slices of u8 since it's more likely to be binary data where
@@ -466,7 +458,7 @@ fn SliceDiffer(comptime T: type) type {
         start_index: usize,
         expected: []const T,
         actual: []const T,
-        ttyconf: Io.tty.Config,
+        file_writer_mode: Io.File.Writer.Mode,
 
         const Self = @This();
 
@@ -474,13 +466,13 @@ fn SliceDiffer(comptime T: type) type {
             for (self.expected, 0..) |value, i| {
                 const full_index = self.start_index + i;
                 const diff = if (i < self.actual.len) !std.meta.eql(self.actual[i], value) else true;
-                if (diff) try self.ttyconf.setColor(writer, .red);
+                if (diff) try self.file_writer_mode.setColor(writer, .red);
                 if (@typeInfo(T) == .pointer) {
                     try writer.print("[{}]{*}: {any}\n", .{ full_index, value, value });
                 } else {
                     try writer.print("[{}]: {any}\n", .{ full_index, value });
                 }
-                if (diff) try self.ttyconf.setColor(writer, .reset);
+                if (diff) try self.file_writer_mode.setColor(writer, .reset);
             }
         }
     };
@@ -489,7 +481,7 @@ fn SliceDiffer(comptime T: type) type {
 const BytesDiffer = struct {
     expected: []const u8,
     actual: []const u8,
-    ttyconf: Io.tty.Config,
+    file_writer_mode: Io.File.Writer.Mode,
 
     pub fn write(self: BytesDiffer, writer: *Io.Writer) !void {
         var expected_iterator = std.mem.window(u8, self.expected, 16, 16);
@@ -516,7 +508,7 @@ const BytesDiffer = struct {
                     try self.writeDiff(writer, "{c}", .{byte}, diff);
                 } else {
                     // TODO: remove this `if` when https://github.com/ziglang/zig/issues/7600 is fixed
-                    if (self.ttyconf == .windows_api) {
+                    if (self.file_writer_mode == .terminal_winapi) {
                         try self.writeDiff(writer, ".", .{}, diff);
                         continue;
                     }
@@ -538,9 +530,9 @@ const BytesDiffer = struct {
     }
 
     fn writeDiff(self: BytesDiffer, writer: *Io.Writer, comptime fmt: []const u8, args: anytype, diff: bool) !void {
-        if (diff) try self.ttyconf.setColor(writer, .red);
+        if (diff) try self.file_writer_mode.setColor(writer, .red);
         try writer.print(fmt, args);
-        if (diff) try self.ttyconf.setColor(writer, .reset);
+        if (diff) try self.file_writer_mode.setColor(writer, .reset);
     }
 };
 
@@ -1162,7 +1154,6 @@ pub fn checkAllAllocationFailures(backing_allocator: std.mem.Allocator, comptime
         } else |err| switch (err) {
             error.OutOfMemory => {
                 if (failing_allocator_inst.allocated_bytes != failing_allocator_inst.freed_bytes) {
-                    const tty_config: Io.tty.Config = .detect(.stderr());
                     print(
                         "\nfail_index: {d}/{d}\nallocated bytes: {d}\nfreed bytes: {d}\nallocations: {d}\ndeallocations: {d}\nallocation that was made to fail: {f}",
                         .{
@@ -1174,7 +1165,6 @@ pub fn checkAllAllocationFailures(backing_allocator: std.mem.Allocator, comptime
                             failing_allocator_inst.deallocations,
                             std.debug.FormatStackTrace{
                                 .stack_trace = failing_allocator_inst.getStackTrace(),
-                                .tty_config = tty_config,
                             },
                         },
                     );

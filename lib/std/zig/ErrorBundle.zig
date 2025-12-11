@@ -164,15 +164,20 @@ pub const RenderOptions = struct {
 
 pub fn renderToStdErr(eb: ErrorBundle, options: RenderOptions, color: std.zig.Color) void {
     var buffer: [256]u8 = undefined;
-    const w, const ttyconf = std.debug.lockStderrWriter(&buffer);
+    const stderr = std.debug.lockStderrWriter(&buffer);
     defer std.debug.unlockStderrWriter();
-    renderToWriter(eb, options, w, color.getTtyConf(ttyconf)) catch return;
+    renderToWriter(eb, options, &stderr.interface, color.getTtyConf(stderr.mode)) catch return;
 }
 
-pub fn renderToWriter(eb: ErrorBundle, options: RenderOptions, w: *Writer, ttyconf: Io.tty.Config) (Writer.Error || std.posix.UnexpectedError)!void {
+pub fn renderToWriter(
+    eb: ErrorBundle,
+    options: RenderOptions,
+    w: *Writer,
+    fwm: Io.File.Writer.Mode,
+) Io.File.Writer.Mode.SetColorError!void {
     if (eb.extra.len == 0) return;
     for (eb.getMessages()) |err_msg| {
-        try renderErrorMessageToWriter(eb, options, err_msg, w, ttyconf, "error", .red, 0);
+        try renderErrorMessageToWriter(eb, options, err_msg, w, fwm, "error", .red, 0);
     }
 
     if (options.include_log_text) {
@@ -189,18 +194,18 @@ fn renderErrorMessageToWriter(
     options: RenderOptions,
     err_msg_index: MessageIndex,
     w: *Writer,
-    ttyconf: Io.tty.Config,
+    fwm: Io.File.Writer.Mode,
     kind: []const u8,
-    color: Io.tty.Color,
+    color: Io.File.Writer.Color,
     indent: usize,
-) (Writer.Error || std.posix.UnexpectedError)!void {
+) Io.File.Writer.Mode.SetColorError!void {
     const err_msg = eb.getErrorMessage(err_msg_index);
     if (err_msg.src_loc != .none) {
         const src = eb.extraData(SourceLocation, @intFromEnum(err_msg.src_loc));
         var prefix: Writer.Discarding = .init(&.{});
         try w.splatByteAll(' ', indent);
         prefix.count += indent;
-        try ttyconf.setColor(w, .bold);
+        try fwm.setColor(w, .bold);
         try w.print("{s}:{d}:{d}: ", .{
             eb.nullTerminatedString(src.data.src_path),
             src.data.line + 1,
@@ -211,7 +216,7 @@ fn renderErrorMessageToWriter(
             src.data.line + 1,
             src.data.column + 1,
         });
-        try ttyconf.setColor(w, color);
+        try fwm.setColor(w, color);
         try w.writeAll(kind);
         prefix.count += kind.len;
         try w.writeAll(": ");
@@ -219,17 +224,17 @@ fn renderErrorMessageToWriter(
         // This is the length of the part before the error message:
         // e.g. "file.zig:4:5: error: "
         const prefix_len: usize = @intCast(prefix.count);
-        try ttyconf.setColor(w, .reset);
-        try ttyconf.setColor(w, .bold);
+        try fwm.setColor(w, .reset);
+        try fwm.setColor(w, .bold);
         if (err_msg.count == 1) {
             try writeMsg(eb, err_msg, w, prefix_len);
             try w.writeByte('\n');
         } else {
             try writeMsg(eb, err_msg, w, prefix_len);
-            try ttyconf.setColor(w, .dim);
+            try fwm.setColor(w, .dim);
             try w.print(" ({d} times)\n", .{err_msg.count});
         }
-        try ttyconf.setColor(w, .reset);
+        try fwm.setColor(w, .reset);
         if (src.data.source_line != 0 and options.include_source_line) {
             const line = eb.nullTerminatedString(src.data.source_line);
             for (line) |b| switch (b) {
@@ -242,19 +247,19 @@ fn renderErrorMessageToWriter(
             // -1 since span.main includes the caret
             const after_caret = src.data.span_end -| src.data.span_main -| 1;
             try w.splatByteAll(' ', src.data.column - before_caret);
-            try ttyconf.setColor(w, .green);
+            try fwm.setColor(w, .green);
             try w.splatByteAll('~', before_caret);
             try w.writeByte('^');
             try w.splatByteAll('~', after_caret);
             try w.writeByte('\n');
-            try ttyconf.setColor(w, .reset);
+            try fwm.setColor(w, .reset);
         }
         for (eb.getNotes(err_msg_index)) |note| {
-            try renderErrorMessageToWriter(eb, options, note, w, ttyconf, "note", .cyan, indent);
+            try renderErrorMessageToWriter(eb, options, note, w, fwm, "note", .cyan, indent);
         }
         if (src.data.reference_trace_len > 0 and options.include_reference_trace) {
-            try ttyconf.setColor(w, .reset);
-            try ttyconf.setColor(w, .dim);
+            try fwm.setColor(w, .reset);
+            try fwm.setColor(w, .dim);
             try w.print("referenced by:\n", .{});
             var ref_index = src.end;
             for (0..src.data.reference_trace_len) |_| {
@@ -281,25 +286,25 @@ fn renderErrorMessageToWriter(
                     );
                 }
             }
-            try ttyconf.setColor(w, .reset);
+            try fwm.setColor(w, .reset);
         }
     } else {
-        try ttyconf.setColor(w, color);
+        try fwm.setColor(w, color);
         try w.splatByteAll(' ', indent);
         try w.writeAll(kind);
         try w.writeAll(": ");
-        try ttyconf.setColor(w, .reset);
+        try fwm.setColor(w, .reset);
         const msg = eb.nullTerminatedString(err_msg.msg);
         if (err_msg.count == 1) {
             try w.print("{s}\n", .{msg});
         } else {
             try w.print("{s}", .{msg});
-            try ttyconf.setColor(w, .dim);
+            try fwm.setColor(w, .dim);
             try w.print(" ({d} times)\n", .{err_msg.count});
         }
-        try ttyconf.setColor(w, .reset);
+        try fwm.setColor(w, .reset);
         for (eb.getNotes(err_msg_index)) |note| {
-            try renderErrorMessageToWriter(eb, options, note, w, ttyconf, "note", .cyan, indent + 4);
+            try renderErrorMessageToWriter(eb, options, note, w, fwm, "note", .cyan, indent + 4);
         }
     }
 }
@@ -806,12 +811,10 @@ pub const Wip = struct {
         };
         defer bundle.deinit(std.testing.allocator);
 
-        const ttyconf: Io.tty.Config = .no_color;
-
         var bundle_buf: Writer.Allocating = .init(std.testing.allocator);
         const bundle_bw = &bundle_buf.interface;
         defer bundle_buf.deinit();
-        try bundle.renderToWriter(.{ .ttyconf = ttyconf }, bundle_bw);
+        try bundle.renderToWriter(bundle_bw);
 
         var copy = copy: {
             var wip: ErrorBundle.Wip = undefined;
@@ -827,7 +830,7 @@ pub const Wip = struct {
         var copy_buf: Writer.Allocating = .init(std.testing.allocator);
         const copy_bw = &copy_buf.interface;
         defer copy_buf.deinit();
-        try copy.renderToWriter(.{ .ttyconf = ttyconf }, copy_bw);
+        try copy.renderToWriter(copy_bw);
 
         try std.testing.expectEqualStrings(bundle_bw.written(), copy_bw.written());
     }
