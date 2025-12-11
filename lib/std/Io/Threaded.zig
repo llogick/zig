@@ -3271,12 +3271,113 @@ fn dirClose(userdata: ?*anyopaque, dirs: []const Dir) void {
     for (dirs) |dir| posix.close(dir.handle);
 }
 
-fn dirRead(userdata: ?*anyopaque, dir_reader: *Dir.Reader, buffer: []Dir.Entry) Dir.Reader.Error!usize {
+const dirRead = switch (native_os) {
+    .linux => dirReadLinux,
+    else => dirReadUnimplemented,
+};
+
+fn dirReadLinux(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Dir.Reader.Error!usize {
+    const linux = std.os.linux;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    _ = t;
+    const current_thread = Thread.getCurrent(t);
+    const Header = extern struct {
+        fill_end: usize,
+    };
+    const header: *Header = @ptrCast(&dr.buffer);
+    const header_end: usize = @sizeOf(Header);
+    if (dr.index < header_end) {
+        // Initialize header.
+        dr.index = header_end;
+        header.* = .{ .fill_end = header_end };
+    }
+    var buffer_index: usize = 0;
+    while (buffer.len - buffer_index != 0) {
+        if (header.fill_end - dr.index == 0) {
+            // Refill the buffer, unless we've already created references to
+            // buffered data.
+            if (buffer_index != 0) break;
+            if (dr.state == .reset) {
+                posixSeekTo(current_thread, dr.dir.handle, 0) catch |err| switch (err) {
+                    error.Unseekable => return error.Unexpected,
+                    else => |e| return e,
+                };
+                dr.state = .reading;
+            }
+            const dents_buffer = dr.buffer[header_end..];
+            try current_thread.beginSyscall();
+            const n = while (true) {
+                const rc = linux.getdents64(dr.dir.handle, dents_buffer.ptr, dents_buffer.len);
+                switch (linux.errno(rc)) {
+                    .SUCCESS => {
+                        current_thread.endSyscall();
+                        break rc;
+                    },
+                    .INTR => {
+                        try current_thread.checkCancel();
+                        continue;
+                    },
+                    .CANCELED => return current_thread.endSyscallCanceled(),
+                    else => |e| {
+                        current_thread.endSyscall();
+                        switch (e) {
+                            .BADF => |err| return errnoBug(err), // Dir is invalid or was opened without iteration ability.
+                            .FAULT => |err| return errnoBug(err),
+                            .NOTDIR => |err| return errnoBug(err),
+                            // To be consistent across platforms, iteration
+                            // ends if the directory being iterated is deleted
+                            // during iteration. This matches the behavior of
+                            // non-Linux UNIX platforms.
+                            .NOENT => {
+                                dr.state = .finished;
+                                return 0;
+                            },
+                            .INVAL => return error.Unexpected, // Linux may in some cases return EINVAL when reading /proc/$PID/net.
+                            .ACCES => return error.AccessDenied, // Lacking permission to iterate this directory.
+                            else => |err| return posix.unexpectedErrno(err),
+                        }
+                    },
+                }
+            };
+            if (n == 0) {
+                dr.state = .finished;
+                return 0;
+            }
+            dr.index = header_end;
+            header.fill_end = header_end + n;
+        }
+        const linux_entry: *align(1) linux.dirent64 = @ptrCast(&dr.buffer[dr.index]);
+        const next_index = dr.index + linux_entry.reclen;
+        dr.index = next_index;
+
+        const name = std.mem.sliceTo(@as([*:0]u8, @ptrCast(&linux_entry.name)), 0);
+        // Skip "." and ".." entries.
+        if (std.mem.eql(u8, name, ".") or std.mem.eql(u8, name, "..")) continue;
+
+        const entry_kind: File.Kind = switch (linux_entry.type) {
+            linux.DT.BLK => .block_device,
+            linux.DT.CHR => .character_device,
+            linux.DT.DIR => .directory,
+            linux.DT.FIFO => .named_pipe,
+            linux.DT.LNK => .sym_link,
+            linux.DT.REG => .file,
+            linux.DT.SOCK => .unix_domain_socket,
+            else => .unknown,
+        };
+        buffer[buffer_index] = .{
+            .name = name,
+            .kind = entry_kind,
+            .inode = linux_entry.ino,
+        };
+        buffer_index += 1;
+    }
+    return buffer_index;
+}
+
+fn dirReadUnimplemented(userdata: ?*anyopaque, dir_reader: *Dir.Reader, buffer: []Dir.Entry) Dir.Reader.Error!usize {
+    _ = userdata;
     _ = dir_reader;
     _ = buffer;
-    @panic("TODO");
+    return error.Unimplemented;
 }
 
 const dirRealPath = switch (native_os) {
@@ -5908,6 +6009,47 @@ fn fileSeekTo(userdata: ?*anyopaque, file: File, offset: u64) File.SeekError!voi
     const current_thread = Thread.getCurrent(t);
     const fd = file.handle;
 
+    if (native_os == .windows) {
+        try current_thread.checkCancel();
+        return windows.SetFilePointerEx_BEGIN(fd, offset);
+    }
+
+    if (native_os == .wasi and !builtin.link_libc) {
+        try current_thread.beginSyscall();
+        while (true) {
+            var new_offset: std.os.wasi.filesize_t = undefined;
+            switch (std.os.wasi.fd_seek(fd, @bitCast(offset), .SET, &new_offset)) {
+                .SUCCESS => {
+                    current_thread.endSyscall();
+                    return;
+                },
+                .INTR => {
+                    try current_thread.checkCancel();
+                    continue;
+                },
+                .CANCELED => return current_thread.endSyscallCanceled(),
+                else => |e| {
+                    current_thread.endSyscall();
+                    switch (e) {
+                        .BADF => |err| return errnoBug(err), // File descriptor used after closed.
+                        .INVAL => return error.Unseekable,
+                        .OVERFLOW => return error.Unseekable,
+                        .SPIPE => return error.Unseekable,
+                        .NXIO => return error.Unseekable,
+                        .NOTCAPABLE => return error.AccessDenied,
+                        else => |err| return posix.unexpectedErrno(err),
+                    }
+                },
+            }
+        }
+    }
+
+    if (posix.SEEK == void) return error.Unseekable;
+
+    return posixSeekTo(current_thread, fd, offset);
+}
+
+fn posixSeekTo(current_thread: *Thread, fd: posix.fd_t, offset: u64) File.SeekError!void {
     if (native_os == .linux and !builtin.link_libc and @sizeOf(usize) == 4) {
         try current_thread.beginSyscall();
         while (true) {
@@ -5936,41 +6078,6 @@ fn fileSeekTo(userdata: ?*anyopaque, file: File, offset: u64) File.SeekError!voi
             }
         }
     }
-
-    if (native_os == .windows) {
-        try current_thread.checkCancel();
-        return windows.SetFilePointerEx_BEGIN(fd, offset);
-    }
-
-    if (native_os == .wasi and !builtin.link_libc) while (true) {
-        var new_offset: std.os.wasi.filesize_t = undefined;
-        try current_thread.beginSyscall();
-        switch (std.os.wasi.fd_seek(fd, @bitCast(offset), .SET, &new_offset)) {
-            .SUCCESS => {
-                current_thread.endSyscall();
-                return;
-            },
-            .INTR => {
-                try current_thread.checkCancel();
-                continue;
-            },
-            .CANCELED => return current_thread.endSyscallCanceled(),
-            else => |e| {
-                current_thread.endSyscall();
-                switch (e) {
-                    .BADF => |err| return errnoBug(err), // File descriptor used after closed.
-                    .INVAL => return error.Unseekable,
-                    .OVERFLOW => return error.Unseekable,
-                    .SPIPE => return error.Unseekable,
-                    .NXIO => return error.Unseekable,
-                    .NOTCAPABLE => return error.AccessDenied,
-                    else => |err| return posix.unexpectedErrno(err),
-                }
-            },
-        }
-    };
-
-    if (posix.SEEK == void) return error.Unseekable;
 
     try current_thread.beginSyscall();
     while (true) {

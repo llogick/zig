@@ -184,6 +184,11 @@ pub const SelectiveWalker = struct {
 
     pub const Error = Io.Dir.Iterator.Error || Allocator.Error;
 
+    const StackItem = struct {
+        iter: Dir.Iterator,
+        dirname_len: usize,
+    };
+
     /// After each call to this function, and on deinit(), the memory returned
     /// from this function becomes invalid. A copy must be made in order to keep
     /// a reference to the path.
@@ -268,7 +273,7 @@ pub const SelectiveWalker = struct {
 /// Recursively iterates over a directory, but requires the user to
 /// opt-in to recursing into each directory entry.
 ///
-/// `dir` must have been opened with `OpenOptions{.iterate = true}`.
+/// `dir` must have been opened with `OpenOptions.iterate` set to `true`.
 ///
 /// `Walker.deinit` releases allocated memory and directory handles.
 ///
@@ -278,7 +283,7 @@ pub const SelectiveWalker = struct {
 ///
 /// See also `walk`.
 pub fn walkSelectively(dir: Dir, allocator: Allocator) !SelectiveWalker {
-    var stack: std.ArrayList(Walker.StackItem) = .empty;
+    var stack: std.ArrayList(SelectiveWalker.StackItem) = .empty;
 
     try stack.append(allocator, .{
         .iter = dir.iterate(),
@@ -310,11 +315,6 @@ pub const Walker = struct {
         pub fn depth(self: Walker.Entry) usize {
             return std.mem.countScalar(u8, self.path, path.sep) + 1;
         }
-    };
-
-    const StackItem = struct {
-        iter: Dir.Iterator,
-        dirname_len: usize,
     };
 
     /// After each call to this function, and on deinit(), the memory returned
