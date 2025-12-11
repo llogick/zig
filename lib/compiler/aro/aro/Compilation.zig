@@ -660,6 +660,7 @@ fn generateSystemDefines(comp: *Compilation, w: *Io.Writer) !void {
             try define(w, "__PPC64__");
             try define(w, "_ARCH_PPC");
             try define(w, "_ARCH_PPC64");
+            try w.writeAll("#define _CALL_ELF 2\n");
         },
         .sparc64 => {
             try defineStd(w, "sparc", is_gnu);
