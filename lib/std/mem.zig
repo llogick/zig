@@ -3007,7 +3007,7 @@ pub fn window(comptime T: type, buffer: []const T, size: usize, advance: usize) 
     assert(size != 0);
     assert(advance != 0);
     return .{
-        .index = 0,
+        .index = if (buffer.len > 0) 0 else null,
         .buffer = buffer,
         .size = size,
         .advance = advance,
@@ -3018,82 +3018,121 @@ test window {
     {
         // moving average size 3
         var it = window(u8, "abcdefg", 3, 1);
-        try testing.expectEqualSlices(u8, it.next().?, "abc");
-        try testing.expectEqualSlices(u8, it.next().?, "bcd");
-        try testing.expectEqualSlices(u8, it.next().?, "cde");
-        try testing.expectEqualSlices(u8, it.next().?, "def");
-        try testing.expectEqualSlices(u8, it.next().?, "efg");
-        try testing.expectEqual(it.next(), null);
+        try testing.expectEqualSlices(u8, "abc", it.next().?);
+        try testing.expectEqualSlices(u8, "bcd", it.next().?);
+        try testing.expectEqualSlices(u8, "cde", it.next().?);
+        try testing.expectEqualSlices(u8, "def", it.next().?);
+        try testing.expectEqualSlices(u8, "efg", it.next().?);
+        try testing.expectEqual(null, it.next());
 
         // multibyte
         var it16 = window(u16, std.unicode.utf8ToUtf16LeStringLiteral("abcdefg"), 3, 1);
-        try testing.expectEqualSlices(u16, it16.next().?, std.unicode.utf8ToUtf16LeStringLiteral("abc"));
-        try testing.expectEqualSlices(u16, it16.next().?, std.unicode.utf8ToUtf16LeStringLiteral("bcd"));
-        try testing.expectEqualSlices(u16, it16.next().?, std.unicode.utf8ToUtf16LeStringLiteral("cde"));
-        try testing.expectEqualSlices(u16, it16.next().?, std.unicode.utf8ToUtf16LeStringLiteral("def"));
-        try testing.expectEqualSlices(u16, it16.next().?, std.unicode.utf8ToUtf16LeStringLiteral("efg"));
+        try testing.expectEqualSlices(u16, std.unicode.utf8ToUtf16LeStringLiteral("abc"), it16.next().?);
+        try testing.expectEqualSlices(u16, std.unicode.utf8ToUtf16LeStringLiteral("bcd"), it16.next().?);
+        try testing.expectEqualSlices(u16, std.unicode.utf8ToUtf16LeStringLiteral("cde"), it16.next().?);
+        try testing.expectEqualSlices(u16, std.unicode.utf8ToUtf16LeStringLiteral("def"), it16.next().?);
+        try testing.expectEqualSlices(u16, std.unicode.utf8ToUtf16LeStringLiteral("efg"), it16.next().?);
         try testing.expectEqual(it16.next(), null);
     }
 
     {
         // chunk/split every 3
         var it = window(u8, "abcdefg", 3, 3);
-        try testing.expectEqualSlices(u8, it.next().?, "abc");
-        try testing.expectEqualSlices(u8, it.next().?, "def");
-        try testing.expectEqualSlices(u8, it.next().?, "g");
-        try testing.expectEqual(it.next(), null);
+        try testing.expectEqualSlices(u8, "abc", it.next().?);
+        try testing.expectEqualSlices(u8, "def", it.next().?);
+        try testing.expectEqualSlices(u8, "g", it.next().?);
+        try testing.expectEqual(null, it.next());
     }
 
     {
         // pick even
         var it = window(u8, "abcdefg", 1, 2);
-        try testing.expectEqualSlices(u8, it.next().?, "a");
-        try testing.expectEqualSlices(u8, it.next().?, "c");
-        try testing.expectEqualSlices(u8, it.next().?, "e");
-        try testing.expectEqualSlices(u8, it.next().?, "g");
-        try testing.expectEqual(it.next(), null);
+        try testing.expectEqualSlices(u8, "a", it.next().?);
+        try testing.expectEqualSlices(u8, "c", it.next().?);
+        try testing.expectEqualSlices(u8, "e", it.next().?);
+        try testing.expectEqualSlices(u8, "g", it.next().?);
+        try testing.expectEqual(null, it.next());
+
+        it = window(u8, "abcdefgh", 1, 2);
+        try testing.expectEqualSlices(u8, "a", it.next().?);
+        try testing.expectEqualSlices(u8, "c", it.next().?);
+        try testing.expectEqualSlices(u8, "e", it.next().?);
+        try testing.expectEqualSlices(u8, "g", it.next().?);
+        try testing.expectEqual(null, it.next());
     }
 
     {
         // empty
         var it = window(u8, "", 1, 1);
-        try testing.expectEqualSlices(u8, it.next().?, "");
-        try testing.expectEqual(it.next(), null);
+        try testing.expectEqual(null, it.next());
 
         it = window(u8, "", 10, 1);
-        try testing.expectEqualSlices(u8, it.next().?, "");
-        try testing.expectEqual(it.next(), null);
+        try testing.expectEqual(null, it.next());
 
         it = window(u8, "", 1, 10);
-        try testing.expectEqualSlices(u8, it.next().?, "");
-        try testing.expectEqual(it.next(), null);
+        try testing.expectEqual(null, it.next());
 
         it = window(u8, "", 10, 10);
-        try testing.expectEqualSlices(u8, it.next().?, "");
-        try testing.expectEqual(it.next(), null);
+        try testing.expectEqual(null, it.next());
     }
 
     {
         // first
         var it = window(u8, "abcdefg", 3, 3);
-        try testing.expectEqualSlices(u8, it.first(), "abc");
+        try testing.expectEqualSlices(u8, "abc", it.next().?);
         it.reset();
-        try testing.expectEqualSlices(u8, it.next().?, "abc");
+        try testing.expectEqualSlices(u8, "abc", it.next().?);
     }
 
     {
         // reset
         var it = window(u8, "abcdefg", 3, 3);
-        try testing.expectEqualSlices(u8, it.next().?, "abc");
-        try testing.expectEqualSlices(u8, it.next().?, "def");
-        try testing.expectEqualSlices(u8, it.next().?, "g");
-        try testing.expectEqual(it.next(), null);
+        try testing.expectEqualSlices(u8, "abc", it.next().?);
+        try testing.expectEqualSlices(u8, "def", it.next().?);
+        try testing.expectEqualSlices(u8, "g", it.next().?);
+        try testing.expectEqual(null, it.next());
 
         it.reset();
-        try testing.expectEqualSlices(u8, it.next().?, "abc");
-        try testing.expectEqualSlices(u8, it.next().?, "def");
-        try testing.expectEqualSlices(u8, it.next().?, "g");
-        try testing.expectEqual(it.next(), null);
+        try testing.expectEqualSlices(u8, "abc", it.next().?);
+        try testing.expectEqualSlices(u8, "def", it.next().?);
+        try testing.expectEqualSlices(u8, "g", it.next().?);
+        try testing.expectEqual(null, it.next());
+    }
+
+    {
+        // size > buffer.len
+        var it = window(u8, "abcdefg", 100, 1);
+        try testing.expectEqualSlices(u8, "abcdefg", it.next().?);
+        try testing.expectEqual(null, it.next());
+    }
+
+    {
+        // advance >= buffer.len
+        var it = window(u8, "abcdefg", 1, 7);
+        try testing.expectEqualSlices(u8, "a", it.next().?);
+        try testing.expectEqual(null, it.next());
+    }
+
+    {
+        // advance == 1 and size == 1
+        var it = window(u8, "abcdefg", 1, 1);
+        try testing.expectEqualSlices(u8, "a", it.next().?);
+        try testing.expectEqualSlices(u8, "b", it.next().?);
+        try testing.expectEqualSlices(u8, "c", it.next().?);
+        try testing.expectEqualSlices(u8, "d", it.next().?);
+        try testing.expectEqualSlices(u8, "e", it.next().?);
+        try testing.expectEqualSlices(u8, "f", it.next().?);
+        try testing.expectEqualSlices(u8, "g", it.next().?);
+        try testing.expectEqual(null, it.next());
+    }
+
+    {
+        // advance > size
+        var it = window(u8, "abcdefg", 2, 3);
+        try testing.expectEqualSlices(u8, "ab", it.next().?);
+        try testing.expectEqualSlices(u8, "de", it.next().?);
+        try testing.expectEqualSlices(u8, "g", it.next().?);
+        try testing.expectEqual(null, it.next());
     }
 }
 
@@ -3107,27 +3146,17 @@ pub fn WindowIterator(comptime T: type) type {
 
         const Self = @This();
 
-        /// Returns a slice of the first window.
-        /// Call this only to get the first window and then use `next` to get
-        /// all subsequent windows.
-        /// Asserts that iteration has not begun.
-        pub fn first(self: *Self) []const T {
-            assert(self.index.? == 0);
-            return self.next().?;
-        }
-
         /// Returns a slice of the next window, or null if window is at end.
         pub fn next(self: *Self) ?[]const T {
             const start = self.index orelse return null;
             const next_index = start + self.advance;
-            const end = if (start + self.size < self.buffer.len and next_index < self.buffer.len) blk: {
-                self.index = next_index;
+            const end = if (start + self.size < self.buffer.len) blk: {
+                self.index = if (next_index < self.buffer.len) next_index else null;
                 break :blk start + self.size;
             } else blk: {
                 self.index = null;
                 break :blk self.buffer.len;
             };
-
             return self.buffer[start..end];
         }
 
