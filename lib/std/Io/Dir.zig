@@ -143,6 +143,12 @@ pub const Reader = struct {
             if (r.state == .finished) return null;
         }
     }
+
+    pub fn reset(r: *Reader) void {
+        r.state = .reset;
+        r.index = 0;
+        r.end = 0;
+    }
 };
 
 /// This API is designed for convenience rather than performance:

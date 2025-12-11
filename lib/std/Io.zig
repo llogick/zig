@@ -2183,16 +2183,12 @@ pub fn select(io: Io, s: anytype) Cancelable!SelectUnion(@TypeOf(s)) {
 /// See also:
 /// * `tryLockStderrWriter`
 pub fn lockStderrWriter(io: Io, buffer: []u8) Cancelable!*File.Writer {
-    const result = try io.vtable.lockStderrWriter(io.userdata, buffer);
-    result.io = io;
-    return result;
+    return io.vtable.lockStderrWriter(io.userdata, buffer);
 }
 
 /// Same as `lockStderrWriter` but uncancelable and non-blocking.
 pub fn tryLockStderrWriter(io: Io, buffer: []u8) ?*File.Writer {
-    const result = io.vtable.tryLockStderrWriter(io.userdata, buffer) orelse return null;
-    result.io = io;
-    return result;
+    return io.vtable.tryLockStderrWriter(io.userdata, buffer);
 }
 
 pub fn unlockStderrWriter(io: Io) void {

@@ -1870,10 +1870,14 @@ fn dirStatPathPosix(
 
     const flags: u32 = if (!options.follow_symlinks) posix.AT.SYMLINK_NOFOLLOW else 0;
 
+    return posixStatPath(current_thread, dir.handle, sub_path_posix, flags);
+}
+
+fn posixStatPath(current_thread: *Thread, dir_fd: posix.fd_t, sub_path: [:0]const u8, flags: u32) Dir.StatPathError!File.Stat {
     try current_thread.beginSyscall();
     while (true) {
         var stat = std.mem.zeroes(posix.Stat);
-        switch (posix.errno(fstatat_sym(dir.handle, sub_path_posix, &stat, flags))) {
+        switch (posix.errno(fstatat_sym(dir_fd, sub_path, &stat, flags))) {
             .SUCCESS => {
                 current_thread.endSyscall();
                 return statFromPosix(&stat);
@@ -3273,6 +3277,12 @@ fn dirClose(userdata: ?*anyopaque, dirs: []const Dir) void {
 
 const dirRead = switch (native_os) {
     .linux => dirReadLinux,
+    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => dirReadDarwin,
+    .freebsd, .netbsd, .dragonfly, .openbsd => dirReadBsd,
+    .illumos => dirReadIllumos,
+    .haiku => dirReadHaiku,
+    .windows => dirReadWindows,
+    .wasi => dirReadWasi,
     else => dirReadUnimplemented,
 };
 
@@ -3339,7 +3349,6 @@ fn dirReadLinux(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Dir
         dr.index = next_index;
 
         const name = std.mem.sliceTo(@as([*:0]u8, @ptrCast(&linux_entry.name)), 0);
-        // Skip "." and ".." entries.
         if (std.mem.eql(u8, name, ".") or std.mem.eql(u8, name, "..")) continue;
 
         const entry_kind: File.Kind = switch (linux_entry.type) {
@@ -3360,6 +3369,278 @@ fn dirReadLinux(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Dir
         buffer_index += 1;
     }
     return buffer_index;
+}
+
+fn dirReadDarwin(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Dir.Reader.Error!usize {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+    const Header = extern struct {
+        seek: i64,
+    };
+    const header: *Header = @ptrCast(&dr.buffer);
+    const header_end: usize = @sizeOf(Header);
+    if (dr.index < header_end) {
+        // Initialize header.
+        dr.index = header_end;
+        header.* = .{ .seek = 0 };
+    }
+    var buffer_index: usize = 0;
+    while (buffer.len - buffer_index != 0) {
+        if (dr.end - dr.index == 0) {
+            // Refill the buffer, unless we've already created references to
+            // buffered data.
+            if (buffer_index != 0) break;
+            if (dr.state == .reset) {
+                posixSeekTo(current_thread, dr.dir.handle, 0) catch |err| switch (err) {
+                    error.Unseekable => return error.Unexpected,
+                    else => |e| return e,
+                };
+                dr.state = .reading;
+            }
+            const dents_buffer = dr.buffer[header_end..];
+            try current_thread.beginSyscall();
+            const n: usize = while (true) {
+                const rc = posix.system.getdirentries(dr.dir.fd, dents_buffer.ptr, dents_buffer.len, &header.seek);
+                switch (posix.errno(rc)) {
+                    .SUCCESS => {
+                        current_thread.endSyscall();
+                        break @intCast(rc);
+                    },
+                    .INTR => {
+                        try current_thread.checkCancel();
+                        continue;
+                    },
+                    .CANCELED => return current_thread.endSyscallCanceled(),
+                    else => |e| {
+                        current_thread.endSyscall();
+                        switch (e) {
+                            .BADF => |err| return errnoBug(err), // Dir is invalid or was opened without iteration ability
+                            .FAULT => |err| return errnoBug(err),
+                            .NOTDIR => |err| return errnoBug(err),
+                            .INVAL => |err| return errnoBug(err),
+                            else => |err| return posix.unexpectedErrno(err),
+                        }
+                    },
+                }
+            };
+            if (n == 0) {
+                dr.state = .finished;
+                return 0;
+            }
+            dr.index = header_end;
+            dr.end = header_end + n;
+        }
+        const darwin_entry = @as(*align(1) posix.system.dirent, @ptrCast(&dr.buffer[dr.index]));
+        const next_index = dr.index + darwin_entry.reclen;
+        dr.index = next_index;
+
+        const name = @as([*]u8, @ptrCast(&darwin_entry.name))[0..darwin_entry.namlen];
+        if (std.mem.eql(u8, name, ".") or std.mem.eql(u8, name, "..") or (darwin_entry.ino == 0))
+            continue;
+
+        const entry_kind: File.Kind = switch (darwin_entry.type) {
+            posix.DT.BLK => .block_device,
+            posix.DT.CHR => .character_device,
+            posix.DT.DIR => .directory,
+            posix.DT.FIFO => .named_pipe,
+            posix.DT.LNK => .sym_link,
+            posix.DT.REG => .file,
+            posix.DT.SOCK => .unix_domain_socket,
+            posix.DT.WHT => .whiteout,
+            else => .unknown,
+        };
+        buffer[buffer_index] = .{
+            .name = name,
+            .kind = entry_kind,
+            .inode = darwin_entry.ino,
+        };
+        buffer_index += 1;
+    }
+    return buffer_index;
+}
+
+fn dirReadBsd(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Dir.Reader.Error!usize {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+    var buffer_index: usize = 0;
+    while (buffer.len - buffer_index != 0) {
+        if (dr.end - dr.index == 0) {
+            // Refill the buffer, unless we've already created references to
+            // buffered data.
+            if (buffer_index != 0) break;
+            if (dr.state == .reset) {
+                posixSeekTo(current_thread, dr.dir.handle, 0) catch |err| switch (err) {
+                    error.Unseekable => return error.Unexpected,
+                    else => |e| return e,
+                };
+                dr.state = .reading;
+            }
+            try current_thread.beginSyscall();
+            const n: usize = while (true) {
+                const rc = posix.system.getdents(dr.dir.handle, dr.buffer.ptr, dr.buffer.len);
+                switch (posix.errno(rc)) {
+                    .SUCCESS => {
+                        current_thread.endSyscall();
+                        break @intCast(rc);
+                    },
+                    .INTR => {
+                        try current_thread.checkCancel();
+                        continue;
+                    },
+                    .CANCELED => return current_thread.endSyscallCanceled(),
+                    else => |e| {
+                        current_thread.endSyscall();
+                        switch (e) {
+                            .BADF => |err| return errnoBug(err), // Dir is invalid or was opened without iteration ability
+                            .FAULT => |err| return errnoBug(err),
+                            .NOTDIR => |err| return errnoBug(err),
+                            .INVAL => |err| return errnoBug(err),
+                            // Introduced in freebsd 13.2: directory unlinked
+                            // but still open. To be consistent, iteration ends
+                            // if the directory being iterated is deleted
+                            // during iteration.
+                            .NOENT => {
+                                dr.state = .finished;
+                                return 0;
+                            },
+                            else => |err| return posix.unexpectedErrno(err),
+                        }
+                    },
+                }
+            };
+            if (n == 0) {
+                dr.state = .finished;
+                return 0;
+            }
+            dr.index = 0;
+            dr.end = n;
+        }
+        const bsd_entry = @as(*align(1) posix.system.dirent, @ptrCast(&dr.buffer[dr.index]));
+        const next_index = dr.index +
+            if (@hasField(posix.system.dirent, "reclen")) bsd_entry.reclen else bsd_entry.reclen();
+        dr.index = next_index;
+
+        const name = @as([*]u8, @ptrCast(&bsd_entry.name))[0..bsd_entry.namlen];
+
+        const skip_zero_fileno = switch (native_os) {
+            // fileno=0 is used to mark invalid entries or deleted files.
+            .openbsd, .netbsd => true,
+            else => false,
+        };
+        if (std.mem.eql(u8, name, ".") or std.mem.eql(u8, name, "..") or
+            (skip_zero_fileno and bsd_entry.fileno == 0))
+        {
+            continue;
+        }
+
+        const entry_kind: File.Kind = switch (bsd_entry.type) {
+            posix.DT.BLK => .block_device,
+            posix.DT.CHR => .character_device,
+            posix.DT.DIR => .directory,
+            posix.DT.FIFO => .named_pipe,
+            posix.DT.LNK => .sym_link,
+            posix.DT.REG => .file,
+            posix.DT.SOCK => .unix_domain_socket,
+            posix.DT.WHT => .whiteout,
+            else => .unknown,
+        };
+        buffer[buffer_index] = .{
+            .name = name,
+            .kind = entry_kind,
+            .inode = bsd_entry.fileno,
+        };
+        buffer_index += 1;
+    }
+    return buffer_index;
+}
+
+fn dirReadIllumos(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Dir.Reader.Error!usize {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+    var buffer_index: usize = 0;
+    while (buffer.len - buffer_index != 0) {
+        if (dr.end - dr.index == 0) {
+            // Refill the buffer, unless we've already created references to
+            // buffered data.
+            if (buffer_index != 0) break;
+            if (dr.state == .reset) {
+                posixSeekTo(current_thread, dr.dir.handle, 0) catch |err| switch (err) {
+                    error.Unseekable => return error.Unexpected,
+                    else => |e| return e,
+                };
+                dr.state = .reading;
+            }
+            try current_thread.beginSyscall();
+            const n: usize = while (true) {
+                const rc = posix.system.getdents(dr.dir.handle, dr.buffer.ptr, dr.buffer.len);
+                switch (posix.errno(rc)) {
+                    .SUCCESS => {
+                        current_thread.endSyscall();
+                        break rc;
+                    },
+                    .INTR => {
+                        try current_thread.checkCancel();
+                        continue;
+                    },
+                    .CANCELED => return current_thread.endSyscallCanceled(),
+                    else => |e| {
+                        current_thread.endSyscall();
+                        switch (e) {
+                            .BADF => |err| return errnoBug(err), // Dir is invalid or was opened without iteration ability
+                            .FAULT => |err| return errnoBug(err),
+                            .NOTDIR => |err| return errnoBug(err),
+                            .INVAL => |err| return errnoBug(err),
+                            else => |err| return posix.unexpectedErrno(err),
+                        }
+                    },
+                }
+            };
+            if (n == 0) {
+                dr.state = .finished;
+                return 0;
+            }
+            dr.index = 0;
+            dr.end = n;
+        }
+        const entry = @as(*align(1) posix.system.dirent, @ptrCast(&dr.buffer[dr.index]));
+        const next_index = dr.index + entry.reclen;
+        dr.index = next_index;
+
+        const name = std.mem.sliceTo(@as([*:0]u8, @ptrCast(&entry.name)), 0);
+        if (std.mem.eql(u8, name, ".") or std.mem.eql(u8, name, "..")) continue;
+
+        // illumos dirent doesn't expose type, so we have to call stat to get it.
+        const stat = try posixStatPath(current_thread, dr.dir.handle, name, posix.AT.SYMLINK_NOFOLLOW);
+
+        buffer[buffer_index] = .{
+            .name = name,
+            .kind = stat.kind,
+            .inode = entry.ino,
+        };
+        buffer_index += 1;
+    }
+    return buffer_index;
+}
+
+fn dirReadHaiku(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Dir.Reader.Error!usize {
+    _ = userdata;
+    _ = dr;
+    _ = buffer;
+    @panic("TODO");
+}
+
+fn dirReadWindows(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Dir.Reader.Error!usize {
+    _ = userdata;
+    _ = dr;
+    _ = buffer;
+    @panic("TODO");
+}
+
+fn dirReadWasi(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Dir.Reader.Error!usize {
+    _ = userdata;
+    _ = dr;
+    _ = buffer;
+    @panic("TODO");
 }
 
 fn dirReadUnimplemented(userdata: ?*anyopaque, dir_reader: *Dir.Reader, buffer: []Dir.Entry) Dir.Reader.Error!usize {
@@ -9628,8 +9909,10 @@ fn lockStderrWriter(userdata: ?*anyopaque, buffer: []u8) Io.Cancelable!*File.Wri
     // Only global mutex since this is Threaded.
     Io.stderr_thread_mutex.lock();
     if (!t.stderr_writer_initialized) {
+        const io_t = ioBasic(t);
         if (is_windows) t.stderr_writer.file = .stderr();
-        t.stderr_writer.mode = try .detect(ioBasic(t), t.stderr_writer.file, true, .streaming_simple);
+        t.stderr_writer.io = io_t;
+        t.stderr_writer.mode = try .detect(io_t, t.stderr_writer.file, true, .streaming_simple);
         t.stderr_writer_initialized = true;
     }
     std.Progress.clearWrittenWithEscapeCodes(&t.stderr_writer) catch {};
@@ -9643,8 +9926,10 @@ fn tryLockStderrWriter(userdata: ?*anyopaque, buffer: []u8) ?*File.Writer {
     // Only global mutex since this is Threaded.
     if (!Io.stderr_thread_mutex.tryLock()) return null;
     if (!t.stderr_writer_initialized) {
+        const io_t = ioBasic(t);
         if (is_windows) t.stderr_writer.file = .stderr();
-        t.stderr_writer.mode = File.Writer.Mode.detect(ioBasic(t), t.stderr_writer.file, true, .streaming_simple) catch
+        t.stderr_writer.io = io_t;
+        t.stderr_writer.mode = File.Writer.Mode.detect(io_t, t.stderr_writer.file, true, .streaming_simple) catch
             return null;
         t.stderr_writer_initialized = true;
     }
