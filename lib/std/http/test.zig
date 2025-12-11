@@ -12,6 +12,8 @@ const expectEqualStrings = std.testing.expectEqualStrings;
 const expectError = std.testing.expectError;
 
 test "trailers" {
+    if (builtin.cpu.arch.isPowerPC64() and builtin.mode != .Debug) return error.SkipZigTest; // https://github.com/llvm/llvm-project/issues/171879
+
     const io = std.testing.io;
     const test_server = try createTestServer(io, struct {
         fn run(test_server: *TestServer) anyerror!void {
@@ -96,6 +98,8 @@ test "trailers" {
 }
 
 test "HTTP server handles a chunked transfer coding request" {
+    if (builtin.cpu.arch.isPowerPC64() and builtin.mode != .Debug) return error.SkipZigTest; // https://github.com/llvm/llvm-project/issues/171879
+
     const io = std.testing.io;
     const test_server = try createTestServer(io, struct {
         fn run(test_server: *TestServer) anyerror!void {
@@ -162,6 +166,8 @@ test "HTTP server handles a chunked transfer coding request" {
 }
 
 test "echo content server" {
+    if (builtin.cpu.arch.isPowerPC64() and builtin.mode != .Debug) return error.SkipZigTest; // https://github.com/llvm/llvm-project/issues/171879
+
     const io = std.testing.io;
     const test_server = try createTestServer(io, struct {
         fn run(test_server: *TestServer) anyerror!void {
@@ -250,6 +256,8 @@ test "echo content server" {
 }
 
 test "Server.Request.respondStreaming non-chunked, unknown content-length" {
+    if (builtin.cpu.arch.isPowerPC64() and builtin.mode != .Debug) return error.SkipZigTest; // https://github.com/llvm/llvm-project/issues/171879
+
     const io = std.testing.io;
 
     if (builtin.os.tag == .windows) {
@@ -326,6 +334,8 @@ test "Server.Request.respondStreaming non-chunked, unknown content-length" {
 }
 
 test "receiving arbitrary http headers from the client" {
+    if (builtin.cpu.arch.isPowerPC64() and builtin.mode != .Debug) return error.SkipZigTest; // https://github.com/llvm/llvm-project/issues/171879
+
     const io = std.testing.io;
 
     const test_server = try createTestServer(io, struct {
@@ -389,6 +399,8 @@ test "receiving arbitrary http headers from the client" {
 }
 
 test "general client/server API coverage" {
+    if (builtin.cpu.arch.isPowerPC64() and builtin.mode != .Debug) return error.SkipZigTest; // https://github.com/llvm/llvm-project/issues/171879
+
     const io = std.testing.io;
 
     if (builtin.os.tag == .windows) {
@@ -882,6 +894,8 @@ test "general client/server API coverage" {
 }
 
 test "Server streams both reading and writing" {
+    if (builtin.cpu.arch.isPowerPC64() and builtin.mode != .Debug) return error.SkipZigTest; // https://github.com/llvm/llvm-project/issues/171879
+
     const io = std.testing.io;
 
     const test_server = try createTestServer(io, struct {
@@ -1136,6 +1150,8 @@ fn createTestServer(io: Io, S: type) !*TestServer {
 }
 
 test "redirect to different connection" {
+    if (builtin.cpu.arch.isPowerPC64() and builtin.mode != .Debug) return error.SkipZigTest; // https://github.com/llvm/llvm-project/issues/171879
+
     const io = std.testing.io;
     const test_server_new = try createTestServer(io, struct {
         fn run(test_server: *TestServer) anyerror!void {
