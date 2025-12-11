@@ -1147,7 +1147,6 @@ const GroupClosure = struct {
         const group = gc.group;
         const group_state: *std.atomic.Value(usize) = @ptrCast(&group.state);
         const event: *Io.Event = @ptrCast(&group.context);
-
         current_thread.current_closure = closure;
         current_thread.cancel_protection = .unblocked;
 

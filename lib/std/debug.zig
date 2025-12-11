@@ -816,9 +816,9 @@ pub fn writeStackTrace(st: *const StackTrace, writer: *Writer, fwm: File.Writer.
 }
 /// A thin wrapper around `writeStackTrace` which writes to stderr and ignores write errors.
 pub fn dumpStackTrace(st: *const StackTrace) void {
-    const stderr, const tty_config = lockStderrWriter(&.{});
+    const stderr = lockStderrWriter(&.{});
     defer unlockStderrWriter();
-    writeStackTrace(st, stderr, tty_config) catch |err| switch (err) {
+    writeStackTrace(st, &stderr.interface, stderr.mode) catch |err| switch (err) {
         error.WriteFailed => {},
     };
 }
@@ -1682,21 +1682,21 @@ pub fn ConfigurableTrace(comptime size: usize, comptime stack_frame_count: usize
         pub fn dump(t: @This()) void {
             if (!enabled) return;
 
-            const stderr, const tty_config = lockStderrWriter(&.{});
+            const stderr = lockStderrWriter(&.{});
             defer unlockStderrWriter();
             const end = @min(t.index, size);
             for (t.addrs[0..end], 0..) |frames_array, i| {
-                stderr.print("{s}:\n", .{t.notes[i]}) catch return;
+                stderr.interface.print("{s}:\n", .{t.notes[i]}) catch return;
                 var frames_array_mutable = frames_array;
                 const frames = mem.sliceTo(frames_array_mutable[0..], 0);
                 const stack_trace: StackTrace = .{
                     .index = frames.len,
                     .instruction_addresses = frames,
                 };
-                writeStackTrace(&stack_trace, stderr, tty_config) catch return;
+                writeStackTrace(&stack_trace, &stderr.interface, stderr.mode) catch return;
             }
             if (t.index > end) {
-                stderr.print("{d} more traces not shown; consider increasing trace size\n", .{
+                stderr.interface.print("{d} more traces not shown; consider increasing trace size\n", .{
                     t.index - end,
                 }) catch return;
             }
