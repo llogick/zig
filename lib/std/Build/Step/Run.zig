@@ -1257,30 +1257,6 @@ fn runCommand(
     };
     defer env_map.deinit();
 
-    color: switch (run.color) {
-        .manual => {},
-        .enable => {
-            try env_map.put("CLICOLOR_FORCE", "1");
-            env_map.remove("NO_COLOR");
-        },
-        .disable => {
-            try env_map.put("NO_COLOR", "1");
-            env_map.remove("CLICOLOR_FORCE");
-        },
-        .inherit => {},
-        .auto => {
-            const capture_stderr = run.captured_stderr != null or switch (run.stdio) {
-                .check => |checks| checksContainStderr(checks.items),
-                .infer_from_args, .inherit, .zig_test => false,
-            };
-            if (capture_stderr) {
-                continue :color .disable;
-            } else {
-                continue :color .inherit;
-            }
-        },
-    }
-
     const opt_generic_result = spawnChildAndCollect(run, argv, &env_map, has_side_effects, options, fuzz_context) catch |err| term: {
         // InvalidExe: cpu arch mismatch
         // FileNotFound: can happen with a wrong dynamic linker path
@@ -1648,12 +1624,44 @@ fn spawnChildAndCollect(
         if (!run.disable_zig_progress and !inherit) {
             child.progress_node = options.progress_node;
         }
-        if (inherit) _ = std.debug.lockStderrWriter(&.{});
+        if (inherit) {
+            const stderr = std.debug.lockStderrWriter(&.{});
+            try setColorEnvironmentVariables(run, env_map, stderr.mode);
+        }
         defer if (inherit) std.debug.unlockStderrWriter();
         var timer = try std.time.Timer.start();
         const res = try evalGeneric(run, &child);
         run.step.result_duration_ns = timer.read();
         return .{ .term = res.term, .stdout = res.stdout, .stderr = res.stderr };
+    }
+}
+
+fn setColorEnvironmentVariables(run: *Run, env_map: *EnvMap, fwm: Io.File.Writer.Mode) !void {
+    color: switch (run.color) {
+        .manual => {},
+        .enable => {
+            try env_map.put("CLICOLOR_FORCE", "1");
+            env_map.remove("NO_COLOR");
+        },
+        .disable => {
+            try env_map.put("NO_COLOR", "1");
+            env_map.remove("CLICOLOR_FORCE");
+        },
+        .inherit => switch (fwm) {
+            .terminal_escaped => continue :color .enable,
+            else => continue :color .disable,
+        },
+        .auto => {
+            const capture_stderr = run.captured_stderr != null or switch (run.stdio) {
+                .check => |checks| checksContainStderr(checks.items),
+                .infer_from_args, .inherit, .zig_test => false,
+            };
+            if (capture_stderr) {
+                continue :color .disable;
+            } else {
+                continue :color .inherit;
+            }
+        },
     }
 }
 
