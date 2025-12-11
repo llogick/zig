@@ -300,12 +300,12 @@ fn drainEscaping(w: *Writer, data: []const []const u8, splat: usize) Io.Writer.E
     const header = w.interface.buffered();
     if (findTerminalEscape(header)) |i| {
         _ = i;
-        @panic("TODO strip terminal escape sequence");
+        // TODO strip terminal escape sequences here
     }
     for (data) |d| {
         if (findTerminalEscape(d)) |i| {
             _ = i;
-            @panic("TODO strip terminal escape sequence");
+            // TODO strip terminal escape sequences here
         }
     }
     const n = io.vtable.fileWriteStreaming(io.userdata, w.file, header, data, splat) catch |err| {
