@@ -1267,7 +1267,7 @@ extern fn c_ret_vector_256_bool() Vector256Bool;
 extern fn c_ret_vector_512_bool() Vector512Bool;
 
 test "bool simd vector" {
-    if (builtin.zig_backend == .stage2_llvm and (builtin.cpu.arch != .powerpc and builtin.cpu.arch != .wasm32)) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_llvm and builtin.cpu.arch != .wasm32) return error.SkipZigTest;
 
     {
         c_vector_2_bool(.{
@@ -3373,6 +3373,7 @@ test "bool simd vector" {
 comptime {
     skip: {
         if (builtin.zig_backend == .stage2_llvm and builtin.cpu.arch == .x86_64) break :skip;
+        if (builtin.zig_backend == .stage2_llvm and builtin.cpu.arch.isPowerPC()) break :skip;
 
         _ = struct {
             export fn zig_vector_2_bool(vec: Vector2Bool) void {
