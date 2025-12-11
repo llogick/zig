@@ -3280,19 +3280,9 @@ fn dirReadLinux(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Dir
     const linux = std.os.linux;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
-    const Header = extern struct {
-        fill_end: usize,
-    };
-    const header: *Header = @ptrCast(&dr.buffer);
-    const header_end: usize = @sizeOf(Header);
-    if (dr.index < header_end) {
-        // Initialize header.
-        dr.index = header_end;
-        header.* = .{ .fill_end = header_end };
-    }
     var buffer_index: usize = 0;
     while (buffer.len - buffer_index != 0) {
-        if (header.fill_end - dr.index == 0) {
+        if (dr.end - dr.index == 0) {
             // Refill the buffer, unless we've already created references to
             // buffered data.
             if (buffer_index != 0) break;
@@ -3303,10 +3293,9 @@ fn dirReadLinux(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Dir
                 };
                 dr.state = .reading;
             }
-            const dents_buffer = dr.buffer[header_end..];
             try current_thread.beginSyscall();
             const n = while (true) {
-                const rc = linux.getdents64(dr.dir.handle, dents_buffer.ptr, dents_buffer.len);
+                const rc = linux.getdents64(dr.dir.handle, dr.buffer.ptr, dr.buffer.len);
                 switch (linux.errno(rc)) {
                     .SUCCESS => {
                         current_thread.endSyscall();
@@ -3342,8 +3331,8 @@ fn dirReadLinux(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Dir
                 dr.state = .finished;
                 return 0;
             }
-            dr.index = header_end;
-            header.fill_end = header_end + n;
+            dr.index = 0;
+            dr.end = n;
         }
         const linux_entry: *align(1) linux.dirent64 = @ptrCast(&dr.buffer[dr.index]);
         const next_index = dr.index + linux_entry.reclen;

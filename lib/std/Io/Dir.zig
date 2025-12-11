@@ -95,8 +95,13 @@ pub const Reader = struct {
     dir: Dir,
     state: State,
     /// Stores I/O implementation specific data.
-    buffer: [2048]u8 align(@alignOf(usize)),
+    buffer: []u8 align(@alignOf(usize)),
+    /// Index of next entry in `buffer`.
     index: usize,
+    /// Fill position of `buffer`.
+    end: usize,
+
+    pub const min_buffer_len = 32;
 
     pub const State = enum {
         /// Indicates the next call to `read` should rewind and start over the
@@ -112,27 +117,45 @@ pub const Reader = struct {
         SystemResources,
     } || Io.UnexpectedError || Io.Cancelable;
 
-    pub fn init(dir: Dir) Reader {
+    pub fn init(dir: Dir, buffer: []align(@alignOf(usize)) u8) Reader {
+        assert(buffer.len >= min_buffer_len);
         return .{
             .dir = dir,
             .state = .reset,
             .index = 0,
-            .buffer = undefined,
+            .end = 0,
+            .buffer = buffer,
         };
     }
 
+    /// All `Entry.name` are invalidated with the next call to `read` or
+    /// `next`.
     pub fn read(r: *Reader, io: Io, buffer: []Entry) Error!usize {
         return io.vtable.dirRead(io.userdata, r, buffer);
     }
+
+    /// `Entry.name` is invalidated with the next call to `read` or `next`.
+    pub fn next(r: *Reader, io: Io) Error!?Entry {
+        var buffer: [1]Entry = undefined;
+        while (true) {
+            const n = try read(r, io, &buffer);
+            if (n == 1) return buffer[0];
+            if (r.state == .finished) return null;
+        }
+    }
 };
 
+/// This API is designed for convenience rather than performance:
+/// * It chooses a buffer size rather than allowing the user to provide one.
+/// * It is movable by only requesting one `Entry` at a time from the `Io`
+///   implementation rather than doing batch operations.
+///
+/// Still, it will do a decent job of minimizing syscall overhead. For a
+/// lower level abstraction, see `Reader`. For a higher level abstraction,
+/// see `Walker`.
 pub const Iterator = struct {
     reader: Reader,
-    buffer: [32]Entry,
-    /// Index of next entry in `buffer`.
-    index: usize,
-    /// Fill position of `buffer`.
-    end: usize,
+    reader_buffer: [2048]u8 align(@alignOf(usize)),
 
     pub const Error = Reader.Error;
 
@@ -142,27 +165,16 @@ pub const Iterator = struct {
                 .dir = dir,
                 .state = reader_state,
                 .index = 0,
+                .end = 0,
                 .buffer = undefined,
             },
-            .buffer = undefined,
-            .index = 0,
-            .end = 0,
+            .reader_buffer = undefined,
         };
     }
 
     pub fn next(it: *Iterator, io: Io) Error!?Entry {
-        if (it.end - it.index == 0) {
-            if (it.reader.state == .finished) return null;
-            it.end = try it.reader.read(io, &it.buffer);
-            it.index = 0;
-            if (it.end - it.index == 0) {
-                assert(it.reader.state == .finished);
-                return null;
-            }
-        }
-        const index = it.index;
-        it.index = index + 1;
-        return it.buffer[index];
+        it.reader.buffer = &it.reader_buffer;
+        return it.reader.next(io);
     }
 };
 
@@ -178,14 +190,14 @@ pub fn iterateAssumeFirstIteration(dir: Dir) Iterator {
 }
 
 pub const SelectiveWalker = struct {
-    stack: std.ArrayList(Walker.StackItem),
+    stack: std.ArrayList(StackItem),
     name_buffer: std.ArrayList(u8),
     allocator: Allocator,
 
-    pub const Error = Io.Dir.Iterator.Error || Allocator.Error;
+    pub const Error = Iterator.Error || Allocator.Error;
 
     const StackItem = struct {
-        iter: Dir.Iterator,
+        iter: Iterator,
         dirname_len: usize,
     };
 
@@ -942,7 +954,7 @@ pub fn renameAbsolute(io: Io, old_path: []const u8, new_path: []const u8) Rename
     return io.vtable.dirRename(io.userdata, my_cwd, old_path, my_cwd, new_path);
 }
 
-/// Use with `Dir.symLink`, `Dir.symLinkAtomic`, and `symLinkAbsolute` to
+/// Use with `symLink`, `symLinkAtomic`, and `symLinkAbsolute` to
 /// specify whether the symlink will point to a file or a directory. This value
 /// is ignored on all hosts except Windows where creating symlinks to different
 /// resource types, requires different flags. By default, `symLinkAbsolute` is
@@ -1182,7 +1194,7 @@ pub fn deleteTree(dir: Dir, io: Io, sub_path: []const u8) DeleteTreeError!void {
     const StackItem = struct {
         name: []const u8,
         parent_dir: Dir,
-        iter: Dir.Iterator,
+        iter: Iterator,
 
         fn closeAll(inner_io: Io, items: []@This()) void {
             for (items) |*item| item.iter.reader.dir.close(inner_io);
