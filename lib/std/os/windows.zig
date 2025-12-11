@@ -2574,23 +2574,6 @@ pub fn CreatePipe(rd: *HANDLE, wr: *HANDLE, sattr: *const SECURITY_ATTRIBUTES) C
     wr.* = write;
 }
 
-pub const DeviceIoControlError = error{
-    AccessDenied,
-    /// The volume does not contain a recognized file system. File system
-    /// drivers might not be loaded, or the volume may be corrupt.
-    UnrecognizedVolume,
-    Pending,
-    /// Attempted to connect a named pipe in the "closing" state, meaning a previous client has
-    /// has closed their handle but we have not yet disconnected the pipe.
-    PipeClosing,
-    /// Attempted to connect a named pipe in the "connected" state, meaning a client has already
-    /// opened the pipe; there is a good connection between client and server.
-    PipeAlreadyConnected,
-    /// Attempted to connect a non-blocking named pipe which is already listening for connections.
-    PipeAlreadyListening,
-    Unexpected,
-};
-
 /// A Zig wrapper around `NtDeviceIoControlFile` and `NtFsControlFile` syscalls.
 /// It implements similar behavior to `DeviceIoControl` and is meant to serve
 /// as a direct substitute for that call.
@@ -2606,9 +2589,9 @@ pub fn DeviceIoControl(
         in: []const u8 = &.{},
         out: []u8 = &.{},
     },
-) DeviceIoControlError!void {
+) NTSTATUS {
     var io_status_block: IO_STATUS_BLOCK = undefined;
-    const rc = switch (io_control_code.DeviceType) {
+    return switch (io_control_code.DeviceType) {
         .FILE_SYSTEM, .NAMED_PIPE => ntdll.NtFsControlFile(
             device,
             opts.event,
@@ -2634,19 +2617,6 @@ pub fn DeviceIoControl(
             @intCast(opts.out.len),
         ),
     };
-    switch (rc) {
-        .SUCCESS => {},
-        .PIPE_CLOSING => return error.PipeClosing,
-        .PIPE_CONNECTED => return error.PipeAlreadyConnected,
-        .PIPE_LISTENING => return error.PipeAlreadyListening,
-        .PRIVILEGE_NOT_HELD => return error.AccessDenied,
-        .ACCESS_DENIED => return error.AccessDenied,
-        .INVALID_DEVICE_REQUEST => return error.AccessDenied, // Not supported by the underlying filesystem
-        .INVALID_PARAMETER => unreachable,
-        .UNRECOGNIZED_VOLUME => return error.UnrecognizedVolume,
-        .PENDING => return error.Pending,
-        else => return unexpectedStatus(rc),
-    }
 }
 
 pub fn GetOverlappedResult(h: HANDLE, overlapped: *OVERLAPPED, wait: bool) !DWORD {
@@ -3037,9 +3007,6 @@ pub const CreateSymbolicLinkError = error{
     NoDevice,
     NetworkNotFound,
     BadPathName,
-    /// The volume does not contain a recognized file system. File system
-    /// drivers might not be loaded, or the volume may be corrupt.
-    UnrecognizedVolume,
     Unexpected,
 };
 
@@ -3139,13 +3106,14 @@ pub fn CreateSymbolicLink(
     @memcpy(buffer[@sizeOf(SYMLINK_DATA)..][0 .. final_target_path.len * 2], @as([*]const u8, @ptrCast(final_target_path)));
     const paths_start = @sizeOf(SYMLINK_DATA) + final_target_path.len * 2;
     @memcpy(buffer[paths_start..][0 .. final_target_path.len * 2], @as([*]const u8, @ptrCast(final_target_path)));
-    _ = DeviceIoControl(symlink_handle, FSCTL.SET_REPARSE_POINT, .{ .in = buffer[0..buf_len] }) catch |err| switch (err) {
-        error.PipeClosing => unreachable,
-        error.PipeAlreadyConnected => unreachable,
-        error.PipeAlreadyListening => unreachable,
-        error.Pending => unreachable,
-        else => |e| return e,
-    };
+    const rc = DeviceIoControl(symlink_handle, FSCTL.SET_REPARSE_POINT, .{ .in = buffer[0..buf_len] });
+    switch (rc) {
+        .SUCCESS => {},
+        .PRIVILEGE_NOT_HELD => return error.AccessDenied,
+        .ACCESS_DENIED => return error.AccessDenied,
+        .INVALID_DEVICE_REQUEST => return error.AccessDenied, // Not supported by the underlying filesystem
+        else => return unexpectedStatus(rc),
+    }
 }
 
 pub const ReadLinkError = error{
@@ -3184,15 +3152,11 @@ pub fn ReadLink(dir: ?HANDLE, sub_path_w: []const u16, out_buffer: []u16) ReadLi
     defer CloseHandle(result_handle);
 
     var reparse_buf: [MAXIMUM_REPARSE_DATA_BUFFER_SIZE]u8 align(@alignOf(REPARSE_DATA_BUFFER)) = undefined;
-    _ = DeviceIoControl(result_handle, FSCTL.GET_REPARSE_POINT, .{ .out = reparse_buf[0..] }) catch |err| switch (err) {
-        error.PipeClosing => unreachable,
-        error.PipeAlreadyConnected => unreachable,
-        error.PipeAlreadyListening => unreachable,
-        error.AccessDenied => return error.Unexpected,
-        error.UnrecognizedVolume => return error.Unexpected,
-        error.Pending => unreachable,
-        else => |e| return e,
-    };
+    const rc = DeviceIoControl(result_handle, FSCTL.GET_REPARSE_POINT, .{ .out = reparse_buf[0..] });
+    switch (rc) {
+        .SUCCESS => {},
+        else => return unexpectedStatus(rc),
+    }
 
     const reparse_struct: *const REPARSE_DATA_BUFFER = @ptrCast(@alignCast(&reparse_buf[0]));
     const IoReparseTagInt = @typeInfo(IO_REPARSE_TAG).@"struct".backing_integer.?;
@@ -3744,14 +3708,14 @@ pub fn GetFinalPathNameByHandle(
             input_struct.DeviceNameLength = @intCast(volume_name_u16.len * 2);
             @memcpy(input_buf[@sizeOf(MOUNTMGR_MOUNT_POINT)..][0 .. volume_name_u16.len * 2], @as([*]const u8, @ptrCast(volume_name_u16.ptr)));
 
-            DeviceIoControl(mgmt_handle, IOCTL.MOUNTMGR.QUERY_POINTS, .{ .in = &input_buf, .out = &output_buf }) catch |err| switch (err) {
-                error.PipeClosing => unreachable,
-                error.PipeAlreadyConnected => unreachable,
-                error.PipeAlreadyListening => unreachable,
-                error.AccessDenied => return error.Unexpected,
-                error.Pending => unreachable,
-                else => |e| return e,
-            };
+            {
+                const rc = DeviceIoControl(mgmt_handle, IOCTL.MOUNTMGR.QUERY_POINTS, .{ .in = &input_buf, .out = &output_buf });
+                switch (rc) {
+                    .SUCCESS => {},
+                    .OBJECT_NAME_NOT_FOUND => return error.FileNotFound,
+                    else => return unexpectedStatus(rc),
+                }
+            }
             const mount_points_struct: *const MOUNTMGR_MOUNT_POINTS = @ptrCast(&output_buf[0]);
 
             const mount_points = @as(
@@ -3803,14 +3767,12 @@ pub fn GetFinalPathNameByHandle(
                     vol_input_struct.DeviceNameLength = @intCast(symlink.len * 2);
                     @memcpy(@as([*]WCHAR, &vol_input_struct.DeviceName)[0..symlink.len], symlink);
 
-                    DeviceIoControl(mgmt_handle, IOCTL.MOUNTMGR.QUERY_DOS_VOLUME_PATH, .{ .in = &vol_input_buf, .out = &vol_output_buf }) catch |err| switch (err) {
-                        error.PipeClosing => unreachable,
-                        error.PipeAlreadyConnected => unreachable,
-                        error.PipeAlreadyListening => unreachable,
-                        error.AccessDenied => return error.Unexpected,
-                        error.Pending => unreachable,
-                        else => |e| return e,
-                    };
+                    const rc = DeviceIoControl(mgmt_handle, IOCTL.MOUNTMGR.QUERY_DOS_VOLUME_PATH, .{ .in = &vol_input_buf, .out = &vol_output_buf });
+                    switch (rc) {
+                        .SUCCESS => {},
+                        .UNRECOGNIZED_VOLUME => return error.UnrecognizedVolume,
+                        else => return unexpectedStatus(rc),
+                    }
                     const volume_paths_struct: *const MOUNTMGR_VOLUME_PATHS = @ptrCast(&vol_output_buf[0]);
                     const volume_path = std.mem.sliceTo(@as(
                         [*]const u16,
