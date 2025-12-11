@@ -3125,6 +3125,7 @@ pub const ReadLinkError = error{
     BadPathName,
     AntivirusInterference,
     UnsupportedReparsePointType,
+    NotLink,
 };
 
 /// `sub_path_w` will never be accessed after `out_buffer` has been written to, so it
@@ -3155,6 +3156,7 @@ pub fn ReadLink(dir: ?HANDLE, sub_path_w: []const u16, out_buffer: []u16) ReadLi
     const rc = DeviceIoControl(result_handle, FSCTL.GET_REPARSE_POINT, .{ .out = reparse_buf[0..] });
     switch (rc) {
         .SUCCESS => {},
+        .NOT_A_REPARSE_POINT => return error.NotLink,
         else => return unexpectedStatus(rc),
     }
 
