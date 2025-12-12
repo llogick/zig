@@ -870,67 +870,6 @@ test "pwrite with empty buffer" {
     try expectEqual(rc, 0);
 }
 
-fn getFileMode(dir: posix.fd_t, path: []const u8) !posix.mode_t {
-    const path_z = try posix.toPosixPath(path);
-    const mode: posix.mode_t = if (native_os == .linux) blk: {
-        const stx = try linux.wrapped.statx(
-            dir,
-            &path_z,
-            posix.AT.SYMLINK_NOFOLLOW,
-            .{ .MODE = true },
-        );
-        std.debug.assert(stx.mask.MODE);
-        break :blk stx.mode;
-    } else blk: {
-        const st = try posix.fstatatZ(dir, &path_z, posix.AT.SYMLINK_NOFOLLOW);
-        break :blk st.mode;
-    };
-
-    return mode & 0b111_111_111;
-}
-
-fn expectMode(dir: posix.fd_t, file: []const u8, mode: posix.mode_t) !void {
-    const actual = try getFileMode(dir, file);
-    try expectEqual(mode, actual & 0b111_111_111);
-}
-
-test "fchmodat smoke test" {
-    if (!Io.File.Permissions.has_executable_bit) return error.SkipZigTest;
-
-    var tmp = tmpDir(.{});
-    defer tmp.cleanup();
-
-    try expectError(error.FileNotFound, posix.fchmodat(tmp.dir.handle, "regfile", 0o666, 0));
-    const fd = try posix.openat(
-        tmp.dir.handle,
-        "regfile",
-        .{ .ACCMODE = .WRONLY, .CREAT = true, .EXCL = true, .TRUNC = true },
-        0o644,
-    );
-    posix.close(fd);
-
-    try posix.symlinkat("regfile", tmp.dir.handle, "symlink");
-    const sym_mode = try getFileMode(tmp.dir.handle, "symlink");
-
-    try posix.fchmodat(tmp.dir.handle, "regfile", 0o640, 0);
-    try expectMode(tmp.dir.handle, "regfile", 0o640);
-    try posix.fchmodat(tmp.dir.handle, "regfile", 0o600, posix.AT.SYMLINK_NOFOLLOW);
-    try expectMode(tmp.dir.handle, "regfile", 0o600);
-
-    try posix.fchmodat(tmp.dir.handle, "symlink", 0o640, 0);
-    try expectMode(tmp.dir.handle, "regfile", 0o640);
-    try expectMode(tmp.dir.handle, "symlink", sym_mode);
-
-    var test_link = true;
-    posix.fchmodat(tmp.dir.handle, "symlink", 0o600, posix.AT.SYMLINK_NOFOLLOW) catch |err| switch (err) {
-        error.OperationNotSupported => test_link = false,
-        else => |e| return e,
-    };
-    if (test_link)
-        try expectMode(tmp.dir.handle, "symlink", 0o600);
-    try expectMode(tmp.dir.handle, "regfile", 0o640);
-}
-
 const CommonOpenFlags = packed struct {
     ACCMODE: posix.ACCMODE = .RDONLY,
     CREAT: bool = false,

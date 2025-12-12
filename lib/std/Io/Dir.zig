@@ -1710,7 +1710,7 @@ pub const SetFilePermissionsOptions = struct {
     follow_symlinks: bool = true,
 };
 
-/// Also known as "chmodat".
+/// Also known as "fchmodat".
 pub fn setFilePermissions(
     dir: Dir,
     io: Io,

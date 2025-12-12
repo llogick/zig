@@ -873,7 +873,7 @@ pub fn io(k: *Kqueue) Io {
             .dirMakePath = dirMakePath,
             .dirMakeOpenPath = dirMakeOpenPath,
             .dirStat = dirStat,
-            .dirStatPath = dirStatPath,
+            .dirStatFile = dirStatFile,
 
             .fileStat = fileStat,
             .dirAccess = dirAccess,
@@ -1144,7 +1144,7 @@ fn dirStat(userdata: ?*anyopaque, dir: Dir) Dir.StatError!Dir.Stat {
     _ = dir;
     @panic("TODO");
 }
-fn dirStatPath(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, options: Dir.StatPathOptions) Dir.StatPathError!File.Stat {
+fn dirStatFile(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, options: Dir.StatPathOptions) Dir.StatFileError!File.Stat {
     const k: *Kqueue = @ptrCast(@alignCast(userdata));
     _ = k;
     _ = dir;
