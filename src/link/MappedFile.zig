@@ -10,6 +10,7 @@ const assert = std.debug.assert;
 const linux = std.os.linux;
 const windows = std.os.windows;
 
+io: Io,
 file: std.Io.File,
 flags: packed struct {
     block_size: std.mem.Alignment,
@@ -36,8 +37,9 @@ pub const Error = std.posix.MMapError || std.posix.MRemapError || Io.File.Length
     NoSpaceLeft,
 };
 
-pub fn init(file: std.Io.File, gpa: std.mem.Allocator) !MappedFile {
+pub fn init(file: std.Io.File, gpa: std.mem.Allocator, io: Io) !MappedFile {
     var mf: MappedFile = .{
+        .io = io,
         .file = file,
         .flags = undefined,
         .section = if (is_windows) windows.INVALID_HANDLE_VALUE else {},
@@ -624,13 +626,14 @@ pub fn addNodeAfter(
 }
 
 fn resizeNode(mf: *MappedFile, gpa: std.mem.Allocator, ni: Node.Index, requested_size: u64) !void {
+    const io = mf.io;
     const node = ni.get(mf);
     const old_offset, const old_size = node.location().resolve(mf);
     const new_size = node.flags.alignment.forward(@intCast(requested_size));
     // Resize the entire file
     if (ni == Node.Index.root) {
         try mf.ensureCapacityForSetLocation(gpa);
-        try mf.file.setEndPos(new_size);
+        try mf.file.setLength(io, new_size);
         try mf.ensureTotalCapacity(@intCast(new_size));
         ni.setLocationAssumeCapacity(mf, old_offset, new_size);
         return;

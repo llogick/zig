@@ -1720,10 +1720,10 @@ pub fn main() !void {
     var pack_file_reader = pack_file.reader(io, &pack_file_buffer);
 
     const commit = try Oid.parse(format, args[3]);
-    var worktree = try Io.Dir.cwd().makeOpenPath(args[4], .{});
+    var worktree = try Io.Dir.cwd().makeOpenPath(io, args[4], .{});
     defer worktree.close(io);
 
-    var git_dir = try worktree.makeOpenPath(".git", .{});
+    var git_dir = try worktree.makeOpenPath(io, ".git", .{});
     defer git_dir.close(io);
 
     std.debug.print("Starting index...\n", .{});

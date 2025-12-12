@@ -636,7 +636,7 @@ fn create(
     const coff = try arena.create(Coff);
     const file = try path.root_dir.handle.createFile(io, path.sub_path, .{
         .read = true,
-        .mode = link.File.determineMode(comp.config.output_mode, comp.config.link_mode),
+        .permissions = link.File.determinePermissions(comp.config.output_mode, comp.config.link_mode),
     });
     errdefer file.close(io);
     coff.* = .{
@@ -653,7 +653,7 @@ fn create(
             .allow_shlib_undefined = false,
             .stack_size = 0,
         },
-        .mf = try .init(file, comp.gpa),
+        .mf = try .init(file, comp.gpa, io),
         .nodes = .empty,
         .import_table = .{
             .ni = .none,

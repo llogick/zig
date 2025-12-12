@@ -242,8 +242,7 @@ pub fn addCertsFromFilePath(
 }
 
 pub const AddCertsFromFileError = Allocator.Error ||
-    Io.File.GetSeekPosError ||
-    Io.File.ReadError ||
+    Io.File.Reader.Error ||
     ParseCertError ||
     std.base64.Error ||
     error{ CertificateAuthorityBundleTooBig, MissingEndCertificateMarker, Streaming };

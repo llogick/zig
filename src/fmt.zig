@@ -59,7 +59,7 @@ pub fn run(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) !
             const arg = args[i];
             if (mem.startsWith(u8, arg, "-")) {
                 if (mem.eql(u8, arg, "-h") or mem.eql(u8, arg, "--help")) {
-                    try Io.File.stdout().writeAll(usage_fmt);
+                    try Io.File.stdout().writeStreamingAll(io, usage_fmt);
                     return process.cleanExit();
                 } else if (mem.eql(u8, arg, "--color")) {
                     if (i + 1 >= args.len) {
@@ -154,7 +154,7 @@ pub fn run(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) !
             process.exit(code);
         }
 
-        return Io.File.stdout().writeAll(formatted);
+        return Io.File.stdout().writeStreamingAll(io, formatted);
     }
 
     if (input_files.items.len == 0) {
@@ -162,7 +162,7 @@ pub fn run(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) !
     }
 
     var stdout_buffer: [4096]u8 = undefined;
-    var stdout_writer = Io.File.stdout().writer(&stdout_buffer);
+    var stdout_writer = Io.File.stdout().writer(io, &stdout_buffer);
 
     var fmt: Fmt = .{
         .gpa = gpa,
@@ -231,7 +231,7 @@ fn fmtPathDir(
     if (try fmt.seen.fetchPut(stat.inode, {})) |_| return;
 
     var dir_it = dir.iterate();
-    while (try dir_it.next()) |entry| {
+    while (try dir_it.next(io)) |entry| {
         const is_dir = entry.kind == .directory;
 
         if (mem.startsWith(u8, entry.name, ".")) continue;
@@ -244,7 +244,7 @@ fn fmtPathDir(
                 try fmtPathDir(fmt, full_path, check_mode, dir, entry.name);
             } else {
                 fmtPathFile(fmt, full_path, check_mode, dir, entry.name) catch |err| {
-                    std.log.err("unable to format '{s}': {s}", .{ full_path, @errorName(err) });
+                    std.log.err("unable to format '{s}': {t}", .{ full_path, err });
                     fmt.any_error = true;
                     return;
                 };
@@ -355,7 +355,7 @@ fn fmtPathFile(
         try fmt.stdout_writer.interface.print("{s}\n", .{file_path});
         fmt.any_error = true;
     } else {
-        var af = try dir.atomicFile(sub_path, .{ .mode = stat.mode, .write_buffer = &.{} });
+        var af = try dir.atomicFile(io, sub_path, .{ .permissions = stat.permissions, .write_buffer = &.{} });
         defer af.deinit();
 
         try af.file_writer.interface.writeAll(fmt.out_buffer.written());

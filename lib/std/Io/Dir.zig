@@ -1588,7 +1588,7 @@ pub const CopyFileOptions = struct {
 
 pub const CopyFileError = File.OpenError || File.StatError ||
     File.Atomic.InitError || File.Atomic.FinishError ||
-    File.Reader.Error || File.WriteError || error{InvalidFileName};
+    File.Reader.Error || File.Writer.Error || error{InvalidFileName};
 
 /// Atomically creates a new file at `dest_path` within `dest_dir` with the
 /// same contents as `source_path` within `source_dir`, overwriting any already

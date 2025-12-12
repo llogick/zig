@@ -320,7 +320,7 @@ pub fn createEmpty(
     self.base.file = try emit.root_dir.handle.createFile(io, sub_path, .{
         .truncate = true,
         .read = true,
-        .mode = link.File.determineMode(output_mode, link_mode),
+        .permissions = link.File.determinePermissions(output_mode, link_mode),
     });
 
     const gpa = comp.gpa;

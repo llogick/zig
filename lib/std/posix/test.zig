@@ -142,7 +142,7 @@ test "linkat with different directories" {
     const target_name = "link-target";
     const link_name = "newlink";
 
-    const subdir = try tmp.dir.makeOpenPath("subdir", .{});
+    const subdir = try tmp.dir.makeOpenPath(io, "subdir", .{});
 
     defer tmp.dir.deleteFile(io, target_name) catch {};
     try tmp.dir.writeFile(io, .{ .sub_path = target_name, .data = "example" });

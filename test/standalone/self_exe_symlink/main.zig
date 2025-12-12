@@ -9,7 +9,7 @@ pub fn main() !void {
     defer threaded.deinit();
     const io = threaded.io();
 
-    const self_path = try std.fs.selfExePathAlloc(gpa);
+    const self_path = try std.process.executablePathAlloc(io, gpa);
     defer gpa.free(self_path);
 
     var self_exe = try std.fs.openSelfExe(.{});

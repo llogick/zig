@@ -1200,7 +1200,7 @@ pub const EmbedFile = struct {
     /// `.none` means the file was not loaded, so `stat` is undefined.
     val: InternPool.Index,
     /// If this is `null` and `val` is `.none`, the file has never been loaded.
-    err: ?(Io.File.OpenError || Io.File.StatError || Io.File.ReadError || error{UnexpectedEof}),
+    err: ?(Io.File.OpenError || Io.File.StatError || Io.File.Reader.Error || error{UnexpectedEof}),
     stat: Cache.File.Stat,
 
     pub const Index = enum(u32) {

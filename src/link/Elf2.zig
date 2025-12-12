@@ -976,7 +976,7 @@ fn create(
     const elf = try arena.create(Elf);
     const file = try path.root_dir.handle.createFile(io, path.sub_path, .{
         .read = true,
-        .mode = link.File.determineMode(comp.config.output_mode, comp.config.link_mode),
+        .permissions = link.File.determinePermissions(comp.config.output_mode, comp.config.link_mode),
     });
     errdefer file.close(io);
     elf.* = .{
@@ -994,7 +994,7 @@ fn create(
             .stack_size = 0,
         },
         .options = options,
-        .mf = try .init(file, comp.gpa),
+        .mf = try .init(file, comp.gpa, io),
         .ni = .{
             .tls = .none,
         },

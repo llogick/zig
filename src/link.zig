@@ -2170,28 +2170,27 @@ fn resolvePathInputLib(
     }) {
         var file = test_path.root_dir.handle.openFile(io, test_path.sub_path, .{}) catch |err| switch (err) {
             error.FileNotFound => return .no_match,
-            else => |e| fatal("unable to search for {s} library '{f}': {s}", .{
-                @tagName(link_mode), std.fmt.alt(test_path, .formatEscapeChar), @errorName(e),
+            else => |e| fatal("unable to search for {t} library '{f}': {t}", .{
+                link_mode, std.fmt.alt(test_path, .formatEscapeChar), e,
             }),
         };
         errdefer file.close(io);
         try ld_script_bytes.resize(gpa, @max(std.elf.MAGIC.len, std.elf.ARMAG.len));
-        const n = file.preadAll(ld_script_bytes.items, 0) catch |err| fatal("failed to read '{f}': {s}", .{
-            std.fmt.alt(test_path, .formatEscapeChar), @errorName(err),
-        });
+        const n = file.readPositionalAll(io, ld_script_bytes.items, 0) catch |err|
+            fatal("failed to read '{f}': {t}", .{ std.fmt.alt(test_path, .formatEscapeChar), err });
         const buf = ld_script_bytes.items[0..n];
         if (mem.startsWith(u8, buf, std.elf.MAGIC) or mem.startsWith(u8, buf, std.elf.ARMAG)) {
             // Appears to be an ELF or archive file.
             return finishResolveLibInput(resolved_inputs, test_path, file, link_mode, pq.query);
         }
         const stat = file.stat(io) catch |err|
-            fatal("failed to stat {f}: {s}", .{ test_path, @errorName(err) });
+            fatal("failed to stat {f}: {t}", .{ test_path, err });
         const size = std.math.cast(u32, stat.size) orelse
             fatal("{f}: linker script too big", .{test_path});
         try ld_script_bytes.resize(gpa, size);
         const buf2 = ld_script_bytes.items[n..];
-        const n2 = file.preadAll(buf2, n) catch |err|
-            fatal("failed to read {f}: {s}", .{ test_path, @errorName(err) });
+        const n2 = file.readPositionalAll(io, buf2, n) catch |err|
+            fatal("failed to read {f}: {t}", .{ test_path, err });
         if (n2 != buf2.len) fatal("failed to read {f}: unexpected end of file", .{test_path});
 
         // This `Io` is only used for a mutex, and we know we aren't doing anything async/concurrent.

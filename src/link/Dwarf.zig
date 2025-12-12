@@ -52,7 +52,6 @@ pub const UpdateError = error{
     codegen.GenerateSymbolError ||
     Io.File.OpenError ||
     Io.File.LengthError ||
-    Io.File.CopyRangeError ||
     Io.File.ReadPositionalError ||
     Io.File.WritePositionalError;
 

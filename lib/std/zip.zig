@@ -117,7 +117,7 @@ pub const EndRecord = extern struct {
         return record;
     }
 
-    pub const FindFileError = File.Reader.SizeError || File.SeekError || File.ReadError || error{
+    pub const FindFileError = File.Reader.SizeError || File.SeekError || File.Reader.Error || error{
         ZipNoEndRecord,
         EndOfStream,
         ReadFailed,
@@ -560,7 +560,7 @@ pub const Iterator = struct {
 
             const out_file = blk: {
                 if (std.fs.path.dirname(filename)) |dirname| {
-                    var parent_dir = try dest.makeOpenPath(dirname, .{});
+                    var parent_dir = try dest.makeOpenPath(io, dirname, .{});
                     defer parent_dir.close(io);
 
                     const basename = std.fs.path.basename(filename);

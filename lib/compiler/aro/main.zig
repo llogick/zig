@@ -43,7 +43,7 @@ pub fn main() u8 {
         return 1;
     };
 
-    const aro_name = std.fs.selfExePathAlloc(gpa) catch {
+    const aro_name = process.executablePathAlloc(io, gpa) catch {
         std.debug.print("unable to find Aro executable path\n", .{});
         if (fast_exit) process.exit(1);
         return 1;

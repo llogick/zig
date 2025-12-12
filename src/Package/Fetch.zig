@@ -500,12 +500,12 @@ fn runResource(
         var tmp_directory: Cache.Directory = .{
             .path = tmp_directory_path,
             .handle = handle: {
-                const dir = cache_root.handle.makeOpenPath(tmp_dir_sub_path, .{
+                const dir = cache_root.handle.makeOpenPath(io, tmp_dir_sub_path, .{
                     .iterate = true,
                 }) catch |err| {
                     try eb.addRootErrorMessage(.{
-                        .msg = try eb.printString("unable to create temporary directory '{s}': {s}", .{
-                            tmp_directory_path, @errorName(err),
+                        .msg = try eb.printString("unable to create temporary directory '{s}': {t}", .{
+                            tmp_directory_path, err,
                         }),
                     });
                     return error.FetchFailed;
@@ -524,7 +524,7 @@ fn runResource(
         if (native_os == .linux and f.job_queue.work_around_btrfs_bug) {
             // https://github.com/ziglang/zig/issues/17095
             pkg_path.root_dir.handle.close(io);
-            pkg_path.root_dir.handle = cache_root.handle.makeOpenPath(tmp_dir_sub_path, .{
+            pkg_path.root_dir.handle = cache_root.handle.makeOpenPath(io, tmp_dir_sub_path, .{
                 .iterate = true,
             }) catch @panic("btrfs workaround failed");
         }
@@ -1366,7 +1366,7 @@ fn unpackGitPack(f: *Fetch, out_dir: Io.Dir, resource: *Resource.Git) anyerror!U
     // we do not attempt to replicate the exact structure of a real .git
     // directory, since that isn't relevant for fetching a package.
     {
-        var pack_dir = try out_dir.makeOpenPath(".git", .{});
+        var pack_dir = try out_dir.makeOpenPath(io, ".git", .{});
         defer pack_dir.close(io);
         var pack_file = try pack_dir.createFile(io, "pkg.pack", .{ .read = true });
         defer pack_file.close(io);
@@ -1743,7 +1743,7 @@ const HashedFile = struct {
 
     const Error =
         Io.File.OpenError ||
-        Io.File.ReadError ||
+        Io.File.Reader.Error ||
         Io.File.StatError ||
         Io.File.ChmodError ||
         Io.Dir.ReadLinkError;
@@ -2258,7 +2258,7 @@ const TestFetchBuilder = struct {
         cache_parent_dir: std.Io.Dir,
         path_or_url: []const u8,
     ) !*Fetch {
-        const cache_dir = try cache_parent_dir.makeOpenPath("zig-global-cache", .{});
+        const cache_dir = try cache_parent_dir.makeOpenPath(io, "zig-global-cache", .{});
 
         self.http_client = .{ .allocator = allocator, .io = io };
         self.global_cache_directory = .{ .handle = cache_dir, .path = null };

@@ -213,7 +213,7 @@ test "Dir.readLink" {
             // test 3: relative path symlink
             const parent_file = ".." ++ fs.path.sep_str ++ "target.txt";
             const canonical_parent_file = try ctx.toCanonicalPathSep(parent_file);
-            var subdir = try ctx.dir.makeOpenPath("subdir", .{});
+            var subdir = try ctx.dir.makeOpenPath(io, "subdir", .{});
             defer subdir.close(io);
             try setupSymlink(io, subdir, canonical_parent_file, "relative-link.txt", .{});
             try testReadLink(io, subdir, canonical_parent_file, "relative-link.txt");
@@ -411,7 +411,7 @@ test "openDir non-cwd parent '..'" {
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
-    var subdir = try tmp.dir.makeOpenPath("subdir", .{});
+    var subdir = try tmp.dir.makeOpenPath(io, "subdir", .{});
     defer subdir.close(io);
 
     var dir = try subdir.openDir(io, "..", .{});
@@ -613,7 +613,7 @@ test "Dir.Iterator but dir is deleted during iteration" {
     defer tmp.cleanup();
 
     // Create directory and setup an iterator for it
-    var subdir = try tmp.dir.makeOpenPath("subdir", .{ .iterate = true });
+    var subdir = try tmp.dir.makeOpenPath(io, "subdir", .{ .iterate = true });
     defer subdir.close(io);
 
     var iterator = subdir.iterate();
@@ -862,7 +862,7 @@ test "makeOpenPath parent dirs do not exist" {
     var tmp_dir = tmpDir(.{});
     defer tmp_dir.cleanup();
 
-    var dir = try tmp_dir.dir.makeOpenPath("root_dir/parent_dir/some_dir", .{});
+    var dir = try tmp_dir.dir.makeOpenPath(io, "root_dir/parent_dir/some_dir", .{});
     dir.close(io);
 
     // double check that the full directory structure was created
@@ -1010,7 +1010,7 @@ test "Dir.rename directory onto non-empty dir" {
 
             try ctx.dir.makeDir(io, test_dir_path, .default_dir);
 
-            var target_dir = try ctx.dir.makeOpenPath(target_dir_path, .{});
+            var target_dir = try ctx.dir.makeOpenPath(io, target_dir_path, .{});
             var file = try target_dir.createFile(io, "test_file", .{ .read = true });
             file.close(io);
             target_dir.close(io);
@@ -1147,7 +1147,7 @@ test "deleteTree does not follow symlinks" {
 
     try tmp.dir.makePath(io, "b");
     {
-        var a = try tmp.dir.makeOpenPath("a", .{});
+        var a = try tmp.dir.makeOpenPath(io, "a", .{});
         defer a.close(io);
 
         try setupSymlink(io, a, "../b", "b", .{ .is_directory = true });
@@ -1346,7 +1346,7 @@ test "makepath ignores '.'" {
 fn testFilenameLimits(io: Io, iterable_dir: Dir, maxed_filename: []const u8) !void {
     // setup, create a dir and a nested file both with maxed filenames, and walk the dir
     {
-        var maxed_dir = try iterable_dir.makeOpenPath(maxed_filename, .{});
+        var maxed_dir = try iterable_dir.makeOpenPath(io, maxed_filename, .{});
         defer maxed_dir.close(io);
 
         try maxed_dir.writeFile(io, .{ .sub_path = maxed_filename, .data = "" });

@@ -1,13 +1,17 @@
-const std = @import("std");
 const builtin = @import("builtin");
-const build_options = @import("build_options");
-const Compilation = @import("Compilation.zig");
+
+const std = @import("std");
+const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const EnvVar = std.zig.EnvVar;
 const fatal = std.process.fatal;
 
+const build_options = @import("build_options");
+const Compilation = @import("Compilation.zig");
+
 pub fn cmdEnv(
     arena: Allocator,
+    io: Io,
     out: *std.Io.Writer,
     args: []const []const u8,
     wasi_preopens: switch (builtin.target.os.tag) {
@@ -21,20 +25,21 @@ pub fn cmdEnv(
 
     const self_exe_path = switch (builtin.target.os.tag) {
         .wasi => args[0],
-        else => std.fs.selfExePathAlloc(arena) catch |err| {
-            fatal("unable to find zig self exe path: {s}", .{@errorName(err)});
+        else => std.process.executablePathAlloc(io, arena) catch |err| {
+            fatal("unable to find zig self exe path: {t}", .{err});
         },
     };
 
     var dirs: Compilation.Directories = .init(
         arena,
+        io,
         override_lib_dir,
         override_global_cache_dir,
         .global,
         if (builtin.target.os.tag == .wasi) wasi_preopens,
         if (builtin.target.os.tag != .wasi) self_exe_path,
     );
-    defer dirs.deinit();
+    defer dirs.deinit(io);
 
     const zig_lib_dir = dirs.zig_lib.path orelse "";
     const zig_std_dir = try dirs.zig_lib.join(arena, &.{"std"});

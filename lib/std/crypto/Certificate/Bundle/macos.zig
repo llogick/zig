@@ -6,7 +6,7 @@ const mem = std.mem;
 const Allocator = std.mem.Allocator;
 const Bundle = @import("../Bundle.zig");
 
-pub const RescanMacError = Allocator.Error || Io.File.OpenError || Io.File.ReadError || Io.File.SeekError || Bundle.ParseCertError || error{EndOfStream};
+pub const RescanMacError = Allocator.Error || Io.File.OpenError || Io.File.Reader.Error || Io.File.SeekError || Bundle.ParseCertError || error{EndOfStream};
 
 pub fn rescanMac(cb: *Bundle, gpa: Allocator, io: Io, now: Io.Timestamp) RescanMacError!void {
     cb.bytes.clearRetainingCapacity();

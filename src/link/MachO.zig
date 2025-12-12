@@ -224,7 +224,7 @@ pub fn createEmpty(
     self.base.file = try emit.root_dir.handle.createFile(io, emit.sub_path, .{
         .truncate = true,
         .read = true,
-        .mode = link.File.determineMode(output_mode, link_mode),
+        .permissions = link.File.determinePermissions(output_mode, link_mode),
     });
 
     // Append null file
@@ -3157,7 +3157,9 @@ fn detectAllocCollision(self: *MachO, start: u64, size: u64) !?u64 {
         }
     }
 
-    if (at_end) try self.base.file.?.setEndPos(end);
+    const comp = self.base.comp;
+    const io = comp.io;
+    if (at_end) try self.base.file.?.setLength(io, end);
     return null;
 }
 
@@ -3292,7 +3294,7 @@ pub fn reopenDebugInfo(self: *MachO) !void {
     );
     defer gpa.free(d_sym_path);
 
-    var d_sym_bundle = try self.base.emit.root_dir.handle.makeOpenPath(d_sym_path, .{});
+    var d_sym_bundle = try self.base.emit.root_dir.handle.makeOpenPath(io, d_sym_path, .{});
     defer d_sym_bundle.close(io);
 
     self.d_sym.?.file = try d_sym_bundle.createFile(io, fs.path.basename(self.base.emit.sub_path), .{
@@ -3303,6 +3305,10 @@ pub fn reopenDebugInfo(self: *MachO) !void {
 
 // TODO: move to ZigObject
 fn initMetadata(self: *MachO, options: InitMetadataOptions) !void {
+    const comp = self.base.comp;
+    const gpa = comp.gpa;
+    const io = comp.io;
+
     if (!self.base.isRelocatable()) {
         const base_vmaddr = blk: {
             const pagezero_size = self.pagezero_size orelse default_pagezero_size;
@@ -3357,7 +3363,11 @@ fn initMetadata(self: *MachO, options: InitMetadataOptions) !void {
         if (options.zo.dwarf) |*dwarf| {
             // Create dSYM bundle.
             log.debug("creating {s}.dSYM bundle", .{options.emit.sub_path});
-            self.d_sym = .{ .allocator = self.base.comp.gpa, .file = null };
+            self.d_sym = .{
+                .io = io,
+                .allocator = gpa,
+                .file = null,
+            };
             try self.reopenDebugInfo();
             try self.d_sym.?.initMetadata(self);
             try dwarf.initMetadata();
@@ -3477,6 +3487,9 @@ fn growSectionNonRelocatable(self: *MachO, sect_index: u8, needed_size: u64) !vo
     const seg_id = self.sections.items(.segment_id)[sect_index];
     const seg = &self.segments.items[seg_id];
 
+    const comp = self.base.comp;
+    const io = comp.io;
+
     if (!sect.isZerofill()) {
         const allocated_size = self.allocatedSize(sect.offset);
         if (needed_size > allocated_size) {
@@ -3498,7 +3511,7 @@ fn growSectionNonRelocatable(self: *MachO, sect_index: u8, needed_size: u64) !vo
 
             sect.offset = @intCast(new_offset);
         } else if (sect.offset + allocated_size == std.math.maxInt(u64)) {
-            try self.base.file.?.setEndPos(sect.offset + needed_size);
+            try self.base.file.?.setLength(io, sect.offset + needed_size);
         }
         seg.filesize = needed_size;
     }
@@ -3520,6 +3533,8 @@ fn growSectionNonRelocatable(self: *MachO, sect_index: u8, needed_size: u64) !vo
 }
 
 fn growSectionRelocatable(self: *MachO, sect_index: u8, needed_size: u64) !void {
+    const comp = self.base.comp;
+    const io = comp.io;
     const sect = &self.sections.items(.header)[sect_index];
 
     if (!sect.isZerofill()) {
@@ -3547,7 +3562,7 @@ fn growSectionRelocatable(self: *MachO, sect_index: u8, needed_size: u64) !void 
             sect.offset = @intCast(new_offset);
             sect.addr = new_addr;
         } else if (sect.offset + allocated_size == std.math.maxInt(u64)) {
-            try self.base.file.?.setEndPos(sect.offset + needed_size);
+            try self.base.file.?.setLength(io, sect.offset + needed_size);
         }
     }
     sect.size = needed_size;
@@ -5346,12 +5361,12 @@ pub fn pwriteAll(macho_file: *MachO, bytes: []const u8, offset: u64) error{LinkF
     };
 }
 
-pub fn setEndPos(macho_file: *MachO, length: u64) error{LinkFailure}!void {
+pub fn setLength(macho_file: *MachO, length: u64) error{LinkFailure}!void {
     const comp = macho_file.base.comp;
+    const io = comp.io;
     const diags = &comp.link_diags;
-    macho_file.base.file.?.setEndPos(length) catch |err| {
-        return diags.fail("failed to set file end pos: {s}", .{@errorName(err)});
-    };
+    macho_file.base.file.?.setLength(io, length) catch |err|
+        return diags.fail("failed to set file end pos: {t}", .{err});
 }
 
 pub fn cast(macho_file: *MachO, comptime T: type, x: anytype) error{LinkFailure}!T {
