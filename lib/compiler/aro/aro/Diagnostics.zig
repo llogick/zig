@@ -292,7 +292,7 @@ const Diagnostics = @This();
 output: union(enum) {
     to_writer: struct {
         writer: *std.Io.Writer,
-        color: std.Io.tty.Config,
+        color: std.Io.File.Writer.Mode,
     },
     to_list: struct {
         messages: std.ArrayList(Message) = .empty,

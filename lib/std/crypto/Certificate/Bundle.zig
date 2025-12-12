@@ -9,8 +9,8 @@ const builtin = @import("builtin");
 
 const std = @import("../../std.zig");
 const Io = std.Io;
+const Dir = std.Io.Dir;
 const assert = std.debug.assert;
-const fs = std.fs;
 const mem = std.mem;
 const crypto = std.crypto;
 const Allocator = std.mem.Allocator;
@@ -192,8 +192,8 @@ pub fn addCertsFromDirPathAbsolute(
     now: Io.Timestamp,
     abs_dir_path: []const u8,
 ) AddCertsFromDirPathError!void {
-    assert(fs.path.isAbsolute(abs_dir_path));
-    var iterable_dir = try fs.openDirAbsolute(abs_dir_path, .{ .iterate = true });
+    assert(Dir.path.isAbsolute(abs_dir_path));
+    var iterable_dir = try Dir.openDirAbsolute(io, abs_dir_path, .{ .iterate = true });
     defer iterable_dir.close(io);
     return addCertsFromDir(cb, gpa, io, now, iterable_dir);
 }

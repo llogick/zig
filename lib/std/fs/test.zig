@@ -346,7 +346,7 @@ test "openDirAbsolute" {
     defer testing.allocator.free(sub_path);
 
     // Can open sub_path
-    var tmp_sub = try fs.openDirAbsolute(sub_path, .{});
+    var tmp_sub = try Dir.openDirAbsolute(io, sub_path, .{});
     defer tmp_sub.close(io);
 
     const sub_ino = (try tmp_sub.stat(io)).inode;
@@ -356,7 +356,7 @@ test "openDirAbsolute" {
         const dir_path = try fs.path.join(testing.allocator, &.{ sub_path, ".." });
         defer testing.allocator.free(dir_path);
 
-        var dir = try fs.openDirAbsolute(dir_path, .{});
+        var dir = try Dir.openDirAbsolute(io, dir_path, .{});
         defer dir.close(io);
 
         const ino = (try dir.stat(io)).inode;
@@ -368,7 +368,7 @@ test "openDirAbsolute" {
         const dir_path = try fs.path.join(testing.allocator, &.{ sub_path, "." });
         defer testing.allocator.free(dir_path);
 
-        var dir = try fs.openDirAbsolute(dir_path, .{});
+        var dir = try Dir.openDirAbsolute(io, dir_path, .{});
         defer dir.close(io);
 
         const ino = (try dir.stat(io)).inode;
@@ -380,7 +380,7 @@ test "openDirAbsolute" {
         const dir_path = try fs.path.join(testing.allocator, &.{ sub_path, ".", "..", "." });
         defer testing.allocator.free(dir_path);
 
-        var dir = try fs.openDirAbsolute(dir_path, .{});
+        var dir = try Dir.openDirAbsolute(io, dir_path, .{});
         defer dir.close(io);
 
         const ino = (try dir.stat(io)).inode;
@@ -1978,7 +1978,7 @@ test "'.' and '..' in absolute functions" {
     const subdir_path = try fs.path.join(allocator, &.{ base_path, "./subdir" });
     try fs.makeDirAbsolute(subdir_path);
     try fs.accessAbsolute(subdir_path, .{});
-    var created_subdir = try fs.openDirAbsolute(subdir_path, .{});
+    var created_subdir = try Dir.openDirAbsolute(io, subdir_path, .{});
     created_subdir.close(io);
 
     const created_file_path = try fs.path.join(allocator, &.{ subdir_path, "../file" });
@@ -2108,7 +2108,7 @@ test "invalid UTF-8/WTF-8 paths" {
                 try expectError(expected_err, Dir.makeDirAbsolute(invalid_path));
                 try expectError(expected_err, Dir.deleteDirAbsolute(invalid_path));
                 try expectError(expected_err, Dir.renameAbsolute(invalid_path, invalid_path));
-                try expectError(expected_err, Dir.openDirAbsolute(invalid_path, .{}));
+                try expectError(expected_err, Dir.openDirAbsolute(io, invalid_path, .{}));
                 try expectError(expected_err, Dir.openFileAbsolute(invalid_path, .{}));
                 try expectError(expected_err, Dir.accessAbsolute(invalid_path, .{}));
                 try expectError(expected_err, Dir.createFileAbsolute(invalid_path, .{}));
