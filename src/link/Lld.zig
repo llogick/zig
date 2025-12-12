@@ -1327,6 +1327,7 @@ fn getLDMOption(target: *const std.Target) ?[]const u8 {
 }
 fn wasmLink(lld: *Lld, arena: Allocator) !void {
     const comp = lld.base.comp;
+    const diags = &comp.link_diags;
     const shared_memory = comp.config.shared_memory;
     const export_memory = comp.config.export_memory;
     const import_memory = comp.config.import_memory;
@@ -1566,17 +1567,12 @@ fn wasmLink(lld: *Lld, arena: Allocator) !void {
         // is not the case, it means we will get "exec format error" when trying to run
         // it, and then can react to that in the same way as trying to run an ELF file
         // from a foreign CPU architecture.
-        if (fs.has_executable_bit and target.os.tag == .wasi and
+        if (Io.File.Permissions.has_executable_bit and target.os.tag == .wasi and
             comp.config.output_mode == .Exe)
         {
-            // TODO: what's our strategy for reporting linker errors from this function?
-            // report a nice error here with the file path if it fails instead of
-            // just returning the error code.
             // chmod does not interact with umask, so we use a conservative -rwxr--r-- here.
-            std.posix.fchmodat(Io.Dir.cwd().handle, full_out_path, 0o744, 0) catch |err| switch (err) {
-                error.OperationNotSupported => unreachable, // Not a symlink.
-                else => |e| return e,
-            };
+            Io.Dir.cwd().setFilePermissions(full_out_path, .fromMode(0o744), .{}) catch |err|
+                return diags.fail("{s}: failed to enable executable permissions: {t}", .{ full_out_path, err });
         }
     }
 }

@@ -1698,6 +1698,29 @@ pub fn setPermissions(dir: Dir, io: Io, new_permissions: File.Permissions) SetPe
     return io.vtable.dirSetPermissions(io.userdata, dir, new_permissions);
 }
 
+pub const SetFilePermissionsError = PathNameError || SetPermissionsError || error{
+    ProcessFdQuotaExceeded,
+    SystemFdQuotaExceeded,
+    /// `SetFilePermissionsOptions.follow_symlinks` was set to false, which is
+    /// not allowed by the file system or operating system.
+    OperationNotSupported,
+};
+
+pub const SetFilePermissionsOptions = struct {
+    follow_symlinks: bool = true,
+};
+
+/// Also known as "chmodat".
+pub fn setFilePermissions(
+    dir: Dir,
+    io: Io,
+    sub_path: []const u8,
+    new_permissions: File.Permissions,
+    options: SetFilePermissionsOptions,
+) SetFilePermissionsError!void {
+    return io.vtable.dirSetFilePermissions(io.userdata, sub_path, dir, new_permissions, options);
+}
+
 pub const SetOwnerError = File.SetOwnerError;
 
 /// Also known as "chown".
@@ -1709,6 +1732,24 @@ pub const SetOwnerError = File.SetOwnerError;
 /// owner or group is specified as `null`, the ID is not changed.
 pub fn setOwner(dir: Dir, io: Io, owner: ?File.Uid, group: ?File.Gid) SetOwnerError!void {
     return io.vtable.dirSetOwner(io.userdata, dir, owner, group);
+}
+
+pub const SetFileOwnerError = PathNameError || SetOwnerError;
+
+pub const SetFileOwnerOptions = struct {
+    follow_symlinks: bool = true,
+};
+
+/// Also known as "fchownat".
+pub fn setFileOwner(
+    dir: Dir,
+    io: Io,
+    sub_path: []const u8,
+    owner: ?File.Uid,
+    group: ?File.Gid,
+    options: SetFileOwnerOptions,
+) SetOwnerError!void {
+    return io.vtable.dirSetFileOwner(io.userdata, dir, sub_path, owner, group, options);
 }
 
 pub const SetTimestampsError = File.SetTimestampsError || PathNameError;

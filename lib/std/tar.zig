@@ -1122,7 +1122,7 @@ fn normalizePath(bytes: []u8) []u8 {
 fn filePermissions(mode: u32, options: PipeOptions) Io.File.Permissions {
     const default_mode = 0o666;
 
-    if (!std.fs.has_executable_bit or options.mode_mode == .ignore)
+    if (!Io.File.Permissions.has_executable_bit or options.mode_mode == .ignore)
         return .fromMode(default_mode);
 
     const S = std.posix.S;
@@ -1137,7 +1137,7 @@ fn filePermissions(mode: u32, options: PipeOptions) Io.File.Permissions {
 }
 
 test filePermissions {
-    if (!std.fs.has_executable_bit) return error.SkipZigTest;
+    if (!Io.File.Permissions.has_executable_bit) return error.SkipZigTest;
     try testing.expectEqual(0o666, filePermissions(0o744, PipeOptions{ .mode_mode = .ignore }));
     try testing.expectEqual(0o777, filePermissions(0o744, PipeOptions{}));
     try testing.expectEqual(0o666, filePermissions(0o644, PipeOptions{}));
@@ -1145,7 +1145,7 @@ test filePermissions {
 }
 
 test "executable bit" {
-    if (!std.fs.has_executable_bit) return error.SkipZigTest;
+    if (!Io.File.Permissions.has_executable_bit) return error.SkipZigTest;
 
     const io = testing.io;
     const S = std.posix.S;

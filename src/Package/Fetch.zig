@@ -1717,7 +1717,7 @@ fn deleteFileFallible(io: Io, dir: Io.Dir, deleted_file: *DeletedFile) DeletedFi
 }
 
 fn setExecutable(file: Io.File) !void {
-    if (!std.fs.has_executable_bit) return;
+    if (!Io.File.Permissions.has_executable_bit) return;
 
     const S = std.posix.S;
     const mode = Io.File.default_mode | S.IXUSR | S.IXGRP | S.IXOTH;
@@ -2183,7 +2183,7 @@ test "tarball without root folder" {
 }
 
 test "set executable bit based on file content" {
-    if (!std.fs.has_executable_bit) return error.SkipZigTest;
+    if (!Io.File.Permissions.has_executable_bit) return error.SkipZigTest;
     const gpa = std.testing.allocator;
     const io = std.testing.io;
 

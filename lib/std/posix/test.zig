@@ -895,7 +895,7 @@ fn expectMode(dir: posix.fd_t, file: []const u8, mode: posix.mode_t) !void {
 }
 
 test "fchmodat smoke test" {
-    if (!std.fs.has_executable_bit) return error.SkipZigTest;
+    if (!Io.File.Permissions.has_executable_bit) return error.SkipZigTest;
 
     var tmp = tmpDir(.{});
     defer tmp.cleanup();

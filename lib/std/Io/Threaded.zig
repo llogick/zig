@@ -76,6 +76,7 @@ old_sig_pipe: if (have_sig_pipe) posix.Sigaction else void,
 use_sendfile: UseSendfile = .default,
 use_copy_file_range: UseCopyFileRange = .default,
 use_fcopyfile: UseFcopyfile = .default,
+use_fchmodat2: UseFchmodat2 = .default,
 
 stderr_writer: File.Writer = .{
     .io = undefined,
@@ -122,6 +123,15 @@ pub const UseFcopyfile = if (have_fcopyfile) enum {
 } else enum {
     disabled,
     pub const default: UseFcopyfile = .disabled;
+};
+
+pub const UseFchmodat2 = if (have_fchmodat2 and !have_fchmodat_flags) enum {
+    enabled,
+    disabled,
+    pub const default: UseFchmodat2 = .enabled;
+} else enum {
+    disabled,
+    pub const default: UseFchmodat2 = .disabled;
 };
 
 const Thread = struct {
@@ -712,7 +722,9 @@ pub fn io(t: *Threaded) Io {
             .dirSymLink = dirSymLink,
             .dirReadLink = dirReadLink,
             .dirSetOwner = dirSetOwner,
+            .dirSetFileOwner = dirSetFileOwner,
             .dirSetPermissions = dirSetPermissions,
+            .dirSetFilePermissions = dirSetFilePermissions,
             .dirSetTimestamps = dirSetTimestamps,
             .dirSetTimestampsNow = dirSetTimestampsNow,
 
@@ -842,7 +854,9 @@ pub fn ioBasic(t: *Threaded) Io {
             .dirSymLink = dirSymLink,
             .dirReadLink = dirReadLink,
             .dirSetOwner = dirSetOwner,
+            .dirSetFileOwner = dirSetFileOwner,
             .dirSetPermissions = dirSetPermissions,
+            .dirSetFilePermissions = dirSetFilePermissions,
             .dirSetTimestamps = dirSetTimestamps,
             .dirSetTimestampsNow = dirSetTimestampsNow,
 
@@ -921,6 +935,11 @@ const have_copy_file_range = switch (native_os) {
     else => false,
 };
 const have_fcopyfile = is_darwin;
+const have_fchmodat2 = native_os == .linux and
+    (builtin.os.isAtLeast(.linux, .{ .major = 6, .minor = 6, .patch = 0 }) orelse true) and
+    (builtin.abi.isAndroid() or !std.c.versionCheck(.{ .major = 2, .minor = 32, .patch = 0 }));
+const have_fchmodat_flags = native_os != .linux or
+    (!builtin.abi.isAndroid() and std.c.versionCheck(.{ .major = 2, .minor = 32, .patch = 0 }));
 
 const openat_sym = if (posix.lfs64_abi) posix.system.openat64 else posix.system.openat;
 const fstat_sym = if (posix.lfs64_abi) posix.system.fstat64 else posix.system.fstat;
@@ -4862,17 +4881,144 @@ const dirSetPermissions = switch (native_os) {
 };
 
 fn dirSetPermissionsWindows(userdata: ?*anyopaque, dir: Dir, permissions: Dir.Permissions) Dir.SetPermissionsError!void {
-    // TODO I think we can actually set permissions on a dir on windows?
-    _ = userdata;
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    _ = t;
     _ = dir;
     _ = permissions;
-    return error.Unexpected;
+    @panic("TODO");
 }
 
 fn dirSetPermissionsPosix(userdata: ?*anyopaque, dir: Dir, permissions: Dir.Permissions) Dir.SetPermissionsError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
     return setPermissionsPosix(current_thread, dir.handle, permissions.toMode());
+}
+
+fn dirSetFilePermissions(
+    userdata: ?*anyopaque,
+    dir: Dir,
+    sub_path: []const u8,
+    permissions: Dir.Permissions,
+    options: Dir.SetFilePermissionsOptions,
+) Dir.SetFilePermissionsError!void {
+    if (!Dir.Permissions.has_executable_bit) return error.Unexpected;
+    if (is_windows) @panic("TODO");
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+
+    var path_buffer: [posix.PATH_MAX]u8 = undefined;
+    const sub_path_posix = try pathToPosix(sub_path, &path_buffer);
+
+    const mode = permissions.toMode();
+    const flags: u32 = if (!options.follow_symlinks) posix.AT.SYMLINK_NOFOLLOW else 0;
+
+    return posixFchmodat(t, current_thread, dir.handle, sub_path_posix, mode, flags);
+}
+
+fn posixFchmodat(
+    t: *Threaded,
+    current_thread: *Thread,
+    dir_fd: posix.fd_t,
+    path: [*:0]const u8,
+    mode: posix.mode_t,
+    flags: u32,
+) Dir.SetFilePermissionsError!void {
+    // No special handling for linux is needed if we can use the libc fallback
+    // or `flags` is empty. Glibc only added the fallback in 2.32.
+    if (have_fchmodat_flags or flags == 0) {
+        try current_thread.beginSyscall();
+        while (true) {
+            const rc = if (have_fchmodat_flags)
+                posix.system.fchmodat(dir_fd, path, mode, flags)
+            else
+                posix.system.fchmodat(dir_fd, path, mode);
+            switch (posix.errno(rc)) {
+                .SUCCESS => return current_thread.endSyscall(),
+                .CANCELED => return current_thread.endSyscallCanceled(),
+                .INTR => {
+                    try current_thread.checkCancel();
+                    continue;
+                },
+                else => |e| {
+                    current_thread.endSyscall();
+                    switch (e) {
+                        .BADF => |err| return errnoBug(err),
+                        .FAULT => |err| return errnoBug(err),
+                        .INVAL => |err| return errnoBug(err),
+                        .ACCES => return error.AccessDenied,
+                        .IO => return error.InputOutput,
+                        .LOOP => return error.SymLinkLoop,
+                        .MFILE => return error.ProcessFdQuotaExceeded,
+                        .NAMETOOLONG => return error.NameTooLong,
+                        .NFILE => return error.SystemFdQuotaExceeded,
+                        .NOENT => return error.FileNotFound,
+                        .NOTDIR => return error.FileNotFound,
+                        .NOMEM => return error.SystemResources,
+                        .OPNOTSUPP => return error.OperationNotSupported,
+                        .PERM => return error.PermissionDenied,
+                        .ROFS => return error.ReadOnlyFileSystem,
+                        else => |err| return posix.unexpectedErrno(err),
+                    }
+                },
+            }
+        }
+    }
+
+    if (@atomicLoad(UseFchmodat2, &t.use_fchmodat2, .monotonic) == .disabled)
+        return fchmodatFallback(current_thread, dir_fd, path, mode, flags);
+
+    comptime assert(native_os == .linux);
+
+    try current_thread.beginSyscall();
+    while (true) {
+        switch (std.os.linux.errno(std.os.linux.fchmodat2(dir_fd, path, mode, flags))) {
+            .SUCCESS => return current_thread.endSyscall(),
+            .CANCELED => return current_thread.endSyscallCanceled(),
+            .INTR => {
+                try current_thread.checkCancel();
+                continue;
+            },
+            else => |e| {
+                current_thread.endSyscall();
+                switch (e) {
+                    .BADF => |err| return errnoBug(err),
+                    .FAULT => |err| return errnoBug(err),
+                    .INVAL => |err| return errnoBug(err),
+                    .ACCES => return error.AccessDenied,
+                    .IO => return error.InputOutput,
+                    .LOOP => return error.SymLinkLoop,
+                    .NOENT => return error.FileNotFound,
+                    .NOMEM => return error.SystemResources,
+                    .NOTDIR => return error.FileNotFound,
+                    .OPNOTSUPP => return error.OperationNotSupported,
+                    .PERM => return error.PermissionDenied,
+                    .ROFS => return error.ReadOnlyFileSystem,
+                    .NOSYS => {
+                        @atomicStore(UseFchmodat2, &t.use_fchmodat2, .disabled, .monotonic);
+                        return fchmodatFallback(current_thread, dir_fd, path, mode, flags);
+                    },
+                    else => |err| return posix.unexpectedErrno(err),
+                }
+            },
+        }
+    }
+}
+
+fn fchmodatFallback(
+    current_thread: *Thread,
+    dir_fd: posix.fd_t,
+    path: [*:0]const u8,
+    mode: posix.mode_t,
+    flags: u32,
+) Dir.SetFilePermissionsError!void {
+    _ = current_thread;
+    _ = dir_fd;
+    _ = path;
+    _ = mode;
+    _ = flags;
+    // I deleted the previous fallback implementation because it looked wrong to me. Please cross-reference
+    // fhmodat.c in musl libc before blindly restoring the implementation.
+    @panic("TODO");
 }
 
 const dirSetOwner = switch (native_os) {
@@ -4925,6 +5071,33 @@ fn setOwnerPosix(current_thread: *Thread, fd: posix.fd_t, uid: posix.uid_t, gid:
             },
         }
     }
+}
+
+fn dirSetFileOwner(
+    userdata: ?*anyopaque,
+    dir: Dir,
+    sub_path: []const u8,
+    owner: ?File.Uid,
+    group: ?File.Gid,
+    options: Dir.SetFileOwnerOptions,
+) Dir.SetFileOwnerError!void {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+
+    if (is_windows) {
+        @panic("TODO");
+    }
+
+    var path_buffer: [posix.PATH_MAX]u8 = undefined;
+    const sub_path_posix = try pathToPosix(sub_path, &path_buffer);
+
+    _ = current_thread;
+    _ = dir;
+    _ = sub_path_posix;
+    _ = owner;
+    _ = group;
+    _ = options;
+    @panic("TODO");
 }
 
 const fileSync = switch (native_os) {

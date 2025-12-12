@@ -3002,7 +3002,7 @@ pub fn createEmpty(
     wasm.base.file = try emit.root_dir.handle.createFile(io, emit.sub_path, .{
         .truncate = true,
         .read = true,
-        .mode = if (fs.has_executable_bit)
+        .mode = if (Io.File.Permissions.has_executable_bit)
             if (target.os.tag == .wasi and output_mode == .Exe)
                 Io.File.default_mode | 0b001_000_000
             else

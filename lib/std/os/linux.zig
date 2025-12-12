@@ -1420,7 +1420,7 @@ pub fn chmod(path: [*:0]const u8, mode: mode_t) usize {
     if (@hasField(SYS, "chmod")) {
         return syscall2(.chmod, @intFromPtr(path), mode);
     } else {
-        return fchmodat(AT.FDCWD, path, mode, 0);
+        return fchmodat(AT.FDCWD, path, mode);
     }
 }
 
@@ -1432,7 +1432,7 @@ pub fn fchown(fd: i32, owner: uid_t, group: gid_t) usize {
     }
 }
 
-pub fn fchmodat(fd: i32, path: [*:0]const u8, mode: mode_t, _: u32) usize {
+pub fn fchmodat(fd: i32, path: [*:0]const u8, mode: mode_t) usize {
     return syscall3(.fchmodat, @bitCast(@as(isize, fd)), @intFromPtr(path), mode);
 }
 
