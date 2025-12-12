@@ -671,7 +671,7 @@ pub const VTable = struct {
     dirMakeOpenPath: *const fn (?*anyopaque, Dir, []const u8, Dir.Permissions, Dir.OpenOptions) Dir.MakeOpenPathError!Dir,
     dirOpenDir: *const fn (?*anyopaque, Dir, []const u8, Dir.OpenOptions) Dir.OpenError!Dir,
     dirStat: *const fn (?*anyopaque, Dir) Dir.StatError!Dir.Stat,
-    dirStatPath: *const fn (?*anyopaque, Dir, []const u8, Dir.StatPathOptions) Dir.StatPathError!File.Stat,
+    dirStatFile: *const fn (?*anyopaque, Dir, []const u8, Dir.StatFileOptions) Dir.StatFileError!File.Stat,
     dirAccess: *const fn (?*anyopaque, Dir, []const u8, Dir.AccessOptions) Dir.AccessError!void,
     dirCreateFile: *const fn (?*anyopaque, Dir, []const u8, File.CreateFlags) File.OpenError!File,
     dirOpenFile: *const fn (?*anyopaque, Dir, []const u8, File.OpenFlags) File.OpenError!File,

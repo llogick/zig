@@ -669,7 +669,7 @@ pub fn makeDirAbsolute(io: Io, absolute_path: []const u8, permissions: Permissio
 
 test makeDirAbsolute {}
 
-pub const MakePathError = MakeError || StatPathError;
+pub const MakePathError = MakeError || StatFileError;
 
 /// Creates parent directories with default permissions as necessary to ensure
 /// `sub_path` exists as a directory.
@@ -708,7 +708,7 @@ pub fn makePathStatus(dir: Dir, io: Io, sub_path: []const u8, permissions: Permi
     return io.vtable.dirMakePath(io.userdata, dir, sub_path, permissions);
 }
 
-pub const MakeOpenPathError = MakeError || OpenError || StatPathError;
+pub const MakeOpenPathError = MakeError || OpenError || StatFileError;
 
 pub const MakeOpenPathOptions = struct {
     open_options: OpenOptions = .{},
@@ -734,9 +734,9 @@ pub fn stat(dir: Dir, io: Io) StatError!Stat {
     return io.vtable.dirStat(io.userdata, dir);
 }
 
-pub const StatPathError = File.OpenError || File.StatError;
+pub const StatFileError = File.OpenError || File.StatError;
 
-pub const StatPathOptions = struct {
+pub const StatFileOptions = struct {
     follow_symlinks: bool = true,
 };
 
@@ -752,8 +752,8 @@ pub const StatPathOptions = struct {
 /// * On Windows, `sub_path` should be encoded as [WTF-8](https://simonsapin.github.io/wtf-8/).
 /// * On WASI, `sub_path` should be encoded as valid UTF-8.
 /// * On other platforms, `sub_path` is an opaque sequence of bytes with no particular encoding.
-pub fn statPath(dir: Dir, io: Io, sub_path: []const u8, options: StatPathOptions) StatPathError!Stat {
-    return io.vtable.dirStatPath(io.userdata, dir, sub_path, options);
+pub fn statFile(dir: Dir, io: Io, sub_path: []const u8, options: StatFileOptions) StatFileError!Stat {
+    return io.vtable.dirStatFile(io.userdata, dir, sub_path, options);
 }
 
 pub const RealPathError = error{

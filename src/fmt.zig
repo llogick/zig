@@ -182,7 +182,7 @@ pub fn run(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) !
     // Mark any excluded files/directories as already seen,
     // so that they are skipped later during actual processing
     for (excluded_files.items) |file_path| {
-        const stat = Io.Dir.cwd().statFile(file_path) catch |err| switch (err) {
+        const stat = Io.Dir.cwd().statFile(io, file_path, .{}) catch |err| switch (err) {
             error.FileNotFound => continue,
             // On Windows, statFile does not work for directories
             error.IsDir => dir: {

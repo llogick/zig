@@ -2162,8 +2162,9 @@ pub fn locSlice(comp: *const Compilation, loc: Source.Location) []const u8 {
 }
 
 pub fn getSourceMTimeUncached(comp: *const Compilation, source_id: Source.Id) ?u64 {
+    const io = comp.io;
     const source = comp.getSource(source_id);
-    if (comp.cwd.statFile(source.path)) |stat| {
+    if (comp.cwd.statFile(io, source.path, .{})) |stat| {
         return std.math.cast(u64, stat.mtime.toSeconds());
     } else |_| {
         return null;

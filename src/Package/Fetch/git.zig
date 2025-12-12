@@ -281,7 +281,7 @@ pub const Repository = struct {
                     const symlink_object = try repository.odb.readObject();
                     if (symlink_object.type != .blob) return error.InvalidFile;
                     const link_name = symlink_object.data;
-                    dir.symLink(link_name, entry.name, .{}) catch |e| {
+                    dir.symLink(io, link_name, entry.name, .{}) catch |e| {
                         const file_name = try std.fs.path.join(diagnostics.allocator, &.{ current_path, entry.name });
                         errdefer diagnostics.allocator.free(file_name);
                         const link_name_dup = try diagnostics.allocator.dupe(u8, link_name);

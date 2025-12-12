@@ -4539,7 +4539,7 @@ test "zig fmt: Only indent multiline string literals in function calls" {
 test "zig fmt: Don't add extra newline after if" {
     try testCanonical(
         \\pub fn atomicSymLink(allocator: Allocator, existing_path: []const u8, new_path: []const u8) !void {
-        \\    if (cwd().symLink(existing_path, new_path, .{})) {
+        \\    if (foo().bar(existing_path, new_path, .{})) {
         \\        return;
         \\    }
         \\}

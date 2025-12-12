@@ -504,6 +504,6 @@ test "case sensitivity" {
     };
 
     // on case sensitive os both files are created
-    try testing.expect((try root.dir.statFile("alacritty/darkermatrix.yml")).kind == .file);
-    try testing.expect((try root.dir.statFile("alacritty/Darkermatrix.yml")).kind == .file);
+    try testing.expect((try root.dir.statFile(io, "alacritty/darkermatrix.yml", .{})).kind == .file);
+    try testing.expect((try root.dir.statFile(io, "alacritty/Darkermatrix.yml", .{})).kind == .file);
 }

@@ -653,11 +653,11 @@ fn createDirAndFile(io: Io, dir: Io.Dir, file_name: []const u8, permissions: Io.
 
 // Creates a symbolic link at path `file_name` which points to `link_name`.
 fn createDirAndSymlink(io: Io, dir: Io.Dir, link_name: []const u8, file_name: []const u8) !void {
-    dir.symLink(link_name, file_name, .{}) catch |err| {
+    dir.symLink(io, link_name, file_name, .{}) catch |err| {
         if (err == error.FileNotFound) {
             if (std.fs.path.dirname(file_name)) |dir_name| {
                 try dir.makePath(io, dir_name);
-                return try dir.symLink(link_name, file_name, .{});
+                return try dir.symLink(io, link_name, file_name, .{});
             }
         }
         return err;
@@ -996,15 +996,15 @@ test pipeToFileSystem {
         return err;
     };
 
-    try testing.expectError(error.FileNotFound, dir.statFile("empty"));
-    try testing.expect((try dir.statFile("a/file")).kind == .file);
-    try testing.expect((try dir.statFile("b/symlink")).kind == .file); // statFile follows symlink
+    try testing.expectError(error.FileNotFound, dir.statFile(io, "empty", .{}));
+    try testing.expect((try dir.statFile(io, "a/file", .{})).kind == .file);
+    try testing.expect((try dir.statFile(io, "b/symlink", .{})).kind == .file); // statFile follows symlink
 
     var buf: [32]u8 = undefined;
     try testing.expectEqualSlices(
         u8,
         "../a/file",
-        normalizePath(try dir.readLink("b/symlink", &buf)),
+        normalizePath(buf[0..try dir.readLink(io, "b/symlink", &buf)]),
     );
 }
 
@@ -1120,28 +1120,18 @@ fn normalizePath(bytes: []u8) []u8 {
 
 // File system mode based on tar header mode and mode_mode options.
 fn filePermissions(mode: u32, options: PipeOptions) Io.File.Permissions {
-    const default_mode = 0o666;
-
-    if (!Io.File.Permissions.has_executable_bit or options.mode_mode == .ignore)
-        return .fromMode(default_mode);
-
-    const S = std.posix.S;
-
-    // The mode from the tar file is inspected for the owner executable bit.
-    if (mode & S.IXUSR == 0)
-        return .fromMode(default_mode);
-
-    // This bit is copied to the group and other executable bits.
-    // Other bits of the mode are left as the default when creating files.
-    return .fromMode(default_mode | S.IXUSR | S.IXGRP | S.IXOTH);
+    return if (!Io.File.Permissions.has_executable_bit or options.mode_mode == .ignore or (mode & 0o100) == 0)
+        .default_file
+    else
+        .executable_file;
 }
 
 test filePermissions {
     if (!Io.File.Permissions.has_executable_bit) return error.SkipZigTest;
-    try testing.expectEqual(0o666, filePermissions(0o744, PipeOptions{ .mode_mode = .ignore }));
-    try testing.expectEqual(0o777, filePermissions(0o744, PipeOptions{}));
-    try testing.expectEqual(0o666, filePermissions(0o644, PipeOptions{}));
-    try testing.expectEqual(0o666, filePermissions(0o655, PipeOptions{}));
+    try testing.expectEqual(.default_file, filePermissions(0o744, .{ .mode_mode = .ignore }));
+    try testing.expectEqual(.executable_file, filePermissions(0o744, .{}));
+    try testing.expectEqual(.default_file, filePermissions(0o644, .{}));
+    try testing.expectEqual(.default_file, filePermissions(0o655, .{}));
 }
 
 test "executable bit" {
@@ -1167,19 +1157,21 @@ test "executable bit" {
             return err;
         };
 
-        const fs = try tmp.dir.statFile("a/file");
+        const fs = try tmp.dir.statFile(io, "a/file", .{});
         try testing.expect(fs.kind == .file);
+
+        const mode = fs.permissions.toMode();
 
         if (opt == .executable_bit_only) {
             // Executable bit is set for user, group and others
-            try testing.expect(fs.mode & S.IXUSR > 0);
-            try testing.expect(fs.mode & S.IXGRP > 0);
-            try testing.expect(fs.mode & S.IXOTH > 0);
+            try testing.expect(mode & S.IXUSR > 0);
+            try testing.expect(mode & S.IXGRP > 0);
+            try testing.expect(mode & S.IXOTH > 0);
         }
         if (opt == .ignore) {
-            try testing.expect(fs.mode & S.IXUSR == 0);
-            try testing.expect(fs.mode & S.IXGRP == 0);
-            try testing.expect(fs.mode & S.IXOTH == 0);
+            try testing.expect(mode & S.IXUSR == 0);
+            try testing.expect(mode & S.IXGRP == 0);
+            try testing.expect(mode & S.IXOTH == 0);
         }
     }
 }

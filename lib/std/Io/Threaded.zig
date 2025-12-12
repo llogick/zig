@@ -708,7 +708,7 @@ pub fn io(t: *Threaded) Io {
             .dirMakePath = dirMakePath,
             .dirMakeOpenPath = dirMakeOpenPath,
             .dirStat = dirStat,
-            .dirStatPath = dirStatPath,
+            .dirStatFile = dirStatFile,
             .dirAccess = dirAccess,
             .dirCreateFile = dirCreateFile,
             .dirOpenFile = dirOpenFile,
@@ -840,7 +840,7 @@ pub fn ioBasic(t: *Threaded) Io {
             .dirMakePath = dirMakePath,
             .dirMakeOpenPath = dirMakeOpenPath,
             .dirStat = dirStat,
-            .dirStatPath = dirStatPath,
+            .dirStatFile = dirStatFile,
             .dirAccess = dirAccess,
             .dirCreateFile = dirCreateFile,
             .dirOpenFile = dirOpenFile,
@@ -1623,7 +1623,7 @@ fn dirMakePath(
                 // could cause an infinite loop
                 check_dir: {
                     // workaround for windows, see https://github.com/ziglang/zig/issues/16738
-                    const fstat = dirStatPath(t, dir, component.path, .{}) catch |stat_err| switch (stat_err) {
+                    const fstat = dirStatFile(t, dir, component.path, .{}) catch |stat_err| switch (stat_err) {
                         error.IsDir => break :check_dir,
                         else => |e| return e,
                     };
@@ -1752,7 +1752,7 @@ fn dirMakeOpenPathWindows(
                 // could cause an infinite loop
                 check_dir: {
                     // workaround for windows, see https://github.com/ziglang/zig/issues/16738
-                    const fstat = dirStatPathWindows(t, dir, component.path, .{
+                    const fstat = dirStatFileWindows(t, dir, component.path, .{
                         .follow_symlinks = options.follow_symlinks,
                     }) catch |stat_err| switch (stat_err) {
                         error.IsDir => break :check_dir,
@@ -1806,19 +1806,19 @@ fn dirStat(userdata: ?*anyopaque, dir: Dir) Dir.StatError!Dir.Stat {
     return fileStat(t, file);
 }
 
-const dirStatPath = switch (native_os) {
-    .linux => dirStatPathLinux,
-    .windows => dirStatPathWindows,
-    .wasi => dirStatPathWasi,
-    else => dirStatPathPosix,
+const dirStatFile = switch (native_os) {
+    .linux => dirStatFileLinux,
+    .windows => dirStatFileWindows,
+    .wasi => dirStatFileWasi,
+    else => dirStatFilePosix,
 };
 
-fn dirStatPathLinux(
+fn dirStatFileLinux(
     userdata: ?*anyopaque,
     dir: Dir,
     sub_path: []const u8,
-    options: Dir.StatPathOptions,
-) Dir.StatPathError!File.Stat {
+    options: Dir.StatFileOptions,
+) Dir.StatFileError!File.Stat {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
     const linux = std.os.linux;
@@ -1875,12 +1875,12 @@ fn dirStatPathLinux(
     }
 }
 
-fn dirStatPathPosix(
+fn dirStatFilePosix(
     userdata: ?*anyopaque,
     dir: Dir,
     sub_path: []const u8,
-    options: Dir.StatPathOptions,
-) Dir.StatPathError!File.Stat {
+    options: Dir.StatFileOptions,
+) Dir.StatFileError!File.Stat {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
@@ -1889,10 +1889,10 @@ fn dirStatPathPosix(
 
     const flags: u32 = if (!options.follow_symlinks) posix.AT.SYMLINK_NOFOLLOW else 0;
 
-    return posixStatPath(current_thread, dir.handle, sub_path_posix, flags);
+    return posixStatFile(current_thread, dir.handle, sub_path_posix, flags);
 }
 
-fn posixStatPath(current_thread: *Thread, dir_fd: posix.fd_t, sub_path: [:0]const u8, flags: u32) Dir.StatPathError!File.Stat {
+fn posixStatFile(current_thread: *Thread, dir_fd: posix.fd_t, sub_path: [:0]const u8, flags: u32) Dir.StatFileError!File.Stat {
     try current_thread.beginSyscall();
     while (true) {
         var stat = std.mem.zeroes(posix.Stat);
@@ -1927,12 +1927,12 @@ fn posixStatPath(current_thread: *Thread, dir_fd: posix.fd_t, sub_path: [:0]cons
     }
 }
 
-fn dirStatPathWindows(
+fn dirStatFileWindows(
     userdata: ?*anyopaque,
     dir: Dir,
     sub_path: []const u8,
-    options: Dir.StatPathOptions,
-) Dir.StatPathError!File.Stat {
+    options: Dir.StatFileOptions,
+) Dir.StatFileError!File.Stat {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const file = try dirOpenFileWindows(t, dir, sub_path, .{
         .follow_symlinks = options.follow_symlinks,
@@ -1941,13 +1941,13 @@ fn dirStatPathWindows(
     return fileStatWindows(t, file);
 }
 
-fn dirStatPathWasi(
+fn dirStatFileWasi(
     userdata: ?*anyopaque,
     dir: Dir,
     sub_path: []const u8,
-    options: Dir.StatPathOptions,
-) Dir.StatPathError!File.Stat {
-    if (builtin.link_libc) return dirStatPathPosix(userdata, dir, sub_path, options);
+    options: Dir.StatFileOptions,
+) Dir.StatFileError!File.Stat {
+    if (builtin.link_libc) return dirStatFilePosix(userdata, dir, sub_path, options);
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
     const wasi = std.os.wasi;
@@ -3629,7 +3629,7 @@ fn dirReadIllumos(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) D
         if (std.mem.eql(u8, name, ".") or std.mem.eql(u8, name, "..")) continue;
 
         // illumos dirent doesn't expose type, so we have to call stat to get it.
-        const stat = try posixStatPath(current_thread, dr.dir.handle, name, posix.AT.SYMLINK_NOFOLLOW);
+        const stat = try posixStatFile(current_thread, dr.dir.handle, name, posix.AT.SYMLINK_NOFOLLOW);
 
         buffer[buffer_index] = .{
             .name = name,

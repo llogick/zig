@@ -94,14 +94,14 @@ pub fn makeOpenPath(p: Path, sub_path: []const u8, opts: Io.Dir.OpenOptions) !Io
     return p.root_dir.handle.makeOpenPath(joined_path, opts);
 }
 
-pub fn statFile(p: Path, sub_path: []const u8) !Io.Dir.Stat {
+pub fn statFile(p: Path, io: Io, sub_path: []const u8) !Io.Dir.Stat {
     var buf: [fs.max_path_bytes]u8 = undefined;
     const joined_path = if (p.sub_path.len == 0) sub_path else p: {
         break :p std.fmt.bufPrint(&buf, "{s}" ++ fs.path.sep_str ++ "{s}", .{
             p.sub_path, sub_path,
         }) catch return error.NameTooLong;
     };
-    return p.root_dir.handle.statFile(joined_path);
+    return p.root_dir.handle.statFile(io, joined_path, .{});
 }
 
 pub fn atomicFile(

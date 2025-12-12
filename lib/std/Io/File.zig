@@ -372,6 +372,7 @@ pub const Permissions = std.options.FilePermissions orelse if (is_windows) enum(
     _,
 
     pub const default_dir: @This() = .default_file;
+    pub const executable_file: @This() = .default_file;
     pub const has_executable_bit = false;
 
     const windows = std.os.windows;
@@ -401,6 +402,7 @@ pub const Permissions = std.options.FilePermissions orelse if (is_windows) enum(
     /// process-scoped "umask" setting to adjust this number for file creation.
     default_file = 0o666,
     default_dir = 0o755,
+    executable_file = 0o777,
     _,
 
     pub const has_executable_bit = true;
@@ -428,6 +430,7 @@ pub const Permissions = std.options.FilePermissions orelse if (is_windows) enum(
 } else enum(u0) {
     default_file = 0,
     pub const default_dir: @This() = .default_file;
+    pub const executable_file: @This() = .default_file;
     pub const has_executable_bit = false;
 };
 

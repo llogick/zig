@@ -1440,13 +1440,13 @@ fn recursiveDirectoryCopy(f: *Fetch, dir: Io.Dir, tmp_dir: Io.Dir) anyerror!void
             },
             .sym_link => {
                 var buf: [fs.max_path_bytes]u8 = undefined;
-                const link_name = try dir.readLink(entry.path, &buf);
+                const link_name = try dir.readLink(io, entry.path, &buf);
                 // TODO: if this would create a symlink to outside
                 // the destination directory, fail with an error instead.
-                tmp_dir.symLink(link_name, entry.path, .{}) catch |err| switch (err) {
+                tmp_dir.symLink(io, link_name, entry.path, .{}) catch |err| switch (err) {
                     error.FileNotFound => {
                         if (fs.path.dirname(entry.path)) |dirname| try tmp_dir.makePath(io, dirname);
-                        try tmp_dir.symLink(link_name, entry.path, .{});
+                        try tmp_dir.symLink(io, link_name, entry.path, .{});
                     },
                     else => |e| return e,
                 };
@@ -1698,7 +1698,7 @@ fn hashFileFallible(io: Io, dir: Io.Dir, hashed_file: *HashedFile) HashedFile.Er
             }
         },
         .link => {
-            const link_name = try dir.readLink(hashed_file.fs_path, &buf);
+            const link_name = try dir.readLink(io, hashed_file.fs_path, &buf);
             if (fs.path.sep != canonical_sep) {
                 // Package hashes are intended to be consistent across
                 // platforms which means we must normalize path separators
@@ -2218,13 +2218,13 @@ test "set executable bit based on file content" {
     defer out.close(io);
     const S = std.posix.S;
     // expect executable bit not set
-    try std.testing.expect((try out.statFile("file1")).mode & S.IXUSR == 0);
-    try std.testing.expect((try out.statFile("script_without_shebang")).mode & S.IXUSR == 0);
+    try std.testing.expect((try out.statFile(io, "file1", .{})).mode & S.IXUSR == 0);
+    try std.testing.expect((try out.statFile(io, "script_without_shebang", .{})).mode & S.IXUSR == 0);
     // expect executable bit set
-    try std.testing.expect((try out.statFile("hello")).mode & S.IXUSR != 0);
-    try std.testing.expect((try out.statFile("script")).mode & S.IXUSR != 0);
-    try std.testing.expect((try out.statFile("script_with_shebang_without_exec_bit")).mode & S.IXUSR != 0);
-    try std.testing.expect((try out.statFile("hello_ln")).mode & S.IXUSR != 0);
+    try std.testing.expect((try out.statFile(io, "hello", .{})).mode & S.IXUSR != 0);
+    try std.testing.expect((try out.statFile(io, "script", .{})).mode & S.IXUSR != 0);
+    try std.testing.expect((try out.statFile(io, "script_with_shebang_without_exec_bit", .{})).mode & S.IXUSR != 0);
+    try std.testing.expect((try out.statFile(io, "hello_ln", .{})).mode & S.IXUSR != 0);
 
     //
     // $ ls -al zig-cache/tmp/OCz9ovUcstDjTC_U/zig-global-cache/p/1220fecb4c06a9da8673c87fe8810e15785f1699212f01728eadce094d21effeeef3

@@ -160,8 +160,8 @@ fn testWithPathTypeIfSupported(comptime path_type: PathType, comptime path_sep: 
 
 // For use in test setup.  If the symlink creation fails on Windows with
 // AccessDenied, then make the test failure silent (it is not a Zig failure).
-fn setupSymlink(dir: Dir, target: []const u8, link: []const u8, flags: SymLinkFlags) !void {
-    return dir.symLink(target, link, flags) catch |err| switch (err) {
+fn setupSymlink(io: Io, dir: Dir, target: []const u8, link: []const u8, flags: SymLinkFlags) !void {
+    return dir.symLink(io, target, link, flags) catch |err| switch (err) {
         // Symlink requires admin privileges on windows, so this test can legitimately fail.
         error.AccessDenied => if (native_os == .windows) return error.SkipZigTest else return err,
         else => return err,
@@ -193,15 +193,15 @@ test "Dir.readLink" {
             const canonical_dir_target_path = try ctx.toCanonicalPathSep(dir_target_path);
 
             // test 1: symlink to a file
-            try setupSymlink(ctx.dir, file_target_path, "symlink1", .{});
-            try testReadLink(ctx.dir, canonical_file_target_path, "symlink1");
+            try setupSymlink(io, ctx.dir, file_target_path, "symlink1", .{});
+            try testReadLink(io, ctx.dir, canonical_file_target_path, "symlink1");
             if (builtin.os.tag == .windows) {
                 try testReadLinkW(testing.allocator, ctx.dir, canonical_file_target_path, "symlink1");
             }
 
             // test 2: symlink to a directory (can be different on Windows)
-            try setupSymlink(ctx.dir, dir_target_path, "symlink2", .{ .is_directory = true });
-            try testReadLink(ctx.dir, canonical_dir_target_path, "symlink2");
+            try setupSymlink(io, ctx.dir, dir_target_path, "symlink2", .{ .is_directory = true });
+            try testReadLink(io, ctx.dir, canonical_dir_target_path, "symlink2");
             if (builtin.os.tag == .windows) {
                 try testReadLinkW(testing.allocator, ctx.dir, canonical_dir_target_path, "symlink2");
             }
@@ -211,8 +211,8 @@ test "Dir.readLink" {
             const canonical_parent_file = try ctx.toCanonicalPathSep(parent_file);
             var subdir = try ctx.dir.makeOpenPath("subdir", .{});
             defer subdir.close(io);
-            try setupSymlink(subdir, canonical_parent_file, "relative-link.txt", .{});
-            try testReadLink(subdir, canonical_parent_file, "relative-link.txt");
+            try setupSymlink(io, subdir, canonical_parent_file, "relative-link.txt", .{});
+            try testReadLink(io, subdir, canonical_parent_file, "relative-link.txt");
             if (builtin.os.tag == .windows) {
                 try testReadLinkW(testing.allocator, subdir, canonical_parent_file, "relative-link.txt");
             }
@@ -246,9 +246,9 @@ test "Dir.readLink on non-symlinks" {
     }.impl);
 }
 
-fn testReadLink(dir: Dir, target_path: []const u8, symlink_path: []const u8) !void {
+fn testReadLink(io: Io, dir: Dir, target_path: []const u8, symlink_path: []const u8) !void {
     var buffer: [fs.max_path_bytes]u8 = undefined;
-    const actual = try dir.readLink(symlink_path, buffer[0..]);
+    const actual = try dir.readLink(io, symlink_path, &buffer);
     try testing.expectEqualStrings(target_path, actual);
 }
 
@@ -284,7 +284,7 @@ test "File.stat on a File that is a symlink returns Kind.sym_link" {
             const dir_target_path = try ctx.transformPath("subdir");
             try ctx.dir.makeDir(io, dir_target_path, .default_dir);
 
-            try setupSymlink(ctx.dir, dir_target_path, "symlink", .{ .is_directory = true });
+            try setupSymlink(io, ctx.dir, dir_target_path, "symlink", .{ .is_directory = true });
 
             var symlink: Dir = switch (builtin.target.os.tag) {
                 .windows => windows_symlink: {
@@ -809,11 +809,11 @@ test "Dir.statFile" {
             const io = ctx.io;
             const test_file_name = try ctx.transformPath("test_file");
 
-            try testing.expectError(error.FileNotFound, ctx.dir.statFile(test_file_name));
+            try testing.expectError(error.FileNotFound, ctx.dir.statFile(io, test_file_name, .{}));
 
             try ctx.dir.writeFile(io, .{ .sub_path = test_file_name, .data = "" });
 
-            const stat = try ctx.dir.statFile(test_file_name);
+            const stat = try ctx.dir.statFile(io, test_file_name, .{});
             try testing.expectEqual(File.Kind.file, stat.kind);
         }
     }.impl);
@@ -822,12 +822,13 @@ test "Dir.statFile" {
 test "statFile on dangling symlink" {
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {
+            const io = ctx.io;
             const symlink_name = try ctx.transformPath("dangling-symlink");
             const symlink_target = "." ++ fs.path.sep_str ++ "doesnotexist";
 
-            try setupSymlink(ctx.dir, symlink_target, symlink_name, .{});
+            try setupSymlink(io, ctx.dir, symlink_target, symlink_name, .{});
 
-            try std.testing.expectError(error.FileNotFound, ctx.dir.statFile(symlink_name));
+            try std.testing.expectError(error.FileNotFound, ctx.dir.statFile(io, symlink_name, .{}));
         }
     }.impl);
 }
@@ -1206,7 +1207,7 @@ test "deleteTree does not follow symlinks" {
         var a = try tmp.dir.makeOpenPath("a", .{});
         defer a.close(io);
 
-        try setupSymlink(a, "../b", "b", .{ .is_directory = true });
+        try setupSymlink(io, a, "../b", "b", .{ .is_directory = true });
     }
 
     try tmp.dir.deleteTree(io, "a");
@@ -1223,7 +1224,7 @@ test "deleteTree on a symlink" {
 
     // Symlink to a file
     try tmp.dir.writeFile(io, .{ .sub_path = "file", .data = "" });
-    try setupSymlink(tmp.dir, "file", "filelink", .{});
+    try setupSymlink(io, tmp.dir, "file", "filelink", .{});
 
     try tmp.dir.deleteTree(io, "filelink");
     try testing.expectError(error.FileNotFound, tmp.dir.access(io, "filelink", .{}));
@@ -1231,7 +1232,7 @@ test "deleteTree on a symlink" {
 
     // Symlink to a directory
     try tmp.dir.makePath(io, "dir");
-    try setupSymlink(tmp.dir, "dir", "dirlink", .{ .is_directory = true });
+    try setupSymlink(io, tmp.dir, "dir", "dirlink", .{ .is_directory = true });
 
     try tmp.dir.deleteTree(io, "dirlink");
     try testing.expectError(error.FileNotFound, tmp.dir.access(io, "dirlink", .{}));
@@ -1337,7 +1338,7 @@ test "makepath through existing valid symlink" {
     defer tmp.cleanup();
 
     try tmp.dir.makeDir(io, "realfolder", .default_dir);
-    try setupSymlink(tmp.dir, "." ++ fs.path.sep_str ++ "realfolder", "working-symlink", .{});
+    try setupSymlink(io, tmp.dir, "." ++ fs.path.sep_str ++ "realfolder", "working-symlink", .{});
 
     try tmp.dir.makePath(io, "working-symlink" ++ fs.path.sep_str ++ "in-realfolder");
 
@@ -2178,12 +2179,12 @@ test "invalid UTF-8/WTF-8 paths" {
 
             try testing.expectError(expected_err, ctx.dir.rename(invalid_path, ctx.dir, invalid_path, io));
 
-            try testing.expectError(expected_err, ctx.dir.symLink(invalid_path, invalid_path, .{}));
+            try testing.expectError(expected_err, ctx.dir.symLink(io, invalid_path, invalid_path, .{}));
             if (native_os == .wasi) {
                 try testing.expectError(expected_err, ctx.dir.symLinkWasi(invalid_path, invalid_path, .{}));
             }
 
-            try testing.expectError(expected_err, ctx.dir.readLink(invalid_path, &[_]u8{}));
+            try testing.expectError(expected_err, ctx.dir.readLink(io, invalid_path, &[_]u8{}));
             if (native_os == .wasi) {
                 try testing.expectError(expected_err, ctx.dir.readLinkWasi(invalid_path, &[_]u8{}));
             }
@@ -2386,14 +2387,16 @@ test "File.Writer sendfile with buffered contents" {
 test "readlink on Windows" {
     if (native_os != .windows) return error.SkipZigTest;
 
-    try testReadlink("C:\\ProgramData", "C:\\Users\\All Users");
-    try testReadlink("C:\\Users\\Default", "C:\\Users\\Default User");
-    try testReadlink("C:\\Users", "C:\\Documents and Settings");
+    const io = testing.io;
+
+    try testReadLinkWindows(io, "C:\\ProgramData", "C:\\Users\\All Users");
+    try testReadLinkWindows(io, "C:\\Users\\Default", "C:\\Users\\Default User");
+    try testReadLinkWindows(io, "C:\\Users", "C:\\Documents and Settings");
 }
 
-fn testReadlink(target_path: []const u8, symlink_path: []const u8) !void {
+fn testReadLinkWindows(io: Io, target_path: []const u8, symlink_path: []const u8) !void {
     var buffer: [fs.max_path_bytes]u8 = undefined;
-    const given = try Dir.readLinkAbsolute(symlink_path, buffer[0..]);
+    const given = try Dir.readLinkAbsolute(io, symlink_path, &buffer);
     try expect(mem.eql(u8, target_path, given));
 }
 
@@ -2424,6 +2427,6 @@ test "readlinkat" {
 
     // read the link
     var buffer: [fs.max_path_bytes]u8 = undefined;
-    const read_link = try tmp.dir.readLink("link", &buffer);
+    const read_link = try tmp.dir.readLink(io, "link", &buffer);
     try expect(mem.eql(u8, "file.txt", read_link));
 }
