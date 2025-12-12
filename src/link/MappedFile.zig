@@ -35,6 +35,11 @@ pub const Error = std.posix.MMapError || std.posix.MRemapError || Io.File.Length
     IsDir,
     Unseekable,
     NoSpaceLeft,
+
+    InputOutput,
+    FileTooBig,
+    FileBusy,
+    NonResizable,
 };
 
 pub fn init(file: std.Io.File, gpa: std.mem.Allocator, io: Io) !MappedFile {

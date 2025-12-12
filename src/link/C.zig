@@ -509,7 +509,7 @@ pub fn flush(self: *C, arena: Allocator, tid: Zcu.PerThread.Id, prog_node: std.P
     }, self.getString(av_block.code));
 
     const file = self.base.file.?;
-    file.setEndPos(f.file_size) catch |err| return diags.fail("failed to allocate file: {s}", .{@errorName(err)});
+    file.setLength(io, f.file_size) catch |err| return diags.fail("failed to allocate file: {t}", .{err});
     var fw = file.writer(io, &.{});
     var w = &fw.interface;
     w.writeVecAll(f.all_buffers.items) catch |err| switch (err) {
@@ -800,7 +800,7 @@ pub fn flushEmitH(zcu: *Zcu) !void {
     });
     defer file.close(io);
 
-    try file.setEndPos(file_size);
+    try file.setLength(io, file_size);
     try file.pwritevAll(all_buffers.items, 0);
 }
 

@@ -1,5 +1,6 @@
 pub fn flushStaticLib(elf_file: *Elf, comp: *Compilation) !void {
     const gpa = comp.gpa;
+    const io = comp.io;
     const diags = &comp.link_diags;
 
     if (diags.hasErrors()) return error.LinkFailure;
@@ -125,7 +126,7 @@ pub fn flushStaticLib(elf_file: *Elf, comp: *Compilation) !void {
 
     assert(writer.buffered().len == total_size);
 
-    try elf_file.base.file.?.setEndPos(total_size);
+    try elf_file.base.file.?.setLength(io, total_size);
     try elf_file.base.file.?.pwriteAll(writer.buffered(), 0);
 
     if (diags.hasErrors()) return error.LinkFailure;

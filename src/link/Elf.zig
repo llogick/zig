@@ -487,6 +487,8 @@ pub fn getUavVAddr(self: *Elf, uav: InternPool.Index, reloc_info: link.File.Relo
 
 /// Returns end pos of collision, if any.
 fn detectAllocCollision(self: *Elf, start: u64, size: u64) !?u64 {
+    const comp = self.base.comp;
+    const io = comp.io;
     const small_ptr = self.ptr_width == .p32;
     const ehdr_size: u64 = if (small_ptr) @sizeOf(elf.Elf32_Ehdr) else @sizeOf(elf.Elf64_Ehdr);
     if (start < ehdr_size)
@@ -526,7 +528,7 @@ fn detectAllocCollision(self: *Elf, start: u64, size: u64) !?u64 {
         }
     }
 
-    if (at_end) try self.base.file.?.setEndPos(end);
+    if (at_end) try self.base.file.?.setLength(io, end);
     return null;
 }
 
@@ -556,6 +558,8 @@ pub fn findFreeSpace(self: *Elf, object_size: u64, min_alignment: u64) !u64 {
 }
 
 pub fn growSection(self: *Elf, shdr_index: u32, needed_size: u64, min_alignment: u64) !void {
+    const comp = self.base.comp;
+    const io = comp.io;
     const shdr = &self.sections.items(.shdr)[shdr_index];
 
     if (shdr.sh_type != elf.SHT_NOBITS) {
@@ -589,7 +593,7 @@ pub fn growSection(self: *Elf, shdr_index: u32, needed_size: u64, min_alignment:
 
             shdr.sh_offset = new_offset;
         } else if (shdr.sh_offset + allocated_size == std.math.maxInt(u64)) {
-            try self.base.file.?.setEndPos(shdr.sh_offset + needed_size);
+            try self.base.file.?.setLength(io, shdr.sh_offset + needed_size);
         }
     }
 
@@ -4446,10 +4450,11 @@ pub fn pwriteAll(elf_file: *Elf, bytes: []const u8, offset: u64) error{LinkFailu
     };
 }
 
-pub fn setEndPos(elf_file: *Elf, length: u64) error{LinkFailure}!void {
+pub fn setLength(elf_file: *Elf, length: u64) error{LinkFailure}!void {
     const comp = elf_file.base.comp;
+    const io = comp.i;
     const diags = &comp.link_diags;
-    elf_file.base.file.?.setEndPos(length) catch |err| {
+    elf_file.base.file.?.setLength(io, length) catch |err| {
         return diags.fail("failed to set file end pos: {s}", .{@errorName(err)});
     };
 }

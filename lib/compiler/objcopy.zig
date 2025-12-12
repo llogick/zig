@@ -676,8 +676,9 @@ fn containsValidAddressRange(segments: []*BinaryElfSegment) bool {
 }
 
 fn padFile(out: *File.Writer, opt_size: ?u64) !void {
+    const io = out.io;
     const size = opt_size orelse return;
-    try out.file.setEndPos(size);
+    try out.file.setLength(io, size);
 }
 
 test "HexWriter.Record.Address has correct payload and checksum" {

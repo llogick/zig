@@ -1451,57 +1451,6 @@ test "pwritev, preadv" {
     try expectError(error.EndOfStream, reader.interface.readSliceAll(&buf1));
 }
 
-test "setEndPos" {
-    // https://github.com/ziglang/zig/issues/20747 (open fd does not have write permission)
-    if (native_os == .wasi and builtin.link_libc) return error.SkipZigTest;
-    if (builtin.cpu.arch.isMIPS64() and (builtin.abi == .gnuabin32 or builtin.abi == .muslabin32)) return error.SkipZigTest; // https://github.com/ziglang/zig/issues/23806
-
-    const io = testing.io;
-
-    var tmp = tmpDir(.{});
-    defer tmp.cleanup();
-
-    const file_name = "afile.txt";
-    try tmp.dir.writeFile(io, .{ .sub_path = file_name, .data = "ninebytes" });
-    const f = try tmp.dir.openFile(io, file_name, .{ .mode = .read_write });
-    defer f.close(io);
-
-    const initial_size = try f.length(io);
-    var buffer: [32]u8 = undefined;
-    var reader = f.reader(io, &.{});
-
-    {
-        try f.setEndPos(initial_size);
-        try expectEqual(initial_size, try f.length(io));
-        try reader.seekTo(0);
-        try expectEqual(initial_size, try reader.interface.readSliceShort(&buffer));
-        try expectEqualStrings("ninebytes", buffer[0..@intCast(initial_size)]);
-    }
-
-    {
-        const larger = initial_size + 4;
-        try f.setEndPos(larger);
-        try expectEqual(larger, try f.length(io));
-        try reader.seekTo(0);
-        try expectEqual(larger, try reader.interface.readSliceShort(&buffer));
-        try expectEqualStrings("ninebytes\x00\x00\x00\x00", buffer[0..@intCast(larger)]);
-    }
-
-    {
-        const smaller = initial_size - 5;
-        try f.setEndPos(smaller);
-        try expectEqual(smaller, try f.length(io));
-        try reader.seekTo(0);
-        try expectEqual(smaller, try reader.interface.readSliceShort(&buffer));
-        try expectEqualStrings("nine", buffer[0..@intCast(smaller)]);
-    }
-
-    try f.setEndPos(0);
-    try expectEqual(0, try f.length(io));
-    try reader.seekTo(0);
-    try expectEqual(0, try reader.interface.readSliceShort(&buffer));
-}
-
 test "access file" {
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {

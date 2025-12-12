@@ -125,6 +125,7 @@ pub fn growSection(
     requires_file_copy: bool,
     macho_file: *MachO,
 ) !void {
+    const io = self.io;
     const sect = self.getSectionPtr(sect_index);
 
     const allocated_size = self.allocatedSize(sect.offset);
@@ -152,7 +153,7 @@ pub fn growSection(
 
         sect.offset = @intCast(new_offset);
     } else if (sect.offset + allocated_size == std.math.maxInt(u64)) {
-        try self.file.?.setEndPos(sect.offset + needed_size);
+        try self.file.?.setLength(io, sect.offset + needed_size);
     }
 
     sect.size = needed_size;
@@ -176,6 +177,7 @@ pub fn markDirty(self: *DebugSymbols, sect_index: u8, macho_file: *MachO) void {
 }
 
 fn detectAllocCollision(self: *DebugSymbols, start: u64, size: u64) !?u64 {
+    const io = self.io;
     var at_end = true;
     const end = start + padToIdeal(size);
 
@@ -188,7 +190,7 @@ fn detectAllocCollision(self: *DebugSymbols, start: u64, size: u64) !?u64 {
         }
     }
 
-    if (at_end) try self.file.?.setEndPos(end);
+    if (at_end) try self.file.?.setLength(io, end);
     return null;
 }
 

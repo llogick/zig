@@ -80,6 +80,7 @@ pub fn flushObject(macho_file: *MachO, comp: *Compilation, module_obj_path: ?Pat
 
 pub fn flushStaticLib(macho_file: *MachO, comp: *Compilation, module_obj_path: ?Path) link.File.FlushError!void {
     const gpa = comp.gpa;
+    const io = comp.io;
     const diags = &macho_file.base.comp.link_diags;
 
     var positionals = std.array_list.Managed(link.Input).init(gpa);
@@ -230,7 +231,7 @@ pub fn flushStaticLib(macho_file: *MachO, comp: *Compilation, module_obj_path: ?
 
     assert(writer.end == total_size);
 
-    try macho_file.setEndPos(total_size);
+    try macho_file.setLength(io, total_size);
     try macho_file.pwriteAll(writer.buffered(), 0);
 
     if (diags.hasErrors()) return error.LinkFailure;

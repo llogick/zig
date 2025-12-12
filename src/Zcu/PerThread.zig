@@ -245,7 +245,7 @@ pub fn updateFile(
 
     if (need_update) {
         // The cache is definitely stale so delete the contents to avoid an underwrite later.
-        cache_file.setEndPos(0) catch |err| switch (err) {
+        cache_file.setLength(io, 0) catch |err| switch (err) {
             error.FileTooBig => unreachable, // 0 is not too big
             else => |e| return e,
         };
