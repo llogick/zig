@@ -1038,7 +1038,7 @@ fn buildOutputType(
                 } else if (mem.startsWith(u8, arg, "-")) {
                     if (mem.eql(u8, arg, "-h") or mem.eql(u8, arg, "--help")) {
                         try Io.File.stdout().writeStreamingAll(io, usage_build_generic);
-                        return cleanExit();
+                        return cleanExit(io);
                     } else if (mem.eql(u8, arg, "--")) {
                         if (arg_mode == .run) {
                             // args_iter.i is 1, referring the next arg after "--" in ["--", ...]
@@ -3646,7 +3646,7 @@ fn buildOutputType(
                 all_args,
                 runtime_args_start,
             );
-            return cleanExit();
+            return cleanExit(io);
         },
         .ip4 => |ip4_addr| {
             const addr: Io.net.IpAddress = .{ .ip4 = ip4_addr };
@@ -3672,7 +3672,7 @@ fn buildOutputType(
                 all_args,
                 runtime_args_start,
             );
-            return cleanExit();
+            return cleanExit(io);
         },
     }
 
@@ -3755,7 +3755,7 @@ fn buildOutputType(
     }
 
     // Skip resource deallocation in release builds; let the OS do it.
-    return cleanExit();
+    return cleanExit(io);
 }
 
 const CreateModule = struct {
@@ -4176,7 +4176,7 @@ fn serve(
         defer if (comp.debugIncremental()) ids.mutex.unlock(io);
 
         switch (hdr.tag) {
-            .exit => return cleanExit(),
+            .exit => return cleanExit(io),
             .update => {
                 tracy.frameMark();
                 file_system_inputs.clearRetainingCapacity();
@@ -4462,7 +4462,7 @@ fn runOrTest(
                 switch (term) {
                     .Exited => |code| {
                         if (code == 0) {
-                            return cleanExit();
+                            return cleanExit(io);
                         } else {
                             process.exit(code);
                         }
@@ -4476,7 +4476,7 @@ fn runOrTest(
                 switch (term) {
                     .Exited => |code| {
                         if (code == 0) {
-                            return cleanExit();
+                            return cleanExit(io);
                         } else {
                             const cmd = try std.mem.join(arena, " ", argv.items);
                             fatal("the following test command failed with exit code {d}:\n{s}", .{ code, cmd });
@@ -4688,7 +4688,7 @@ fn cmdTranslateC(
         var file_reader = zig_file.reader(io, &.{});
         _ = try stdout_writer.interface.sendFileAll(&file_reader, .unlimited);
         try stdout_writer.interface.flush();
-        return cleanExit();
+        return cleanExit(io);
     }
 }
 
@@ -4735,7 +4735,7 @@ fn cmdInit(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) !
                     template = .minimal;
                 } else if (mem.eql(u8, arg, "-h") or mem.eql(u8, arg, "--help")) {
                     try Io.File.stdout().writeStreamingAll(io, usage_init);
-                    return cleanExit();
+                    return cleanExit(io);
                 } else {
                     fatal("unrecognized parameter: '{s}'", .{arg});
                 }
@@ -4780,7 +4780,7 @@ fn cmdInit(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) !
             if (ok_count == template_paths.len) {
                 std.log.info("see `zig build --help` for a menu of options", .{});
             }
-            return cleanExit();
+            return cleanExit(io);
         },
         .minimal => {
             writeSimpleTemplateFile(io, Package.Manifest.basename,
@@ -4813,11 +4813,11 @@ fn cmdInit(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) !
                 // their `build.zig.zon` *after* writing their `build.zig`. So this one isn't fatal.
                 error.PathAlreadyExists => {
                     std.log.info("successfully populated '{s}', preserving existing '{s}'", .{ Package.Manifest.basename, Package.build_zig_basename });
-                    return cleanExit();
+                    return cleanExit(io);
                 },
             };
             std.log.info("successfully populated '{s}' and '{s}'", .{ Package.Manifest.basename, Package.build_zig_basename });
-            return cleanExit();
+            return cleanExit(io);
         },
     }
 }
@@ -5284,7 +5284,7 @@ fn cmdBuild(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) 
                     process.exit(1);
                 }
 
-                if (fetch_only) return cleanExit();
+                if (fetch_only) return cleanExit(io);
 
                 var source_buf = std.array_list.Managed(u8).init(gpa);
                 defer source_buf.deinit();
@@ -5420,7 +5420,7 @@ fn cmdBuild(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) 
 
             switch (term) {
                 .Exited => |code| {
-                    if (code == 0) return cleanExit();
+                    if (code == 0) return cleanExit(io);
                     // Indicates that the build runner has reported compile errors
                     // and this parent process does not need to report any further
                     // diagnostics.
@@ -5691,7 +5691,7 @@ fn jitCmd(
         .Exited => |code| {
             if (code == 0) {
                 if (options.capture != null) return;
-                return cleanExit();
+                return cleanExit(io);
             }
             const cmd = try std.mem.join(arena, " ", child_argv.items);
             fatal("the following build command failed with exit code {d}:\n{s}", .{ code, cmd });
@@ -6151,7 +6151,7 @@ fn cmdAstCheck(arena: Allocator, io: Io, args: []const []const u8) !void {
         if (mem.startsWith(u8, arg, "-")) {
             if (mem.eql(u8, arg, "-h") or mem.eql(u8, arg, "--help")) {
                 try Io.File.stdout().writeStreamingAll(io, usage_ast_check);
-                return cleanExit();
+                return cleanExit(io);
             } else if (mem.eql(u8, arg, "-t")) {
                 want_output_text = true;
             } else if (mem.eql(u8, arg, "--zon")) {
@@ -6222,7 +6222,7 @@ fn cmdAstCheck(arena: Allocator, io: Io, args: []const []const u8) !void {
                 if (zir.hasCompileErrors()) {
                     process.exit(1);
                 } else {
-                    return cleanExit();
+                    return cleanExit(io);
                 }
             }
             if (!build_options.enable_debug_extensions) {
@@ -6273,7 +6273,7 @@ fn cmdAstCheck(arena: Allocator, io: Io, args: []const []const u8) !void {
             if (zir.hasCompileErrors()) {
                 process.exit(1);
             } else {
-                return cleanExit();
+                return cleanExit(io);
             }
         },
         .zon => {
@@ -6288,7 +6288,7 @@ fn cmdAstCheck(arena: Allocator, io: Io, args: []const []const u8) !void {
             }
 
             if (!want_output_text) {
-                return cleanExit();
+                return cleanExit(io);
             }
 
             if (!build_options.enable_debug_extensions) {
@@ -6297,7 +6297,7 @@ fn cmdAstCheck(arena: Allocator, io: Io, args: []const []const u8) !void {
 
             try @import("print_zoir.zig").renderToWriter(zoir, arena, stdout_bw);
             try stdout_bw.flush();
-            return cleanExit();
+            return cleanExit(io);
         },
     }
 }
@@ -6325,7 +6325,7 @@ fn cmdDetectCpu(io: Io, args: []const []const u8) !void {
             if (mem.startsWith(u8, arg, "-")) {
                 if (mem.eql(u8, arg, "-h") or mem.eql(u8, arg, "--help")) {
                     try Io.File.stdout().writeStreamingAll(io, detect_cpu_usage);
-                    return cleanExit();
+                    return cleanExit(io);
                 } else if (mem.eql(u8, arg, "--llvm")) {
                     use_llvm = true;
                 } else {
@@ -6475,7 +6475,7 @@ fn cmdDumpLlvmInts(
     }
     try stdout_bw.flush();
 
-    return cleanExit();
+    return cleanExit(io);
 }
 
 /// This is only enabled for debug builds.
@@ -6909,7 +6909,7 @@ fn cmdFetch(
             if (mem.startsWith(u8, arg, "-")) {
                 if (mem.eql(u8, arg, "-h") or mem.eql(u8, arg, "--help")) {
                     try Io.File.stdout().writeStreamingAll(io, usage_fetch);
-                    return cleanExit();
+                    return cleanExit(io);
                 } else if (mem.eql(u8, arg, "--global-cache-dir")) {
                     if (i + 1 >= args.len) fatal("expected argument after '{s}'", .{arg});
                     i += 1;
@@ -7020,7 +7020,7 @@ fn cmdFetch(
             var stdout = Io.File.stdout().writerStreaming(io, &stdout_buffer);
             try stdout.interface.print("{s}\n", .{package_hash_slice});
             try stdout.interface.flush();
-            return cleanExit();
+            return cleanExit(io);
         },
         .yes, .exact => |name| name: {
             if (name) |n| break :name n;
@@ -7159,7 +7159,7 @@ fn cmdFetch(
         fatal("unable to write {s} file: {t}", .{ Package.Manifest.basename, err });
     };
 
-    return cleanExit();
+    return cleanExit(io);
 }
 
 fn createEmptyDependenciesModule(

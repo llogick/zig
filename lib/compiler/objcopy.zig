@@ -235,7 +235,7 @@ fn cmdObjCopy(gpa: Allocator, arena: Allocator, args: []const []const u8) !void 
             const hdr = try server.receiveMessage();
             switch (hdr.tag) {
                 .exit => {
-                    return std.process.cleanExit();
+                    return std.process.cleanExit(io);
                 },
                 .update => {
                     if (seen_update) fatal("zig objcopy only supports 1 update for now", .{});
@@ -250,7 +250,7 @@ fn cmdObjCopy(gpa: Allocator, arena: Allocator, args: []const []const u8) !void 
             }
         }
     }
-    return std.process.cleanExit();
+    return std.process.cleanExit(io);
 }
 
 const usage =

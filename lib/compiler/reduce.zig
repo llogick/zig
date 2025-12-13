@@ -75,7 +75,7 @@ pub fn main() !void {
                 if (mem.eql(u8, arg, "-h") or mem.eql(u8, arg, "--help")) {
                     const stdout = Io.File.stdout();
                     try stdout.writeAll(usage);
-                    return std.process.cleanExit();
+                    return std.process.cleanExit(io);
                 } else if (mem.eql(u8, arg, "--")) {
                     argv = args[i + 1 ..];
                     break;
@@ -278,10 +278,10 @@ pub fn main() !void {
         try tree.render(gpa, &rendered.writer, fixups);
         try Io.Dir.cwd().writeFile(io, .{ .sub_path = root_source_file_path, .data = rendered.written() });
 
-        return std.process.cleanExit();
+        return std.process.cleanExit(io);
     }
     std.debug.print("no more transformations found\n", .{});
-    return std.process.cleanExit();
+    return std.process.cleanExit(io);
 }
 
 fn sortTransformations(transformations: []Walk.Transformation, rng: std.Random) void {

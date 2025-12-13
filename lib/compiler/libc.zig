@@ -50,7 +50,7 @@ pub fn main() !void {
                 if (mem.eql(u8, arg, "-h") or mem.eql(u8, arg, "--help")) {
                     try stdout.writeAll(usage_libc);
                     try stdout.flush();
-                    return std.process.cleanExit();
+                    return std.process.cleanExit(io);
                 } else if (mem.eql(u8, arg, "-target")) {
                     if (i + 1 >= args.len) fatal("expected parameter after {s}", .{arg});
                     i += 1;
@@ -110,7 +110,7 @@ pub fn main() !void {
             try stdout.writeByte('\n');
         }
         try stdout.flush();
-        return std.process.cleanExit();
+        return std.process.cleanExit(io);
     }
 
     if (input_file) |libc_file| {
