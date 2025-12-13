@@ -1841,21 +1841,19 @@ pub fn totalSystemMemory() TotalSystemMemoryError!u64 {
     }
 }
 
-/// Indicate that we are now terminating with a successful exit code.
-/// In debug builds, this is a no-op, so that the calling code's
-/// cleanup mechanisms are tested and so that external tools that
-/// check for resource leaks can be accurate. In release builds, this
-/// calls exit(0), and does not return.
-pub fn cleanExit() void {
-    if (builtin.mode == .Debug) {
-        return;
-    } else {
-        std.debug.lockStdErr();
-        exit(0);
-    }
+/// Indicate intent to terminate with a successful exit code.
+///
+/// In debug builds, this is a no-op, so that the calling code's cleanup
+/// mechanisms are tested and so that external tools checking for resource
+/// leaks can be accurate. In release builds, this calls `exit` with code zero,
+/// and does not return.
+pub fn cleanExit(io: Io) void {
+    if (builtin.mode == .Debug) return;
+    _ = io.lockStderrWriter(&.{});
+    exit(0);
 }
 
-/// Raise the open file descriptor limit.
+/// Request ability to have more open file descriptors simultaneously.
 ///
 /// On some systems, this raises the limit before seeing ProcessFdQuotaExceeded
 /// errors. On other systems, this does nothing.

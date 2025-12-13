@@ -405,15 +405,22 @@ pub fn fuzz(
             testOne(ctx, input.toSlice()) catch |err| switch (err) {
                 error.SkipZigTest => return,
                 else => {
-                    std.debug.lockStdErr();
-                    if (@errorReturnTrace()) |trace| std.debug.dumpStackTrace(trace);
-                    std.debug.print("failed with error.{t}\n", .{err});
+                    const stderr = std.debug.lockStderrWriter(&.{});
+                    p: {
+                        if (@errorReturnTrace()) |trace| {
+                            std.debug.writeStackTrace(trace, &stderr.interface, stderr.mode) catch break :p;
+                        }
+                        stderr.interface.print("failed with error.{t}\n", .{err}) catch break :p;
+                        stderr.interface.flush() catch break :p;
+                    }
+                    stderr.interface.flush() catch {};
                     std.process.exit(1);
                 },
             };
             if (log_err_count != 0) {
-                std.debug.lockStdErr();
-                std.debug.print("error logs detected\n", .{});
+                const stderr = std.debug.lockStderrWriter(&.{});
+                stderr.interface.print("error logs detected\n", .{}) catch {};
+                stderr.interface.flush() catch {};
                 std.process.exit(1);
             }
         }

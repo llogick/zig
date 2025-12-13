@@ -4429,12 +4429,12 @@ fn runOrTest(
     // the error message and invocation below.
     if (process.can_execv and arg_mode == .run) {
         // execv releases the locks; no need to destroy the Compilation here.
-        std.debug.lockStdErr();
+        _ = std.debug.lockStderrWriter(&.{});
         const err = process.execve(gpa, argv.items, &env_map);
-        std.debug.unlockStdErr();
+        std.debug.unlockStderrWriter();
         try warnAboutForeignBinaries(io, arena, arg_mode, target, link_libc);
         const cmd = try std.mem.join(arena, " ", argv.items);
-        fatal("the following command failed to execve with '{s}':\n{s}", .{ @errorName(err), cmd });
+        fatal("the following command failed to execve with '{t}':\n{s}", .{ err, cmd });
     } else if (process.can_spawn) {
         var child = std.process.Child.init(argv.items, gpa);
         child.env_map = &env_map;
@@ -4448,8 +4448,8 @@ fn runOrTest(
         comp_destroyed.* = true;
 
         const term_result = t: {
-            std.debug.lockStdErr();
-            defer std.debug.unlockStdErr();
+            _ = std.debug.lockStderrWriter();
+            defer std.debug.unlockStderrWriter();
             break :t child.spawnAndWait(io);
         };
         const term = term_result catch |err| {
