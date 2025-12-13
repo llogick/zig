@@ -24,7 +24,7 @@ pub fn unpack(self: *Archive, macho_file: *MachO, path: Path, handle_index: File
 
         var hdr_buffer: [@sizeOf(ar_hdr)]u8 = undefined;
         {
-            const amt = try handle.preadAll(&hdr_buffer, pos);
+            const amt = try handle.readPositionalAll(io, &hdr_buffer, pos);
             if (amt != @sizeOf(ar_hdr)) return error.InputOutput;
         }
         const hdr = @as(*align(1) const ar_hdr, @ptrCast(&hdr_buffer)).*;
@@ -42,7 +42,7 @@ pub fn unpack(self: *Archive, macho_file: *MachO, path: Path, handle_index: File
             if (try hdr.nameLength()) |len| {
                 hdr_size -= len;
                 const buf = try arena.allocator().alloc(u8, len);
-                const amt = try handle.preadAll(buf, pos);
+                const amt = try handle.readPositionalAll(io, buf, pos);
                 if (amt != len) return error.InputOutput;
                 pos += len;
                 const actual_len = mem.indexOfScalar(u8, buf, @as(u8, 0)) orelse len;

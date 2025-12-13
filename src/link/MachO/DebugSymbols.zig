@@ -135,20 +135,12 @@ pub fn growSection(
         const new_offset = try self.findFreeSpace(needed_size, 1);
 
         log.debug("moving {s} section: {} bytes from 0x{x} to 0x{x}", .{
-            sect.sectName(),
-            existing_size,
-            sect.offset,
-            new_offset,
+            sect.sectName(), existing_size, sect.offset, new_offset,
         });
 
         if (requires_file_copy) {
-            const amt = try self.file.?.copyRangeAll(
-                sect.offset,
-                self.file.?,
-                new_offset,
-                existing_size,
-            );
-            if (amt != existing_size) return error.InputOutput;
+            const file = self.file.?;
+            try link.File.copyRangeAll2(io, file, file, sect.offset, new_offset, existing_size);
         }
 
         sect.offset = @intCast(new_offset);
@@ -204,6 +196,7 @@ fn findFreeSpace(self: *DebugSymbols, object_size: u64, min_alignment: u64) !u64
 }
 
 pub fn flush(self: *DebugSymbols, macho_file: *MachO) !void {
+    const io = self.io;
     const zo = macho_file.getZigObject().?;
     for (self.relocs.items) |*reloc| {
         const sym = zo.symbols.items[reloc.target];
@@ -215,12 +208,9 @@ pub fn flush(self: *DebugSymbols, macho_file: *MachO) !void {
         const sect = &self.sections.items[self.debug_info_section_index.?];
         const file_offset = sect.offset + reloc.offset;
         log.debug("resolving relocation: {d}@{x} ('{s}') at offset {x}", .{
-            reloc.target,
-            addr,
-            sym_name,
-            file_offset,
+            reloc.target, addr, sym_name, file_offset,
         });
-        try self.file.?.pwriteAll(mem.asBytes(&addr), file_offset);
+        try self.file.?.writePositionalAll(io, mem.asBytes(&addr), file_offset);
     }
 
     self.finalizeDwarfSegment(macho_file);
@@ -294,6 +284,7 @@ fn finalizeDwarfSegment(self: *DebugSymbols, macho_file: *MachO) void {
 }
 
 fn writeLoadCommands(self: *DebugSymbols, macho_file: *MachO) !struct { usize, usize } {
+    const io = self.io;
     const gpa = self.allocator;
     const needed_size = load_commands.calcLoadCommandsSizeDsym(macho_file, self);
     const buffer = try gpa.alloc(u8, needed_size);
@@ -345,12 +336,13 @@ fn writeLoadCommands(self: *DebugSymbols, macho_file: *MachO) !struct { usize, u
 
     assert(writer.end == needed_size);
 
-    try self.file.?.pwriteAll(buffer, @sizeOf(macho.mach_header_64));
+    try self.file.?.writePositionalAll(io, buffer, @sizeOf(macho.mach_header_64));
 
     return .{ ncmds, buffer.len };
 }
 
 fn writeHeader(self: *DebugSymbols, macho_file: *MachO, ncmds: usize, sizeofcmds: usize) !void {
+    const io = self.io;
     var header: macho.mach_header_64 = .{};
     header.filetype = macho.MH_DSYM;
 
@@ -371,7 +363,7 @@ fn writeHeader(self: *DebugSymbols, macho_file: *MachO, ncmds: usize, sizeofcmds
 
     log.debug("writing Mach-O header {}", .{header});
 
-    try self.file.?.pwriteAll(mem.asBytes(&header), 0);
+    try self.file.?.writePositionalAll(io, mem.asBytes(&header), 0);
 }
 
 fn allocatedSize(self: *DebugSymbols, start: u64) u64 {
@@ -406,6 +398,8 @@ fn writeLinkeditSegmentData(self: *DebugSymbols, macho_file: *MachO) !void {
 pub fn writeSymtab(self: *DebugSymbols, off: u32, macho_file: *MachO) !u32 {
     const tracy = trace(@src());
     defer tracy.end();
+
+    const io = self.io;
     const gpa = self.allocator;
     const cmd = &self.symtab_cmd;
     cmd.nsyms = macho_file.symtab_cmd.nsyms;
@@ -429,15 +423,16 @@ pub fn writeSymtab(self: *DebugSymbols, off: u32, macho_file: *MachO) !u32 {
         internal.writeSymtab(macho_file, self);
     }
 
-    try self.file.?.pwriteAll(@ptrCast(self.symtab.items), cmd.symoff);
+    try self.file.?.writePositionalAll(io, @ptrCast(self.symtab.items), cmd.symoff);
 
     return off + cmd.nsyms * @sizeOf(macho.nlist_64);
 }
 
 pub fn writeStrtab(self: *DebugSymbols, off: u32) !u32 {
+    const io = self.io;
     const cmd = &self.symtab_cmd;
     cmd.stroff = off;
-    try self.file.?.pwriteAll(self.strtab.items, cmd.stroff);
+    try self.file.?.writePositionalAll(io, self.strtab.items, cmd.stroff);
     return off + cmd.strsize;
 }
 

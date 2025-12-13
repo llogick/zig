@@ -108,6 +108,7 @@ pub fn deinit(f: *Flush, gpa: Allocator) void {
 
 pub fn finish(f: *Flush, wasm: *Wasm) !void {
     const comp = wasm.base.comp;
+    const io = comp.io;
     const shared_memory = comp.config.shared_memory;
     const diags = &comp.link_diags;
     const gpa = comp.gpa;
@@ -1067,7 +1068,7 @@ pub fn finish(f: *Flush, wasm: *Wasm) !void {
     }
 
     // Finally, write the entire binary into the file.
-    var file_writer = wasm.base.file.?.writer(&.{});
+    var file_writer = wasm.base.file.?.writer(io, &.{});
     file_writer.interface.writeAll(binary_bytes.items) catch |err| switch (err) {
         error.WriteFailed => return file_writer.err.?,
     };

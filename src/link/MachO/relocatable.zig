@@ -10,10 +10,10 @@ pub fn flushObject(macho_file: *MachO, comp: *Compilation, module_obj_path: ?Pat
     positionals.appendSliceAssumeCapacity(comp.link_inputs);
 
     for (comp.c_object_table.keys()) |key| {
-        try positionals.append(try link.openObjectInput(diags, key.status.success.object_path));
+        try positionals.append(try link.openObjectInput(io, diags, key.status.success.object_path));
     }
 
-    if (module_obj_path) |path| try positionals.append(try link.openObjectInput(diags, path));
+    if (module_obj_path) |path| try positionals.append(try link.openObjectInput(io, diags, path));
 
     if (macho_file.getZigObject() == null and positionals.items.len == 1) {
         // Instead of invoking a full-blown `-r` mode on the input which sadly will strip all
@@ -24,10 +24,8 @@ pub fn flushObject(macho_file: *MachO, comp: *Compilation, module_obj_path: ?Pat
             return diags.fail("failed to open {f}: {s}", .{ path, @errorName(err) });
         const stat = in_file.stat(io) catch |err|
             return diags.fail("failed to stat {f}: {s}", .{ path, @errorName(err) });
-        const amt = in_file.copyRangeAll(0, macho_file.base.file.?, 0, stat.size) catch |err|
-            return diags.fail("failed to copy range of file {f}: {s}", .{ path, @errorName(err) });
-        if (amt != stat.size)
-            return diags.fail("unexpected short write in copy range of file {f}", .{path});
+        link.File.copyRangeAll2(io, in_file, macho_file.base.file.?, 0, 0, stat.size) catch |err|
+            return diags.fail("failed to copy range of file {f}: {t}", .{ path, err });
         return;
     }
 
@@ -90,17 +88,17 @@ pub fn flushStaticLib(macho_file: *MachO, comp: *Compilation, module_obj_path: ?
     positionals.appendSliceAssumeCapacity(comp.link_inputs);
 
     for (comp.c_object_table.keys()) |key| {
-        try positionals.append(try link.openObjectInput(diags, key.status.success.object_path));
+        try positionals.append(try link.openObjectInput(io, diags, key.status.success.object_path));
     }
 
-    if (module_obj_path) |path| try positionals.append(try link.openObjectInput(diags, path));
+    if (module_obj_path) |path| try positionals.append(try link.openObjectInput(io, diags, path));
 
     if (comp.compiler_rt_strat == .obj) {
-        try positionals.append(try link.openObjectInput(diags, comp.compiler_rt_obj.?.full_object_path));
+        try positionals.append(try link.openObjectInput(io, diags, comp.compiler_rt_obj.?.full_object_path));
     }
 
     if (comp.ubsan_rt_strat == .obj) {
-        try positionals.append(try link.openObjectInput(diags, comp.ubsan_rt_obj.?.full_object_path));
+        try positionals.append(try link.openObjectInput(io, diags, comp.ubsan_rt_obj.?.full_object_path));
     }
 
     for (positionals.items) |link_input| {
@@ -231,7 +229,7 @@ pub fn flushStaticLib(macho_file: *MachO, comp: *Compilation, module_obj_path: ?
 
     assert(writer.end == total_size);
 
-    try macho_file.setLength(io, total_size);
+    try macho_file.setLength(total_size);
     try macho_file.pwriteAll(writer.buffered(), 0);
 
     if (diags.hasErrors()) return error.LinkFailure;

@@ -347,7 +347,8 @@ pub fn flush(
 
     const comp = self.base.comp;
     const gpa = comp.gpa;
-    const diags = &self.base.comp.link_diags;
+    const io = comp.io;
+    const diags = &comp.link_diags;
 
     const sub_prog_node = prog_node.start("MachO Flush", 0);
     defer sub_prog_node.end();
@@ -380,26 +381,26 @@ pub fn flush(
     // in this set.
     try positionals.ensureUnusedCapacity(comp.c_object_table.keys().len);
     for (comp.c_object_table.keys()) |key| {
-        positionals.appendAssumeCapacity(try link.openObjectInput(diags, key.status.success.object_path));
+        positionals.appendAssumeCapacity(try link.openObjectInput(io, diags, key.status.success.object_path));
     }
 
-    if (zcu_obj_path) |path| try positionals.append(try link.openObjectInput(diags, path));
+    if (zcu_obj_path) |path| try positionals.append(try link.openObjectInput(io, diags, path));
 
     if (comp.config.any_sanitize_thread) {
-        try positionals.append(try link.openObjectInput(diags, comp.tsan_lib.?.full_object_path));
+        try positionals.append(try link.openObjectInput(io, diags, comp.tsan_lib.?.full_object_path));
     }
 
     if (comp.config.any_fuzz) {
-        try positionals.append(try link.openArchiveInput(diags, comp.fuzzer_lib.?.full_object_path, false, false));
+        try positionals.append(try link.openArchiveInput(io, diags, comp.fuzzer_lib.?.full_object_path, false, false));
     }
 
     if (comp.ubsan_rt_lib) |crt_file| {
         const path = crt_file.full_object_path;
-        self.classifyInputFile(try link.openArchiveInput(diags, path, false, false)) catch |err|
+        self.classifyInputFile(try link.openArchiveInput(io, diags, path, false, false)) catch |err|
             diags.addParseError(path, "failed to parse archive: {s}", .{@errorName(err)});
     } else if (comp.ubsan_rt_obj) |crt_file| {
         const path = crt_file.full_object_path;
-        self.classifyInputFile(try link.openObjectInput(diags, path)) catch |err|
+        self.classifyInputFile(try link.openObjectInput(io, diags, path)) catch |err|
             diags.addParseError(path, "failed to parse archive: {s}", .{@errorName(err)});
     }
 
@@ -434,7 +435,7 @@ pub fn flush(
     if (comp.config.link_libc and is_exe_or_dyn_lib) {
         if (comp.zigc_static_lib) |zigc| {
             const path = zigc.full_object_path;
-            self.classifyInputFile(try link.openArchiveInput(diags, path, false, false)) catch |err|
+            self.classifyInputFile(try link.openArchiveInput(io, diags, path, false, false)) catch |err|
                 diags.addParseError(path, "failed to parse archive: {s}", .{@errorName(err)});
         }
     }
@@ -457,12 +458,12 @@ pub fn flush(
     for (system_libs.items) |lib| {
         switch (Compilation.classifyFileExt(lib.path.sub_path)) {
             .shared_library => {
-                const dso_input = try link.openDsoInput(diags, lib.path, lib.needed, lib.weak, lib.reexport);
+                const dso_input = try link.openDsoInput(io, diags, lib.path, lib.needed, lib.weak, lib.reexport);
                 self.classifyInputFile(dso_input) catch |err|
                     diags.addParseError(lib.path, "failed to parse input file: {s}", .{@errorName(err)});
             },
             .static_library => {
-                const archive_input = try link.openArchiveInput(diags, lib.path, lib.must_link, lib.hidden);
+                const archive_input = try link.openArchiveInput(io, diags, lib.path, lib.must_link, lib.hidden);
                 self.classifyInputFile(archive_input) catch |err|
                     diags.addParseError(lib.path, "failed to parse input file: {s}", .{@errorName(err)});
             },
@@ -473,11 +474,11 @@ pub fn flush(
     // Finally, link against compiler_rt.
     if (comp.compiler_rt_lib) |crt_file| {
         const path = crt_file.full_object_path;
-        self.classifyInputFile(try link.openArchiveInput(diags, path, false, false)) catch |err|
+        self.classifyInputFile(try link.openArchiveInput(io, diags, path, false, false)) catch |err|
             diags.addParseError(path, "failed to parse archive: {s}", .{@errorName(err)});
     } else if (comp.compiler_rt_obj) |crt_file| {
         const path = crt_file.full_object_path;
-        self.classifyInputFile(try link.openObjectInput(diags, path)) catch |err|
+        self.classifyInputFile(try link.openObjectInput(io, diags, path)) catch |err|
             diags.addParseError(path, "failed to parse archive: {s}", .{@errorName(err)});
     }
 
@@ -568,7 +569,7 @@ pub fn flush(
     self.writeLinkeditSectionsToFile() catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.LinkFailure => return error.LinkFailure,
-        else => |e| return diags.fail("failed to write linkedit sections to file: {s}", .{@errorName(e)}),
+        else => |e| return diags.fail("failed to write linkedit sections to file: {t}", .{e}),
     };
 
     var codesig: ?CodeSignature = if (self.requiresCodeSig()) blk: {
@@ -579,8 +580,8 @@ pub fn flush(
         // where the code signature goes into.
         var codesig = CodeSignature.init(self.getPageSize());
         codesig.code_directory.ident = fs.path.basename(self.base.emit.sub_path);
-        if (self.entitlements) |path| codesig.addEntitlements(gpa, path) catch |err|
-            return diags.fail("failed to add entitlements from {s}: {s}", .{ path, @errorName(err) });
+        if (self.entitlements) |path| codesig.addEntitlements(gpa, io, path) catch |err|
+            return diags.fail("failed to add entitlements from {s}: {t}", .{ path, err });
         try self.writeCodeSignaturePadding(&codesig);
         break :blk codesig;
     } else null;
@@ -866,6 +867,9 @@ pub fn classifyInputFile(self: *MachO, input: link.Input) !void {
     const tracy = trace(@src());
     defer tracy.end();
 
+    const comp = self.base.comp;
+    const io = comp.io;
+
     const path, const file = input.pathAndFile().?;
     // TODO don't classify now, it's too late. The input file has already been classified
     log.debug("classifying input file {f}", .{path});
@@ -876,7 +880,7 @@ pub fn classifyInputFile(self: *MachO, input: link.Input) !void {
     const fat_arch: ?fat.Arch = try self.parseFatFile(file, path);
     const offset = if (fat_arch) |fa| fa.offset else 0;
 
-    if (readMachHeader(file, offset) catch null) |h| blk: {
+    if (readMachHeader(io, file, offset) catch null) |h| blk: {
         if (h.magic != macho.MH_MAGIC_64) break :blk;
         switch (h.filetype) {
             macho.MH_OBJECT => try self.addObject(path, fh, offset),
@@ -885,7 +889,7 @@ pub fn classifyInputFile(self: *MachO, input: link.Input) !void {
         }
         return;
     }
-    if (readArMagic(file, offset, &buffer) catch null) |ar_magic| blk: {
+    if (readArMagic(io, file, offset, &buffer) catch null) |ar_magic| blk: {
         if (!mem.eql(u8, ar_magic, Archive.ARMAG)) break :blk;
         try self.addArchive(input.archive, fh, fat_arch);
         return;
@@ -894,11 +898,13 @@ pub fn classifyInputFile(self: *MachO, input: link.Input) !void {
 }
 
 fn parseFatFile(self: *MachO, file: Io.File, path: Path) !?fat.Arch {
-    const diags = &self.base.comp.link_diags;
-    const fat_h = fat.readFatHeader(file) catch return null;
+    const comp = self.base.comp;
+    const io = comp.io;
+    const diags = &comp.link_diags;
+    const fat_h = fat.readFatHeader(io, file) catch return null;
     if (fat_h.magic != macho.FAT_MAGIC and fat_h.magic != macho.FAT_MAGIC_64) return null;
     var fat_archs_buffer: [2]fat.Arch = undefined;
-    const fat_archs = try fat.parseArchs(file, fat_h, &fat_archs_buffer);
+    const fat_archs = try fat.parseArchs(io, file, fat_h, &fat_archs_buffer);
     const cpu_arch = self.getTarget().cpu.arch;
     for (fat_archs) |arch| {
         if (arch.tag == cpu_arch) return arch;
@@ -906,16 +912,16 @@ fn parseFatFile(self: *MachO, file: Io.File, path: Path) !?fat.Arch {
     return diags.failParse(path, "missing arch in universal file: expected {s}", .{@tagName(cpu_arch)});
 }
 
-pub fn readMachHeader(file: Io.File, offset: usize) !macho.mach_header_64 {
+pub fn readMachHeader(io: Io, file: Io.File, offset: usize) !macho.mach_header_64 {
     var buffer: [@sizeOf(macho.mach_header_64)]u8 = undefined;
-    const nread = try file.preadAll(&buffer, offset);
+    const nread = try file.readPositionalAll(io, &buffer, offset);
     if (nread != buffer.len) return error.InputOutput;
     const hdr = @as(*align(1) const macho.mach_header_64, @ptrCast(&buffer)).*;
     return hdr;
 }
 
-pub fn readArMagic(file: Io.File, offset: usize, buffer: *[Archive.SARMAG]u8) ![]const u8 {
-    const nread = try file.preadAll(buffer, offset);
+pub fn readArMagic(io: Io, file: Io.File, offset: usize, buffer: *[Archive.SARMAG]u8) ![]const u8 {
+    const nread = try file.readPositionalAll(io, buffer, offset);
     if (nread != buffer.len) return error.InputOutput;
     return buffer[0..Archive.SARMAG];
 }
@@ -1212,7 +1218,8 @@ fn parseDependentDylibs(self: *MachO) !void {
                         const rel_path = try fs.path.join(arena, &.{ prefix, path });
                         try checked_paths.append(rel_path);
                         var buffer: [fs.max_path_bytes]u8 = undefined;
-                        const full_path = fs.realpath(rel_path, &buffer) catch continue;
+                        // TODO don't use realpath
+                        const full_path = buffer[0 .. Io.Dir.realPathAbsolute(io, rel_path, &buffer) catch continue];
                         break :full_path try arena.dupe(u8, full_path);
                     }
                 } else if (eatPrefix(id.name, "@loader_path/")) |_| {
@@ -1225,8 +1232,9 @@ fn parseDependentDylibs(self: *MachO) !void {
 
                 try checked_paths.append(try arena.dupe(u8, id.name));
                 var buffer: [fs.max_path_bytes]u8 = undefined;
-                if (fs.realpath(id.name, &buffer)) |full_path| {
-                    break :full_path try arena.dupe(u8, full_path);
+                // TODO don't use realpath
+                if (Io.Dir.realPathAbsolute(io, id.name, &buffer)) |full_path_n| {
+                    break :full_path try arena.dupe(u8, buffer[0..full_path_n]);
                 } else |_| {
                     try self.reportMissingDependencyError(
                         self.getFile(dylib_index).?.dylib.getUmbrella(self).index,
@@ -1248,7 +1256,7 @@ fn parseDependentDylibs(self: *MachO) !void {
             const fat_arch = try self.parseFatFile(file, lib.path);
             const offset = if (fat_arch) |fa| fa.offset else 0;
             const file_index = file_index: {
-                if (readMachHeader(file, offset) catch null) |h| blk: {
+                if (readMachHeader(io, file, offset) catch null) |h| blk: {
                     if (h.magic != macho.MH_MAGIC_64) break :blk;
                     switch (h.filetype) {
                         macho.MH_DYLIB => break :file_index try self.addDylib(lib, false, fh, offset),
@@ -3244,21 +3252,36 @@ pub fn findFreeSpaceVirtual(self: *MachO, object_size: u64, min_alignment: u32) 
 }
 
 pub fn copyRangeAll(self: *MachO, old_offset: u64, new_offset: u64, size: u64) !void {
-    const file = self.base.file.?;
-    const amt = try file.copyRangeAll(old_offset, file, new_offset, size);
-    if (amt != size) return error.InputOutput;
+    return self.base.copyRangeAll(old_offset, new_offset, size);
 }
 
-/// Like File.copyRangeAll but also ensures the source region is zeroed out after copy.
+/// Like copyRangeAll but also ensures the source region is zeroed out after copy.
 /// This is so that we guarantee zeroed out regions for mapping of zerofill sections by the loader.
 fn copyRangeAllZeroOut(self: *MachO, old_offset: u64, new_offset: u64, size: u64) !void {
-    const gpa = self.base.comp.gpa;
-    try self.copyRangeAll(old_offset, new_offset, size);
+    const comp = self.base.comp;
+    const io = comp.io;
+    const file = self.base.file.?;
+    var write_buffer: [2048]u8 = undefined;
+    var file_reader = file.reader(io, &.{});
+    file_reader.pos = old_offset;
+    var file_writer = file.writer(io, &write_buffer);
+    file_writer.pos = new_offset;
     const size_u = math.cast(usize, size) orelse return error.Overflow;
-    const zeroes = try gpa.alloc(u8, size_u); // TODO no need to allocate here.
-    defer gpa.free(zeroes);
-    @memset(zeroes, 0);
-    try self.base.file.?.pwriteAll(zeroes, old_offset);
+    const n = file_writer.interface.sendFileAll(&file_reader, .limited(size_u)) catch |err| switch (err) {
+        error.ReadFailed => return file_reader.err.?,
+        error.WriteFailed => return file_writer.err.?,
+    };
+    assert(n == size_u);
+    file_writer.seekTo(old_offset) catch |err| switch (err) {
+        error.WriteFailed => return file_writer.err.?,
+        else => |e| return e,
+    };
+    file_writer.interface.splatByteAll(0, size_u) catch |err| switch (err) {
+        error.WriteFailed => return file_writer.err.?,
+    };
+    file_writer.interface.flush() catch |err| switch (err) {
+        error.WriteFailed => return file_writer.err.?,
+    };
 }
 
 const InitMetadataOptions = struct {
@@ -5355,10 +5378,10 @@ fn isReachable(atom: *const Atom, rel: Relocation, macho_file: *MachO) bool {
 
 pub fn pwriteAll(macho_file: *MachO, bytes: []const u8, offset: u64) error{LinkFailure}!void {
     const comp = macho_file.base.comp;
+    const io = comp.io;
     const diags = &comp.link_diags;
-    macho_file.base.file.?.pwriteAll(bytes, offset) catch |err| {
-        return diags.fail("failed to write: {s}", .{@errorName(err)});
-    };
+    macho_file.base.file.?.writePositionalAll(io, bytes, offset) catch |err|
+        return diags.fail("failed to write: {t}", .{err});
 }
 
 pub fn setLength(macho_file: *MachO, length: u64) error{LinkFailure}!void {

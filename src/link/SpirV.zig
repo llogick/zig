@@ -246,6 +246,7 @@ pub fn flush(
     const comp = linker.base.comp;
     const diags = &comp.link_diags;
     const gpa = comp.gpa;
+    const io = comp.io;
 
     // We need to export the list of error names somewhere so that we can pretty-print them in the
     // executor. This is not really an important thing though, so we can just dump it in any old
@@ -287,8 +288,8 @@ pub fn flush(
     };
 
     // TODO endianness bug. use file writer and call writeSliceEndian instead
-    linker.base.file.?.writeAll(@ptrCast(linked_module)) catch |err|
-        return diags.fail("failed to write: {s}", .{@errorName(err)});
+    linker.base.file.?.writeStreamingAll(io, @ptrCast(linked_module)) catch |err|
+        return diags.fail("failed to write: {t}", .{err});
 }
 
 fn linkModule(arena: Allocator, module: []Word, progress: std.Progress.Node) ![]Word {

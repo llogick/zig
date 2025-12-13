@@ -740,7 +740,9 @@ pub fn checkDuplicates(self: *ZigObject, dupes: anytype, elf_file: *Elf) error{O
 /// We need this so that we can write to an archive.
 /// TODO implement writing ZigObject data directly to a buffer instead.
 pub fn readFileContents(self: *ZigObject, elf_file: *Elf) !void {
-    const gpa = elf_file.base.comp.gpa;
+    const comp = elf_file.base.comp;
+    const gpa = comp.gpa;
+    const io = comp.io;
     const shsize: u64 = switch (elf_file.ptr_width) {
         .p32 => @sizeOf(elf.Elf32_Shdr),
         .p64 => @sizeOf(elf.Elf64_Shdr),
@@ -753,7 +755,7 @@ pub fn readFileContents(self: *ZigObject, elf_file: *Elf) !void {
     const size = std.math.cast(usize, end_pos) orelse return error.Overflow;
     try self.data.resize(gpa, size);
 
-    const amt = try elf_file.base.file.?.preadAll(self.data.items, 0);
+    const amt = try elf_file.base.file.?.readPositionalAll(io, self.data.items, 0);
     if (amt != size) return error.InputOutput;
 }
 
@@ -901,13 +903,15 @@ pub fn writeSymtab(self: ZigObject, elf_file: *Elf) void {
 /// Returns atom's code.
 /// Caller owns the memory.
 pub fn codeAlloc(self: *ZigObject, elf_file: *Elf, atom_index: Atom.Index) ![]u8 {
-    const gpa = elf_file.base.comp.gpa;
+    const comp = elf_file.base.comp;
+    const gpa = comp.gpa;
+    const io = comp.io;
     const atom_ptr = self.atom(atom_index).?;
     const file_offset = atom_ptr.offset(elf_file);
     const size = std.math.cast(usize, atom_ptr.size) orelse return error.Overflow;
     const code = try gpa.alloc(u8, size);
     errdefer gpa.free(code);
-    const amt = try elf_file.base.file.?.preadAll(code, file_offset);
+    const amt = try elf_file.base.file.?.readPositionalAll(io, code, file_offset);
     if (amt != code.len) {
         log.err("fetching code for {s} failed", .{atom_ptr.name(elf_file)});
         return error.InputOutput;
@@ -1365,6 +1369,8 @@ fn updateNavCode(
 ) link.File.UpdateNavError!void {
     const zcu = pt.zcu;
     const gpa = zcu.gpa;
+    const comp = elf_file.base.comp;
+    const io = comp.io;
     const ip = &zcu.intern_pool;
     const nav = ip.getNav(nav_index);
 
@@ -1449,8 +1455,8 @@ fn updateNavCode(
     const shdr = elf_file.sections.items(.shdr)[shdr_index];
     if (shdr.sh_type != elf.SHT_NOBITS) {
         const file_offset = atom_ptr.offset(elf_file);
-        elf_file.base.file.?.pwriteAll(code, file_offset) catch |err|
-            return elf_file.base.cgFail(nav_index, "failed to write to output file: {s}", .{@errorName(err)});
+        elf_file.base.file.?.writePositionalAll(io, code, file_offset) catch |err|
+            return elf_file.base.cgFail(nav_index, "failed to write to output file: {t}", .{err});
         log.debug("writing {f} from 0x{x} to 0x{x}", .{ nav.fqn.fmt(ip), file_offset, file_offset + code.len });
     }
 }
@@ -1467,6 +1473,8 @@ fn updateTlv(
     const zcu = pt.zcu;
     const ip = &zcu.intern_pool;
     const gpa = zcu.gpa;
+    const comp = elf_file.base.comp;
+    const io = comp.io;
     const nav = ip.getNav(nav_index);
 
     log.debug("updateTlv {f}({d})", .{ nav.fqn.fmt(ip), nav_index });
@@ -1503,8 +1511,8 @@ fn updateTlv(
     const shdr = elf_file.sections.items(.shdr)[shndx];
     if (shdr.sh_type != elf.SHT_NOBITS) {
         const file_offset = atom_ptr.offset(elf_file);
-        elf_file.base.file.?.pwriteAll(code, file_offset) catch |err|
-            return elf_file.base.cgFail(nav_index, "failed to write to output file: {s}", .{@errorName(err)});
+        elf_file.base.file.?.writePositionalAll(io, code, file_offset) catch |err|
+            return elf_file.base.cgFail(nav_index, "failed to write to output file: {t}", .{err});
         log.debug("writing TLV {s} from 0x{x} to 0x{x}", .{
             atom_ptr.name(elf_file),
             file_offset,
@@ -2003,6 +2011,8 @@ fn trampolineSize(cpu_arch: std.Target.Cpu.Arch) u64 {
 }
 
 fn writeTrampoline(tr_sym: Symbol, target: Symbol, elf_file: *Elf) !void {
+    const comp = elf_file.base.comp;
+    const io = comp.io;
     const atom_ptr = tr_sym.atom(elf_file).?;
     const fileoff = atom_ptr.offset(elf_file);
     const source_addr = tr_sym.address(.{}, elf_file);
@@ -2012,7 +2022,7 @@ fn writeTrampoline(tr_sym: Symbol, target: Symbol, elf_file: *Elf) !void {
         .x86_64 => try x86_64.writeTrampolineCode(source_addr, target_addr, &buf),
         else => @panic("TODO implement write trampoline for this CPU arch"),
     };
-    try elf_file.base.file.?.pwriteAll(out, fileoff);
+    try elf_file.base.file.?.writePositionalAll(io, out, fileoff);
 
     if (elf_file.base.child_pid) |pid| {
         switch (builtin.os.tag) {

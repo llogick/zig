@@ -3016,8 +3016,10 @@ pub fn createEmpty(
 }
 
 fn openParseObjectReportingFailure(wasm: *Wasm, path: Path) void {
-    const diags = &wasm.base.comp.link_diags;
-    const obj = link.openObject(path, false, false) catch |err| {
+    const comp = wasm.base.comp;
+    const io = comp.io;
+    const diags = &comp.link_diags;
+    const obj = link.openObject(io, path, false, false) catch |err| {
         switch (diags.failParse(path, "failed to open object: {t}", .{err})) {
             error.LinkFailure => return,
         }

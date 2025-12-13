@@ -494,7 +494,14 @@ pub const WritePositionalError = Writer.Error || error{Unseekable};
 /// See also:
 /// * `writer`
 pub fn writePositional(file: File, io: Io, buffer: []const []const u8, offset: u64) WritePositionalError!usize {
-    return io.vtable.fileWritePositional(io.userdata, file, buffer, offset);
+    return io.vtable.fileWritePositional(io.userdata, file, &.{}, buffer, 1, offset);
+}
+
+/// Equivalent to creating a positional writer, writing `bytes`, and then flushing.
+pub fn writePositionalAll(file: File, io: Io, bytes: []const u8, offset: u64) WritePositionalError!void {
+    var index: usize = 0;
+    while (index < bytes.len)
+        index += try io.vtable.fileWritePositional(io.userdata, file, &.{}, &.{bytes[index..]}, 1, offset + index);
 }
 
 pub const SeekError = error{

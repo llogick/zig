@@ -406,6 +406,7 @@ fn coffLink(lld: *Lld, arena: Allocator) !void {
             the_object_path.sub_path,
             directory.handle,
             base.emit.sub_path,
+            io,
             .{},
         );
     } else {
@@ -756,6 +757,7 @@ fn findLib(arena: Allocator, io: Io, name: []const u8, lib_directories: []const 
 fn elfLink(lld: *Lld, arena: Allocator) !void {
     const comp = lld.base.comp;
     const gpa = comp.gpa;
+    const io = comp.io;
     const diags = &comp.link_diags;
     const base = &lld.base;
     const elf = &lld.ofmt.elf;
@@ -822,6 +824,7 @@ fn elfLink(lld: *Lld, arena: Allocator) !void {
             the_object_path.sub_path,
             directory.handle,
             base.emit.sub_path,
+            io,
             .{},
         );
     } else {
@@ -1336,6 +1339,7 @@ fn wasmLink(lld: *Lld, arena: Allocator) !void {
     const wasm = &lld.ofmt.wasm;
 
     const gpa = comp.gpa;
+    const io = comp.io;
 
     const directory = base.emit.root_dir; // Just an alias to make it shorter to type.
     const full_out_path = try directory.join(arena, &[_][]const u8{base.emit.sub_path});
@@ -1378,6 +1382,7 @@ fn wasmLink(lld: *Lld, arena: Allocator) !void {
             the_object_path.sub_path,
             directory.handle,
             base.emit.sub_path,
+            io,
             .{},
         );
     } else {
@@ -1571,7 +1576,7 @@ fn wasmLink(lld: *Lld, arena: Allocator) !void {
             comp.config.output_mode == .Exe)
         {
             // chmod does not interact with umask, so we use a conservative -rwxr--r-- here.
-            Io.Dir.cwd().setFilePermissions(full_out_path, .fromMode(0o744), .{}) catch |err|
+            Io.Dir.cwd().setFilePermissions(io, full_out_path, .fromMode(0o744), .{}) catch |err|
                 return diags.fail("{s}: failed to enable executable permissions: {t}", .{ full_out_path, err });
         }
     }
@@ -1579,6 +1584,7 @@ fn wasmLink(lld: *Lld, arena: Allocator) !void {
 
 fn spawnLld(comp: *Compilation, arena: Allocator, argv: []const []const u8) !void {
     const io = comp.io;
+    const gpa = comp.gpa;
 
     if (comp.verbose_link) {
         // Skip over our own name so that the LLD linker name is the first argv item.
@@ -1596,7 +1602,7 @@ fn spawnLld(comp: *Compilation, arena: Allocator, argv: []const []const u8) !voi
     }
 
     var stderr: []u8 = &.{};
-    defer comp.gpa.free(stderr);
+    defer gpa.free(stderr);
 
     var child = std.process.Child.init(argv, arena);
     const term = (if (comp.clang_passthrough_mode) term: {
@@ -1612,8 +1618,8 @@ fn spawnLld(comp: *Compilation, arena: Allocator, argv: []const []const u8) !voi
 
         child.spawn(io) catch |err| break :term err;
         var stderr_reader = child.stderr.?.readerStreaming(io, &.{});
-        stderr = try stderr_reader.interface.allocRemaining(comp.gpa, .unlimited);
-        break :term child.wait();
+        stderr = try stderr_reader.interface.allocRemaining(gpa, .unlimited);
+        break :term child.wait(io);
     }) catch |first_err| term: {
         const err = switch (first_err) {
             error.NameTooLong => err: {
@@ -1622,8 +1628,8 @@ fn spawnLld(comp: *Compilation, arena: Allocator, argv: []const []const u8) !voi
                 const rsp_path = "tmp" ++ s ++ std.fmt.hex(rand_int) ++ ".rsp";
 
                 const rsp_file = try comp.dirs.local_cache.handle.createFile(io, rsp_path, .{});
-                defer comp.dirs.local_cache.handle.deleteFileZ(rsp_path) catch |err|
-                    log.warn("failed to delete response file {s}: {s}", .{ rsp_path, @errorName(err) });
+                defer comp.dirs.local_cache.handle.deleteFile(io, rsp_path) catch |err|
+                    log.warn("failed to delete response file {s}: {t}", .{ rsp_path, err });
                 {
                     defer rsp_file.close(io);
                     var rsp_file_buffer: [1024]u8 = undefined;
@@ -1662,8 +1668,8 @@ fn spawnLld(comp: *Compilation, arena: Allocator, argv: []const []const u8) !voi
 
                     rsp_child.spawn(io) catch |err| break :err err;
                     var stderr_reader = rsp_child.stderr.?.readerStreaming(io, &.{});
-                    stderr = try stderr_reader.interface.allocRemaining(comp.gpa, .unlimited);
-                    break :term rsp_child.wait() catch |err| break :err err;
+                    stderr = try stderr_reader.interface.allocRemaining(gpa, .unlimited);
+                    break :term rsp_child.wait(io) catch |err| break :err err;
                 }
             },
             else => first_err,

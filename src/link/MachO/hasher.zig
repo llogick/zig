@@ -9,7 +9,7 @@ pub fn ParallelHasher(comptime Hasher: type) type {
     const hash_size = Hasher.digest_length;
 
     return struct {
-        pub fn hash(self: Self, io: Io, file: Io.File, out: [][hash_size]u8, opts: struct {
+        pub fn hash(gpa: Allocator, io: Io, file: Io.File, out: [][hash_size]u8, opts: struct {
             chunk_size: u64 = 0x4000,
             max_file_size: ?u64 = null,
         }) !void {
@@ -22,11 +22,11 @@ pub fn ParallelHasher(comptime Hasher: type) type {
             };
             const chunk_size = std.math.cast(usize, opts.chunk_size) orelse return error.Overflow;
 
-            const buffer = try self.allocator.alloc(u8, chunk_size * out.len);
-            defer self.allocator.free(buffer);
+            const buffer = try gpa.alloc(u8, chunk_size * out.len);
+            defer gpa.free(buffer);
 
-            const results = try self.allocator.alloc(Io.File.ReadPositionalError!usize, out.len);
-            defer self.allocator.free(results);
+            const results = try gpa.alloc(Io.File.ReadPositionalError!usize, out.len);
+            defer gpa.free(results);
 
             {
                 var group: Io.Group = .init;
@@ -38,7 +38,8 @@ pub fn ParallelHasher(comptime Hasher: type) type {
                         file_size - fstart
                     else
                         chunk_size;
-                    group.async(worker, .{
+                    group.async(io, worker, .{
+                        io,
                         file,
                         fstart,
                         buffer[fstart..][0..fsize],
@@ -53,16 +54,15 @@ pub fn ParallelHasher(comptime Hasher: type) type {
         }
 
         fn worker(
+            io: Io,
             file: Io.File,
             fstart: usize,
             buffer: []u8,
             out: *[hash_size]u8,
             err: *Io.File.ReadPositionalError!usize,
         ) void {
-            err.* = file.readPositionalAll(buffer, fstart);
+            err.* = file.readPositionalAll(io, buffer, fstart);
             Hasher.hash(buffer, out, .{});
         }
-
-        const Self = @This();
     };
 }

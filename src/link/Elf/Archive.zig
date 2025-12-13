@@ -34,17 +34,17 @@ pub fn parse(
     path: Path,
     handle_index: File.HandleIndex,
 ) !Archive {
-    const handle = file_handles.items[handle_index];
+    const file = file_handles.items[handle_index];
     var pos: usize = 0;
     {
         var magic_buffer: [elf.ARMAG.len]u8 = undefined;
-        const n = try handle.preadAll(&magic_buffer, pos);
+        const n = try file.readPositionalAll(io, &magic_buffer, pos);
         if (n != magic_buffer.len) return error.BadMagic;
         if (!mem.eql(u8, &magic_buffer, elf.ARMAG)) return error.BadMagic;
         pos += magic_buffer.len;
     }
 
-    const size = (try handle.stat(io)).size;
+    const size = (try file.stat(io)).size;
 
     var objects: std.ArrayList(Object) = .empty;
     defer objects.deinit(gpa);
@@ -55,7 +55,7 @@ pub fn parse(
     while (pos < size) {
         var hdr: elf.ar_hdr = undefined;
         {
-            const n = try handle.preadAll(mem.asBytes(&hdr), pos);
+            const n = try file.readPositionalAll(io, mem.asBytes(&hdr), pos);
             if (n != @sizeOf(elf.ar_hdr)) return error.UnexpectedEndOfFile;
         }
         pos += @sizeOf(elf.ar_hdr);
@@ -72,7 +72,7 @@ pub fn parse(
         if (hdr.isSymtab() or hdr.isSymtab64()) continue;
         if (hdr.isStrtab()) {
             try strtab.resize(gpa, obj_size);
-            const amt = try handle.preadAll(strtab.items, pos);
+            const amt = try file.readPositionalAll(io, strtab.items, pos);
             if (amt != obj_size) return error.InputOutput;
             continue;
         }

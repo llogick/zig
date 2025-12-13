@@ -3677,7 +3677,7 @@ fn buildOutputType(
     }
 
     {
-        const root_prog_node = std.Progress.start(.{
+        const root_prog_node = std.Progress.start(io, .{
             .disable_printing = (color == .off),
         });
         defer root_prog_node.end();

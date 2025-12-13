@@ -130,7 +130,7 @@ pub const Tbd = union(enum) {
 pub const TapiError = error{
     NotLibStub,
     InputOutput,
-} || yaml.YamlError || Io.File.PReadError;
+} || yaml.YamlError || Io.File.ReadPositionalError;
 
 pub const LibStub = struct {
     /// Underlying memory for stub's contents.
@@ -146,7 +146,7 @@ pub const LibStub = struct {
         };
         const source = try allocator.alloc(u8, filesize);
         defer allocator.free(source);
-        const amt = try file.preadAll(source, 0);
+        const amt = try file.readPositionalAll(io, source, 0);
         if (amt != filesize) return error.InputOutput;
 
         var lib_stub = LibStub{

@@ -1,3 +1,22 @@
+const Coff = @This();
+
+const builtin = @import("builtin");
+const native_endian = builtin.cpu.arch.endian();
+
+const std = @import("std");
+const assert = std.debug.assert;
+const log = std.log.scoped(.link);
+
+const codegen = @import("../codegen.zig");
+const Compilation = @import("../Compilation.zig");
+const InternPool = @import("../InternPool.zig");
+const link = @import("../link.zig");
+const MappedFile = @import("MappedFile.zig");
+const target_util = @import("../target.zig");
+const Type = @import("../Type.zig");
+const Value = @import("../Value.zig");
+const Zcu = @import("../Zcu.zig");
+
 base: link.File,
 mf: MappedFile,
 nodes: std.MultiArrayList(Node),
@@ -1729,22 +1748,20 @@ pub fn flush(
     const comp = coff.base.comp;
     if (comp.compiler_rt_dyn_lib) |crt_file| {
         const gpa = comp.gpa;
+        const io = comp.io;
         const compiler_rt_sub_path = try std.fs.path.join(gpa, &.{
             std.fs.path.dirname(coff.base.emit.sub_path) orelse "",
             std.fs.path.basename(crt_file.full_object_path.sub_path),
         });
         defer gpa.free(compiler_rt_sub_path);
-        crt_file.full_object_path.root_dir.handle.copyFile(
+        std.Io.Dir.copyFile(
+            crt_file.full_object_path.root_dir.handle,
             crt_file.full_object_path.sub_path,
             coff.base.emit.root_dir.handle,
             compiler_rt_sub_path,
+            io,
             .{},
-        ) catch |err| switch (err) {
-            else => |e| return comp.link_diags.fail("Copy '{s}' failed: {s}", .{
-                compiler_rt_sub_path,
-                @errorName(e),
-            }),
-        };
+        ) catch |err| return comp.link_diags.fail("copy '{s}' failed: {t}", .{ compiler_rt_sub_path, err });
     }
 }
 
@@ -2461,19 +2478,3 @@ pub fn printNode(
         }
     }
 }
-
-const assert = std.debug.assert;
-const builtin = @import("builtin");
-const codegen = @import("../codegen.zig");
-const Compilation = @import("../Compilation.zig");
-const Coff = @This();
-const InternPool = @import("../InternPool.zig");
-const link = @import("../link.zig");
-const log = std.log.scoped(.link);
-const MappedFile = @import("MappedFile.zig");
-const native_endian = builtin.cpu.arch.endian();
-const std = @import("std");
-const target_util = @import("../target.zig");
-const Type = @import("../Type.zig");
-const Value = @import("../Value.zig");
-const Zcu = @import("../Zcu.zig");

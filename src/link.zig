@@ -620,7 +620,7 @@ pub const File = struct {
                             emit.sub_path, std.crypto.random.int(u32),
                         });
                         defer gpa.free(tmp_sub_path);
-                        try emit.root_dir.handle.copyFile(emit.sub_path, emit.root_dir.handle, tmp_sub_path, .{});
+                        try emit.root_dir.handle.copyFile(emit.sub_path, emit.root_dir.handle, tmp_sub_path, io, .{});
                         try emit.root_dir.handle.rename(tmp_sub_path, emit.root_dir.handle, emit.sub_path, io);
                         switch (builtin.os.tag) {
                             .linux => std.posix.ptrace(std.os.linux.PTRACE.ATTACH, pid, 0, 0) catch |err| {
@@ -852,10 +852,12 @@ pub const File = struct {
         }
     }
 
-    pub fn releaseLock(self: *File) void {
-        if (self.lock) |*lock| {
-            lock.release();
-            self.lock = null;
+    pub fn releaseLock(base: *File) void {
+        const comp = base.comp;
+        const io = comp.io;
+        if (base.lock) |*lock| {
+            lock.release(io);
+            base.lock = null;
         }
     }
 
@@ -908,6 +910,7 @@ pub const File = struct {
     /// `arena` has the lifetime of the call to `Compilation.update`.
     pub fn flush(base: *File, arena: Allocator, tid: Zcu.PerThread.Id, prog_node: std.Progress.Node) FlushError!void {
         const comp = base.comp;
+        const io = comp.io;
         if (comp.clang_preprocessor_mode == .yes or comp.clang_preprocessor_mode == .pch) {
             dev.check(.clang_command);
             const emit = base.emit;
@@ -918,12 +921,19 @@ pub const File = struct {
             assert(comp.c_object_table.count() == 1);
             const the_key = comp.c_object_table.keys()[0];
             const cached_pp_file_path = the_key.status.success.object_path;
-            cached_pp_file_path.root_dir.handle.copyFile(cached_pp_file_path.sub_path, emit.root_dir.handle, emit.sub_path, .{}) catch |err| {
+            Io.Dir.copyFile(
+                cached_pp_file_path.root_dir.handle,
+                cached_pp_file_path.sub_path,
+                emit.root_dir.handle,
+                emit.sub_path,
+                io,
+                .{},
+            ) catch |err| {
                 const diags = &base.comp.link_diags;
-                return diags.fail("failed to copy '{f}' to '{f}': {s}", .{
+                return diags.fail("failed to copy '{f}' to '{f}': {t}", .{
                     std.fmt.alt(@as(Path, cached_pp_file_path), .formatEscapeChar),
                     std.fmt.alt(@as(Path, emit), .formatEscapeChar),
-                    @errorName(err),
+                    err,
                 });
             };
             return;
@@ -1119,7 +1129,7 @@ pub const File = struct {
         const size = std.math.cast(u32, stat.size) orelse return error.FileTooBig;
         const buf = try gpa.alloc(u8, size);
         defer gpa.free(buf);
-        const n = try file.preadAll(buf, 0);
+        const n = try file.readPositionalAll(io, buf, 0);
         if (buf.len != n) return error.UnexpectedEndOfFile;
         var ld_script = try LdScript.parse(gpa, diags, path, buf);
         defer ld_script.deinit(gpa);
@@ -1184,6 +1194,32 @@ pub const File = struct {
         }
     }
 
+    /// Legacy function for old linker code
+    pub fn copyRangeAll(base: *File, old_offset: u64, new_offset: u64, size: u64) !void {
+        const comp = base.comp;
+        const io = comp.io;
+        const file = base.file.?;
+        return copyRangeAll2(io, file, file, old_offset, new_offset, size);
+    }
+
+    /// Legacy function for old linker code
+    pub fn copyRangeAll2(io: Io, src_file: Io.File, dst_file: Io.File, old_offset: u64, new_offset: u64, size: u64) !void {
+        var write_buffer: [2048]u8 = undefined;
+        var file_reader = src_file.reader(io, &.{});
+        file_reader.pos = old_offset;
+        var file_writer = dst_file.writer(io, &write_buffer);
+        file_writer.pos = new_offset;
+        const size_u = std.math.cast(usize, size) orelse return error.Overflow;
+        const n = file_writer.interface.sendFileAll(&file_reader, .limited(size_u)) catch |err| switch (err) {
+            error.ReadFailed => return file_reader.err.?,
+            error.WriteFailed => return file_writer.err.?,
+        };
+        assert(n == size_u);
+        file_writer.interface.flush() catch |err| switch (err) {
+            error.WriteFailed => return file_writer.err.?,
+        };
+    }
+
     pub const Tag = enum {
         coff2,
         elf,
@@ -1243,7 +1279,7 @@ pub const File = struct {
         // with 0o755 permissions, but it works appropriately if the system is configured
         // more leniently. As another data point, C's fopen seems to open files with the
         // 666 mode.
-        const executable_mode: Io.FilePermissions = if (builtin.target.os.tag == .windows)
+        const executable_mode: Io.File.Permissions = if (builtin.target.os.tag == .windows)
             .default_file
         else
             .fromMode(0o777);

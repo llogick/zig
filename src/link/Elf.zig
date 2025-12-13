@@ -582,14 +582,7 @@ pub fn growSection(self: *Elf, shdr_index: u32, needed_size: u64, min_alignment:
                 new_offset,
             });
 
-            const amt = try self.base.file.?.copyRangeAll(
-                shdr.sh_offset,
-                self.base.file.?,
-                new_offset,
-                existing_size,
-            );
-            // TODO figure out what to about this error condition - how to communicate it up.
-            if (amt != existing_size) return error.InputOutput;
+            try self.base.copyRangeAll(shdr.sh_offset, new_offset, existing_size);
 
             shdr.sh_offset = new_offset;
         } else if (shdr.sh_offset + allocated_size == std.math.maxInt(u64)) {
@@ -745,7 +738,7 @@ pub fn loadInput(self: *Elf, input: link.Input) !void {
         .res => unreachable,
         .dso_exact => @panic("TODO"),
         .object => |obj| try parseObject(self, obj),
-        .archive => |obj| try parseArchive(gpa, diags, &self.file_handles, &self.files, target, debug_fmt_strip, default_sym_version, &self.objects, obj, is_static_lib),
+        .archive => |obj| try parseArchive(gpa, io, diags, &self.file_handles, &self.files, target, debug_fmt_strip, default_sym_version, &self.objects, obj, is_static_lib),
         .dso => |dso| try parseDso(gpa, io, diags, dso, &self.shared_objects, &self.files, target),
     }
 }
@@ -1055,9 +1048,11 @@ fn dumpArgvInit(self: *Elf, arena: Allocator) !void {
 }
 
 pub fn openParseObjectReportingFailure(self: *Elf, path: Path) void {
-    const diags = &self.base.comp.link_diags;
-    const obj = link.openObject(path, false, false) catch |err| {
-        switch (diags.failParse(path, "failed to open object: {s}", .{@errorName(err)})) {
+    const comp = self.base.comp;
+    const io = comp.io;
+    const diags = &comp.link_diags;
+    const obj = link.openObject(io, path, false, false) catch |err| {
+        switch (diags.failParse(path, "failed to open object: {t}", .{err})) {
             error.LinkFailure => return,
         }
     };
@@ -1065,10 +1060,11 @@ pub fn openParseObjectReportingFailure(self: *Elf, path: Path) void {
 }
 
 fn parseObjectReportingFailure(self: *Elf, obj: link.Input.Object) void {
-    const diags = &self.base.comp.link_diags;
+    const comp = self.base.comp;
+    const diags = &comp.link_diags;
     self.parseObject(obj) catch |err| switch (err) {
         error.LinkFailure => return, // already reported
-        else => |e| diags.addParseError(obj.path, "failed to parse object: {s}", .{@errorName(e)}),
+        else => |e| diags.addParseError(obj.path, "failed to parse object: {t}", .{e}),
     };
 }
 
@@ -1076,10 +1072,12 @@ fn parseObject(self: *Elf, obj: link.Input.Object) !void {
     const tracy = trace(@src());
     defer tracy.end();
 
-    const gpa = self.base.comp.gpa;
-    const diags = &self.base.comp.link_diags;
-    const target = &self.base.comp.root_mod.resolved_target.result;
-    const debug_fmt_strip = self.base.comp.config.debug_format == .strip;
+    const comp = self.base.comp;
+    const io = comp.io;
+    const gpa = comp.gpa;
+    const diags = &comp.link_diags;
+    const target = &comp.root_mod.resolved_target.result;
+    const debug_fmt_strip = comp.config.debug_format == .strip;
     const default_sym_version = self.default_sym_version;
     const file_handles = &self.file_handles;
 
@@ -1098,14 +1096,15 @@ fn parseObject(self: *Elf, obj: link.Input.Object) !void {
     try self.objects.append(gpa, index);
 
     const object = self.file(index).?.object;
-    try object.parseCommon(gpa, diags, obj.path, handle, target);
+    try object.parseCommon(gpa, io, diags, obj.path, handle, target);
     if (!self.base.isStaticLib()) {
-        try object.parse(gpa, diags, obj.path, handle, target, debug_fmt_strip, default_sym_version);
+        try object.parse(gpa, io, diags, obj.path, handle, target, debug_fmt_strip, default_sym_version);
     }
 }
 
 fn parseArchive(
     gpa: Allocator,
+    io: Io,
     diags: *Diags,
     file_handles: *std.ArrayList(File.Handle),
     files: *std.MultiArrayList(File.Entry),
@@ -1120,7 +1119,7 @@ fn parseArchive(
     defer tracy.end();
 
     const fh = try addFileHandle(gpa, file_handles, obj.file);
-    var archive = try Archive.parse(gpa, diags, file_handles, obj.path, fh);
+    var archive = try Archive.parse(gpa, io, diags, file_handles, obj.path, fh);
     defer archive.deinit(gpa);
 
     const init_alive = if (is_static_lib) true else obj.must_link;
@@ -1131,9 +1130,9 @@ fn parseArchive(
         const object = &files.items(.data)[index].object;
         object.index = index;
         object.alive = init_alive;
-        try object.parseCommon(gpa, diags, obj.path, obj.file, target);
+        try object.parseCommon(gpa, io, diags, obj.path, obj.file, target);
         if (!is_static_lib)
-            try object.parse(gpa, diags, obj.path, obj.file, target, debug_fmt_strip, default_sym_version);
+            try object.parse(gpa, io, diags, obj.path, obj.file, target, debug_fmt_strip, default_sym_version);
         try objects.append(gpa, index);
     }
 }
@@ -1153,7 +1152,7 @@ fn parseDso(
     const handle = dso.file;
 
     const stat = Stat.fromFs(try handle.stat(io));
-    var header = try SharedObject.parseHeader(gpa, diags, dso.path, handle, stat, target);
+    var header = try SharedObject.parseHeader(gpa, io, diags, dso.path, handle, stat, target);
     defer header.deinit(gpa);
 
     const soname = header.soname() orelse dso.path.basename();
@@ -1167,7 +1166,7 @@ fn parseDso(
 
     gop.value_ptr.* = index;
 
-    var parsed = try SharedObject.parse(gpa, &header, handle);
+    var parsed = try SharedObject.parse(gpa, io, &header, handle);
     errdefer parsed.deinit(gpa);
 
     const duped_path: Path = .{
@@ -2897,13 +2896,7 @@ pub fn allocateAllocSections(self: *Elf) !void {
                 if (shdr.sh_offset > 0) {
                     // Get size actually commited to the output file.
                     const existing_size = self.sectionSize(shndx);
-                    const amt = try self.base.file.?.copyRangeAll(
-                        shdr.sh_offset,
-                        self.base.file.?,
-                        new_offset,
-                        existing_size,
-                    );
-                    if (amt != existing_size) return error.InputOutput;
+                    try self.base.copyRangeAll(shdr.sh_offset, new_offset, existing_size);
                 }
 
                 shdr.sh_offset = new_offset;
@@ -2939,13 +2932,7 @@ pub fn allocateNonAllocSections(self: *Elf) !void {
 
             if (shdr.sh_offset > 0) {
                 const existing_size = self.sectionSize(@intCast(shndx));
-                const amt = try self.base.file.?.copyRangeAll(
-                    shdr.sh_offset,
-                    self.base.file.?,
-                    new_offset,
-                    existing_size,
-                );
-                if (amt != existing_size) return error.InputOutput;
+                try self.base.copyRangeAll(shdr.sh_offset, new_offset, existing_size);
             }
 
             shdr.sh_offset = new_offset;
@@ -4075,10 +4062,10 @@ fn fmtDumpState(self: *Elf, writer: *std.Io.Writer) std.Io.Writer.Error!void {
 }
 
 /// Caller owns the memory.
-pub fn preadAllAlloc(allocator: Allocator, handle: Io.File, offset: u64, size: u64) ![]u8 {
+pub fn preadAllAlloc(allocator: Allocator, io: Io, io_file: Io.File, offset: u64, size: u64) ![]u8 {
     const buffer = try allocator.alloc(u8, math.cast(usize, size) orelse return error.Overflow);
     errdefer allocator.free(buffer);
-    const amt = try handle.preadAll(buffer, offset);
+    const amt = try io_file.readPositionalAll(io, buffer, offset);
     if (amt != size) return error.InputOutput;
     return buffer;
 }
@@ -4444,10 +4431,10 @@ pub fn stringTableLookup(strtab: []const u8, off: u32) [:0]const u8 {
 
 pub fn pwriteAll(elf_file: *Elf, bytes: []const u8, offset: u64) error{LinkFailure}!void {
     const comp = elf_file.base.comp;
+    const io = comp.io;
     const diags = &comp.link_diags;
-    elf_file.base.file.?.pwriteAll(bytes, offset) catch |err| {
-        return diags.fail("failed to write: {s}", .{@errorName(err)});
-    };
+    elf_file.base.file.?.writePositionalAll(io, bytes, offset) catch |err|
+        return diags.fail("failed to write: {t}", .{err});
 }
 
 pub fn setLength(elf_file: *Elf, length: u64) error{LinkFailure}!void {
