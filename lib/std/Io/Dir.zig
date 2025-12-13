@@ -789,21 +789,17 @@ pub const RealPathError = error{
     UnrecognizedVolume,
 } || PathNameError || Io.Cancelable || Io.UnexpectedError;
 
-///  This function returns the canonicalized absolute pathname of `pathname`
-///  relative to this `Dir`. If `pathname` is absolute, ignores this `Dir`
-///  handle and returns the canonicalized absolute pathname of `pathname`
-///  argument.
+/// This function returns the canonicalized absolute path name of `sub_path`
+/// relative to this `Dir`. If `sub_path` is absolute, ignores this `Dir`
+/// handle and returns the canonicalized absolute pathname of `sub_path`
+/// argument.
 ///
-/// On Windows, `sub_path` should be encoded as [WTF-8](https://wtf-8.codeberg.page/).
-/// On other platforms, `sub_path` is an opaque sequence of bytes with no particular encoding.
-/// On Windows, the result is encoded as [WTF-8](https://wtf-8.codeberg.page/).
-/// On other platforms, the result is an opaque sequence of bytes with no particular encoding.
-///
-/// This function is not universally supported by all platforms. Currently
-/// supported hosts are: Linux, macOS, and Windows.
+/// This function is not universally supported by all platforms, and using this
+/// function can lead to unnecessary failures and race conditions.
 ///
 /// See also:
 /// * `realPathAlloc`.
+/// * `realPathAbsolute`.
 pub fn realPath(dir: Dir, io: Io, sub_path: []const u8, out_buffer: []u8) RealPathError!usize {
     return io.vtable.dirRealPath(io.userdata, dir, sub_path, out_buffer);
 }
@@ -811,18 +807,41 @@ pub fn realPath(dir: Dir, io: Io, sub_path: []const u8, out_buffer: []u8) RealPa
 pub const RealPathAllocError = RealPathError || Allocator.Error;
 
 /// Same as `realPath` except allocates result.
+///
+/// This function is not universally supported by all platforms, and using this
+/// function can lead to unnecessary failures and race conditions.
+///
+/// See also:
+/// * `realPath`.
+/// * `realPathAbsolute`.
 pub fn realPathAlloc(dir: Dir, io: Io, sub_path: []const u8, allocator: Allocator) RealPathAllocError![:0]u8 {
     var buffer: [max_path_bytes]u8 = undefined;
     const n = try realPath(dir, io, sub_path, &buffer);
     return allocator.dupeZ(u8, buffer[0..n]);
 }
 
+/// Same as `realPath` except `absolute_path` is asserted to be an absolute
+/// path.
+///
+/// This function is not universally supported by all platforms, and using this
+/// function can lead to unnecessary failures and race conditions.
+///
+/// See also:
+/// * `realPath`.
+/// * `realPathAlloc`.
 pub fn realPathAbsolute(io: Io, absolute_path: []const u8, out_buffer: []u8) RealPathError!usize {
     assert(path.isAbsolute(absolute_path));
     return io.vtable.dirRealPath(io.userdata, .cwd(), absolute_path, out_buffer);
 }
 
 /// Same as `realPathAbsolute` except allocates result.
+///
+/// This function is not universally supported by all platforms, and using this
+/// function can lead to unnecessary failures and race conditions.
+///
+/// See also:
+/// * `realPathAbsolute`.
+/// * `realPath`.
 pub fn realPathAbsoluteAlloc(io: Io, absolute_path: []const u8, allocator: Allocator) RealPathAllocError![:0]u8 {
     var buffer: [max_path_bytes]u8 = undefined;
     const n = try realPathAbsolute(io, absolute_path, &buffer);
