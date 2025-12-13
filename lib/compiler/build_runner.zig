@@ -522,7 +522,7 @@ pub fn main() !void {
             // Perhaps in the future there could be an Advanced Options flag
             // such as --debug-build-runner-leaks which would make this code
             // return instead of calling exit.
-            _ = std.debug.lockStderrWriter(&.{});
+            _ = io.lockStderrWriter(&.{}) catch {};
             process.exit(1);
         },
         else => |e| return e,
@@ -554,8 +554,8 @@ pub fn main() !void {
     }
 
     rebuild: while (true) : (if (run.error_style.clearOnUpdate()) {
-        const stderr = std.debug.lockStderrWriter(&stdio_buffer_allocation);
-        defer std.debug.unlockStderrWriter();
+        const stderr = try io.lockStderrWriter(&stdio_buffer_allocation);
+        defer io.unlockStderrWriter();
         try stderr.writeAllUnescaped("\x1B[2J\x1B[3J\x1B[H");
     }) {
         if (run.web_server) |*ws| ws.startBuild();
@@ -856,8 +856,8 @@ fn runStepNames(
             .none => break :summary,
         }
 
-        const stderr = std.debug.lockStderrWriter(&stdio_buffer_allocation);
-        defer std.debug.unlockStderrWriter();
+        const stderr = try io.lockStderrWriter(&stdio_buffer_allocation);
+        defer io.unlockStderrWriter();
 
         const w = &stderr.interface;
         const fwm = stderr.mode;
@@ -954,7 +954,7 @@ fn runStepNames(
         if (run.error_style.verboseContext()) break :code 1; // failure; print build command
         break :code 2; // failure; do not print build command
     };
-    _ = std.debug.lockStderrWriter(&.{});
+    _ = io.lockStderrWriter(&.{}) catch {};
     process.exit(code);
 }
 
@@ -1369,8 +1369,10 @@ fn workerMakeOneStep(
     const show_error_msgs = s.result_error_msgs.items.len > 0;
     const show_stderr = s.result_stderr.len > 0;
     if (show_error_msgs or show_compile_errors or show_stderr) {
-        const stderr = std.debug.lockStderrWriter(&stdio_buffer_allocation);
-        defer std.debug.unlockStderrWriter();
+        const stderr = io.lockStderrWriter(&stdio_buffer_allocation) catch |err| switch (err) {
+            error.Canceled => return,
+        };
+        defer io.unlockStderrWriter();
         printErrorMessages(gpa, s, .{}, &stderr.interface, stderr.mode, run.error_style, run.multiline_errors) catch {};
     }
 

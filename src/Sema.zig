@@ -2668,16 +2668,18 @@ fn failWithTypeMismatch(sema: *Sema, block: *Block, src: LazySrcLoc, expected: T
 
 pub fn failWithOwnedErrorMsg(sema: *Sema, block: ?*Block, err_msg: *Zcu.ErrorMsg) error{ AnalysisFail, OutOfMemory } {
     @branchHint(.cold);
-    const gpa = sema.gpa;
     const zcu = sema.pt.zcu;
+    const comp = zcu.comp;
+    const gpa = comp.gpa;
+    const io = comp.io;
 
-    if (build_options.enable_debug_extensions and zcu.comp.debug_compile_errors) {
+    if (build_options.enable_debug_extensions and comp.debug_compile_errors) {
         var wip_errors: std.zig.ErrorBundle.Wip = undefined;
         wip_errors.init(gpa) catch @panic("out of memory");
         Compilation.addModuleErrorMsg(zcu, &wip_errors, err_msg.*, false) catch @panic("out of memory");
         std.debug.print("compile error during Sema:\n", .{});
         var error_bundle = wip_errors.toOwnedBundle("") catch @panic("out of memory");
-        error_bundle.renderToStdErr(.{}, .auto);
+        error_bundle.renderToStderr(io, .{}, .auto);
         std.debug.panicExtra(@returnAddress(), "unexpected compile error occurred", .{});
     }
 

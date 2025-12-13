@@ -312,11 +312,17 @@ pub fn buildImportLib(comp: *Compilation, lib_name: []const u8) !void {
 
     const include_dir = try comp.dirs.zig_lib.join(arena, &.{ "libc", "mingw", "def-include" });
 
-    if (comp.verbose_cc) print: {
-        var stderr, _ = std.debug.lockStderrWriter(&.{});
-        defer std.debug.unlockStderrWriter();
-        nosuspend stderr.print("def file: {s}\n", .{def_file_path}) catch break :print;
-        nosuspend stderr.print("include dir: {s}\n", .{include_dir}) catch break :print;
+    if (comp.verbose_cc) {
+        var buffer: [256]u8 = undefined;
+        const stderr = try io.lockStderrWriter(&buffer);
+        defer io.unlockStderrWriter();
+        const w = &stderr.interface;
+        w.print("def file: {s}\n", .{def_file_path}) catch |err| switch (err) {
+            error.WriteFailed => return stderr.err.?,
+        };
+        w.print("include dir: {s}\n", .{include_dir}) catch |err| switch (err) {
+            error.WriteFailed => return stderr.err.?,
+        };
     }
 
     try aro_comp.search_path.append(gpa, .{ .path = include_dir, .kind = .normal });
@@ -333,11 +339,13 @@ pub fn buildImportLib(comp: *Compilation, lib_name: []const u8) !void {
 
     if (aro_comp.diagnostics.output.to_list.messages.items.len != 0) {
         var buffer: [64]u8 = undefined;
-        const w, const ttyconf = std.debug.lockStderrWriter(&buffer);
-        defer std.debug.unlockStderrWriter();
+        const stderr = try io.lockStderrWriter(&buffer);
+        defer io.unlockStderrWriter();
         for (aro_comp.diagnostics.output.to_list.messages.items) |msg| {
             if (msg.kind == .@"fatal error" or msg.kind == .@"error") {
-                msg.write(w, ttyconf, true) catch {};
+                msg.write(&stderr.interface, stderr.mode, true) catch |err| switch (err) {
+                    error.WriteFailed => return stderr.err.?,
+                };
                 return error.AroPreprocessorFailed;
             }
         }
@@ -357,8 +365,9 @@ pub fn buildImportLib(comp: *Compilation, lib_name: []const u8) !void {
             error.OutOfMemory => |e| return e,
             error.ParseError => {
                 var buffer: [64]u8 = undefined;
-                const w, _ = std.debug.lockStderrWriter(&buffer);
-                defer std.debug.unlockStderrWriter();
+                const stderr = try io.lockStderrWriter(&buffer);
+                defer io.unlockStderrWriter();
+                const w = &stderr.interface;
                 try w.writeAll("error: ");
                 try def_diagnostics.writeMsg(w, input);
                 try w.writeByte('\n');

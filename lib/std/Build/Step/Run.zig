@@ -1559,6 +1559,7 @@ fn spawnChildAndCollect(
 ) !?EvalGenericResult {
     const b = run.step.owner;
     const arena = b.allocator;
+    const io = b.graph.io;
 
     if (fuzz_context != null) {
         assert(!has_side_effects);
@@ -1625,10 +1626,10 @@ fn spawnChildAndCollect(
             child.progress_node = options.progress_node;
         }
         if (inherit) {
-            const stderr = std.debug.lockStderrWriter(&.{});
+            const stderr = try io.lockStderrWriter(&.{});
             try setColorEnvironmentVariables(run, env_map, stderr.mode);
         }
-        defer if (inherit) std.debug.unlockStderrWriter();
+        defer if (inherit) io.unlockStderrWriter();
         var timer = try std.time.Timer.start();
         const res = try evalGeneric(run, &child);
         run.step.result_duration_ns = timer.read();

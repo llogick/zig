@@ -125,10 +125,10 @@ pub const Diagnostics = struct {
         try self.errors.append(self.allocator, error_details);
     }
 
-    pub fn renderToStdErr(self: *Diagnostics, args: []const []const u8) void {
-        const stderr, const ttyconf = std.debug.lockStderrWriter(&.{});
-        defer std.debug.unlockStderrWriter();
-        self.renderToWriter(args, stderr, ttyconf) catch return;
+    pub fn renderToStderr(self: *Diagnostics, io: Io, args: []const []const u8) void {
+        const stderr = io.lockStderrWriter(&.{});
+        defer io.unlockStderrWriter();
+        self.renderToWriter(args, &stderr.interface, stderr.mode) catch return;
     }
 
     pub fn renderToWriter(self: *Diagnostics, args: []const []const u8, writer: *std.Io.Writer, config: std.Io.tty.Config) !void {

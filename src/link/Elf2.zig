@@ -3729,10 +3729,16 @@ pub fn deleteExport(elf: *Elf, exported: Zcu.Exported, name: InternPool.NullTerm
     _ = name;
 }
 
-pub fn dump(elf: *Elf, tid: Zcu.PerThread.Id) void {
-    const w, _ = std.debug.lockStderrWriter(&.{});
-    defer std.debug.unlockStderrWriter();
-    elf.printNode(tid, w, .root, 0) catch {};
+pub fn dump(elf: *Elf, tid: Zcu.PerThread.Id) Io.Cancelable!void {
+    const comp = elf.base.comp;
+    const io = comp.io;
+    var buffer: [512]u8 = undefined;
+    const stderr = try io.lockStderrWriter(&buffer);
+    defer io.unlockStderrWriter();
+    const w = &stderr.interface;
+    elf.printNode(tid, w, .root, 0) catch |err| switch (err) {
+        error.WriteFailed => return stderr.err.?,
+    };
 }
 
 pub fn printNode(

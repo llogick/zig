@@ -2088,12 +2088,13 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
 
         if (options.verbose_llvm_cpu_features) {
             if (options.root_mod.resolved_target.llvm_cpu_features) |cf| print: {
-                const stderr_w, _ = std.debug.lockStderrWriter(&.{});
-                defer std.debug.unlockStderrWriter();
-                stderr_w.print("compilation: {s}\n", .{options.root_name}) catch break :print;
-                stderr_w.print("  target: {s}\n", .{try target.zigTriple(arena)}) catch break :print;
-                stderr_w.print("  cpu: {s}\n", .{target.cpu.model.name}) catch break :print;
-                stderr_w.print("  features: {s}\n", .{cf}) catch {};
+                const stderr = try io.lockStderrWriter(&.{});
+                defer io.unlockStderrWriter();
+                const w = &stderr.interface;
+                w.print("compilation: {s}\n", .{options.root_name}) catch break :print;
+                w.print("  target: {s}\n", .{try target.zigTriple(arena)}) catch break :print;
+                w.print("  cpu: {s}\n", .{target.cpu.model.name}) catch break :print;
+                w.print("  features: {s}\n", .{cf}) catch {};
             }
         }
 
@@ -4257,12 +4258,13 @@ pub fn getAllErrorsAlloc(comp: *Compilation) error{OutOfMemory}!ErrorBundle {
             // However, we haven't reported any such error.
             // This is a compiler bug.
             print_ctx: {
-                var stderr_w, _ = std.debug.lockStderrWriter(&.{});
-                defer std.debug.unlockStderrWriter();
-                stderr_w.writeAll("referenced transitive analysis errors, but none actually emitted\n") catch break :print_ctx;
-                stderr_w.print("{f} [transitive failure]\n", .{zcu.fmtAnalUnit(failed_unit)}) catch break :print_ctx;
+                const stderr = try io.lockStderrWriter(&.{});
+                defer io.unlockStderrWriter();
+                const w = &stderr.interface;
+                w.writeAll("referenced transitive analysis errors, but none actually emitted\n") catch break :print_ctx;
+                w.print("{f} [transitive failure]\n", .{zcu.fmtAnalUnit(failed_unit)}) catch break :print_ctx;
                 while (ref) |r| {
-                    stderr_w.print("referenced by: {f}{s}\n", .{
+                    w.print("referenced by: {f}{s}\n", .{
                         zcu.fmtAnalUnit(r.referencer),
                         if (zcu.transitive_failed_analysis.contains(r.referencer)) " [transitive failure]" else "",
                     }) catch break :print_ctx;
@@ -5756,7 +5758,7 @@ pub fn translateC(
         try argv.appendSlice(comp.global_cc_argv);
         try argv.appendSlice(owner_mod.cc_argv);
         try argv.appendSlice(&.{ source_path, "-o", translated_path });
-        if (comp.verbose_cimport) dump_argv(argv.items);
+        if (comp.verbose_cimport) dumpArgv(io, argv.items);
     }
 
     var stdout: []u8 = undefined;
@@ -6264,7 +6266,7 @@ fn updateCObject(comp: *Compilation, c_object: *CObject, c_obj_prog_node: std.Pr
             }
 
             if (comp.verbose_cc) {
-                dump_argv(argv.items);
+                dumpArgv(io, argv.items);
             }
 
             const err = std.process.execv(arena, argv.items);
@@ -6310,7 +6312,7 @@ fn updateCObject(comp: *Compilation, c_object: *CObject, c_obj_prog_node: std.Pr
         }
 
         if (comp.verbose_cc) {
-            dump_argv(argv.items);
+            dumpArgv(io, argv.items);
         }
 
         // Just to save disk space, we delete the files that are never needed again.
@@ -7773,17 +7775,22 @@ pub fn lockAndSetMiscFailure(
     return setMiscFailure(comp, tag, format, args);
 }
 
-pub fn dump_argv(argv: []const []const u8) void {
+pub fn dumpArgv(io: Io, argv: []const []const u8) Io.Cancelable!void {
     var buffer: [64]u8 = undefined;
-    const stderr, _ = std.debug.lockStderrWriter(&buffer);
-    defer std.debug.unlockStderrWriter();
-    nosuspend {
-        for (argv, 0..) |arg, i| {
-            if (i != 0) stderr.writeByte(' ') catch return;
-            stderr.writeAll(arg) catch return;
-        }
-        stderr.writeByte('\n') catch return;
+    const stderr = try io.lockStderrWriter(&buffer);
+    defer io.unlockStderrWriter();
+    const w = &stderr.interface;
+    return dumpArgvWriter(w, argv) catch |err| switch (err) {
+        error.WriteFailed => return stderr.err.?,
+    };
+}
+
+fn dumpArgvWriter(w: *Io.Writer, argv: []const []const u8) Io.Writer.Error!void {
+    for (argv, 0..) |arg, i| {
+        if (i != 0) try w.writeByte(' ');
+        try w.writeAll(arg);
     }
+    try w.writeByte('\n');
 }
 
 pub fn getZigBackend(comp: Compilation) std.builtin.CompilerBackend {

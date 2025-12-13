@@ -162,11 +162,13 @@ pub const RenderOptions = struct {
     include_log_text: bool = true,
 };
 
-pub fn renderToStdErr(eb: ErrorBundle, options: RenderOptions, color: std.zig.Color) void {
+pub const RenderToStderrError = Io.Cancelable || Io.File.Writer.Mode.SetColorError;
+
+pub fn renderToStderr(eb: ErrorBundle, io: Io, options: RenderOptions, color: std.zig.Color) RenderToStderrError!void {
     var buffer: [256]u8 = undefined;
-    const stderr = std.debug.lockStderrWriter(&buffer);
-    defer std.debug.unlockStderrWriter();
-    renderToWriter(eb, options, &stderr.interface, color.getTtyConf(stderr.mode)) catch return;
+    const stderr = try io.lockStderrWriter(&buffer);
+    defer io.unlockStderrWriter();
+    try renderToWriter(eb, options, &stderr.interface, color.getTtyConf(stderr.mode));
 }
 
 pub fn renderToWriter(

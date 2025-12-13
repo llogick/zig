@@ -47,10 +47,9 @@ pub const Value = union(enum) {
     }
 
     pub fn dump(v: Value) void {
-        const w, _ = std.debug.lockStderrWriter(&.{});
+        const stderr = std.debug.lockStderrWriter(&.{});
         defer std.debug.unlockStderrWriter();
-
-        json.Stringify.value(v, .{}, w) catch return;
+        json.Stringify.value(v, .{}, &stderr.interface) catch return;
     }
 
     pub fn jsonStringify(value: @This(), jws: anytype) !void {

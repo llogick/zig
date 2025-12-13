@@ -2238,7 +2238,7 @@ pub const GeneratedFile = struct {
     /// This value must be set in the `fn make()` of the `step` and must not be `null` afterwards.
     path: ?[]const u8 = null,
 
-    /// Deprecated, see `getPath2`.
+    /// Deprecated, see `getPath3`.
     pub fn getPath(gen: GeneratedFile) []const u8 {
         return gen.step.owner.pathFromCwd(gen.path orelse std.debug.panic(
             "getPath() was called on a GeneratedFile that wasn't built yet. Is there a missing Step dependency on step '{s}'?",
@@ -2246,11 +2246,18 @@ pub const GeneratedFile = struct {
         ));
     }
 
+    /// Deprecated, see `getPath3`.
     pub fn getPath2(gen: GeneratedFile, src_builder: *Build, asking_step: ?*Step) []const u8 {
+        return getPath3(gen, src_builder, asking_step) catch |err| switch (err) {
+            error.Canceled => std.process.exit(1),
+        };
+    }
+
+    pub fn getPath3(gen: GeneratedFile, src_builder: *Build, asking_step: ?*Step) Io.Cancelable![]const u8 {
         return gen.path orelse {
-            const stderr = std.debug.lockStderrWriter(&.{});
+            const io = gen.step.owner.graph.io;
+            const stderr = try io.lockStderrWriter(&.{});
             dumpBadGetPathHelp(gen.step, &stderr.interface, stderr.mode, src_builder, asking_step) catch {};
-            std.debug.unlockStderrWriter();
             @panic("misconfigured build script");
         };
     }
@@ -2425,22 +2432,29 @@ pub const LazyPath = union(enum) {
         }
     }
 
-    /// Deprecated, see `getPath3`.
+    /// Deprecated, see `getPath4`.
     pub fn getPath(lazy_path: LazyPath, src_builder: *Build) []const u8 {
         return getPath2(lazy_path, src_builder, null);
     }
 
-    /// Deprecated, see `getPath3`.
+    /// Deprecated, see `getPath4`.
     pub fn getPath2(lazy_path: LazyPath, src_builder: *Build, asking_step: ?*Step) []const u8 {
         const p = getPath3(lazy_path, src_builder, asking_step);
         return src_builder.pathResolve(&.{ p.root_dir.path orelse ".", p.sub_path });
+    }
+
+    /// Deprecated, see `getPath4`.
+    pub fn getPath3(lazy_path: LazyPath, src_builder: *Build, asking_step: ?*Step) Cache.Path {
+        return getPath4(lazy_path, src_builder, asking_step) catch |err| switch (err) {
+            error.Canceled => std.process.exit(1),
+        };
     }
 
     /// Intended to be used during the make phase only.
     ///
     /// `asking_step` is only used for debugging purposes; it's the step being
     /// run that is asking for the path.
-    pub fn getPath3(lazy_path: LazyPath, src_builder: *Build, asking_step: ?*Step) Cache.Path {
+    pub fn getPath4(lazy_path: LazyPath, src_builder: *Build, asking_step: ?*Step) Io.Cancelable!Cache.Path {
         switch (lazy_path) {
             .src_path => |sp| return .{
                 .root_dir = sp.owner.build_root,
@@ -2457,9 +2471,10 @@ pub const LazyPath = union(enum) {
                 var file_path: Cache.Path = .{
                     .root_dir = Cache.Directory.cwd(),
                     .sub_path = gen.file.path orelse {
-                        const stderr = std.debug.lockStderrWriter(&.{});
+                        const io = src_builder.graph.io;
+                        const stderr = try io.lockStderrWriter(&.{});
                         dumpBadGetPathHelp(gen.file.step, &stderr.interface, stderr.mode, src_builder, asking_step) catch {};
-                        std.debug.unlockStderrWriter();
+                        io.unlockStderrWriter();
                         @panic("misconfigured build script");
                     },
                 };

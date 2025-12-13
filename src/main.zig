@@ -4429,9 +4429,9 @@ fn runOrTest(
     // the error message and invocation below.
     if (process.can_execv and arg_mode == .run) {
         // execv releases the locks; no need to destroy the Compilation here.
-        _ = std.debug.lockStderrWriter(&.{});
+        _ = try io.lockStderrWriter(&.{});
         const err = process.execve(gpa, argv.items, &env_map);
-        std.debug.unlockStderrWriter();
+        io.unlockStderrWriter();
         try warnAboutForeignBinaries(io, arena, arg_mode, target, link_libc);
         const cmd = try std.mem.join(arena, " ", argv.items);
         fatal("the following command failed to execve with '{t}':\n{s}", .{ err, cmd });
@@ -4448,8 +4448,8 @@ fn runOrTest(
         comp_destroyed.* = true;
 
         const term_result = t: {
-            _ = std.debug.lockStderrWriter();
-            defer std.debug.unlockStderrWriter();
+            _ = try io.lockStderrWriter(&.{});
+            defer io.unlockStderrWriter();
             break :t child.spawnAndWait(io);
         };
         const term = term_result catch |err| {
@@ -4606,7 +4606,8 @@ fn updateModule(comp: *Compilation, color: Color, prog_node: std.Progress.Node) 
     defer errors.deinit(comp.gpa);
 
     if (errors.errorMessageCount() > 0) {
-        errors.renderToStdErr(.{}, color);
+        const io = comp.io;
+        errors.renderToStderr(io, .{}, color);
         return error.CompileErrorsReported;
     }
 }
@@ -4659,7 +4660,7 @@ fn cmdTranslateC(
                 return;
             } else {
                 const color: Color = .auto;
-                result.errors.renderToStdErr(.{}, color);
+                result.errors.renderToStderr(io, .{}, color);
                 process.exit(1);
             }
         }
@@ -5280,7 +5281,7 @@ fn cmdBuild(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) 
 
                 if (fetch.error_bundle.root_list.items.len > 0) {
                     var errors = try fetch.error_bundle.toOwnedBundle("");
-                    errors.renderToStdErr(.{}, color);
+                    errors.renderToStderr(io, .{}, color);
                     process.exit(1);
                 }
 
@@ -5412,8 +5413,8 @@ fn cmdBuild(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) 
             child.stderr_behavior = .Inherit;
 
             const term = t: {
-                _ = std.debug.lockStderrWriter(&.{});
-                defer std.debug.unlockStderrWriter();
+                _ = try io.lockStderrWriter(&.{});
+                defer io.unlockStderrWriter();
                 break :t child.spawnAndWait(io) catch |err|
                     fatal("failed to spawn build runner {s}: {t}", .{ child_argv.items[0], err });
             };
@@ -6212,7 +6213,7 @@ fn cmdAstCheck(arena: Allocator, io: Io, args: []const []const u8) !void {
                 try wip_errors.init(arena);
                 try wip_errors.addZirErrorMessages(zir, tree, source, display_path);
                 var error_bundle = try wip_errors.toOwnedBundle("");
-                error_bundle.renderToStdErr(.{}, color);
+                error_bundle.renderToStderr(io, .{}, color);
                 if (zir.loweringFailed()) {
                     process.exit(1);
                 }
@@ -6283,7 +6284,7 @@ fn cmdAstCheck(arena: Allocator, io: Io, args: []const []const u8) !void {
                 try wip_errors.init(arena);
                 try wip_errors.addZoirErrorMessages(zoir, tree, source, display_path);
                 var error_bundle = try wip_errors.toOwnedBundle("");
-                error_bundle.renderToStdErr(.{}, color);
+                error_bundle.renderToStderr(io, .{}, color);
                 process.exit(1);
             }
 
@@ -6557,7 +6558,7 @@ fn cmdChangelist(arena: Allocator, io: Io, args: []const []const u8) !void {
         try wip_errors.init(arena);
         try wip_errors.addZirErrorMessages(old_zir, old_tree, old_source, old_source_path);
         var error_bundle = try wip_errors.toOwnedBundle("");
-        error_bundle.renderToStdErr(.{}, color);
+        error_bundle.renderToStderr(io, .{}, color);
         process.exit(1);
     }
 
@@ -6569,7 +6570,7 @@ fn cmdChangelist(arena: Allocator, io: Io, args: []const []const u8) !void {
         try wip_errors.init(arena);
         try wip_errors.addZirErrorMessages(new_zir, new_tree, new_source, new_source_path);
         var error_bundle = try wip_errors.toOwnedBundle("");
-        error_bundle.renderToStdErr(.{}, color);
+        error_bundle.renderToStderr(io, .{}, color);
         process.exit(1);
     }
 
@@ -7005,7 +7006,7 @@ fn cmdFetch(
 
     if (fetch.error_bundle.root_list.items.len > 0) {
         var errors = try fetch.error_bundle.toOwnedBundle("");
-        errors.renderToStdErr(.{}, color);
+        errors.renderToStderr(io, .{}, color);
         process.exit(1);
     }
 
@@ -7345,7 +7346,7 @@ fn loadManifest(
     errdefer ast.deinit(gpa);
 
     if (ast.errors.len > 0) {
-        try std.zig.printAstErrorsToStderr(gpa, ast, Package.Manifest.basename, options.color);
+        try std.zig.printAstErrorsToStderr(gpa, io, ast, Package.Manifest.basename, options.color);
         process.exit(2);
     }
 
@@ -7362,7 +7363,7 @@ fn loadManifest(
 
         var error_bundle = try wip_errors.toOwnedBundle("");
         defer error_bundle.deinit(gpa);
-        error_bundle.renderToStdErr(.{}, options.color);
+        error_bundle.renderToStderr(io, .{}, options.color);
 
         process.exit(2);
     }

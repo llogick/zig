@@ -67,12 +67,12 @@ pub const Diagnostics = struct {
         return @intCast(index);
     }
 
-    pub fn renderToStdErr(self: *Diagnostics, cwd: Io.Dir, source: []const u8, source_mappings: ?SourceMappings) void {
+    pub fn renderToStderr(self: *Diagnostics, cwd: Io.Dir, source: []const u8, source_mappings: ?SourceMappings) void {
         const io = self.io;
-        const stderr, const ttyconf = std.debug.lockStderrWriter(&.{});
-        defer std.debug.unlockStderrWriter();
+        const stderr = io.lockStderrWriter(&.{});
+        defer io.unlockStderrWriter();
         for (self.errors.items) |err_details| {
-            renderErrorMessage(io, stderr, ttyconf, cwd, err_details, source, self.strings.items, source_mappings) catch return;
+            renderErrorMessage(io, &stderr.interface, stderr.mode, cwd, err_details, source, self.strings.items, source_mappings) catch return;
         }
     }
 

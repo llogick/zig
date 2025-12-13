@@ -411,16 +411,13 @@ pub fn fuzz(
                             std.debug.writeStackTrace(trace, &stderr.interface, stderr.mode) catch break :p;
                         }
                         stderr.interface.print("failed with error.{t}\n", .{err}) catch break :p;
-                        stderr.interface.flush() catch break :p;
                     }
-                    stderr.interface.flush() catch {};
                     std.process.exit(1);
                 },
             };
             if (log_err_count != 0) {
                 const stderr = std.debug.lockStderrWriter(&.{});
                 stderr.interface.print("error logs detected\n", .{}) catch {};
-                stderr.interface.flush() catch {};
                 std.process.exit(1);
             }
         }

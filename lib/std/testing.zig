@@ -368,13 +368,21 @@ pub fn expectEqualSlices(comptime T: type, expected: []const T, actual: []const 
         break :diff_index if (expected.len == actual.len) return else shortest;
     };
     if (!backend_can_print) return error.TestExpectedEqual;
-    const stderr = std.debug.lockStderrWriter(&.{});
-    defer std.debug.unlockStderrWriter();
-    failEqualSlices(T, expected, actual, diff_index, &stderr.interface, stderr.mode) catch {};
+    if (io.lockStderrWriter(&.{})) |stderr| {
+        defer io.unlockStderrWriter();
+        failEqualSlices(T, expected, actual, diff_index, &stderr.interface, stderr.mode) catch {};
+    } else |_| {}
     return error.TestExpectedEqual;
 }
 
-fn failEqualSlices(comptime T: type, expected: []const T, actual: []const T, diff_index: usize, w: *Io.Writer, fwm: Io.File.Writer.Mode) !void {
+fn failEqualSlices(
+    comptime T: type,
+    expected: []const T,
+    actual: []const T,
+    diff_index: usize,
+    w: *Io.Writer,
+    fwm: Io.File.Writer.Mode,
+) !void {
     try w.print("slices differ. first difference occurs at index {d} (0x{X})\n", .{ diff_index, diff_index });
 
     // TODO: Should this be configurable by the caller?

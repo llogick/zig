@@ -655,7 +655,7 @@ fn buildClientWasm(ws: *WebServer, arena: Allocator, optimize: std.builtin.Optim
     }
 
     if (result_error_bundle.errorMessageCount() > 0) {
-        result_error_bundle.renderToStdErr(.{}, .auto);
+        try result_error_bundle.renderToStderr(io, .{}, .auto);
         log.err("the following command failed with {d} compilation errors:\n{s}", .{
             result_error_bundle.errorMessageCount(),
             try Build.Step.allocPrintCmd(arena, null, argv.items),

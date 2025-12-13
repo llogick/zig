@@ -1,7 +1,6 @@
 const std = @import("std");
-const mem = std.mem;
-const print = std.debug.print;
-const maxInt = std.math.maxInt;
+const Io = std.Io;
+const Allocator = std.mem.Allocator;
 
 test "zig fmt: remove extra whitespace at start and end of file with comment between" {
     try testTransform(
@@ -6332,10 +6331,10 @@ test "ampersand" {
 
 var fixed_buffer_mem: [100 * 1024]u8 = undefined;
 
-fn testParse(source: [:0]const u8, allocator: mem.Allocator, anything_changed: *bool) ![]u8 {
+fn testParse(io: Io, source: [:0]const u8, allocator: Allocator, anything_changed: *bool) ![]u8 {
     var buffer: [64]u8 = undefined;
-    const stderr = std.debug.lockStderrWriter(&buffer);
-    defer std.debug.unlockStderrWriter();
+    const stderr = try io.lockStderrWriter(&buffer);
+    defer io.unlockStderrWriter();
 
     var tree = try std.zig.Ast.parse(allocator, source, .zig);
     defer tree.deinit(allocator);
@@ -6359,27 +6358,36 @@ fn testParse(source: [:0]const u8, allocator: mem.Allocator, anything_changed: *
     }
 
     const formatted = try tree.renderAlloc(allocator);
-    anything_changed.* = !mem.eql(u8, formatted, source);
+    anything_changed.* = !std.mem.eql(u8, formatted, source);
     return formatted;
 }
-fn testTransformImpl(allocator: mem.Allocator, fba: *std.heap.FixedBufferAllocator, source: [:0]const u8, expected_source: []const u8) !void {
+fn testTransformImpl(
+    io: Io,
+    allocator: Allocator,
+    fba: *std.heap.FixedBufferAllocator,
+    source: [:0]const u8,
+    expected_source: []const u8,
+) !void {
     // reset the fixed buffer allocator each run so that it can be re-used for each
     // iteration of the failing index
     fba.reset();
     var anything_changed: bool = undefined;
-    const result_source = try testParse(source, allocator, &anything_changed);
+    const result_source = try testParse(io, source, allocator, &anything_changed);
     try std.testing.expectEqualStrings(expected_source, result_source);
     const changes_expected = source.ptr != expected_source.ptr;
     if (anything_changed != changes_expected) {
-        print("std.zig.render returned {} instead of {}\n", .{ anything_changed, changes_expected });
+        std.debug.print("std.zig.render returned {} instead of {}\n", .{ anything_changed, changes_expected });
         return error.TestFailed;
     }
     try std.testing.expect(anything_changed == changes_expected);
     allocator.free(result_source);
 }
 fn testTransform(source: [:0]const u8, expected_source: []const u8) !void {
+    const io = std.testing.io;
     var fixed_allocator = std.heap.FixedBufferAllocator.init(fixed_buffer_mem[0..]);
-    return std.testing.checkAllAllocationFailures(fixed_allocator.allocator(), testTransformImpl, .{ &fixed_allocator, source, expected_source });
+    return std.testing.checkAllAllocationFailures(fixed_allocator.allocator(), testTransformImpl, .{
+        io, &fixed_allocator, source, expected_source,
+    });
 }
 fn testCanonical(source: [:0]const u8) !void {
     return testTransform(source, source);

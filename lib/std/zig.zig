@@ -639,7 +639,7 @@ pub fn readSourceFileToEndAlloc(gpa: Allocator, file_reader: *Io.File.Reader) ![
     return buffer.toOwnedSliceSentinel(gpa, 0);
 }
 
-pub fn printAstErrorsToStderr(gpa: Allocator, tree: Ast, path: []const u8, color: Color) !void {
+pub fn printAstErrorsToStderr(gpa: Allocator, io: Io, tree: Ast, path: []const u8, color: Color) !void {
     var wip_errors: std.zig.ErrorBundle.Wip = undefined;
     try wip_errors.init(gpa);
     defer wip_errors.deinit();
@@ -648,7 +648,7 @@ pub fn printAstErrorsToStderr(gpa: Allocator, tree: Ast, path: []const u8, color
 
     var error_bundle = try wip_errors.toOwnedBundle("");
     defer error_bundle.deinit(gpa);
-    error_bundle.renderToStdErr(.{}, color);
+    error_bundle.renderToStderr(io, .{}, color);
 }
 
 pub fn putAstErrorsIntoBundle(

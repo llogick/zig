@@ -4,6 +4,7 @@ const builtin = @import("builtin");
 const native_endian = builtin.cpu.arch.endian();
 
 const std = @import("std");
+const Io = std.Io;
 const assert = std.debug.assert;
 const log = std.log.scoped(.link);
 
@@ -2377,10 +2378,16 @@ pub fn deleteExport(coff: *Coff, exported: Zcu.Exported, name: InternPool.NullTe
     _ = name;
 }
 
-pub fn dump(coff: *Coff, tid: Zcu.PerThread.Id) void {
-    const w, _ = std.debug.lockStderrWriter(&.{});
-    defer std.debug.unlockStderrWriter();
-    coff.printNode(tid, w, .root, 0) catch {};
+pub fn dump(coff: *Coff, tid: Zcu.PerThread.Id) Io.Cancelable!void {
+    const comp = coff.base.comp;
+    const io = comp.io;
+    var buffer: [512]u8 = undefined;
+    const stderr = try io.lockStderrWriter(&buffer);
+    defer io.unlockStderrWriter();
+    const w = &stderr.interface;
+    coff.printNode(tid, w, .root, 0) catch |err| switch (err) {
+        error.WriteFailed => return stderr.err.?,
+    };
 }
 
 pub fn printNode(

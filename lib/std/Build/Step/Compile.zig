@@ -922,20 +922,23 @@ const CliNamedModules = struct {
     }
 };
 
-fn getGeneratedFilePath(compile: *Compile, comptime tag_name: []const u8, asking_step: ?*Step) []const u8 {
+fn getGeneratedFilePath(compile: *Compile, comptime tag_name: []const u8, asking_step: ?*Step) ![]const u8 {
+    const step = &compile.step;
+    const b = step.owner;
+    const io = b.graph.io;
     const maybe_path: ?*GeneratedFile = @field(compile, tag_name);
 
     const generated_file = maybe_path orelse {
-        const stderr = std.debug.lockStderrWriter(&.{});
+        const stderr = try io.lockStderrWriter(&.{});
         std.Build.dumpBadGetPathHelp(&compile.step, &stderr.interface, stderr.mode, compile.step.owner, asking_step) catch {};
-        std.debug.unlockStderrWriter();
+        io.unlockStderrWriter();
         @panic("missing emit option for " ++ tag_name);
     };
 
     const path = generated_file.path orelse {
-        const stderr = std.debug.lockStderrWriter(&.{});
+        const stderr = try io.lockStderrWriter(&.{});
         std.Build.dumpBadGetPathHelp(&compile.step, &stderr.interface, stderr.mode, compile.step.owner, asking_step) catch {};
-        std.debug.unlockStderrWriter();
+        io.unlockStderrWriter();
         @panic(tag_name ++ " is null. Is there a missing step dependency?");
     };
 
@@ -1149,9 +1152,9 @@ fn getZigArgs(compile: *Compile, fuzz: bool) ![][]const u8 {
                                     // For everything else, we directly link
                                     // against the library file.
                                     const full_path_lib = if (other_produces_implib)
-                                        other.getGeneratedFilePath("generated_implib", &compile.step)
+                                        try other.getGeneratedFilePath("generated_implib", &compile.step)
                                     else
-                                        other.getGeneratedFilePath("generated_bin", &compile.step);
+                                        try other.getGeneratedFilePath("generated_bin", &compile.step);
 
                                     try zig_args.append(full_path_lib);
                                     total_linker_objects += 1;

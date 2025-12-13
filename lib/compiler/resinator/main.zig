@@ -24,6 +24,10 @@ pub fn main() !void {
     defer std.debug.assert(debug_allocator.deinit() == .ok);
     const gpa = debug_allocator.allocator();
 
+    var threaded: std.Io.Threaded = .init(gpa);
+    defer threaded.deinit();
+    const io = threaded.io();
+
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -31,8 +35,8 @@ pub fn main() !void {
     const args = try std.process.argsAlloc(arena);
 
     if (args.len < 2) {
-        const w, const ttyconf = std.debug.lockStderrWriter(&.{});
-        try renderErrorMessage(w, ttyconf, .err, "expected zig lib dir as first argument", .{});
+        const stderr = io.lockStderrWriter(&.{});
+        try renderErrorMessage(&stderr.interface, stderr.mode, .err, "expected zig lib dir as first argument", .{});
         std.process.exit(1);
     }
     const zig_lib_dir = args[1];
@@ -45,7 +49,7 @@ pub fn main() !void {
     }
 
     var stdout_buffer: [1024]u8 = undefined;
-    var stdout_writer = Io.File.stdout().writer(&stdout_buffer);
+    var stdout_writer = Io.File.stdout().writer(io, &stdout_buffer);
     const stdout = &stdout_writer.interface;
     var error_handler: ErrorHandler = switch (zig_integration) {
         true => .{
@@ -71,23 +75,19 @@ pub fn main() !void {
 
         if (!zig_integration) {
             // print any warnings/notes
-            cli_diagnostics.renderToStdErr(cli_args);
+            cli_diagnostics.renderToStderr(io, cli_args);
             // If there was something printed, then add an extra newline separator
             // so that there is a clear separation between the cli diagnostics and whatever
             // gets printed after
             if (cli_diagnostics.errors.items.len > 0) {
-                const stderr, _ = std.debug.lockStderrWriter(&.{});
-                defer std.debug.unlockStderrWriter();
-                try stderr.writeByte('\n');
+                const stderr = io.lockStderrWriter(&.{});
+                defer io.unlockStderrWriter();
+                try stderr.interface.writeByte('\n');
             }
         }
         break :options options;
     };
     defer options.deinit();
-
-    var threaded: std.Io.Threaded = .init(gpa);
-    defer threaded.deinit();
-    const io = threaded.io();
 
     if (options.print_help_and_exit) {
         try cli.writeUsage(stdout, "zig rc");
@@ -130,10 +130,10 @@ pub fn main() !void {
             var stderr_buf: [512]u8 = undefined;
             var diagnostics: aro.Diagnostics = .{ .output = output: {
                 if (zig_integration) break :output .{ .to_list = .{ .arena = .init(gpa) } };
-                const w, const ttyconf = std.debug.lockStderrWriter(&stderr_buf);
+                const stderr = io.lockStderrWriter(&stderr_buf);
                 break :output .{ .to_writer = .{
-                    .writer = w,
-                    .color = ttyconf,
+                    .writer = &stderr.interface,
+                    .color = stderr.mode,
                 } };
             } };
             defer {
@@ -175,11 +175,11 @@ pub fn main() !void {
                     std.process.exit(1);
                 },
                 error.FileTooBig => {
-                    try error_handler.emitMessage(gpa, .err, "failed during preprocessing: maximum file size exceeded", .{});
+                    try error_handler.emitMessage(gpa, io, .err, "failed during preprocessing: maximum file size exceeded", .{});
                     std.process.exit(1);
                 },
                 error.WriteFailed => {
-                    try error_handler.emitMessage(gpa, .err, "failed during preprocessing: error writing the preprocessed output", .{});
+                    try error_handler.emitMessage(gpa, io, .err, "failed during preprocessing: error writing the preprocessed output", .{});
                     std.process.exit(1);
                 },
                 error.OutOfMemory => |e| return e,
@@ -191,13 +191,13 @@ pub fn main() !void {
                 .stdio => |file| {
                     var file_reader = file.reader(io, &.{});
                     break :full_input file_reader.interface.allocRemaining(gpa, .unlimited) catch |err| {
-                        try error_handler.emitMessage(gpa, .err, "unable to read input from stdin: {s}", .{@errorName(err)});
+                        try error_handler.emitMessage(gpa, io, .err, "unable to read input from stdin: {s}", .{@errorName(err)});
                         std.process.exit(1);
                     };
                 },
                 .filename => |input_filename| {
                     break :full_input Io.Dir.cwd().readFileAlloc(input_filename, gpa, .unlimited) catch |err| {
-                        try error_handler.emitMessage(gpa, .err, "unable to read input file path '{s}': {s}", .{ input_filename, @errorName(err) });
+                        try error_handler.emitMessage(gpa, io, .err, "unable to read input file path '{s}': {s}", .{ input_filename, @errorName(err) });
                         std.process.exit(1);
                     };
                 },
@@ -228,12 +228,12 @@ pub fn main() !void {
             }
         else if (options.input_format == .res)
             IoStream.fromIoSource(options.input_source, .input) catch |err| {
-                try error_handler.emitMessage(gpa, .err, "unable to read res file path '{s}': {s}", .{ options.input_source.filename, @errorName(err) });
+                try error_handler.emitMessage(gpa, io, .err, "unable to read res file path '{s}': {s}", .{ options.input_source.filename, @errorName(err) });
                 std.process.exit(1);
             }
         else
             IoStream.fromIoSource(options.output_source, .output) catch |err| {
-                try error_handler.emitMessage(gpa, .err, "unable to create output file '{s}': {s}", .{ options.output_source.filename, @errorName(err) });
+                try error_handler.emitMessage(gpa, io, .err, "unable to create output file '{s}': {s}", .{ options.output_source.filename, @errorName(err) });
                 std.process.exit(1);
             };
         defer res_stream.deinit(gpa);
@@ -246,17 +246,17 @@ pub fn main() !void {
                 var mapping_results = parseAndRemoveLineCommands(gpa, full_input, full_input, .{ .initial_filename = options.input_source.filename }) catch |err| switch (err) {
                     error.InvalidLineCommand => {
                         // TODO: Maybe output the invalid line command
-                        try error_handler.emitMessage(gpa, .err, "invalid line command in the preprocessed source", .{});
+                        try error_handler.emitMessage(gpa, io, .err, "invalid line command in the preprocessed source", .{});
                         if (options.preprocess == .no) {
-                            try error_handler.emitMessage(gpa, .note, "line commands must be of the format: #line <num> \"<path>\"", .{});
+                            try error_handler.emitMessage(gpa, io, .note, "line commands must be of the format: #line <num> \"<path>\"", .{});
                         } else {
-                            try error_handler.emitMessage(gpa, .note, "this is likely to be a bug, please report it", .{});
+                            try error_handler.emitMessage(gpa, io, .note, "this is likely to be a bug, please report it", .{});
                         }
                         std.process.exit(1);
                     },
                     error.LineNumberOverflow => {
                         // TODO: Better error message
-                        try error_handler.emitMessage(gpa, .err, "line number count exceeded maximum of {}", .{std.math.maxInt(usize)});
+                        try error_handler.emitMessage(gpa, io, .err, "line number count exceeded maximum of {}", .{std.math.maxInt(usize)});
                         std.process.exit(1);
                     },
                     error.OutOfMemory => |e| return e,
@@ -306,13 +306,13 @@ pub fn main() !void {
 
                 // print any warnings/notes
                 if (!zig_integration) {
-                    diagnostics.renderToStdErr(Io.Dir.cwd(), final_input, mapping_results.mappings);
+                    diagnostics.renderToStderr(io, Io.Dir.cwd(), final_input, mapping_results.mappings);
                 }
 
                 // write the depfile
                 if (options.depfile_path) |depfile_path| {
                     var depfile = Io.Dir.cwd().createFile(io, depfile_path, .{}) catch |err| {
-                        try error_handler.emitMessage(gpa, .err, "unable to create depfile '{s}': {s}", .{ depfile_path, @errorName(err) });
+                        try error_handler.emitMessage(gpa, io, .err, "unable to create depfile '{s}': {s}", .{ depfile_path, @errorName(err) });
                         std.process.exit(1);
                     };
                     defer depfile.close(io);
@@ -340,7 +340,7 @@ pub fn main() !void {
             if (options.output_format != .coff) return;
 
             break :res_data res_stream.source.readAll(gpa, io) catch |err| {
-                try error_handler.emitMessage(gpa, .err, "unable to read res from '{s}': {s}", .{ res_stream.name, @errorName(err) });
+                try error_handler.emitMessage(gpa, io, .err, "unable to read res from '{s}': {s}", .{ res_stream.name, @errorName(err) });
                 std.process.exit(1);
             };
         };
@@ -353,14 +353,14 @@ pub fn main() !void {
         var res_reader: std.Io.Reader = .fixed(res_data.bytes);
         break :resources cvtres.parseRes(gpa, &res_reader, .{ .max_size = res_data.bytes.len }) catch |err| {
             // TODO: Better errors
-            try error_handler.emitMessage(gpa, .err, "unable to parse res from '{s}': {s}", .{ res_stream.name, @errorName(err) });
+            try error_handler.emitMessage(gpa, io, .err, "unable to parse res from '{s}': {s}", .{ res_stream.name, @errorName(err) });
             std.process.exit(1);
         };
     };
     defer resources.deinit();
 
     var coff_stream = IoStream.fromIoSource(options.output_source, .output) catch |err| {
-        try error_handler.emitMessage(gpa, .err, "unable to create output file '{s}': {s}", .{ options.output_source.filename, @errorName(err) });
+        try error_handler.emitMessage(gpa, io, .err, "unable to create output file '{s}': {s}", .{ options.output_source.filename, @errorName(err) });
         std.process.exit(1);
     };
     defer coff_stream.deinit(gpa);
@@ -373,7 +373,7 @@ pub fn main() !void {
         switch (err) {
             error.DuplicateResource => {
                 const duplicate_resource = resources.list.items[cvtres_diagnostics.duplicate_resource];
-                try error_handler.emitMessage(gpa, .err, "duplicate resource [id: {f}, type: {f}, language: {f}]", .{
+                try error_handler.emitMessage(gpa, io, .err, "duplicate resource [id: {f}, type: {f}, language: {f}]", .{
                     duplicate_resource.name_value,
                     fmtResourceType(duplicate_resource.type_value),
                     duplicate_resource.language,
@@ -381,8 +381,8 @@ pub fn main() !void {
             },
             error.ResourceDataTooLong => {
                 const overflow_resource = resources.list.items[cvtres_diagnostics.duplicate_resource];
-                try error_handler.emitMessage(gpa, .err, "resource has a data length that is too large to be written into a coff section", .{});
-                try error_handler.emitMessage(gpa, .note, "the resource with the invalid size is [id: {f}, type: {f}, language: {f}]", .{
+                try error_handler.emitMessage(gpa, io, .err, "resource has a data length that is too large to be written into a coff section", .{});
+                try error_handler.emitMessage(gpa, io, .note, "the resource with the invalid size is [id: {f}, type: {f}, language: {f}]", .{
                     overflow_resource.name_value,
                     fmtResourceType(overflow_resource.type_value),
                     overflow_resource.language,
@@ -390,15 +390,15 @@ pub fn main() !void {
             },
             error.TotalResourceDataTooLong => {
                 const overflow_resource = resources.list.items[cvtres_diagnostics.duplicate_resource];
-                try error_handler.emitMessage(gpa, .err, "total resource data exceeds the maximum of the coff 'size of raw data' field", .{});
-                try error_handler.emitMessage(gpa, .note, "size overflow occurred when attempting to write this resource: [id: {f}, type: {f}, language: {f}]", .{
+                try error_handler.emitMessage(gpa, io, .err, "total resource data exceeds the maximum of the coff 'size of raw data' field", .{});
+                try error_handler.emitMessage(gpa, io, .note, "size overflow occurred when attempting to write this resource: [id: {f}, type: {f}, language: {f}]", .{
                     overflow_resource.name_value,
                     fmtResourceType(overflow_resource.type_value),
                     overflow_resource.language,
                 });
             },
             else => {
-                try error_handler.emitMessage(gpa, .err, "unable to write coff output file '{s}': {s}", .{ coff_stream.name, @errorName(err) });
+                try error_handler.emitMessage(gpa, io, .err, "unable to write coff output file '{s}': {s}", .{ coff_stream.name, @errorName(err) });
             },
         }
         // Delete the output file on error
@@ -550,16 +550,16 @@ const LazyIncludePaths = struct {
             else => |e| {
                 switch (e) {
                     error.UnsupportedAutoIncludesMachineType => {
-                        try error_handler.emitMessage(self.arena, .err, "automatic include path detection is not supported for target '{s}'", .{@tagName(self.target_machine_type)});
+                        try error_handler.emitMessage(self.arena, io, .err, "automatic include path detection is not supported for target '{s}'", .{@tagName(self.target_machine_type)});
                     },
                     error.MsvcIncludesNotFound => {
-                        try error_handler.emitMessage(self.arena, .err, "MSVC include paths could not be automatically detected", .{});
+                        try error_handler.emitMessage(self.arena, io, .err, "MSVC include paths could not be automatically detected", .{});
                     },
                     error.MingwIncludesNotFound => {
-                        try error_handler.emitMessage(self.arena, .err, "MinGW include paths could not be automatically detected", .{});
+                        try error_handler.emitMessage(self.arena, io, .err, "MinGW include paths could not be automatically detected", .{});
                     },
                 }
-                try error_handler.emitMessage(self.arena, .note, "to disable auto includes, use the option /:auto-includes none", .{});
+                try error_handler.emitMessage(self.arena, io, .note, "to disable auto includes, use the option /:auto-includes none", .{});
                 std.process.exit(1);
             },
         };
@@ -664,6 +664,7 @@ const ErrorHandler = union(enum) {
     pub fn emitCliDiagnostics(
         self: *ErrorHandler,
         allocator: Allocator,
+        io: Io,
         args: []const []const u8,
         diagnostics: *cli.Diagnostics,
     ) !void {
@@ -674,7 +675,7 @@ const ErrorHandler = union(enum) {
 
                 try server.serveErrorBundle(error_bundle);
             },
-            .stderr => diagnostics.renderToStdErr(args),
+            .stderr => diagnostics.renderToStderr(io, args),
         }
     }
 
@@ -684,6 +685,7 @@ const ErrorHandler = union(enum) {
         fail_msg: []const u8,
         comp: *aro.Compilation,
     ) !void {
+        const io = comp.io;
         switch (self.*) {
             .server => |*server| {
                 var error_bundle = try compiler_util.aroDiagnosticsToErrorBundle(
@@ -697,9 +699,9 @@ const ErrorHandler = union(enum) {
             },
             .stderr => {
                 // aro errors have already been emitted
-                const stderr, const ttyconf = std.debug.lockStderrWriter(&.{});
-                defer std.debug.unlockStderrWriter();
-                try renderErrorMessage(stderr, ttyconf, .err, "{s}", .{fail_msg});
+                const stderr = io.lockStderrWriter(&.{});
+                defer io.unlockStderrWriter();
+                try renderErrorMessage(&stderr.interface, stderr.mode, .err, "{s}", .{fail_msg});
             },
         }
     }
@@ -707,6 +709,7 @@ const ErrorHandler = union(enum) {
     pub fn emitDiagnostics(
         self: *ErrorHandler,
         allocator: Allocator,
+        io: Io,
         cwd: Io.Dir,
         source: []const u8,
         diagnostics: *Diagnostics,
@@ -719,13 +722,14 @@ const ErrorHandler = union(enum) {
 
                 try server.serveErrorBundle(error_bundle);
             },
-            .stderr => diagnostics.renderToStdErr(cwd, source, mappings),
+            .stderr => diagnostics.renderToStderr(io, cwd, source, mappings),
         }
     }
 
     pub fn emitMessage(
         self: *ErrorHandler,
         allocator: Allocator,
+        io: Io,
         msg_type: @import("utils.zig").ErrorMessageType,
         comptime format: []const u8,
         args: anytype,
@@ -741,9 +745,9 @@ const ErrorHandler = union(enum) {
                 try server.serveErrorBundle(error_bundle);
             },
             .stderr => {
-                const stderr, const ttyconf = std.debug.lockStderrWriter(&.{});
-                defer std.debug.unlockStderrWriter();
-                try renderErrorMessage(stderr, ttyconf, msg_type, format, args);
+                const stderr = io.lockStderrWriter(&.{});
+                defer io.unlockStderrWriter();
+                try renderErrorMessage(&stderr.interface, stderr.mode, msg_type, format, args);
             },
         }
     }

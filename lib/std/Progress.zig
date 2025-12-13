@@ -764,7 +764,7 @@ fn appendTreeSymbol(symbol: TreeSymbol, buf: []u8, start_i: usize) usize {
     }
 }
 
-pub fn clearWrittenWithEscapeCodes(file_writer: *Io.File.Writer) anyerror!void {
+pub fn clearWrittenWithEscapeCodes(file_writer: *Io.File.Writer) Io.Writer.Error!void {
     if (noop_impl or !global_progress.need_clear) return;
     try file_writer.writeAllUnescaped(clear ++ progress_remove);
     global_progress.need_clear = false;
