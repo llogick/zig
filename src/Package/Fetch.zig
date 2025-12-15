@@ -501,7 +501,7 @@ fn runResource(
             .path = tmp_directory_path,
             .handle = handle: {
                 const dir = cache_root.handle.makeOpenPath(io, tmp_dir_sub_path, .{
-                    .iterate = true,
+                    .open_options = .{ .iterate = true },
                 }) catch |err| {
                     try eb.addRootErrorMessage(.{
                         .msg = try eb.printString("unable to create temporary directory '{s}': {t}", .{
@@ -525,7 +525,7 @@ fn runResource(
             // https://github.com/ziglang/zig/issues/17095
             pkg_path.root_dir.handle.close(io);
             pkg_path.root_dir.handle = cache_root.handle.makeOpenPath(io, tmp_dir_sub_path, .{
-                .iterate = true,
+                .open_options = .{ .iterate = true },
             }) catch @panic("btrfs workaround failed");
         }
 
@@ -1334,7 +1334,7 @@ fn unzip(
             f.location_tok,
             try eb.printString("failed writing temporary zip file: {t}", .{err}),
         );
-        break :b zip_file_writer.moveToReader(io);
+        break :b zip_file_writer.moveToReader();
     };
 
     var diagnostics: std.zip.Diagnostics = .{ .allocator = f.arena.allocator() };
@@ -1376,7 +1376,7 @@ fn unpackGitPack(f: *Fetch, out_dir: Io.Dir, resource: *Resource.Git) anyerror!U
             const fetch_reader = &resource.fetch_stream.reader;
             _ = try fetch_reader.streamRemaining(&pack_file_writer.interface);
             try pack_file_writer.interface.flush();
-            break :b pack_file_writer.moveToReader(io);
+            break :b pack_file_writer.moveToReader();
         };
 
         var index_file = try pack_dir.createFile(io, "pkg.idx", .{ .read = true });
@@ -1421,26 +1421,21 @@ fn recursiveDirectoryCopy(f: *Fetch, dir: Io.Dir, tmp_dir: Io.Dir) anyerror!void
     // Recursive directory copy.
     var it = try dir.walk(gpa);
     defer it.deinit();
-    while (try it.next()) |entry| {
+    while (try it.next(io)) |entry| {
         switch (entry.kind) {
             .directory => {}, // omit empty directories
             .file => {
-                dir.copyFile(
-                    entry.path,
-                    tmp_dir,
-                    entry.path,
-                    .{},
-                ) catch |err| switch (err) {
+                dir.copyFile(entry.path, tmp_dir, entry.path, io, .{}) catch |err| switch (err) {
                     error.FileNotFound => {
                         if (fs.path.dirname(entry.path)) |dirname| try tmp_dir.makePath(io, dirname);
-                        try dir.copyFile(entry.path, tmp_dir, entry.path, .{});
+                        try dir.copyFile(entry.path, tmp_dir, entry.path, io, .{});
                     },
                     else => |e| return e,
                 };
             },
             .sym_link => {
                 var buf: [fs.max_path_bytes]u8 = undefined;
-                const link_name = try dir.readLink(io, entry.path, &buf);
+                const link_name = buf[0..try dir.readLink(io, entry.path, &buf)];
                 // TODO: if this would create a symlink to outside
                 // the destination directory, fail with an error instead.
                 tmp_dir.symLink(io, link_name, entry.path, .{}) catch |err| switch (err) {
@@ -1524,7 +1519,7 @@ fn computeHash(f: *Fetch, pkg_path: Cache.Path, filter: Filter) RunError!Compute
         var group: Io.Group = .init;
         defer group.wait(io);
 
-        while (walker.next() catch |err| {
+        while (walker.next(io) catch |err| {
             try eb.addRootErrorMessage(.{ .msg = try eb.printString(
                 "unable to walk temporary directory '{f}': {s}",
                 .{ pkg_path, @errorName(err) },
@@ -1575,7 +1570,7 @@ fn computeHash(f: *Fetch, pkg_path: Cache.Path, filter: Filter) RunError!Compute
                 .failure = undefined, // to be populated by the worker
                 .size = undefined, // to be populated by the worker
             };
-            group.async(io, workerHashFile, .{ root_dir, hashed_file });
+            group.async(io, workerHashFile, .{ io, root_dir, hashed_file });
             try all_files.append(hashed_file);
         }
     }
@@ -1643,7 +1638,7 @@ fn computeHash(f: *Fetch, pkg_path: Cache.Path, filter: Filter) RunError!Compute
         assert(!f.job_queue.recursive);
         // Print something to stdout that can be text diffed to figure out why
         // the package hash is different.
-        dumpHashInfo(all_files.items) catch |err| {
+        dumpHashInfo(io, all_files.items) catch |err| {
             std.debug.print("unable to write to stdout: {s}\n", .{@errorName(err)});
             std.process.exit(1);
         };
@@ -1655,9 +1650,9 @@ fn computeHash(f: *Fetch, pkg_path: Cache.Path, filter: Filter) RunError!Compute
     };
 }
 
-fn dumpHashInfo(all_files: []const *const HashedFile) !void {
+fn dumpHashInfo(io: Io, all_files: []const *const HashedFile) !void {
     var stdout_buffer: [1024]u8 = undefined;
-    var stdout_writer: Io.File.Writer = .initStreaming(.stdout(), &stdout_buffer);
+    var stdout_writer: Io.File.Writer = .initStreaming(.stdout(), io, &stdout_buffer);
     const w = &stdout_writer.interface;
     for (all_files) |hashed_file| {
         try w.print("{t}: {x}: {s}\n", .{ hashed_file.kind, &hashed_file.hash, hashed_file.normalized_path });
@@ -1665,8 +1660,8 @@ fn dumpHashInfo(all_files: []const *const HashedFile) !void {
     try w.flush();
 }
 
-fn workerHashFile(dir: Io.Dir, hashed_file: *HashedFile) void {
-    hashed_file.failure = hashFileFallible(dir, hashed_file);
+fn workerHashFile(io: Io, dir: Io.Dir, hashed_file: *HashedFile) void {
+    hashed_file.failure = hashFileFallible(io, dir, hashed_file);
 }
 
 fn workerDeleteFile(io: Io, dir: Io.Dir, deleted_file: *DeletedFile) void {
@@ -1745,7 +1740,7 @@ const HashedFile = struct {
         Io.File.OpenError ||
         Io.File.Reader.Error ||
         Io.File.StatError ||
-        Io.File.ChmodError ||
+        Io.File.SetPermissionsError ||
         Io.Dir.ReadLinkError;
 
     const Kind = enum { file, link };

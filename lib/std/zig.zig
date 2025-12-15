@@ -648,7 +648,7 @@ pub fn printAstErrorsToStderr(gpa: Allocator, io: Io, tree: Ast, path: []const u
 
     var error_bundle = try wip_errors.toOwnedBundle("");
     defer error_bundle.deinit(gpa);
-    error_bundle.renderToStderr(io, .{}, color);
+    return error_bundle.renderToStderr(io, .{}, color);
 }
 
 pub fn putAstErrorsIntoBundle(

@@ -2246,13 +2246,12 @@ fn resolvePathInputLib(
             var error_bundle = try wip_errors.toOwnedBundle("");
             defer error_bundle.deinit(gpa);
 
-            error_bundle.renderToStderr(io, .{}, color);
-
+            error_bundle.renderToStderr(io, .{}, color) catch {};
             std.process.exit(1);
         }
 
         var ld_script = ld_script_result catch |err|
-            fatal("{f}: failed to parse linker script: {s}", .{ test_path, @errorName(err) });
+            fatal("{f}: failed to parse linker script: {t}", .{ test_path, err });
         defer ld_script.deinit(gpa);
 
         try unresolved_inputs.ensureUnusedCapacity(gpa, ld_script.args.len);

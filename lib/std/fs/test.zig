@@ -1598,7 +1598,7 @@ test "AtomicFile" {
 
             {
                 var buffer: [100]u8 = undefined;
-                var af = try ctx.dir.atomicFile(test_out_file, .{ .write_buffer = &buffer });
+                var af = try ctx.dir.atomicFile(io, test_out_file, .{ .write_buffer = &buffer });
                 defer af.deinit();
                 try af.file_writer.interface.writeAll(test_content);
                 try af.finish();

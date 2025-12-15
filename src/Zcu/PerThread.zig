@@ -238,18 +238,13 @@ pub fn updateFile(
         if (builtin.os.tag == .wasi or lock == .exclusive) break true;
         // Otherwise, unlock to give someone a chance to get the exclusive lock
         // and then upgrade to an exclusive lock.
-        cache_file.unlock();
+        cache_file.unlock(io);
         lock = .exclusive;
-        try cache_file.lock(lock);
+        try cache_file.lock(io, lock);
     };
 
     if (need_update) {
-        // The cache is definitely stale so delete the contents to avoid an underwrite later.
-        cache_file.setLength(io, 0) catch |err| switch (err) {
-            error.FileTooBig => unreachable, // 0 is not too big
-            else => |e| return e,
-        };
-        try cache_file.seekTo(0);
+        var cache_file_writer: Io.File.Writer = .init(cache_file, io, &.{});
 
         if (stat.size > std.math.maxInt(u32))
             return error.FileTooBig;
@@ -278,7 +273,7 @@ pub fn updateFile(
         switch (file.getMode()) {
             .zig => {
                 file.zir = try AstGen.generate(gpa, file.tree.?);
-                Zcu.saveZirCache(gpa, io, cache_file, stat, file.zir.?) catch |err| switch (err) {
+                Zcu.saveZirCache(gpa, &cache_file_writer, stat, file.zir.?) catch |err| switch (err) {
                     error.OutOfMemory => |e| return e,
                     else => log.warn("unable to write cached ZIR code for {f} to {f}{s}: {t}", .{
                         file.path.fmt(comp), cache_directory, &hex_digest, err,
@@ -287,13 +282,19 @@ pub fn updateFile(
             },
             .zon => {
                 file.zoir = try ZonGen.generate(gpa, file.tree.?, .{});
-                Zcu.saveZoirCache(io, cache_file, stat, file.zoir.?) catch |err| {
+                Zcu.saveZoirCache(&cache_file_writer, stat, file.zoir.?) catch |err| {
                     log.warn("unable to write cached ZOIR code for {f} to {f}{s}: {t}", .{
                         file.path.fmt(comp), cache_directory, &hex_digest, err,
                     });
                 };
             },
         }
+
+        cache_file_writer.end() catch |err| switch (err) {
+            error.WriteFailed => return cache_file_writer.err.?,
+            else => |e| return e,
+        };
+
         if (timer.finish()) |ns_astgen| {
             comp.mutex.lockUncancelable(io);
             defer comp.mutex.unlock(io);
@@ -4524,12 +4525,14 @@ pub fn runCodegen(pt: Zcu.PerThread, func_index: InternPool.Index, air: *Air) Ru
                 .stage2_llvm,
                 => {},
             },
+            error.Canceled => |e| return e,
         }
         return error.AlreadyReported;
     };
 }
 fn runCodegenInner(pt: Zcu.PerThread, func_index: InternPool.Index, air: *Air) error{
     OutOfMemory,
+    Canceled,
     CodegenFail,
     NoLinkFile,
     BackendDoesNotProduceMir,
@@ -4555,13 +4558,16 @@ fn runCodegenInner(pt: Zcu.PerThread, func_index: InternPool.Index, air: *Air) e
         null;
     defer if (liveness) |*l| l.deinit(gpa);
 
-    if (build_options.enable_debug_extensions and comp.verbose_air) {
+    if (build_options.enable_debug_extensions and comp.verbose_air) p: {
         const io = comp.io;
         const stderr = try io.lockStderrWriter(&.{});
         defer io.unlockStderrWriter();
-        stderr.print("# Begin Function AIR: {f}:\n", .{fqn.fmt(ip)}) catch {};
-        air.write(stderr, pt, liveness);
-        stderr.print("# End Function AIR: {f}\n\n", .{fqn.fmt(ip)}) catch {};
+        printVerboseAir(pt, liveness, fqn, air, &stderr.interface) catch |err| switch (err) {
+            error.WriteFailed => switch (stderr.err.?) {
+                error.Canceled => |e| return e,
+                else => break :p,
+            },
+        };
     }
 
     if (std.debug.runtime_safety) verify_liveness: {
@@ -4576,7 +4582,7 @@ fn runCodegenInner(pt: Zcu.PerThread, func_index: InternPool.Index, air: *Air) e
 
         verify.verify() catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
-            else => return zcu.codegenFail(nav, "invalid liveness: {s}", .{@errorName(err)}),
+            else => return zcu.codegenFail(nav, "invalid liveness: {t}", .{err}),
         };
     }
 
@@ -4611,4 +4617,18 @@ fn runCodegenInner(pt: Zcu.PerThread, func_index: InternPool.Index, air: *Air) e
         error.RelocationNotByteAligned,
         => return zcu.codegenFail(nav, "unable to codegen: {s}", .{@errorName(err)}),
     };
+}
+
+fn printVerboseAir(
+    pt: Zcu.PerThread,
+    liveness: ?Air.Liveness,
+    fqn: InternPool.NullTerminatedString,
+    air: *const Air,
+    w: *Io.Writer,
+) Io.Writer.Error!void {
+    const zcu = pt.zcu;
+    const ip = &zcu.intern_pool;
+    try w.print("# Begin Function AIR: {f}:\n", .{fqn.fmt(ip)});
+    try air.write(w, pt, liveness);
+    try w.print("# End Function AIR: {f}\n\n", .{fqn.fmt(ip)});
 }

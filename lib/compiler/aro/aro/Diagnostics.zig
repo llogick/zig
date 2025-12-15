@@ -24,7 +24,7 @@ pub const Message = struct {
         @"fatal error",
     };
 
-    pub fn write(msg: Message, w: *std.Io.Writer, config: std.Io.tty.Config, details: bool) std.Io.tty.Config.SetColorError!void {
+    pub fn write(msg: Message, w: *std.Io.Writer, config: std.Io.File.Writer.Mode, details: bool) std.Io.tty.Config.SetColorError!void {
         try config.setColor(w, .bold);
         if (msg.location) |loc| {
             try w.print("{s}:{d}:{d}: ", .{ loc.path, loc.line_no, loc.col });

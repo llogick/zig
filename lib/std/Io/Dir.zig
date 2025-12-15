@@ -1645,7 +1645,7 @@ pub fn copyFile(
         .permissions = permissions,
         .write_buffer = &buffer,
     });
-    defer atomic_file.deinit(io);
+    defer atomic_file.deinit();
 
     _ = atomic_file.file_writer.interface.sendFileAll(&file_reader, .unlimited) catch |err| switch (err) {
         error.ReadFailed => return file_reader.err.?,

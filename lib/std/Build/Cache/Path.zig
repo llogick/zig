@@ -106,6 +106,7 @@ pub fn statFile(p: Path, io: Io, sub_path: []const u8) !Io.Dir.Stat {
 
 pub fn atomicFile(
     p: Path,
+    io: Io,
     sub_path: []const u8,
     options: Io.Dir.AtomicFileOptions,
     buf: *[fs.max_path_bytes]u8,
@@ -115,7 +116,7 @@ pub fn atomicFile(
             p.sub_path, sub_path,
         }) catch return error.NameTooLong;
     };
-    return p.root_dir.handle.atomicFile(joined_path, options);
+    return p.root_dir.handle.atomicFile(io, joined_path, options);
 }
 
 pub fn access(p: Path, io: Io, sub_path: []const u8, flags: Io.Dir.AccessOptions) !void {

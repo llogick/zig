@@ -202,7 +202,7 @@ pub const AddCertsFromDirError = AddCertsFromFilePathError;
 
 pub fn addCertsFromDir(cb: *Bundle, gpa: Allocator, io: Io, now: Io.Timestamp, iterable_dir: Io.Dir) AddCertsFromDirError!void {
     var it = iterable_dir.iterate();
-    while (try it.next()) |entry| {
+    while (try it.next(io)) |entry| {
         switch (entry.kind) {
             .file, .sym_link => {},
             else => continue,
@@ -243,6 +243,7 @@ pub fn addCertsFromFilePath(
 
 pub const AddCertsFromFileError = Allocator.Error ||
     Io.File.Reader.Error ||
+    Io.File.Reader.SizeError ||
     ParseCertError ||
     std.base64.Error ||
     error{ CertificateAuthorityBundleTooBig, MissingEndCertificateMarker, Streaming };

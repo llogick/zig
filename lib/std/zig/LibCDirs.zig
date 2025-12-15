@@ -1,3 +1,11 @@
+const LibCDirs = @This();
+const builtin = @import("builtin");
+
+const std = @import("../std.zig");
+const Io = std.Io;
+const LibCInstallation = std.zig.LibCInstallation;
+const Allocator = std.mem.Allocator;
+
 libc_include_dir_list: []const []const u8,
 libc_installation: ?*const LibCInstallation,
 libc_framework_dir_list: []const []const u8,
@@ -14,6 +22,7 @@ pub const DarwinSdkLayout = enum {
 
 pub fn detect(
     arena: Allocator,
+    io: Io,
     zig_lib_dir: []const u8,
     target: *const std.Target,
     is_native_abi: bool,
@@ -38,7 +47,7 @@ pub fn detect(
     // using the system libc installation.
     if (is_native_abi and !target.isMinGW()) {
         const libc = try arena.create(LibCInstallation);
-        libc.* = LibCInstallation.findNative(.{ .allocator = arena, .target = target }) catch |err| switch (err) {
+        libc.* = LibCInstallation.findNative(arena, io, .{ .target = target }) catch |err| switch (err) {
             error.CCompilerExitCode,
             error.CCompilerCrashed,
             error.CCompilerCannotFindHeaders,
@@ -75,7 +84,7 @@ pub fn detect(
 
     if (use_system_abi) {
         const libc = try arena.create(LibCInstallation);
-        libc.* = try LibCInstallation.findNative(.{ .allocator = arena, .verbose = true, .target = target });
+        libc.* = try LibCInstallation.findNative(arena, io, .{ .verbose = true, .target = target });
         return detectFromInstallation(arena, target, libc);
     }
 
@@ -265,9 +274,3 @@ fn libCGenericName(target: *const std.Target) [:0]const u8 {
         => unreachable,
     }
 }
-
-const LibCDirs = @This();
-const builtin = @import("builtin");
-const std = @import("../std.zig");
-const LibCInstallation = std.zig.LibCInstallation;
-const Allocator = std.mem.Allocator;

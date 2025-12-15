@@ -124,7 +124,7 @@ pub fn run(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) !
                     try wip_errors.addZirErrorMessages(zir, tree, source_code, "<stdin>");
                     var error_bundle = try wip_errors.toOwnedBundle("");
                     defer error_bundle.deinit(gpa);
-                    error_bundle.renderToStderr(io, .{}, color);
+                    error_bundle.renderToStderr(io, .{}, color) catch {};
                     process.exit(2);
                 }
             } else {
@@ -138,12 +138,12 @@ pub fn run(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) !
                     try wip_errors.addZoirErrorMessages(zoir, tree, source_code, "<stdin>");
                     var error_bundle = try wip_errors.toOwnedBundle("");
                     defer error_bundle.deinit(gpa);
-                    error_bundle.renderToStderr(io, .{}, color);
+                    error_bundle.renderToStderr(io, .{}, color) catch {};
                     process.exit(2);
                 }
             }
         } else if (tree.errors.len != 0) {
-            try std.zig.printAstErrorsToStderr(gpa, tree, "<stdin>", color);
+            std.zig.printAstErrorsToStderr(gpa, io, tree, "<stdin>", color) catch {};
             process.exit(2);
         }
         const formatted = try tree.renderAlloc(gpa);
@@ -298,7 +298,7 @@ fn fmtPathFile(
     defer tree.deinit(gpa);
 
     if (tree.errors.len != 0) {
-        try std.zig.printAstErrorsToStderr(gpa, tree, file_path, fmt.color);
+        try std.zig.printAstErrorsToStderr(gpa, io, tree, file_path, fmt.color);
         fmt.any_error = true;
         return;
     }
@@ -319,7 +319,7 @@ fn fmtPathFile(
                     try wip_errors.addZirErrorMessages(zir, tree, source_code, file_path);
                     var error_bundle = try wip_errors.toOwnedBundle("");
                     defer error_bundle.deinit(gpa);
-                    error_bundle.renderToStderr(io, .{}, fmt.color);
+                    try error_bundle.renderToStderr(io, .{}, fmt.color);
                     fmt.any_error = true;
                 }
             },
@@ -334,7 +334,7 @@ fn fmtPathFile(
                     try wip_errors.addZoirErrorMessages(zoir, tree, source_code, file_path);
                     var error_bundle = try wip_errors.toOwnedBundle("");
                     defer error_bundle.deinit(gpa);
-                    error_bundle.renderToStderr(io, .{}, fmt.color);
+                    try error_bundle.renderToStderr(io, .{}, fmt.color);
                     fmt.any_error = true;
                 }
             },

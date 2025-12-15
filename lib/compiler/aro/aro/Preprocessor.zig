@@ -1065,11 +1065,13 @@ fn fatalNotFound(pp: *Preprocessor, tok: TokenWithExpansionLocs, filename: []con
 
 fn verboseLog(pp: *Preprocessor, raw: RawToken, comptime fmt: []const u8, args: anytype) void {
     @branchHint(.cold);
-    const source = pp.comp.getSource(raw.source);
+    const comp = pp.comp;
+    const io = comp.io;
+    const source = comp.getSource(raw.source);
     const line_col = source.lineCol(.{ .id = raw.source, .line = raw.line, .byte_offset = raw.start });
 
     var stderr_buf: [4096]u8 = undefined;
-    var stderr = Io.File.stderr().writer(&stderr_buf);
+    var stderr = Io.File.stderr().writer(io, &stderr_buf);
     const w = &stderr.interface;
 
     w.print("{s}:{d}:{d}: ", .{ source.path, line_col.line_no, line_col.col }) catch return;

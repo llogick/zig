@@ -162,14 +162,14 @@ pub const RenderOptions = struct {
     include_log_text: bool = true,
 };
 
-pub const RenderToStderrError = Io.Cancelable || Io.File.Writer.Mode.SetColorError;
+pub const RenderToStderrError = Io.Cancelable || Io.File.Writer.Error;
 
 pub fn renderToStderr(eb: ErrorBundle, io: Io, options: RenderOptions, color: std.zig.Color) RenderToStderrError!void {
     var buffer: [256]u8 = undefined;
     const stderr = try io.lockStderrWriter(&buffer);
     defer io.unlockStderrWriter();
     renderToWriter(eb, options, &stderr.interface, color.getTtyConf(stderr.mode)) catch |err| switch (err) {
-        error.WriteFailed => return stderr.interface.err.?,
+        error.WriteFailed => return stderr.err.?,
         else => |e| return e,
     };
 }

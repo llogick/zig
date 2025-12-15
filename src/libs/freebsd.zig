@@ -401,8 +401,8 @@ pub const BuiltSharedObjects = struct {
     lock: Cache.Lock,
     dir_path: Path,
 
-    pub fn deinit(self: *BuiltSharedObjects, gpa: Allocator) void {
-        self.lock.release();
+    pub fn deinit(self: *BuiltSharedObjects, gpa: Allocator, io: Io) void {
+        self.lock.release(io);
         gpa.free(self.dir_path.sub_path);
         self.* = undefined;
     }

@@ -274,7 +274,7 @@ pub const Repository = struct {
                         continue;
                     };
                     defer file.close(io);
-                    try file.writeAll(file_object.data);
+                    try file.writePositionalAll(io, file_object.data, 0);
                 },
                 .symlink => {
                     try repository.odb.seekOid(entry.oid);

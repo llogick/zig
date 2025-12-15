@@ -771,8 +771,8 @@ pub const Directories = struct {
         const zig_lib: Cache.Directory = d: {
             if (override_zig_lib) |path| break :d openUnresolved(arena, io, cwd, path, .@"zig lib");
             if (wasi) break :d openWasiPreopen(wasi_preopens, "/lib");
-            break :d introspect.findZigLibDirFromSelfExe(arena, cwd, self_exe_path) catch |err| {
-                fatal("unable to find zig installation directory '{s}': {s}", .{ self_exe_path, @errorName(err) });
+            break :d introspect.findZigLibDirFromSelfExe(arena, io, cwd, self_exe_path) catch |err| {
+                fatal("unable to find zig installation directory '{s}': {t}", .{ self_exe_path, err });
             };
         };
 
@@ -780,7 +780,7 @@ pub const Directories = struct {
             if (override_global_cache) |path| break :d openUnresolved(arena, io, cwd, path, .@"global cache");
             if (wasi) break :d openWasiPreopen(wasi_preopens, "/cache");
             const path = introspect.resolveGlobalCacheDir(arena) catch |err| {
-                fatal("unable to resolve zig cache directory: {s}", .{@errorName(err)});
+                fatal("unable to resolve zig cache directory: {t}", .{err});
             };
             break :d openUnresolved(arena, io, cwd, path, .@"global cache");
         };
@@ -789,7 +789,7 @@ pub const Directories = struct {
             .override => |path| openUnresolved(arena, io, cwd, path, .@"local cache"),
             .search => d: {
                 const maybe_path = introspect.resolveSuitableLocalCacheDir(arena, io, cwd) catch |err| {
-                    fatal("unable to resolve zig cache directory: {s}", .{@errorName(err)});
+                    fatal("unable to resolve zig cache directory: {t}", .{err});
                 };
                 const path = maybe_path orelse break :d global_cache;
                 break :d openUnresolved(arena, io, cwd, path, .@"local cache");
@@ -919,8 +919,8 @@ pub const CrtFile = struct {
     lock: Cache.Lock,
     full_object_path: Cache.Path,
 
-    pub fn deinit(self: *CrtFile, gpa: Allocator) void {
-        self.lock.release();
+    pub fn deinit(self: *CrtFile, gpa: Allocator, io: Io) void {
+        self.lock.release(io);
         gpa.free(self.full_object_path.sub_path);
         self.* = undefined;
     }
@@ -1317,7 +1317,7 @@ pub const CObject = struct {
     };
 
     /// Returns if there was failure.
-    pub fn clearStatus(self: *CObject, gpa: Allocator) bool {
+    pub fn clearStatus(self: *CObject, gpa: Allocator, io: Io) bool {
         switch (self.status) {
             .new => return false,
             .failure, .failure_retryable => {
@@ -1326,15 +1326,15 @@ pub const CObject = struct {
             },
             .success => |*success| {
                 gpa.free(success.object_path.sub_path);
-                success.lock.release();
+                success.lock.release(io);
                 self.status = .new;
                 return false;
             },
         }
     }
 
-    pub fn destroy(self: *CObject, gpa: Allocator) void {
-        _ = self.clearStatus(gpa);
+    pub fn destroy(self: *CObject, gpa: Allocator, io: Io) void {
+        _ = self.clearStatus(gpa, io);
         gpa.destroy(self);
     }
 };
@@ -1364,7 +1364,7 @@ pub const Win32Resource = struct {
     },
 
     /// Returns true if there was failure.
-    pub fn clearStatus(self: *Win32Resource, gpa: Allocator) bool {
+    pub fn clearStatus(self: *Win32Resource, gpa: Allocator, io: Io) bool {
         switch (self.status) {
             .new => return false,
             .failure, .failure_retryable => {
@@ -1373,15 +1373,15 @@ pub const Win32Resource = struct {
             },
             .success => |*success| {
                 gpa.free(success.res_path);
-                success.lock.release();
+                success.lock.release(io);
                 self.status = .new;
                 return false;
             },
         }
     }
 
-    pub fn destroy(self: *Win32Resource, gpa: Allocator) void {
-        _ = self.clearStatus(gpa);
+    pub fn destroy(self: *Win32Resource, gpa: Allocator, io: Io) void {
+        _ = self.clearStatus(gpa, io);
         gpa.destroy(self);
     }
 };
@@ -1610,9 +1610,9 @@ const CacheUse = union(CacheMode) {
         /// Prevents other processes from clobbering files in the output directory.
         lock: ?Cache.Lock,
 
-        fn releaseLock(whole: *Whole) void {
+        fn releaseLock(whole: *Whole, io: Io) void {
             if (whole.lock) |*lock| {
-                lock.release();
+                lock.release(io);
                 whole.lock = null;
             }
         }
@@ -1634,7 +1634,7 @@ const CacheUse = union(CacheMode) {
             },
             .whole => |whole| {
                 assert(whole.tmp_artifact_directory == null);
-                whole.releaseLock();
+                whole.releaseLock(io);
             },
         }
     }
@@ -1903,13 +1903,17 @@ pub const CreateDiagnostic = union(enum) {
         return error.CreateFail;
     }
 };
-pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic, options: CreateOptions) error{
+
+pub const CreateError = error{
     OutOfMemory,
+    Canceled,
     Unexpected,
     CurrentWorkingDirectoryUnlinked,
     /// An error has been stored to `diag`.
     CreateFail,
-}!*Compilation {
+};
+
+pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic, options: CreateOptions) CreateError!*Compilation {
     const output_mode = options.config.output_mode;
     const is_dyn_lib = switch (output_mode) {
         .Obj, .Exe => false,
@@ -1957,6 +1961,7 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
 
         const libc_dirs = std.zig.LibCDirs.detect(
             arena,
+            io,
             options.dirs.zig_lib.path.?,
             target,
             options.root_mod.resolved_target.is_native_abi,
@@ -2701,7 +2706,7 @@ pub fn destroy(comp: *Compilation) void {
 
     if (comp.bin_file) |lf| lf.destroy();
     if (comp.zcu) |zcu| zcu.deinit();
-    comp.cache_use.deinit();
+    comp.cache_use.deinit(io);
 
     for (&comp.work_queues) |*work_queue| work_queue.deinit(gpa);
     comp.c_object_work_queue.deinit(gpa);
@@ -2714,36 +2719,36 @@ pub fn destroy(comp: *Compilation) void {
         var it = comp.crt_files.iterator();
         while (it.next()) |entry| {
             gpa.free(entry.key_ptr.*);
-            entry.value_ptr.deinit(gpa);
+            entry.value_ptr.deinit(gpa, io);
         }
         comp.crt_files.deinit(gpa);
     }
-    if (comp.libcxx_static_lib) |*crt_file| crt_file.deinit(gpa);
-    if (comp.libcxxabi_static_lib) |*crt_file| crt_file.deinit(gpa);
-    if (comp.libunwind_static_lib) |*crt_file| crt_file.deinit(gpa);
-    if (comp.tsan_lib) |*crt_file| crt_file.deinit(gpa);
-    if (comp.ubsan_rt_lib) |*crt_file| crt_file.deinit(gpa);
-    if (comp.ubsan_rt_obj) |*crt_file| crt_file.deinit(gpa);
-    if (comp.zigc_static_lib) |*crt_file| crt_file.deinit(gpa);
-    if (comp.compiler_rt_lib) |*crt_file| crt_file.deinit(gpa);
-    if (comp.compiler_rt_obj) |*crt_file| crt_file.deinit(gpa);
-    if (comp.compiler_rt_dyn_lib) |*crt_file| crt_file.deinit(gpa);
-    if (comp.fuzzer_lib) |*crt_file| crt_file.deinit(gpa);
+    if (comp.libcxx_static_lib) |*crt_file| crt_file.deinit(gpa, io);
+    if (comp.libcxxabi_static_lib) |*crt_file| crt_file.deinit(gpa, io);
+    if (comp.libunwind_static_lib) |*crt_file| crt_file.deinit(gpa, io);
+    if (comp.tsan_lib) |*crt_file| crt_file.deinit(gpa, io);
+    if (comp.ubsan_rt_lib) |*crt_file| crt_file.deinit(gpa, io);
+    if (comp.ubsan_rt_obj) |*crt_file| crt_file.deinit(gpa, io);
+    if (comp.zigc_static_lib) |*crt_file| crt_file.deinit(gpa, io);
+    if (comp.compiler_rt_lib) |*crt_file| crt_file.deinit(gpa, io);
+    if (comp.compiler_rt_obj) |*crt_file| crt_file.deinit(gpa, io);
+    if (comp.compiler_rt_dyn_lib) |*crt_file| crt_file.deinit(gpa, io);
+    if (comp.fuzzer_lib) |*crt_file| crt_file.deinit(gpa, io);
 
     if (comp.glibc_so_files) |*glibc_file| {
-        glibc_file.deinit(gpa);
+        glibc_file.deinit(gpa, io);
     }
 
     if (comp.freebsd_so_files) |*freebsd_file| {
-        freebsd_file.deinit(gpa);
+        freebsd_file.deinit(gpa, io);
     }
 
     if (comp.netbsd_so_files) |*netbsd_file| {
-        netbsd_file.deinit(gpa);
+        netbsd_file.deinit(gpa, io);
     }
 
     for (comp.c_object_table.keys()) |key| {
-        key.destroy(gpa);
+        key.destroy(gpa, io);
     }
     comp.c_object_table.deinit(gpa);
 
@@ -2753,7 +2758,7 @@ pub fn destroy(comp: *Compilation) void {
     comp.failed_c_objects.deinit(gpa);
 
     for (comp.win32_resource_table.keys()) |key| {
-        key.destroy(gpa);
+        key.destroy(gpa, io);
     }
     comp.win32_resource_table.deinit(gpa);
 
@@ -2906,7 +2911,7 @@ pub fn update(comp: *Compilation, main_progress_node: std.Progress.Node) UpdateE
         .whole => |whole| {
             assert(comp.bin_file == null);
             // We are about to obtain this lock, so here we give other processes a chance first.
-            whole.releaseLock();
+            whole.releaseLock(io);
 
             man = comp.cache_parent.obtain();
             whole.cache_manifest = &man;
@@ -3092,17 +3097,12 @@ pub fn update(comp: *Compilation, main_progress_node: std.Progress.Node) UpdateE
         }
 
         if (build_options.enable_debug_extensions and comp.verbose_intern_pool) {
-            std.debug.print("intern pool stats for '{s}':\n", .{
-                comp.root_name,
-            });
-            zcu.intern_pool.dump();
+            std.debug.print("intern pool stats for '{s}':\n", .{comp.root_name});
+            zcu.intern_pool.dump(io);
         }
 
         if (build_options.enable_debug_extensions and comp.verbose_generic_instances) {
-            std.debug.print("generic instances for '{s}:0x{x}':\n", .{
-                comp.root_name,
-                @intFromPtr(zcu),
-            });
+            std.debug.print("generic instances for '{s}:0x{x}':\n", .{ comp.root_name, @intFromPtr(zcu) });
             zcu.intern_pool.dumpGenericInstances(gpa);
         }
     }
@@ -3680,6 +3680,7 @@ pub fn saveState(comp: *Compilation) !void {
     const lf = comp.bin_file orelse return;
 
     const gpa = comp.gpa;
+    const io = comp.io;
 
     var bufs = std.array_list.Managed([]const u8).init(gpa);
     defer bufs.deinit();
@@ -3900,7 +3901,7 @@ pub fn saveState(comp: *Compilation) !void {
     // Using an atomic file prevents a crash or power failure from corrupting
     // the previous incremental compilation state.
     var write_buffer: [1024]u8 = undefined;
-    var af = try lf.emit.root_dir.handle.atomicFile(basename, .{ .write_buffer = &write_buffer });
+    var af = try lf.emit.root_dir.handle.atomicFile(io, basename, .{ .write_buffer = &write_buffer });
     defer af.deinit();
     try af.file_writer.interface.writeVecAll(bufs.items);
     try af.finish();
@@ -4258,8 +4259,8 @@ pub fn getAllErrorsAlloc(comp: *Compilation) error{OutOfMemory}!ErrorBundle {
             // However, we haven't reported any such error.
             // This is a compiler bug.
             print_ctx: {
-                const stderr = try io.lockStderrWriter(&.{});
-                defer io.unlockStderrWriter();
+                const stderr = std.debug.lockStderrWriter(&.{});
+                defer std.debug.unlockStderrWriter();
                 const w = &stderr.interface;
                 w.writeAll("referenced transitive analysis errors, but none actually emitted\n") catch break :print_ctx;
                 w.print("{f} [transitive failure]\n", .{zcu.fmtAnalUnit(failed_unit)}) catch break :print_ctx;
@@ -5219,13 +5220,10 @@ fn processOneJob(
     }
 }
 
-fn createDepFile(
-    comp: *Compilation,
-    depfile: []const u8,
-    binfile: Cache.Path,
-) anyerror!void {
+fn createDepFile(comp: *Compilation, depfile: []const u8, binfile: Cache.Path) anyerror!void {
+    const io = comp.io;
     var buf: [4096]u8 = undefined;
-    var af = try Io.Dir.cwd().atomicFile(depfile, .{ .write_buffer = &buf });
+    var af = try Io.Dir.cwd().atomicFile(io, depfile, .{ .write_buffer = &buf });
     defer af.deinit();
 
     comp.writeDepFile(binfile, &af.file_writer.interface) catch return af.file_writer.err.?;
@@ -5280,13 +5278,8 @@ fn docsCopyFallible(comp: *Compilation) anyerror!void {
 
     for (&[_][]const u8{ "docs/main.js", "docs/index.html" }) |sub_path| {
         const basename = fs.path.basename(sub_path);
-        comp.dirs.zig_lib.handle.copyFile(sub_path, out_dir, basename, .{}) catch |err| {
-            comp.lockAndSetMiscFailure(.docs_copy, "unable to copy {s}: {s}", .{
-                sub_path,
-                @errorName(err),
-            });
-            return;
-        };
+        comp.dirs.zig_lib.handle.copyFile(sub_path, out_dir, basename, io, .{}) catch |err|
+            return comp.lockAndSetMiscFailure(.docs_copy, "unable to copy {s}: {t}", .{ sub_path, err });
     }
 
     var tar_file = out_dir.createFile(io, "sources.tar", .{}) catch |err| {
@@ -5350,7 +5343,7 @@ fn docsCopyModule(
 
     var buffer: [1024]u8 = undefined;
 
-    while (try walker.next()) |entry| {
+    while (try walker.next(io)) |entry| {
         switch (entry.kind) {
             .file => {
                 if (!std.mem.endsWith(u8, entry.basename, ".zig")) continue;
@@ -5505,7 +5498,7 @@ fn workerDocsWasmFallible(comp: *Compilation, prog_node: std.Progress.Node) SubU
     try comp.updateSubCompilation(sub_compilation, .docs_wasm, prog_node);
 
     var crt_file = try sub_compilation.toCrtFile();
-    defer crt_file.deinit(gpa);
+    defer crt_file.deinit(gpa, io);
 
     const docs_bin_file = crt_file.full_object_path;
     assert(docs_bin_file.sub_path.len > 0); // emitted binary is not a directory
@@ -5521,10 +5514,12 @@ fn workerDocsWasmFallible(comp: *Compilation, prog_node: std.Progress.Node) SubU
     };
     defer out_dir.close(io);
 
-    crt_file.full_object_path.root_dir.handle.copyFile(
+    Io.Dir.copyFile(
+        crt_file.full_object_path.root_dir.handle,
         crt_file.full_object_path.sub_path,
         out_dir,
         "main.wasm",
+        io,
         .{},
     ) catch |err| {
         comp.lockAndSetMiscFailure(.docs_copy, "unable to copy '{f}' to '{f}': {t}", .{
@@ -5758,7 +5753,7 @@ pub fn translateC(
         try argv.appendSlice(comp.global_cc_argv);
         try argv.appendSlice(owner_mod.cc_argv);
         try argv.appendSlice(&.{ source_path, "-o", translated_path });
-        if (comp.verbose_cimport) dumpArgv(io, argv.items);
+        if (comp.verbose_cimport) try dumpArgv(io, argv.items);
     }
 
     var stdout: []u8 = undefined;
@@ -6153,7 +6148,7 @@ fn updateCObject(comp: *Compilation, c_object: *CObject, c_obj_prog_node: std.Pr
     const gpa = comp.gpa;
     const io = comp.io;
 
-    if (c_object.clearStatus(gpa)) {
+    if (c_object.clearStatus(gpa, io)) {
         // There was previous failure.
         comp.mutex.lockUncancelable(io);
         defer comp.mutex.unlock(io);
@@ -6500,7 +6495,7 @@ fn updateWin32Resource(comp: *Compilation, win32_resource: *Win32Resource, win32
     defer arena_allocator.deinit();
     const arena = arena_allocator.allocator();
 
-    if (win32_resource.clearStatus(comp.gpa)) {
+    if (win32_resource.clearStatus(comp.gpa, io)) {
         // There was previous failure.
         comp.mutex.lockUncancelable(io);
         defer comp.mutex.unlock(io);
@@ -6768,7 +6763,7 @@ fn spawnZigRc(
     // Just in case there's a failure that didn't send an ErrorBundle (e.g. an error return trace)
     const stderr = poller.reader(.stderr);
 
-    const term = child.wait() catch |err| {
+    const term = child.wait(io) catch |err| {
         return comp.failWin32Resource(win32_resource, "unable to wait for {s} rc: {s}", .{ argv[0], @errorName(err) });
     };
 
@@ -7781,7 +7776,10 @@ pub fn dumpArgv(io: Io, argv: []const []const u8) Io.Cancelable!void {
     defer io.unlockStderrWriter();
     const w = &stderr.interface;
     return dumpArgvWriter(w, argv) catch |err| switch (err) {
-        error.WriteFailed => return stderr.err.?,
+        error.WriteFailed => switch (stderr.err.?) {
+            error.Canceled => return error.Canceled,
+            else => return,
+        },
     };
 }
 

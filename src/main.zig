@@ -4598,6 +4598,8 @@ const UpdateModuleError = Compilation.UpdateError || error{
     /// The update caused compile errors. The error bundle has already been
     /// reported to the user by being rendered to stderr.
     CompileErrorsReported,
+    /// Error occurred printing compilation errors to stderr.
+    PrintingErrorsFailed,
 };
 fn updateModule(comp: *Compilation, color: Color, prog_node: std.Progress.Node) UpdateModuleError!void {
     try comp.update(prog_node);
@@ -4607,7 +4609,10 @@ fn updateModule(comp: *Compilation, color: Color, prog_node: std.Progress.Node) 
 
     if (errors.errorMessageCount() > 0) {
         const io = comp.io;
-        try errors.renderToStderr(io, .{}, color);
+        errors.renderToStderr(io, .{}, color) catch |err| switch (err) {
+            error.Canceled => |e| return e,
+            else => return error.PrintingErrorsFailed,
+        };
         return error.CompileErrorsReported;
     }
 }

@@ -204,7 +204,7 @@ pub fn findNative(gpa: Allocator, io: Io, args: FindNativeOptions) FindError!Lib
         try self.findNativeIncludeDirWindows(gpa, io, args, sdk);
         try self.findNativeCrtDirWindows(gpa, io, args.target, sdk);
     } else if (is_haiku) {
-        try self.findNativeIncludeDirPosix(args);
+        try self.findNativeIncludeDirPosix(gpa, io, args);
         try self.findNativeGccDirHaiku(gpa, io, args);
         self.crt_dir = try gpa.dupeZ(u8, "/system/develop/lib");
     } else if (builtin.target.os.tag == .illumos) {
@@ -213,7 +213,7 @@ pub fn findNative(gpa: Allocator, io: Io, args: FindNativeOptions) FindError!Lib
         self.sys_include_dir = try gpa.dupeZ(u8, "/usr/include");
         self.crt_dir = try gpa.dupeZ(u8, "/usr/lib/64");
     } else if (std.process.can_spawn) {
-        try self.findNativeIncludeDirPosix(args);
+        try self.findNativeIncludeDirPosix(gpa, io, args);
         switch (builtin.target.os.tag) {
             .freebsd, .netbsd, .openbsd, .dragonfly => self.crt_dir = try gpa.dupeZ(u8, "/usr/lib"),
             .linux => try self.findNativeCrtDirPosix(gpa, io, args),
@@ -335,7 +335,7 @@ fn findNativeIncludeDirPosix(self: *LibCInstallation, gpa: Allocator, io: Io, ar
         defer search_dir.close(io);
 
         if (self.include_dir == null) {
-            if (search_dir.access(include_dir_example_file, .{})) |_| {
+            if (search_dir.access(io, include_dir_example_file, .{})) |_| {
                 self.include_dir = try gpa.dupeZ(u8, search_path);
             } else |err| switch (err) {
                 error.FileNotFound => {},

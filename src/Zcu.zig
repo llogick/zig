@@ -2988,11 +2988,10 @@ pub fn loadZirCacheBody(gpa: Allocator, header: Zir.Header, cache_br: *Io.Reader
 
 pub fn saveZirCache(
     gpa: Allocator,
-    io: Io,
-    cache_file: Io.File,
+    cache_file_writer: *Io.File.Writer,
     stat: Io.File.Stat,
     zir: Zir,
-) (Io.File.WriteError || Allocator.Error)!void {
+) (Io.File.Writer.Error || Allocator.Error)!void {
     const safety_buffer = if (data_has_safety_tag)
         try gpa.alloc([8]u8, zir.instructions.len)
     else
@@ -3026,13 +3025,12 @@ pub fn saveZirCache(
         zir.string_bytes,
         @ptrCast(zir.extra),
     };
-    var cache_fw = cache_file.writer(io, &.{});
-    cache_fw.interface.writeVecAll(&vecs) catch |err| switch (err) {
-        error.WriteFailed => return cache_fw.err.?,
+    cache_file_writer.interface.writeVecAll(&vecs) catch |err| switch (err) {
+        error.WriteFailed => return cache_file_writer.err.?,
     };
 }
 
-pub fn saveZoirCache(io: Io, cache_file: Io.File, stat: Io.File.Stat, zoir: Zoir) Io.File.WriteError!void {
+pub fn saveZoirCache(cache_file_writer: *Io.File.Writer, stat: Io.File.Stat, zoir: Zoir) Io.File.Writer.Error!void {
     const header: Zoir.Header = .{
         .nodes_len = @intCast(zoir.nodes.len),
         .extra_len = @intCast(zoir.extra.len),
@@ -3056,9 +3054,8 @@ pub fn saveZoirCache(io: Io, cache_file: Io.File, stat: Io.File.Stat, zoir: Zoir
         @ptrCast(zoir.compile_errors),
         @ptrCast(zoir.error_notes),
     };
-    var cache_fw = cache_file.writer(io, &.{});
-    cache_fw.interface.writeVecAll(&vecs) catch |err| switch (err) {
-        error.WriteFailed => return cache_fw.err.?,
+    cache_file_writer.interface.writeVecAll(&vecs) catch |err| switch (err) {
+        error.WriteFailed => return cache_file_writer.err.?,
     };
 }
 
