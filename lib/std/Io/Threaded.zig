@@ -5795,11 +5795,13 @@ fn netLookup(
     host_name: HostName,
     resolved: *Io.Queue(HostName.LookupResult),
     options: HostName.LookupOptions,
-) void {
+) net.HostName.LookupError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
-    const t_io = io(t);
-    resolved.putOneUncancelable(t_io, .{ .end = netLookupFallible(t, current_thread, host_name, resolved, options) });
+    defer resolved.close(io(t));
+    netLookupFallible(t, host_name, resolved, options) catch |err| switch (err) {
+        error.Closed => unreachable, // `resolved` must not be closed until `netLookup` returns
+        else => |e| return e,
+    };
 }
 
 fn netLookupUnavailable(
@@ -5807,22 +5809,23 @@ fn netLookupUnavailable(
     host_name: HostName,
     resolved: *Io.Queue(HostName.LookupResult),
     options: HostName.LookupOptions,
-) void {
+) net.HostName.LookupError!void {
     _ = host_name;
     _ = options;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const t_io = ioBasic(t);
-    resolved.putOneUncancelable(t_io, .{ .end = error.NetworkDown });
+    resolved.close(ioBasic(t));
+    return error.NetworkDown;
 }
 
 fn netLookupFallible(
     t: *Threaded,
-    current_thread: *Thread,
     host_name: HostName,
     resolved: *Io.Queue(HostName.LookupResult),
     options: HostName.LookupOptions,
-) !void {
+) (net.HostName.LookupError || Io.QueueClosedError)!void {
     if (!have_networking) return error.NetworkDown;
+
+    const current_thread: *Thread = .getCurrent(t);
     const t_io = io(t);
     const name = host_name.bytes;
     assert(name.len <= HostName.max_len);
@@ -6363,7 +6366,7 @@ fn lookupDnsSearch(
     host_name: HostName,
     resolved: *Io.Queue(HostName.LookupResult),
     options: HostName.LookupOptions,
-) HostName.LookupError!void {
+) (HostName.LookupError || Io.QueueClosedError)!void {
     const t_io = io(t);
     const rc = HostName.ResolvConf.init(t_io) catch return error.ResolvConfParseFailed;
 
@@ -6407,7 +6410,7 @@ fn lookupDns(
     rc: *const HostName.ResolvConf,
     resolved: *Io.Queue(HostName.LookupResult),
     options: HostName.LookupOptions,
-) HostName.LookupError!void {
+) (HostName.LookupError || Io.QueueClosedError)!void {
     const t_io = io(t);
     const family_records: [2]struct { af: IpAddress.Family, rr: HostName.DnsRecord } = .{
         .{ .af = .ip6, .rr = .A },
@@ -6621,8 +6624,10 @@ fn lookupHosts(
                 return error.DetectingNetworkConfigurationFailed;
             },
         },
-        error.Canceled => |e| return e,
-        error.UnknownHostName => |e| return e,
+        error.Canceled,
+        error.Closed,
+        error.UnknownHostName,
+        => |e| return e,
     };
 }
 
@@ -6632,7 +6637,7 @@ fn lookupHostsReader(
     resolved: *Io.Queue(HostName.LookupResult),
     options: HostName.LookupOptions,
     reader: *Io.Reader,
-) error{ ReadFailed, Canceled, UnknownHostName }!void {
+) error{ ReadFailed, Canceled, UnknownHostName, Closed }!void {
     const t_io = io(t);
     var addresses_len: usize = 0;
     var canonical_name: ?HostName = null;

@@ -209,10 +209,10 @@ test "select" {
             return;
         },
     };
-    defer if (get_a.cancel(io)) |_| {} else |_| @panic("fail");
+    defer _ = get_a.cancel(io) catch {};
 
     var get_b = try io.concurrent(Io.Queue(u8).getOne, .{ &queue, io });
-    defer if (get_b.cancel(io)) |_| {} else |_| @panic("fail");
+    defer _ = get_b.cancel(io) catch {};
 
     var timeout = io.async(Io.sleep, .{ io, .fromMilliseconds(1), .awake });
     defer timeout.cancel(io) catch {};
@@ -225,12 +225,9 @@ test "select" {
         .get_a => return error.TestFailure,
         .get_b => return error.TestFailure,
         .timeout => {
-            // Unblock the queues to avoid making this unit test depend on
-            // cancellation.
-            queue.putOneUncancelable(io, 1);
-            queue.putOneUncancelable(io, 1);
-            try testing.expectEqual(1, try get_a.await(io));
-            try testing.expectEqual(1, try get_b.await(io));
+            queue.close(io);
+            try testing.expectError(error.Closed, get_a.await(io));
+            try testing.expectError(error.Closed, get_b.await(io));
         },
     }
 }
@@ -254,6 +251,54 @@ test "Queue" {
     try testQueue(3);
     try testQueue(4);
     try testQueue(5);
+}
+
+test "Queue.close single-threaded" {
+    const io = std.testing.io;
+
+    var buf: [10]u8 = undefined;
+    var queue: Io.Queue(u8) = .init(&buf);
+
+    try queue.putAll(io, &.{ 0, 1, 2, 3, 4, 5, 6 });
+    try expectEqual(3, try queue.put(io, &.{ 7, 8, 9, 10 }, 0)); // there is capacity for 3 more items
+
+    var get_buf: [4]u8 = undefined;
+
+    // Receive some elements before closing
+    try expectEqual(4, try queue.get(io, &get_buf, 0));
+    try expectEqual(0, get_buf[0]);
+    try expectEqual(1, get_buf[1]);
+    try expectEqual(2, get_buf[2]);
+    try expectEqual(3, get_buf[3]);
+    try expectEqual(4, try queue.getOne(io));
+
+    // ...and add a couple more now there's space
+    try queue.putAll(io, &.{ 20, 21 });
+
+    queue.close(io);
+
+    // Receive more elements *after* closing
+    try expectEqual(4, try queue.get(io, &get_buf, 0));
+    try expectEqual(5, get_buf[0]);
+    try expectEqual(6, get_buf[1]);
+    try expectEqual(7, get_buf[2]);
+    try expectEqual(8, get_buf[3]);
+    try expectEqual(9, try queue.getOne(io));
+
+    // Cannot put anything while closed, even if the buffer has space
+    try expectError(error.Closed, queue.putOne(io, 100));
+    try expectError(error.Closed, queue.putAll(io, &.{ 101, 102 }));
+    try expectError(error.Closed, queue.putUncancelable(io, &.{ 103, 104 }, 0));
+
+    // Even if we ask for 3 items, the queue is closed, so we only get the last 2
+    try expectEqual(2, try queue.get(io, &get_buf, 4));
+    try expectEqual(20, get_buf[0]);
+    try expectEqual(21, get_buf[1]);
+
+    // The queue is now empty, so `get` should return `error.Closed` too
+    try expectError(error.Closed, queue.getOne(io));
+    try expectError(error.Closed, queue.get(io, &get_buf, 0));
+    try expectError(error.Closed, queue.putUncancelable(io, &get_buf, 2));
 }
 
 test "Event" {
