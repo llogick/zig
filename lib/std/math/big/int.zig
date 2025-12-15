@@ -17,6 +17,27 @@ const Endian = std.builtin.Endian;
 const Signedness = std.builtin.Signedness;
 const native_endian = builtin.cpu.arch.endian();
 
+// Comptime-computed constants for supported bases (2 - 36)
+// all values are set to 0 for bases 0 - 1, to make it possible to
+// access a constant for a given base b using `constants.value[b]`
+const Constants = struct {
+    // big_bases[b] is the biggest power of b that fit in a single Limb
+    // i.e. big_bases[b] = b^k < 2^@bitSizeOf(Limb) and b^(k+1) >= 2^@bitSizeOf(Limb)
+    big_bases: [37]Limb,
+    // digits_per_limb[b] is the value of k used in the previous field
+    digits_per_limb: [37]u8,
+};
+const constants: Constants = blk: {
+    @setEvalBranchQuota(2000);
+    var digits_per_limb = [_]u8{0} ** 37;
+    var bases = [_]Limb{0} ** 37;
+    for (2..37) |base| {
+        digits_per_limb[base] = @intCast(math.log(Limb, base, math.maxInt(Limb)));
+        bases[base] = std.math.pow(Limb, base, digits_per_limb[base]);
+    }
+    break :blk Constants{ .big_bases = bases, .digits_per_limb = digits_per_limb };
+};
+
 /// Returns the number of limbs needed to store `scalar`, which must be a
 /// primitive integer or float value.
 /// Note: A comptime-known upper bound of this value that may be used
@@ -329,23 +350,15 @@ pub const Mutable = struct {
     /// not allowed (e.g. 0x43 should simply be 43).  Underscores in the input string are
     /// ignored and can be used as digit separators.
     ///
-    /// Asserts there is enough memory for the value in `self.limbs`. An upper bound on number of limbs can
+    /// There must be enough memory for the value in `self.limbs`. An upper bound on number of limbs can
     /// be determined with `calcSetStringLimbCount`.
     /// Asserts the base is in the range [2, 36].
     ///
     /// Returns an error if the value has invalid digits for the requested base.
-    ///
-    /// `limbs_buffer` is used for temporary storage. The size required can be found with
-    /// `calcSetStringLimbsBufferLen`.
-    ///
-    /// If `allocator` is provided, it will be used for temporary storage to improve
-    /// multiplication performance. `error.OutOfMemory` is handled with a fallback algorithm.
     pub fn setString(
         self: *Mutable,
         base: u8,
         value: []const u8,
-        limbs_buffer: []Limb,
-        allocator: ?Allocator,
     ) error{InvalidCharacter}!void {
         assert(base >= 2);
         assert(base <= 36);
@@ -357,18 +370,41 @@ pub const Mutable = struct {
             i += 1;
         }
 
-        const ap_base: Const = .{ .limbs = &[_]Limb{base}, .positive = true };
-        self.set(0);
+        @memset(self.limbs, 0);
+        self.len = 1;
 
+        var limb: Limb = 0;
+        var j: usize = 0;
         for (value[i..]) |ch| {
             if (ch == '_') {
                 continue;
             }
             const d = try std.fmt.charToDigit(ch, base);
-            const ap_d: Const = .{ .limbs = &[_]Limb{d}, .positive = true };
+            limb *= base;
+            limb += d;
+            j += 1;
 
-            self.mul(self.toConst(), ap_base, limbs_buffer, allocator);
-            self.add(self.toConst(), ap_d);
+            if (j == constants.digits_per_limb[base]) {
+                const len = @min(self.len + 1, self.limbs.len);
+                // r = a * b = a + a * (b - 1)
+                // we assert when self.limbs is not large enough to store the number
+                assert(!llmulLimb(.add, self.limbs[0..len], self.limbs[0..len], constants.big_bases[base] - 1));
+                assert(lladdcarry(self.limbs[0..len], self.limbs[0..len], &[1]Limb{limb}) == 0);
+
+                if (self.limbs.len > self.len and self.limbs[self.len] != 0)
+                    self.len += 1;
+                j = 0;
+                limb = 0;
+            }
+        }
+        if (j > 0) {
+            const len = @min(self.len + 1, self.limbs.len);
+            // we assert when self.limbs is not large enough to store the number
+            assert(!llmulLimb(.add, self.limbs[0..len], self.limbs[0..len], math.pow(Limb, base, j) - 1));
+            assert(lladdcarry(self.limbs[0..len], self.limbs[0..len], &[1]Limb{limb}) == 0);
+
+            if (self.limbs.len > self.len and self.limbs[self.len] != 0)
+                self.len += 1;
         }
         self.positive = positive;
     }
@@ -2081,7 +2117,7 @@ pub const Const = struct {
         for (self.limbs[0..self.limbs.len]) |limb| {
             std.debug.print("{x} ", .{limb});
         }
-        std.debug.print("len={} positive={}\n", .{ self.len, self.positive });
+        std.debug.print("len={} positive={}\n", .{ self.limbs.len, self.positive });
     }
 
     pub fn abs(self: Const) Const {
@@ -2884,10 +2920,8 @@ pub const Managed = struct {
     pub fn setString(self: *Managed, base: u8, value: []const u8) !void {
         if (base < 2 or base > 36) return error.InvalidBase;
         try self.ensureCapacity(calcSetStringLimbCount(base, value.len));
-        const limbs_buffer = try self.allocator.alloc(Limb, calcSetStringLimbsBufferLen(base, value.len));
-        defer self.allocator.free(limbs_buffer);
         var m = self.toMutable();
-        try m.setString(base, value, limbs_buffer, self.allocator);
+        try m.setString(base, value);
         self.setMetadata(m.positive, m.len);
     }
 
@@ -3596,6 +3630,7 @@ fn llmulaccKaratsuba(
 /// r = r (op) a.
 /// The result is computed modulo `r.len`.
 fn llaccum(comptime op: AccOp, r: []Limb, a: []const Limb) void {
+    assert(!slicesOverlap(r, a) or @intFromPtr(r.ptr) <= @intFromPtr(a.ptr));
     if (op == .sub) {
         _ = llsubcarry(r, r, a);
         return;
@@ -3665,6 +3700,8 @@ fn llmulaccLong(comptime op: AccOp, r: []Limb, a: []const Limb, b: []const Limb)
 /// The result is computed modulo `r.len`.
 /// Returns whether the operation overflowed.
 fn llmulLimb(comptime op: AccOp, acc: []Limb, y: []const Limb, xi: Limb) bool {
+    assert(!slicesOverlap(acc, y) or @intFromPtr(acc.ptr) <= @intFromPtr(y.ptr));
+
     if (xi == 0) {
         return false;
     }
@@ -3727,6 +3764,8 @@ fn llsubcarry(r: []Limb, a: []const Limb, b: []const Limb) Limb {
     assert(a.len != 0 and b.len != 0);
     assert(a.len >= b.len);
     assert(r.len >= a.len);
+    assert(!slicesOverlap(r, a) or @intFromPtr(r.ptr) <= @intFromPtr(a.ptr));
+    assert(!slicesOverlap(r, b) or @intFromPtr(r.ptr) <= @intFromPtr(b.ptr));
 
     var i: usize = 0;
     var borrow: Limb = 0;
@@ -3758,6 +3797,8 @@ fn lladdcarry(r: []Limb, a: []const Limb, b: []const Limb) Limb {
     assert(a.len != 0 and b.len != 0);
     assert(a.len >= b.len);
     assert(r.len >= a.len);
+    assert(!slicesOverlap(r, a) or @intFromPtr(r.ptr) <= @intFromPtr(a.ptr));
+    assert(!slicesOverlap(r, b) or @intFromPtr(r.ptr) <= @intFromPtr(b.ptr));
 
     var i: usize = 0;
     var carry: Limb = 0;
