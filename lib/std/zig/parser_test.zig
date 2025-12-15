@@ -6362,9 +6362,9 @@ fn testParse(io: Io, source: [:0]const u8, allocator: Allocator, anything_change
     return formatted;
 }
 fn testTransformImpl(
-    io: Io,
     allocator: Allocator,
     fba: *std.heap.FixedBufferAllocator,
+    io: Io,
     source: [:0]const u8,
     expected_source: []const u8,
 ) !void {
@@ -6386,7 +6386,7 @@ fn testTransform(source: [:0]const u8, expected_source: []const u8) !void {
     const io = std.testing.io;
     var fixed_allocator = std.heap.FixedBufferAllocator.init(fixed_buffer_mem[0..]);
     return std.testing.checkAllAllocationFailures(fixed_allocator.allocator(), testTransformImpl, .{
-        io, &fixed_allocator, source, expected_source,
+        &fixed_allocator, io, source, expected_source,
     });
 }
 fn testCanonical(source: [:0]const u8) !void {

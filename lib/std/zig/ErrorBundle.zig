@@ -168,7 +168,10 @@ pub fn renderToStderr(eb: ErrorBundle, io: Io, options: RenderOptions, color: st
     var buffer: [256]u8 = undefined;
     const stderr = try io.lockStderrWriter(&buffer);
     defer io.unlockStderrWriter();
-    try renderToWriter(eb, options, &stderr.interface, color.getTtyConf(stderr.mode));
+    renderToWriter(eb, options, &stderr.interface, color.getTtyConf(stderr.mode)) catch |err| switch (err) {
+        error.WriteFailed => return stderr.interface.err.?,
+        else => |e| return e,
+    };
 }
 
 pub fn renderToWriter(

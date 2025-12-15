@@ -1,3 +1,4 @@
+/// TODO add a mapped file abstraction to std.Io
 const MappedFile = @This();
 
 const builtin = @import("builtin");
@@ -74,18 +75,41 @@ pub fn init(file: std.Io.File, gpa: std.mem.Allocator, io: Io) !MappedFile {
             };
         }
         if (is_linux) {
-            const statx = try linux.wrapped.statx(
-                mf.file.handle,
-                "",
-                std.posix.AT.EMPTY_PATH,
-                .{ .TYPE = true, .SIZE = true, .BLOCKS = true },
-            );
-            assert(statx.mask.TYPE);
-            assert(statx.mask.SIZE);
-            assert(statx.mask.BLOCKS);
-
-            if (!std.posix.S.ISREG(statx.mode)) return error.PathAlreadyExists;
-            break :stat .{ statx.size, @max(std.heap.pageSize(), statx.blksize) };
+            const use_c = std.c.versionCheck(if (builtin.abi.isAndroid())
+                .{ .major = 30, .minor = 0, .patch = 0 }
+            else
+                .{ .major = 2, .minor = 28, .patch = 0 });
+            const sys = if (use_c) std.c else std.os.linux;
+            while (true) {
+                var statx = std.mem.zeroes(linux.Statx);
+                const rc = sys.statx(
+                    mf.file.handle,
+                    "",
+                    std.posix.AT.EMPTY_PATH,
+                    .{ .TYPE = true, .SIZE = true, .BLOCKS = true },
+                    &statx,
+                );
+                switch (sys.errno(rc)) {
+                    .SUCCESS => {
+                        assert(statx.mask.TYPE);
+                        assert(statx.mask.SIZE);
+                        assert(statx.mask.BLOCKS);
+                        if (!std.posix.S.ISREG(statx.mode)) return error.PathAlreadyExists;
+                        break :stat .{ statx.size, @max(std.heap.pageSize(), statx.blksize) };
+                    },
+                    .INTR => continue,
+                    .ACCES => return error.AccessDenied,
+                    .BADF => if (std.debug.runtime_safety) unreachable else return error.Unexpected,
+                    .FAULT => if (std.debug.runtime_safety) unreachable else return error.Unexpected,
+                    .INVAL => if (std.debug.runtime_safety) unreachable else return error.Unexpected,
+                    .LOOP => return error.SymLinkLoop,
+                    .NAMETOOLONG => return error.NameTooLong,
+                    .NOENT => return error.FileNotFound,
+                    .NOTDIR => return error.FileNotFound,
+                    .NOMEM => return error.SystemResources,
+                    else => |err| return std.posix.unexpectedErrno(err),
+                }
+            }
         }
         const stat = try std.posix.fstat(mf.file.handle);
         if (!std.posix.S.ISREG(stat.mode)) return error.PathAlreadyExists;

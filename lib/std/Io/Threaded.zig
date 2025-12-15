@@ -1822,6 +1822,11 @@ fn dirStatFileLinux(
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
     const linux = std.os.linux;
+    const use_c = std.c.versionCheck(if (builtin.abi.isAndroid())
+        .{ .major = 30, .minor = 0, .patch = 0 }
+    else
+        .{ .major = 2, .minor = 28, .patch = 0 });
+    const sys = if (use_c) std.c else std.os.linux;
 
     var path_buffer: [posix.PATH_MAX]u8 = undefined;
     const sub_path_posix = try pathToPosix(sub_path, &path_buffer);
@@ -1832,14 +1837,14 @@ fn dirStatFileLinux(
     try current_thread.beginSyscall();
     while (true) {
         var statx = std.mem.zeroes(linux.Statx);
-        const rc = linux.statx(
+        const rc = sys.statx(
             dir.handle,
             sub_path_posix,
             flags,
             .{ .TYPE = true, .MODE = true, .ATIME = true, .MTIME = true, .CTIME = true, .INO = true, .SIZE = true },
             &statx,
         );
-        switch (linux.errno(rc)) {
+        switch (sys.errno(rc)) {
             .SUCCESS => {
                 current_thread.endSyscall();
                 assert(statx.mask.TYPE);
@@ -2076,18 +2081,23 @@ fn fileStatLinux(userdata: ?*anyopaque, file: File) File.StatError!File.Stat {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
     const linux = std.os.linux;
+    const use_c = std.c.versionCheck(if (builtin.abi.isAndroid())
+        .{ .major = 30, .minor = 0, .patch = 0 }
+    else
+        .{ .major = 2, .minor = 28, .patch = 0 });
+    const sys = if (use_c) std.c else std.os.linux;
 
     try current_thread.beginSyscall();
     while (true) {
         var statx = std.mem.zeroes(linux.Statx);
-        const rc = linux.statx(
+        const rc = sys.statx(
             file.handle,
             "",
             linux.AT.EMPTY_PATH,
             .{ .TYPE = true, .MODE = true, .ATIME = true, .MTIME = true, .CTIME = true, .INO = true, .SIZE = true },
             &statx,
         );
-        switch (linux.errno(rc)) {
+        switch (sys.errno(rc)) {
             .SUCCESS => {
                 current_thread.endSyscall();
                 assert(statx.mask.TYPE);

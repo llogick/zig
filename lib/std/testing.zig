@@ -1148,9 +1148,10 @@ pub fn checkAllAllocationFailures(backing_allocator: std.mem.Allocator, comptime
         break :x failing_allocator_inst.alloc_index;
     };
 
-    var fail_index: usize = 0;
-    while (fail_index < needed_alloc_count) : (fail_index += 1) {
-        var failing_allocator_inst = std.testing.FailingAllocator.init(backing_allocator, .{ .fail_index = fail_index });
+    for (0..needed_alloc_count) |fail_index| {
+        var failing_allocator_inst = std.testing.FailingAllocator.init(backing_allocator, .{
+            .fail_index = fail_index,
+        });
         args.@"0" = failing_allocator_inst.allocator();
 
         if (@call(.auto, test_fn, args)) |_| {
