@@ -1997,7 +1997,7 @@ fn fileLength(userdata: ?*anyopaque, file: File) File.LengthError!u64 {
         try current_thread.beginSyscall();
         while (true) {
             var statx = std.mem.zeroes(linux.Statx);
-            switch (linux.errno(linux.statx(file.handle, "", linux.AT.EMPTY_PATH, linux.STATX_SIZE, &statx))) {
+            switch (linux.errno(linux.statx(file.handle, "", linux.AT.EMPTY_PATH, .{ .SIZE = true }, &statx))) {
                 .SUCCESS => {
                     current_thread.endSyscall();
                     return statx.size;
