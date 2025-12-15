@@ -122,8 +122,8 @@ pub fn init(opts: Options) WebServer {
         .update_id = .init(0),
 
         .runner_request_mutex = .init,
-        .runner_request_ready_cond = .{},
-        .runner_request_empty_cond = .{},
+        .runner_request_ready_cond = .init,
+        .runner_request_empty_cond = .init,
         .runner_request = null,
     };
 }

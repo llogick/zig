@@ -658,14 +658,6 @@ pub const VTable = struct {
     futexWaitUncancelable: *const fn (?*anyopaque, ptr: *const u32, expected: u32) void,
     futexWake: *const fn (?*anyopaque, ptr: *const u32, max_waiters: u32) void,
 
-    mutexLock: *const fn (?*anyopaque, prev_state: Mutex.State, mutex: *Mutex) Cancelable!void,
-    mutexLockUncancelable: *const fn (?*anyopaque, prev_state: Mutex.State, mutex: *Mutex) void,
-    mutexUnlock: *const fn (?*anyopaque, prev_state: Mutex.State, mutex: *Mutex) void,
-
-    conditionWait: *const fn (?*anyopaque, cond: *Condition, mutex: *Mutex) Cancelable!void,
-    conditionWaitUncancelable: *const fn (?*anyopaque, cond: *Condition, mutex: *Mutex) void,
-    conditionWake: *const fn (?*anyopaque, cond: *Condition, wake: Condition.Wake) void,
-
     dirMake: *const fn (?*anyopaque, Dir, sub_path: []const u8, Dir.Mode) Dir.MakeError!void,
     dirMakePath: *const fn (?*anyopaque, Dir, sub_path: []const u8, Dir.Mode) Dir.MakeError!void,
     dirMakeOpenPath: *const fn (?*anyopaque, Dir, sub_path: []const u8, Dir.OpenOptions) Dir.MakeOpenPathError!Dir,
@@ -1215,99 +1207,183 @@ pub fn futexWake(io: Io, comptime T: type, ptr: *align(@alignOf(u32)) const T, m
 }
 
 pub const Mutex = struct {
-    state: State,
+    state: std.atomic.Value(State),
 
-    pub const State = enum(usize) {
-        locked_once = 0b00,
-        unlocked = 0b01,
-        contended = 0b10,
-        /// contended
-        _,
+    pub const init: Mutex = .{ .state = .init(.unlocked) };
 
-        pub fn isUnlocked(state: State) bool {
-            return @intFromEnum(state) & @intFromEnum(State.unlocked) == @intFromEnum(State.unlocked);
-        }
+    const State = enum(u32) {
+        unlocked,
+        locked_once,
+        contended,
     };
 
-    pub const init: Mutex = .{ .state = .unlocked };
-
-    pub fn tryLock(mutex: *Mutex) bool {
-        const prev_state: State = @enumFromInt(@atomicRmw(
-            usize,
-            @as(*usize, @ptrCast(&mutex.state)),
-            .And,
-            ~@intFromEnum(State.unlocked),
+    pub fn tryLock(m: *Mutex) bool {
+        switch (m.state.cmpxchgWeak(
+            .unlocked,
+            .locked_once,
             .acquire,
-        ));
-        return prev_state.isUnlocked();
-    }
-
-    pub fn lock(mutex: *Mutex, io: std.Io) Cancelable!void {
-        const prev_state: State = @enumFromInt(@atomicRmw(
-            usize,
-            @as(*usize, @ptrCast(&mutex.state)),
-            .And,
-            ~@intFromEnum(State.unlocked),
-            .acquire,
-        ));
-        if (prev_state.isUnlocked()) {
-            @branchHint(.likely);
-            return;
+            .monotonic,
+        ) orelse return true) {
+            .unlocked => unreachable,
+            .locked_once, .contended => return false,
         }
-        return io.vtable.mutexLock(io.userdata, prev_state, mutex);
     }
 
-    /// Same as `lock` but cannot be canceled.
-    pub fn lockUncancelable(mutex: *Mutex, io: std.Io) void {
-        const prev_state: State = @enumFromInt(@atomicRmw(
-            usize,
-            @as(*usize, @ptrCast(&mutex.state)),
-            .And,
-            ~@intFromEnum(State.unlocked),
+    pub fn lock(m: *Mutex, io: Io) Cancelable!void {
+        const initial_state = m.state.cmpxchgWeak(
+            .unlocked,
+            .locked_once,
             .acquire,
-        ));
-        if (prev_state.isUnlocked()) {
-            @branchHint(.likely);
-            return;
-        }
-        return io.vtable.mutexLockUncancelable(io.userdata, prev_state, mutex);
-    }
-
-    pub fn unlock(mutex: *Mutex, io: std.Io) void {
-        const prev_state = @cmpxchgWeak(State, &mutex.state, .locked_once, .unlocked, .release, .acquire) orelse {
+            .monotonic,
+        ) orelse {
             @branchHint(.likely);
             return;
         };
-        assert(prev_state != .unlocked); // mutex not locked
-        return io.vtable.mutexUnlock(io.userdata, prev_state, mutex);
+        if (initial_state == .contended) {
+            try io.futexWait(State, &m.state.raw, .contended);
+        }
+        while (m.state.swap(.contended, .acquire) != .unlocked) {
+            try io.futexWait(State, &m.state.raw, .contended);
+        }
+    }
+
+    pub fn lockUncancelable(m: *Mutex, io: Io) void {
+        const initial_state = m.state.cmpxchgWeak(
+            .unlocked,
+            .locked_once,
+            .acquire,
+            .monotonic,
+        ) orelse {
+            @branchHint(.likely);
+            return;
+        };
+        if (initial_state == .contended) {
+            io.futexWaitUncancelable(State, &m.state.raw, .contended);
+        }
+        while (m.state.swap(.contended, .acquire) != .unlocked) {
+            io.futexWaitUncancelable(State, &m.state.raw, .contended);
+        }
+    }
+
+    pub fn unlock(m: *Mutex, io: Io) void {
+        switch (m.state.swap(.unlocked, .release)) {
+            .unlocked => unreachable,
+            .locked_once => {},
+            .contended => {
+                @branchHint(.unlikely);
+                io.futexWake(State, &m.state.raw, 1);
+            },
+        }
     }
 };
 
 pub const Condition = struct {
-    state: u64 = 0,
+    state: std.atomic.Value(State),
+    /// Incremented whenever the condition is signaled
+    epoch: std.atomic.Value(u32),
+
+    const State = packed struct(u32) {
+        waiters: u16,
+        signals: u16,
+    };
+
+    pub const init: Condition = .{
+        .state = .init(.{ .waiters = 0, .signals = 0 }),
+        .epoch = .init(0),
+    };
 
     pub fn wait(cond: *Condition, io: Io, mutex: *Mutex) Cancelable!void {
-        return io.vtable.conditionWait(io.userdata, cond, mutex);
+        try waitInner(cond, io, mutex, false);
     }
 
     pub fn waitUncancelable(cond: *Condition, io: Io, mutex: *Mutex) void {
-        return io.vtable.conditionWaitUncancelable(io.userdata, cond, mutex);
+        waitInner(cond, io, mutex, true) catch |err| switch (err) {
+            error.Canceled => unreachable,
+        };
+    }
+
+    fn waitInner(cond: *Condition, io: Io, mutex: *Mutex, uncancelable: bool) Cancelable!void {
+        var epoch = cond.epoch.load(.acquire); // `.acquire` to ensure ordered before state load
+
+        {
+            const prev_state = cond.state.fetchAdd(.{ .waiters = 1, .signals = 0 }, .monotonic);
+            assert(prev_state.waiters < math.maxInt(u16)); // overflow caused by too many waiters
+        }
+
+        mutex.unlock(io);
+        defer mutex.lockUncancelable(io);
+
+        while (true) {
+            const result = if (uncancelable)
+                io.futexWaitUncancelable(u32, &cond.epoch.raw, epoch)
+            else
+                io.futexWait(u32, &cond.epoch.raw, epoch);
+
+            epoch = cond.epoch.load(.acquire); // `.acquire` to ensure ordered before `state` laod
+
+            // Even on error, try to consume a pending signal first. Otherwise a race might
+            // cause a signal to get stuck in the state with no corresponding waiter.
+            {
+                var prev_state = cond.state.load(.monotonic);
+                while (prev_state.signals > 0) {
+                    prev_state = cond.state.cmpxchgWeak(prev_state, .{
+                        .waiters = prev_state.waiters - 1,
+                        .signals = prev_state.signals - 1,
+                    }, .acquire, .monotonic) orelse {
+                        // We successfully consumed a signal.
+                        return;
+                    };
+                }
+            }
+
+            // There are no more signals available; this was a spurious wakeup or an error. If it
+            // was an error, we will remove ourselves as a waiter and return that error. Otherwise,
+            // we'll loop back to the futex wait.
+            result catch |err| {
+                const prev_state = cond.state.fetchSub(.{ .waiters = 1, .signals = 0 }, .monotonic);
+                assert(prev_state.waiters > 0); // underflow caused by illegal state
+                return err;
+            };
+        }
     }
 
     pub fn signal(cond: *Condition, io: Io) void {
-        io.vtable.conditionWake(io.userdata, cond, .one);
+        var prev_state = cond.state.load(.monotonic);
+        while (prev_state.waiters > prev_state.signals) {
+            @branchHint(.unlikely);
+            prev_state = cond.state.cmpxchgWeak(prev_state, .{
+                .waiters = prev_state.waiters,
+                .signals = prev_state.signals + 1,
+            }, .release, .monotonic) orelse {
+                // Update the epoch to tell the waiting threads that there are new signals for them.
+                // Note that a waiting thread could miss a take if *exactly* (1<<32)-1 wakes happen
+                // between it observing the epoch and sleeping on it, but this is extraordinarily
+                // unlikely due to the precise number of calls required.
+                _ = cond.epoch.fetchAdd(1, .release); // `.release` to ensure ordered after `state` update
+                io.futexWake(u32, &cond.epoch.raw, 1);
+                return;
+            };
+        }
     }
 
     pub fn broadcast(cond: *Condition, io: Io) void {
-        io.vtable.conditionWake(io.userdata, cond, .all);
+        var prev_state = cond.state.load(.monotonic);
+        while (prev_state.waiters > prev_state.signals) {
+            @branchHint(.unlikely);
+            prev_state = cond.state.cmpxchgWeak(prev_state, .{
+                .waiters = prev_state.waiters,
+                .signals = prev_state.waiters,
+            }, .release, .monotonic) orelse {
+                // Update the epoch to tell the waiting threads that there are new signals for them.
+                // Note that a waiting thread could miss a take if *exactly* (1<<32)-1 wakes happen
+                // between it observing the epoch and sleeping on it, but this is extraordinarily
+                // unlikely due to the precise number of calls required.
+                _ = cond.epoch.fetchAdd(1, .release); // `.release` to ensure ordered after `state` update
+                io.futexWake(u32, &cond.epoch.raw, prev_state.waiters - prev_state.signals);
+                return;
+            };
+        }
     }
-
-    pub const Wake = enum {
-        /// Wake up only one thread.
-        one,
-        /// Wake up all threads.
-        all,
-    };
 };
 
 pub const TypeErasedQueue = struct {
