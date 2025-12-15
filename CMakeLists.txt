@@ -411,7 +411,6 @@ set(ZIG_STAGE2_SOURCES
     lib/std/Thread.zig
     lib/std/Thread/Futex.zig
     lib/std/Thread/Mutex.zig
-    lib/std/Thread/Pool.zig
     lib/std/Thread/WaitGroup.zig
     lib/std/array_hash_map.zig
     lib/std/array_list.zig
