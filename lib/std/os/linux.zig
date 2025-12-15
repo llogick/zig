@@ -6891,10 +6891,6 @@ pub const utsname = extern struct {
 };
 pub const HOST_NAME_MAX = 64;
 
-/// Flags used to request specific members in `Statx` be filled out.
-/// The `Statx.mask` member will be updated with what information the kernel
-/// returned. Callers must check this field since support varies by kernel
-/// version and filesystem.
 pub const STATX = packed struct(u32) {
     /// Want `mode & S.IFMT`.
     TYPE: bool = false,
@@ -6982,7 +6978,9 @@ pub const statx_timestamp = extern struct {
 
 /// Renamed to `Statx` to not conflict with the `statx` function.
 pub const Statx = extern struct {
-    /// Mask of bits indicating filled fields.
+    /// Mask of bits indicating filled fields. Updated with what information
+    /// the kernel returned. Callers must check this field since support varies
+    /// by kernel version and filesystem.
     mask: STATX,
     /// Block size for filesystem I/O.
     blksize: u32,
