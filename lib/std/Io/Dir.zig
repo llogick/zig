@@ -377,6 +377,8 @@ pub fn walk(dir: Dir, allocator: Allocator) Allocator.Error!Walker {
 pub const Handle = std.posix.fd_t;
 
 pub const PathNameError = error{
+    /// Returned when an insufficient buffer is provided that cannot fit the
+    /// path name.
     NameTooLong,
     /// File system cannot encode the requested file name bytes.
     /// Could be due to invalid WTF-8 on Windows, invalid UTF-8 on WASI,

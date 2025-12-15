@@ -2033,7 +2033,7 @@ fn fileLength(userdata: ?*anyopaque, file: File) File.LengthError!u64 {
         // TODO call NtQueryInformationFile and ask for only the size instead of "all"
     }
 
-    const stat = try fileStat(ioBasic(t), file);
+    const stat = try fileStat(t, file);
     return stat.size;
 }
 
@@ -3429,7 +3429,7 @@ fn dirReadDarwin(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Di
             const dents_buffer = dr.buffer[header_end..];
             try current_thread.beginSyscall();
             const n: usize = while (true) {
-                const rc = posix.system.getdirentries(dr.dir.fd, dents_buffer.ptr, dents_buffer.len, &header.seek);
+                const rc = posix.system.getdirentries(dr.dir.handle, dents_buffer.ptr, dents_buffer.len, &header.seek);
                 switch (posix.errno(rc)) {
                     .SUCCESS => {
                         current_thread.endSyscall();
@@ -3735,9 +3735,11 @@ fn dirRealPathPosix(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, out_b
     if (@hasField(posix.O, "CLOEXEC")) flags.CLOEXEC = true;
     if (@hasField(posix.O, "PATH")) flags.PATH = true;
 
+    const mode: posix.mode_t = 0;
+
     try current_thread.beginSyscall();
     const fd: posix.fd_t = while (true) {
-        const rc = openat_sym(dir.handle, sub_path_posix, flags, 0);
+        const rc = openat_sym(dir.handle, sub_path_posix, flags, mode);
         switch (posix.errno(rc)) {
             .SUCCESS => {
                 current_thread.endSyscall();
@@ -3784,10 +3786,11 @@ fn dirRealPathPosix(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, out_b
         .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => {
             // On macOS, we can use F.GETPATH fcntl command to query the OS for
             // the path to the file descriptor.
-            @memset(out_buffer, 0);
+            var sufficient_buffer: [posix.PATH_MAX]u8 = undefined;
+            @memset(&sufficient_buffer, 0);
             try current_thread.beginSyscall();
             while (true) {
-                switch (posix.errno(posix.system.fcntl(fd, posix.F.GETPATH, out_buffer))) {
+                switch (posix.errno(posix.system.fcntl(fd, posix.F.GETPATH, &sufficient_buffer))) {
                     .SUCCESS => {
                         current_thread.endSyscall();
                         break;
@@ -3803,14 +3806,15 @@ fn dirRealPathPosix(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, out_b
                             .BADF => return error.FileNotFound,
                             .NOSPC => return error.NameTooLong,
                             .NOENT => return error.FileNotFound,
-                            // TODO man pages for fcntl on macOS don't really tell you what
-                            // errno values to expect when command is F.GETPATH...
                             else => |err| return posix.unexpectedErrno(err),
                         }
                     },
                 }
             }
-            return std.mem.indexOfScalar(u8, &out_buffer, 0) orelse out_buffer.len;
+            const n = std.mem.indexOfScalar(u8, &sufficient_buffer, 0) orelse sufficient_buffer.len;
+            if (n > out_buffer.len) return error.NameTooLong;
+            @memcpy(out_buffer[0..n], sufficient_buffer[0..n]);
+            return n;
         },
         .linux, .serenity, .illumos => {
             var procfs_buf: ["/proc/self/path/-2147483648\x00".len]u8 = undefined;
@@ -6578,7 +6582,6 @@ fn processExecutableOpen(userdata: ?*anyopaque, flags: File.OpenFlags) std.proce
 
 fn processExecutablePath(userdata: ?*anyopaque, out_buffer: []u8) std.process.ExecutablePathError!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const max_path_bytes = std.fs.max_path_bytes;
 
     switch (native_os) {
         .driverkit,
@@ -6591,20 +6594,19 @@ fn processExecutablePath(userdata: ?*anyopaque, out_buffer: []u8) std.process.Ex
         => {
             // Note that _NSGetExecutablePath() will return "a path" to
             // the executable not a "real path" to the executable.
-            var symlink_path_buf: [max_path_bytes:0]u8 = undefined;
-            var u32_len: u32 = max_path_bytes + 1; // include the sentinel
+            var symlink_path_buf: [posix.PATH_MAX:0]u8 = undefined;
+            var u32_len: u32 = posix.PATH_MAX + 1; // include the sentinel
             const rc = std.c._NSGetExecutablePath(&symlink_path_buf, &u32_len);
             if (rc != 0) return error.NameTooLong;
 
-            var real_path_buf: [max_path_bytes]u8 = undefined;
-            const real_path = Io.Dir.realPathAbsolute(ioBasic(t), &symlink_path_buf, &real_path_buf) catch |err| switch (err) {
+            var real_path_buf: [posix.PATH_MAX]u8 = undefined;
+            const n = Io.Dir.realPathAbsolute(ioBasic(t), &symlink_path_buf, &real_path_buf) catch |err| switch (err) {
                 error.NetworkNotFound => unreachable, // Windows-only
                 else => |e| return e,
             };
-            if (real_path.len > out_buffer.len) return error.NameTooLong;
-            const result = out_buffer[0..real_path.len];
-            @memcpy(result, real_path);
-            return result.len;
+            if (n > out_buffer.len) return error.NameTooLong;
+            @memcpy(out_buffer[0..n], real_path_buf[0..n]);
+            return n;
         },
         .linux, .serenity => return Io.Dir.readLinkAbsolute(ioBasic(t), "/proc/self/exe", out_buffer) catch |err| switch (err) {
             error.UnsupportedReparsePointType => unreachable, // Windows-only
@@ -6640,7 +6642,7 @@ fn processExecutablePath(userdata: ?*anyopaque, out_buffer: []u8) std.process.Ex
             const argv0 = std.mem.span(std.os.argv[0]);
             if (std.mem.indexOf(u8, argv0, "/") != null) {
                 // argv[0] is a path (relative or absolute): use realpath(3) directly
-                var real_path_buf: [max_path_bytes]u8 = undefined;
+                var real_path_buf: [posix.PATH_MAX]u8 = undefined;
                 const real_path = Io.Dir.realPathAbsolute(ioBasic(t), std.os.argv[0], &real_path_buf) catch |err| switch (err) {
                     error.NetworkNotFound => unreachable, // Windows-only
                     else => |e| return e,
@@ -6655,12 +6657,12 @@ fn processExecutablePath(userdata: ?*anyopaque, out_buffer: []u8) std.process.Ex
                 const PATH = posix.getenvZ("PATH") orelse return error.FileNotFound;
                 var path_it = std.mem.tokenizeScalar(u8, PATH, std.fs.path.delimiter);
                 while (path_it.next()) |a_path| {
-                    var resolved_path_buf: [max_path_bytes - 1:0]u8 = undefined;
+                    var resolved_path_buf: [posix.PATH_MAX - 1:0]u8 = undefined;
                     const resolved_path = std.fmt.bufPrintSentinel(&resolved_path_buf, "{s}/{s}", .{
                         a_path, std.os.argv[0],
                     }, 0) catch continue;
 
-                    var real_path_buf: [max_path_bytes]u8 = undefined;
+                    var real_path_buf: [posix.PATH_MAX]u8 = undefined;
                     if (Io.Dir.realPathAbsolute(ioBasic(t), resolved_path, &real_path_buf)) |real_path| {
                         // found a file, and hope it is the right file
                         if (real_path.len > out_buffer.len)
@@ -7566,7 +7568,7 @@ fn fileWriteFilePositional(
                     current_thread.endSyscall();
                     assert(error.Unexpected == switch (e) {
                         .NOMEM => return error.SystemResources,
-                        .INVAL => |err| posix.errnoBug(err),
+                        .INVAL => |err| errnoBug(err),
                         else => |err| posix.unexpectedErrno(err),
                     });
                     return 0;

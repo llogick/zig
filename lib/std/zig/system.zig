@@ -248,7 +248,7 @@ pub fn resolveTargetQuery(io: Io, query: Target.Query) DetectError!Target {
                 os.version_range.windows.min = detected_version;
                 os.version_range.windows.max = detected_version;
             },
-            .macos => try darwin.macos.detect(&os),
+            .macos => try darwin.macos.detect(io, &os),
             .freebsd, .netbsd, .dragonfly => {
                 const key = switch (builtin.target.os.tag) {
                     .freebsd => "kern.osreldate",

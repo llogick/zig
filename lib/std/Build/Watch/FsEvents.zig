@@ -78,10 +78,10 @@ const ResolvedSymbols = struct {
     kCFAllocatorUseContext: *const CFAllocatorRef,
 };
 
-pub fn init(io: Io) error{ OpenFrameworkFailed, MissingCoreServicesSymbol }!FsEvents {
+pub fn init() error{ OpenFrameworkFailed, MissingCoreServicesSymbol }!FsEvents {
     var core_services = std.DynLib.open("/System/Library/Frameworks/CoreServices.framework/CoreServices") catch
         return error.OpenFrameworkFailed;
-    errdefer core_services.close(io);
+    errdefer core_services.close();
 
     var resolved_symbols: ResolvedSymbols = undefined;
     inline for (@typeInfo(ResolvedSymbols).@"struct".fields) |f| {

@@ -40,8 +40,8 @@ pub const DynLib = struct {
     }
 
     /// Trusts the file.
-    pub fn close(self: *DynLib, io: Io) void {
-        return self.inner.close(io);
+    pub fn close(self: *DynLib) void {
+        return self.inner.close();
     }
 
     pub fn lookup(self: *DynLib, comptime T: type, name: [:0]const u8) ?T {
