@@ -255,3 +255,39 @@ test "Queue" {
     try testQueue(4);
     try testQueue(5);
 }
+
+test "Event" {
+    const global = struct {
+        fn waitAndRead(io: Io, event: *Io.Event, ptr: *const u32) Io.Cancelable!u32 {
+            try event.wait(io);
+            return ptr.*;
+        }
+    };
+
+    const io = std.testing.io;
+
+    var event: Io.Event = .unset;
+    var buffer: u32 = undefined;
+
+    {
+        var future = io.concurrent(global.waitAndRead, .{ io, &event, &buffer }) catch |err| switch (err) {
+            error.ConcurrencyUnavailable => return error.SkipZigTest,
+        };
+
+        buffer = 123;
+        event.set(io);
+
+        const result = try future.await(io);
+
+        try std.testing.expectEqual(123, result);
+    }
+
+    event.reset();
+
+    {
+        var future = io.concurrent(global.waitAndRead, .{ io, &event, &buffer }) catch |err| switch (err) {
+            error.ConcurrencyUnavailable => return error.SkipZigTest,
+        };
+        try std.testing.expectError(error.Canceled, future.cancel(io));
+    }
+}
