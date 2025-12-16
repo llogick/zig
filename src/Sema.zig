@@ -1061,7 +1061,7 @@ fn analyzeInlineBody(
     /// The index which a break instruction can target to break from this body.
     break_target: Zir.Inst.Index,
 ) CompileError!?Air.Inst.Ref {
-    if (sema.analyzeBodyInner(block, body)) |_| {
+    if (sema.analyzeBodyInner(block, body)) {
         return null;
     } else |err| switch (err) {
         error.ComptimeBreak => {},
@@ -1808,7 +1808,7 @@ fn analyzeBodyInner(
                     child_block.instructions = block.instructions;
                     defer block.instructions = child_block.instructions;
 
-                    const break_result: ?BreakResult = if (sema.analyzeBodyInner(&child_block, inline_body)) |_| r: {
+                    const break_result: ?BreakResult = if (sema.analyzeBodyInner(&child_block, inline_body)) r: {
                         break :r null;
                     } else |err| switch (err) {
                         error.ComptimeBreak => brk_res: {
@@ -1956,7 +1956,7 @@ fn analyzeBodyInner(
             .@"defer" => blk: {
                 const inst_data = sema.code.instructions.items(.data)[@intFromEnum(inst)].@"defer";
                 const defer_body = sema.code.bodySlice(inst_data.index, inst_data.len);
-                if (sema.analyzeBodyInner(block, defer_body)) |_| {
+                if (sema.analyzeBodyInner(block, defer_body)) {
                     // The defer terminated noreturn - no more analysis needed.
                     break;
                 } else |err| switch (err) {
@@ -1975,7 +1975,7 @@ fn analyzeBodyInner(
                 const err_code = try sema.resolveInst(inst_data.err_code);
                 try map.ensureSpaceForInstructions(sema.gpa, defer_body);
                 map.putAssumeCapacity(extra.remapped_err_code, err_code);
-                if (sema.analyzeBodyInner(block, defer_body)) |_| {
+                if (sema.analyzeBodyInner(block, defer_body)) {
                     // The defer terminated noreturn - no more analysis needed.
                     break;
                 } else |err| switch (err) {
@@ -5959,7 +5959,7 @@ fn resolveBlockBody(
         assert(sema.air_instructions.items(.tag)[@intFromEnum(merges.block_inst)] == .block);
         var need_debug_scope = false;
         child_block.need_debug_scope = &need_debug_scope;
-        if (sema.analyzeBodyInner(child_block, body)) |_| {
+        if (sema.analyzeBodyInner(child_block, body)) {
             return sema.resolveAnalyzedBlock(parent_block, src, child_block, merges, need_debug_scope);
         } else |err| switch (err) {
             error.ComptimeBreak => {
