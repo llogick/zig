@@ -3406,11 +3406,12 @@ fn dirReadDarwin(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Di
     const Header = extern struct {
         seek: i64,
     };
-    const header: *Header = @ptrCast(&dr.buffer);
+    const header: *Header = @ptrCast(dr.buffer.ptr);
     const header_end: usize = @sizeOf(Header);
     if (dr.index < header_end) {
         // Initialize header.
         dr.index = header_end;
+        dr.end = header_end;
         header.* = .{ .seek = 0 };
     }
     var buffer_index: usize = 0;

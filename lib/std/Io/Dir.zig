@@ -95,7 +95,7 @@ pub const Reader = struct {
     dir: Dir,
     state: State,
     /// Stores I/O implementation specific data.
-    buffer: []u8 align(@alignOf(usize)),
+    buffer: []align(@alignOf(usize)) u8,
     /// Index of next entry in `buffer`.
     index: usize,
     /// Fill position of `buffer`.
