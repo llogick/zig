@@ -100,6 +100,18 @@ pub const Lock = enum {
 pub const OpenFlags = struct {
     mode: OpenMode = .read_only,
 
+    /// Determines the behavior when opening a path that refers to a directory.
+    /// If set to true, directories may be opened, but `error.IsDir` is still
+    /// possible in certain scenarios, e.g. attempting to open a directory with
+    /// write permissions.
+    /// If set to false, `error.IsDir` will always be returned when opening a directory.
+    ///
+    /// When set to false:
+    /// * On Windows, the behavior is implemented without any extra syscalls.
+    /// * On other operating systems, the behavior is implemented with an additional
+    ///   `fstat` syscall.
+    allow_directory: bool = true,
+
     /// Open the file with an advisory lock to coordinate with other processes
     /// accessing it at the same time. An exclusive lock will prevent other
     /// processes from acquiring a lock. A shared lock will prevent other
@@ -226,7 +238,9 @@ pub const OpenError = error{
     /// The file is too large to be opened. This error is unreachable
     /// for 64-bit targets, as well as when opening directories.
     FileTooBig,
-    /// The path refers to directory but the `DIRECTORY` flag was not provided.
+    /// Either:
+    /// * The path refers to a directory and write permissions were requested.
+    /// * The path refers to a directory and `allow_directory` was set to false.
     IsDir,
     /// A new path cannot be created because the device has no room for the new file.
     /// This error is only reachable when the `CREAT` flag is provided.

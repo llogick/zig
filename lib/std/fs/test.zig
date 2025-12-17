@@ -750,14 +750,26 @@ test "Dir.statFile" {
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {
             const io = ctx.io;
-            const test_file_name = try ctx.transformPath("test_file");
+            {
+                const test_file_name = try ctx.transformPath("test_file");
 
-            try expectError(error.FileNotFound, ctx.dir.statFile(io, test_file_name, .{}));
+                try expectError(error.FileNotFound, ctx.dir.statFile(io, test_file_name, .{}));
 
-            try ctx.dir.writeFile(io, .{ .sub_path = test_file_name, .data = "" });
+                try ctx.dir.writeFile(io, .{ .sub_path = test_file_name, .data = "" });
 
-            const stat = try ctx.dir.statFile(io, test_file_name, .{});
-            try expectEqual(File.Kind.file, stat.kind);
+                const stat = try ctx.dir.statFile(io, test_file_name, .{});
+                try expectEqual(.file, stat.kind);
+            }
+            {
+                const test_dir_name = try ctx.transformPath("test_dir");
+
+                try expectError(error.FileNotFound, ctx.dir.statFile(io, test_dir_name, .{}));
+
+                try ctx.dir.makeDir(io, test_dir_name);
+
+                const stat = try ctx.dir.statFile(io, test_dir_name, .{});
+                try expectEqual(.directory, stat.kind);
+            }
         }
     }.impl);
 }
@@ -840,9 +852,14 @@ test "file operations on directories" {
                 handle.close(io);
             } else {
                 // Note: The `.mode = .read_write` is necessary to ensure the error occurs on all platforms.
-                // TODO: Add a read-only test as well, see https://github.com/ziglang/zig/issues/5732
                 try expectError(error.IsDir, ctx.dir.openFile(io, test_dir_name, .{ .mode = .read_write }));
             }
+
+            {
+                const handle = try ctx.dir.openFile(io, test_dir_name, .{ .allow_directory = true, .mode = .read_only });
+                handle.close(io);
+            }
+            try expectError(error.IsDir, ctx.dir.openFile(io, test_dir_name, .{ .allow_directory = false, .mode = .read_only }));
 
             if (ctx.path_type == .absolute and comptime PathType.absolute.isSupported(builtin.os)) {
                 try expectError(error.IsDir, fs.createFileAbsolute(test_dir_name, .{}));

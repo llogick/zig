@@ -2310,17 +2310,15 @@ pub const OpenFileOptions = struct {
     sa: ?*SECURITY_ATTRIBUTES = null,
     share_access: FILE.SHARE = .VALID_FLAGS,
     creation: FILE.CREATE_DISPOSITION,
-    /// If true, tries to open path as a directory.
-    /// Defaults to false.
-    filter: Filter = .file_only,
+    filter: Filter = .non_directory_only,
     /// If false, tries to open path as a reparse point without dereferencing it.
     /// Defaults to true.
     follow_symlinks: bool = true,
 
     pub const Filter = enum {
         /// Causes `OpenFile` to return `error.IsDir` if the opened handle would be a directory.
-        file_only,
-        /// Causes `OpenFile` to return `error.NotDir` if the opened handle would be a file.
+        non_directory_only,
+        /// Causes `OpenFile` to return `error.NotDir` if the opened handle is not a directory.
         dir_only,
         /// `OpenFile` does not discriminate between opening files and directories.
         any,
@@ -2328,10 +2326,10 @@ pub const OpenFileOptions = struct {
 };
 
 pub fn OpenFile(sub_path_w: []const u16, options: OpenFileOptions) OpenError!HANDLE {
-    if (mem.eql(u16, sub_path_w, &[_]u16{'.'}) and options.filter == .file_only) {
+    if (mem.eql(u16, sub_path_w, &[_]u16{'.'}) and options.filter == .non_directory_only) {
         return error.IsDir;
     }
-    if (mem.eql(u16, sub_path_w, &[_]u16{ '.', '.' }) and options.filter == .file_only) {
+    if (mem.eql(u16, sub_path_w, &[_]u16{ '.', '.' }) and options.filter == .non_directory_only) {
         return error.IsDir;
     }
 
@@ -2366,7 +2364,7 @@ pub fn OpenFile(sub_path_w: []const u16, options: OpenFileOptions) OpenError!HAN
             options.creation,
             .{
                 .DIRECTORY_FILE = options.filter == .dir_only,
-                .NON_DIRECTORY_FILE = options.filter == .file_only,
+                .NON_DIRECTORY_FILE = options.filter == .non_directory_only,
                 .IO = if (options.follow_symlinks) .SYNCHRONOUS_NONALERT else .ASYNCHRONOUS,
                 .OPEN_REPARSE_POINT = !options.follow_symlinks,
             },
@@ -3040,7 +3038,7 @@ pub fn CreateSymbolicLink(
         },
         .dir = dir,
         .creation = .CREATE,
-        .filter = if (is_directory) .dir_only else .file_only,
+        .filter = if (is_directory) .dir_only else .non_directory_only,
     }) catch |err| switch (err) {
         error.IsDir => return error.PathAlreadyExists,
         error.NotDir => return error.Unexpected,

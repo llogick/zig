@@ -1621,14 +1621,8 @@ fn dirMakePath(
                 // stat the file and return an error if it's not a directory
                 // this is important because otherwise a dangling symlink
                 // could cause an infinite loop
-                check_dir: {
-                    // workaround for windows, see https://github.com/ziglang/zig/issues/16738
-                    const fstat = dirStatFile(t, dir, component.path, .{}) catch |stat_err| switch (stat_err) {
-                        error.IsDir => break :check_dir,
-                        else => |e| return e,
-                    };
-                    if (fstat.kind != .directory) return error.NotDir;
-                }
+                const fstat = dirStatFile(t, dir, component.path, .{});
+                if (fstat.kind != .directory) return error.NotDir;
             },
             error.FileNotFound => |e| {
                 component = it.previous() orelse return e;
@@ -1750,16 +1744,10 @@ fn dirMakeOpenPathWindows(
                 // stat the file and return an error if it's not a directory
                 // this is important because otherwise a dangling symlink
                 // could cause an infinite loop
-                check_dir: {
-                    // workaround for windows, see https://github.com/ziglang/zig/issues/16738
-                    const fstat = dirStatFileWindows(t, dir, component.path, .{
-                        .follow_symlinks = options.follow_symlinks,
-                    }) catch |stat_err| switch (stat_err) {
-                        error.IsDir => break :check_dir,
-                        else => |e| return e,
-                    };
-                    if (fstat.kind != .directory) return error.NotDir;
-                }
+                const fstat = dirStatFileWindows(t, dir, component.path, .{
+                    .follow_symlinks = options.follow_symlinks,
+                });
+                if (fstat.kind != .directory) return error.NotDir;
 
                 component = it.next().?;
                 continue;
@@ -2791,6 +2779,18 @@ fn dirOpenFilePosix(
     };
     errdefer posix.close(fd);
 
+    if (!flags.allow_directory) {
+        const is_dir = is_dir: {
+            const stat = fileStat(t, .{ .handle = fd }) catch |err| switch (err) {
+                // The directory-ness is either unknown or unknowable
+                error.Streaming => break :is_dir false,
+                else => |e| return e,
+            };
+            break :is_dir stat.kind == .directory;
+        };
+        if (is_dir) return error.IsDir;
+    }
+
     if (have_flock and !have_flock_open_flags and flags.lock != .none) {
         const lock_nonblocking: i32 = if (flags.lock_nonblocking) posix.LOCK.NB else 0;
         const lock_flags = switch (flags.lock) {
@@ -2936,7 +2936,7 @@ pub fn dirOpenFileWtf16(
             .OPEN,
             .{
                 .IO = if (flags.follow_symlinks) .SYNCHRONOUS_NONALERT else .ASYNCHRONOUS,
-                .NON_DIRECTORY_FILE = true,
+                .NON_DIRECTORY_FILE = !flags.allow_directory,
                 .OPEN_REPARSE_POINT = !flags.follow_symlinks,
             },
             null,
@@ -3052,9 +3052,8 @@ fn dirOpenFileWasi(
     while (true) {
         switch (wasi.path_open(dir.handle, lookup_flags, sub_path.ptr, sub_path.len, oflags, base, inheriting, fdflags, &fd)) {
             .SUCCESS => {
-                errdefer posix.close(fd);
                 current_thread.endSyscall();
-                return .{ .handle = fd };
+                break;
             },
             .INTR => {
                 try current_thread.checkCancel();
@@ -3088,6 +3087,21 @@ fn dirOpenFileWasi(
             },
         }
     }
+    errdefer posix.close(fd);
+
+    if (!flags.allow_directory) {
+        const is_dir = is_dir: {
+            const stat = fileStat(t, .{ .handle = fd }) catch |err| switch (err) {
+                // The directory-ness is either unknown or unknowable
+                error.Streaming => break :is_dir false,
+                else => |e| return e,
+            };
+            break :is_dir stat.kind == .directory;
+        };
+        if (is_dir) return error.IsDir;
+    }
+
+    return .{ .handle = fd };
 }
 
 const dirOpenDir = switch (native_os) {
@@ -4577,7 +4591,7 @@ fn dirSymLinkWindows(
         .access_mask = w.SYNCHRONIZE | w.GENERIC_READ | w.GENERIC_WRITE,
         .dir = dir,
         .creation = w.FILE_CREATE,
-        .filter = if (flags.is_directory) .dir_only else .file_only,
+        .filter = if (flags.is_directory) .dir_only else .non_directory_only,
     }) catch |err| switch (err) {
         error.IsDir => return error.PathAlreadyExists,
         error.NotDir => return error.Unexpected,
