@@ -2162,92 +2162,101 @@ fn breakExpr(parent_gz: *GenZir, parent_scope: *Scope, node: Ast.Node.Index) Inn
 
     // Look for the label in the scope.
     var scope = parent_scope;
-    while (true) {
-        switch (scope.tag) {
-            .gen_zir => {
-                const block_gz = scope.cast(GenZir).?;
+    find_scope: switch (scope.tag) {
+        .gen_zir => {
+            const gen_zir = scope.cast(GenZir).?;
 
-                if (block_gz.cur_defer_node.unwrap()) |cur_defer_node| {
-                    // We are breaking out of a `defer` block.
-                    return astgen.failNodeNotes(node, "cannot break out of defer expression", .{}, &.{
-                        try astgen.errNoteNode(
-                            cur_defer_node,
-                            "defer expression here",
-                            .{},
-                        ),
-                    });
-                }
+            if (gen_zir.cur_defer_node.unwrap()) |cur_defer_node| {
+                // We are breaking out of a `defer` block.
+                return astgen.failNodeNotes(node, "cannot break out of defer expression", .{}, &.{
+                    try astgen.errNoteNode(
+                        cur_defer_node,
+                        "defer expression here",
+                        .{},
+                    ),
+                });
+            }
 
-                const block_inst = blk: {
-                    if (opt_break_label.unwrap()) |break_label| {
-                        if (block_gz.label) |*label| {
-                            if (try astgen.tokenIdentEql(label.token, break_label)) {
-                                label.used = true;
-                                break :blk label.block_inst;
-                            }
-                        }
-                    } else if (block_gz.break_block.unwrap()) |i| {
-                        break :blk i;
+            if (opt_break_label.unwrap()) |break_label| labeled: {
+                if (gen_zir.label) |*label| {
+                    if (try astgen.tokenIdentEql(label.token, break_label)) {
+                        label.used = true;
+                        break :labeled;
                     }
-                    // If not the target, start over with the parent
-                    scope = block_gz.parent;
-                    continue;
-                };
-                // If we made it here, this block is the target of the break expr
+                }
+                // gz without or with different label, continue to parent scopes.
+                scope = gen_zir.parent;
+                continue :find_scope scope.tag;
+            } else if (!gen_zir.allow_unlabeled_control_flow) {
+                // This `break` is unlabeled and the gz we've found doesn't allow
+                // unlabeled control flow. Continue to parent scopes.
+                scope = gen_zir.parent;
+                continue :find_scope scope.tag;
+            }
 
-                const break_tag: Zir.Inst.Tag = if (block_gz.is_inline)
-                    .break_inline
-                else
-                    .@"break";
+            const break_tag: Zir.Inst.Tag = if (gen_zir.is_inline)
+                .break_inline
+            else
+                .@"break";
 
-                const rhs = opt_rhs.unwrap() orelse {
-                    _ = try rvalue(parent_gz, block_gz.break_result_info, .void_value, node);
-
-                    try genDefers(parent_gz, scope, parent_scope, .normal_only);
-
-                    // As our last action before the break, "pop" the error trace if needed
-                    if (!block_gz.is_comptime)
-                        _ = try parent_gz.addRestoreErrRetIndex(.{ .block = block_inst }, .always, node);
-
-                    _ = try parent_gz.addBreak(break_tag, block_inst, .void_value);
-                    return Zir.Inst.Ref.unreachable_value;
-                };
-
-                const operand = try reachableExpr(parent_gz, parent_scope, block_gz.break_result_info, rhs, node);
+            if (opt_rhs.unwrap()) |rhs| {
+                // We have a `break` operand.
+                const operand = try reachableExpr(parent_gz, parent_scope, gen_zir.break_result_info, rhs, node);
 
                 try genDefers(parent_gz, scope, parent_scope, .normal_only);
 
                 // As our last action before the break, "pop" the error trace if needed
-                if (!block_gz.is_comptime)
-                    try restoreErrRetIndex(parent_gz, .{ .block = block_inst }, block_gz.break_result_info, rhs, operand);
-
-                switch (block_gz.break_result_info.rl) {
+                if (!gen_zir.is_comptime) {
+                    try restoreErrRetIndex(parent_gz, .{ .block = gen_zir.break_target }, gen_zir.break_result_info, rhs, operand);
+                }
+                switch (gen_zir.break_result_info.rl) {
                     .ptr => {
                         // In this case we don't have any mechanism to intercept it;
                         // we assume the result location is written, and we break with void.
-                        _ = try parent_gz.addBreak(break_tag, block_inst, .void_value);
+                        _ = try parent_gz.addBreak(break_tag, gen_zir.break_target, .void_value);
                     },
                     .discard => {
-                        _ = try parent_gz.addBreak(break_tag, block_inst, .void_value);
+                        _ = try parent_gz.addBreak(break_tag, gen_zir.break_target, .void_value);
                     },
                     else => {
-                        _ = try parent_gz.addBreakWithSrcNode(break_tag, block_inst, operand, rhs);
+                        _ = try parent_gz.addBreakWithSrcNode(break_tag, gen_zir.break_target, operand, rhs);
                     },
                 }
-                return Zir.Inst.Ref.unreachable_value;
-            },
-            .local_val => scope = scope.cast(Scope.LocalVal).?.parent,
-            .local_ptr => scope = scope.cast(Scope.LocalPtr).?.parent,
-            .namespace => break,
-            .defer_normal, .defer_error => scope = scope.cast(Scope.Defer).?.parent,
-            .top => unreachable,
-        }
-    }
-    if (opt_break_label.unwrap()) |break_label| {
-        const label_name = try astgen.identifierTokenString(break_label);
-        return astgen.failTok(break_label, "label not found: '{s}'", .{label_name});
-    } else {
-        return astgen.failNode(node, "break expression outside loop", .{});
+                return .unreachable_value;
+            } else {
+                _ = try rvalue(parent_gz, gen_zir.break_result_info, .void_value, node);
+
+                try genDefers(parent_gz, scope, parent_scope, .normal_only);
+
+                // As our last action before the break, "pop" the error trace if needed
+                if (!gen_zir.is_comptime)
+                    _ = try parent_gz.addRestoreErrRetIndex(.{ .block = gen_zir.break_target }, .always, node);
+
+                _ = try parent_gz.addBreak(break_tag, gen_zir.break_target, .void_value);
+                return .unreachable_value;
+            }
+        },
+        .local_val => {
+            scope = scope.cast(Scope.LocalVal).?.parent;
+            continue :find_scope scope.tag;
+        },
+        .local_ptr => {
+            scope = scope.cast(Scope.LocalPtr).?.parent;
+            continue :find_scope scope.tag;
+        },
+        .defer_normal, .defer_error => {
+            scope = scope.cast(Scope.Defer).?.parent;
+            continue :find_scope scope.tag;
+        },
+        .namespace => {
+            if (opt_break_label.unwrap()) |break_label| {
+                const label_name = try astgen.identifierTokenString(break_label);
+                return astgen.failTok(break_label, "label not found: '{s}'", .{label_name});
+            } else {
+                return astgen.failNode(node, "break expression outside loop", .{});
+            }
+        },
+        .top => unreachable,
     }
 }
 
@@ -2262,100 +2271,116 @@ fn continueExpr(parent_gz: *GenZir, parent_scope: *Scope, node: Ast.Node.Index) 
 
     // Look for the label in the scope.
     var scope = parent_scope;
-    while (true) {
-        switch (scope.tag) {
-            .gen_zir => {
-                const gen_zir = scope.cast(GenZir).?;
+    find_scope: switch (scope.tag) {
+        .gen_zir => {
+            const gen_zir = scope.cast(GenZir).?;
 
-                if (gen_zir.cur_defer_node.unwrap()) |cur_defer_node| {
-                    return astgen.failNodeNotes(node, "cannot continue out of defer expression", .{}, &.{
-                        try astgen.errNoteNode(
-                            cur_defer_node,
-                            "defer expression here",
-                            .{},
-                        ),
-                    });
-                }
-                const continue_block = gen_zir.continue_block.unwrap() orelse {
-                    scope = gen_zir.parent;
-                    continue;
-                };
-                if (opt_break_label.unwrap()) |break_label| blk: {
-                    if (gen_zir.label) |*label| {
-                        if (try astgen.tokenIdentEql(label.token, break_label)) {
-                            const maybe_switch_tag = astgen.instructions.items(.tag)[@intFromEnum(label.block_inst)];
-                            if (opt_rhs != .none) switch (maybe_switch_tag) {
-                                .switch_block, .switch_block_ref => {},
-                                else => return astgen.failNode(node, "cannot continue loop with operand", .{}),
-                            } else switch (maybe_switch_tag) {
-                                .switch_block, .switch_block_ref => return astgen.failNode(node, "cannot continue switch without operand", .{}),
-                                else => {},
-                            }
+            if (gen_zir.cur_defer_node.unwrap()) |cur_defer_node| {
+                return astgen.failNodeNotes(node, "cannot continue out of defer expression", .{}, &.{
+                    try astgen.errNoteNode(
+                        cur_defer_node,
+                        "defer expression here",
+                        .{},
+                    ),
+                });
+            }
 
-                            label.used = true;
-                            label.used_for_continue = true;
-                            break :blk;
+            if (opt_break_label.unwrap()) |break_label| labeled: {
+                if (gen_zir.label) |*label| {
+                    if (try astgen.tokenIdentEql(label.token, break_label)) {
+                        switch (gen_zir.continue_target) {
+                            .none => {
+                                return astgen.failNode(node, "continue cannot target labeled block", .{});
+                            },
+                            .@"break" => if (opt_rhs != .none) {
+                                return astgen.failNode(node, "cannot continue loop with operand", .{});
+                            },
+                            .switch_continue => if (opt_rhs == .none) {
+                                return astgen.failNode(node, "cannot continue switch without operand", .{});
+                            },
                         }
-                    }
-                    // found continue but either it has a different label, or no label
-                    scope = gen_zir.parent;
-                    continue;
-                } else if (gen_zir.label) |label| {
-                    // This `continue` is unlabeled. If the gz we've found corresponds to a labeled
-                    // `switch`, ignore it and continue to parent scopes.
-                    switch (astgen.instructions.items(.tag)[@intFromEnum(label.block_inst)]) {
-                        .switch_block, .switch_block_ref => {
-                            scope = gen_zir.parent;
-                            continue;
-                        },
-                        else => {},
+                        label.used = true;
+                        label.used_for_continue = true;
+                        break :labeled;
                     }
                 }
+                // gz without or with different label, continue to parent scopes.
+                scope = gen_zir.parent;
+                continue :find_scope scope.tag;
+            } else if (gen_zir.allow_unlabeled_control_flow) {
+                // This `continue` is unlabeled. If the gz we've found doesn't
+                // provide a `continue` target or corresponds to a labeled
+                // `switch`, ignore it and continue to parent scopes.
+                switch (gen_zir.continue_target) {
+                    .none, .switch_continue => {
+                        scope = gen_zir.parent;
+                        continue :find_scope scope.tag;
+                    },
+                    .@"break" => {},
+                }
+            } else {
+                // We don't have a break label and the gz we found doesn't allow
+                // unlabeled control flow, so we continue to its parent scopes.
+                scope = gen_zir.parent;
+                continue :find_scope scope.tag;
+            }
 
-                if (opt_rhs.unwrap()) |rhs| {
-                    // We need to figure out the result info to use.
-                    // The type should match
+            switch (gen_zir.continue_target) {
+                .none => unreachable, // should have failed or continued to parent scopes by now
+                .@"break" => |block| {
+                    try genDefers(parent_gz, scope, parent_scope, .normal_only);
+
+                    const break_tag: Zir.Inst.Tag = if (gen_zir.is_inline)
+                        .break_inline
+                    else
+                        .@"break";
+                    if (break_tag == .break_inline) {
+                        _ = try parent_gz.addUnNode(.check_comptime_control_flow, block.toRef(), node);
+                    }
+
+                    // As our last action before the continue, "pop" the error trace if needed
+                    if (!gen_zir.is_comptime) {
+                        _ = try parent_gz.addRestoreErrRetIndex(.{ .block = block }, .always, node);
+                    }
+                    _ = try parent_gz.addBreak(break_tag, block, .void_value);
+                    return .unreachable_value;
+                },
+                .switch_continue => |switch_block| {
+                    const rhs = opt_rhs.unwrap().?; // checked above
                     const operand = try reachableExpr(parent_gz, parent_scope, gen_zir.continue_result_info, rhs, node);
 
                     try genDefers(parent_gz, scope, parent_scope, .normal_only);
 
                     // As our last action before the continue, "pop" the error trace if needed
-                    if (!gen_zir.is_comptime)
-                        _ = try parent_gz.addRestoreErrRetIndex(.{ .block = continue_block }, .always, node);
-
-                    _ = try parent_gz.addBreakWithSrcNode(.switch_continue, continue_block, operand, rhs);
-                    return Zir.Inst.Ref.unreachable_value;
-                }
-
-                try genDefers(parent_gz, scope, parent_scope, .normal_only);
-
-                const break_tag: Zir.Inst.Tag = if (gen_zir.is_inline)
-                    .break_inline
-                else
-                    .@"break";
-                if (break_tag == .break_inline) {
-                    _ = try parent_gz.addUnNode(.check_comptime_control_flow, continue_block.toRef(), node);
-                }
-
-                // As our last action before the continue, "pop" the error trace if needed
-                if (!gen_zir.is_comptime)
-                    _ = try parent_gz.addRestoreErrRetIndex(.{ .block = continue_block }, .always, node);
-
-                _ = try parent_gz.addBreak(break_tag, continue_block, .void_value);
-                return Zir.Inst.Ref.unreachable_value;
-            },
-            .local_val => scope = scope.cast(Scope.LocalVal).?.parent,
-            .local_ptr => scope = scope.cast(Scope.LocalPtr).?.parent,
-            .defer_normal, .defer_error => scope = scope.cast(Scope.Defer).?.parent,
-            .namespace => break,
-            .top => unreachable,
-        }
-    }
-    if (opt_break_label.unwrap()) |break_label| {
-        const label_name = try astgen.identifierTokenString(break_label);
-        return astgen.failTok(break_label, "label not found: '{s}'", .{label_name});
-    } else {
-        return astgen.failNode(node, "continue expression outside loop", .{});
+                    if (!gen_zir.is_comptime) {
+                        _ = try parent_gz.addRestoreErrRetIndex(.{ .block = switch_block }, .always, node);
+                    }
+                    _ = try parent_gz.addBreakWithSrcNode(.switch_continue, switch_block, operand, rhs);
+                    return .unreachable_value;
+                },
+            }
+        },
+        .local_val => {
+            scope = scope.cast(Scope.LocalVal).?.parent;
+            continue :find_scope scope.tag;
+        },
+        .local_ptr => {
+            scope = scope.cast(Scope.LocalPtr).?.parent;
+            continue :find_scope scope.tag;
+        },
+        .defer_normal, .defer_error => {
+            scope = scope.cast(Scope.Defer).?.parent;
+            continue :find_scope scope.tag;
+        },
+        .namespace => {
+            if (opt_break_label.unwrap()) |break_label| {
+                const label_name = try astgen.identifierTokenString(break_label);
+                return astgen.failTok(break_label, "label not found: '{s}'", .{label_name});
+            } else {
+                return astgen.failNode(node, "continue expression outside loop", .{});
+            }
+        },
+        .top => unreachable,
     }
 }
 
@@ -2509,10 +2534,9 @@ fn labeledBlockExpr(
     try gz.instructions.append(astgen.gpa, block_inst);
     var block_scope = gz.makeSubBlock(parent_scope);
     block_scope.is_inline = force_comptime;
-    block_scope.label = GenZir.Label{
-        .token = label_token,
-        .block_inst = block_inst,
-    };
+    block_scope.label = .{ .token = label_token };
+    block_scope.break_target = block_inst;
+    block_scope.continue_target = .none;
     block_scope.setBreakResultInfo(block_ri);
     if (force_comptime) block_scope.is_comptime = true;
     defer block_scope.unstack();
@@ -6574,7 +6598,6 @@ fn whileExpr(
 
     var loop_scope = parent_gz.makeSubBlock(scope);
     loop_scope.is_inline = is_inline;
-    loop_scope.setBreakResultInfo(block_ri);
     defer loop_scope.unstack();
 
     var cond_scope = parent_gz.makeSubBlock(&loop_scope.base);
@@ -6707,14 +6730,13 @@ fn whileExpr(
     _ = try loop_scope.addNode(repeat_tag, node);
 
     try loop_scope.setBlockBody(loop_block);
-    loop_scope.break_block = loop_block.toOptional();
-    loop_scope.continue_block = continue_block.toOptional();
     if (while_full.label_token) |label_token| {
-        loop_scope.label = .{
-            .token = label_token,
-            .block_inst = loop_block,
-        };
+        loop_scope.label = .{ .token = label_token };
     }
+    loop_scope.allow_unlabeled_control_flow = true;
+    loop_scope.break_target = loop_block;
+    loop_scope.continue_target = .{ .@"break" = continue_block };
+    loop_scope.setBreakResultInfo(block_ri);
 
     // done adding instructions to loop_scope, can now stack then_scope
     then_scope.instructions_top = then_scope.instructions.items.len;
@@ -6787,10 +6809,12 @@ fn whileExpr(
                 break :s &else_scope.base;
             }
         };
-        // Remove the continue block and break block so that `continue` and `break`
-        // control flow apply to outer loops; not this one.
-        loop_scope.continue_block = .none;
-        loop_scope.break_block = .none;
+        // Remove label and forbid unlabeled control flow to this scope so that
+        // `continue` and `break` control flow apply to outer loops; not this one.
+        loop_scope.label = null;
+        loop_scope.allow_unlabeled_control_flow = false;
+        loop_scope.continue_target = undefined;
+        loop_scope.break_target = undefined;
         const else_result = try fullBodyExpr(&else_scope, sub_scope, loop_scope.break_result_info, else_node, .allow_branch_hint);
         if (is_statement) {
             _ = try addEnsureResult(&else_scope, else_result, else_node);
@@ -6979,14 +7003,12 @@ fn forExpr(
     const cond_block = try loop_scope.makeBlockInst(block_tag, node);
     try cond_scope.setBlockBody(cond_block);
 
-    loop_scope.break_block = loop_block.toOptional();
-    loop_scope.continue_block = cond_block.toOptional();
     if (for_full.label_token) |label_token| {
-        loop_scope.label = .{
-            .token = label_token,
-            .block_inst = loop_block,
-        };
+        loop_scope.label = .{ .token = label_token };
     }
+    loop_scope.allow_unlabeled_control_flow = true;
+    loop_scope.break_target = loop_block;
+    loop_scope.continue_target = .{ .@"break" = cond_block };
 
     const then_node = for_full.ast.then_expr;
     var then_scope = parent_gz.makeSubBlock(&cond_scope.base);
@@ -7077,10 +7099,12 @@ fn forExpr(
 
     if (for_full.ast.else_expr.unwrap()) |else_node| {
         const sub_scope = &else_scope.base;
-        // Remove the continue block and break block so that `continue` and `break`
-        // control flow apply to outer loops; not this one.
-        loop_scope.continue_block = .none;
-        loop_scope.break_block = .none;
+        // Remove label and forbid unlabeled control flow to this scope so that
+        // `continue` and `break` control flow apply to outer loops; not this one.
+        loop_scope.label = null;
+        loop_scope.allow_unlabeled_control_flow = false;
+        loop_scope.continue_target = undefined;
+        loop_scope.break_target = undefined;
         const else_result = try fullBodyExpr(&else_scope, sub_scope, loop_scope.break_result_info, else_node, .allow_branch_hint);
         if (is_statement) {
             _ = try addEnsureResult(&else_scope, else_result, else_node);
@@ -7818,7 +7842,9 @@ fn switchExpr(
     const switch_block = try parent_gz.makeBlockInst(switch_tag, node);
 
     if (switch_full.label_token) |label_token| {
-        block_scope.continue_block = switch_block.toOptional();
+        block_scope.label = .{ .token = label_token };
+        block_scope.break_target = switch_block;
+        block_scope.continue_target = .{ .switch_continue = switch_block };
         block_scope.continue_result_info = .{
             .rl = if (any_payload_is_ref)
                 .{ .ref_coerced_ty = raw_operand_ty_ref }
@@ -7826,12 +7852,7 @@ fn switchExpr(
                 .{ .coerced_ty = raw_operand_ty_ref },
         };
 
-        block_scope.label = .{
-            .token = label_token,
-            .block_inst = switch_block,
-        };
-        // `break` can target this via `label.block_inst`
-        // `break_result_info` already set by `setBreakResultInfo`
+        // `break_result_info` already set by `setBreakResultInfo` above.
     }
 
     // We re-use this same scope for all cases, including the special prong, if any.
@@ -11916,8 +11937,8 @@ const GenZir = struct {
     /// whenever we know Sema will analyze the current block with `is_comptime`,
     /// for instance when we're within a `struct_decl` or a `block_comptime`.
     is_comptime: bool,
-    /// Whether we're in an expression within a `@TypeOf` operand. In this case, closure of runtime
-    /// variables is permitted where it is usually not.
+    /// Whether we're in an expression within a `@TypeOf` operand. In this case,
+    /// closure of runtime variables is permitted where it is usually not.
     is_typeof: bool = false,
     /// This is set to true for a `GenZir` of a `block_inline`, indicating that
     /// exits from this block should use `break_inline` rather than `break`.
@@ -11938,10 +11959,27 @@ const GenZir = struct {
     /// if use is strictly nested. This saves prior size of list for unstacking.
     instructions_top: usize,
     label: ?Label = null,
-    break_block: Zir.Inst.OptionalIndex = .none,
-    continue_block: Zir.Inst.OptionalIndex = .none,
+    /// If `true`, unlabeled `break` and `continue` exprs can target this `GenZir`.
+    allow_unlabeled_control_flow: bool = false,
+    /// If `label` is `null` and `unlabeled_control_flow_target` is `false`,
+    /// this is unused and may be `undefined`.
+    /// Otherwise, this is the target for a `break` instruction when a `break`
+    /// targets this `GenZir`.
+    break_target: Zir.Inst.Index = undefined,
+    /// If `label` is `null` and `unlabeled_control_flow_target` is `false`,
+    /// this is unused and may be `undefined`.
+    continue_target: union(enum) {
+        /// A `continue` cannot target this `GenZir`; emit an error.
+        none,
+        /// Emit a `break` instruction targeting this block.
+        @"break": Zir.Inst.Index,
+        /// Emit a `switch_continue` instruction targeting this `switch_block`.
+        switch_continue: Zir.Inst.Index,
+    } = undefined,
     /// Only valid when setBreakResultInfo is called.
     break_result_info: AstGen.ResultInfo = undefined,
+    /// If `continue_target` is *not* `switch_continue`, this is unused and may
+    /// be `undefined`.
     continue_result_info: AstGen.ResultInfo = undefined,
 
     suspend_node: Ast.Node.OptionalIndex = .none,
@@ -12008,7 +12046,6 @@ const GenZir = struct {
 
     const Label = struct {
         token: Ast.TokenIndex,
-        block_inst: Zir.Inst.Index,
         used: bool = false,
         used_for_continue: bool = false,
     };
