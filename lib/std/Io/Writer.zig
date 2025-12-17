@@ -961,7 +961,7 @@ pub fn sendFileAll(w: *Writer, file_reader: *File.Reader, limit: Limit) FileAllE
         const n = sendFile(w, file_reader, .limited(remaining)) catch |err| switch (err) {
             error.EndOfStream => break,
             error.Unimplemented => {
-                file_reader.mode = file_reader.mode.toReading();
+                file_reader.mode = file_reader.mode.toSimple();
                 remaining -= try w.sendFileReadingAll(file_reader, .limited(remaining));
                 break;
             },

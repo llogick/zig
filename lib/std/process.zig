@@ -21,6 +21,13 @@ pub const changeCurDirZ = posix.chdirZ;
 
 pub const GetCwdError = posix.GetCwdError;
 
+/// This is the global, process-wide protection to coordinate stderr writes.
+///
+/// The primary motivation for recursive mutex here is so that a panic while
+/// stderr mutex is held still dumps the stack trace and other debug
+/// information.
+pub var stderr_thread_mutex: std.Thread.Mutex.Recursive = .init;
+
 /// The result is a slice of `out_buffer`, from index `0`.
 /// On Windows, the result is encoded as [WTF-8](https://wtf-8.codeberg.page/).
 /// On other platforms, the result is an opaque sequence of bytes with no particular encoding.

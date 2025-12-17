@@ -557,13 +557,6 @@ pub const net = @import("Io/net.zig");
 userdata: ?*anyopaque,
 vtable: *const VTable,
 
-/// This is the global, process-wide protection to coordinate stderr writes.
-///
-/// The primary motivation for recursive mutex here is so that a panic while
-/// stderr mutex is held still dumps the stack trace and other debug
-/// information.
-pub var stderr_thread_mutex: std.Thread.Mutex.Recursive = .init;
-
 pub const VTable = struct {
     /// If it returns `null` it means `result` has been already populated and
     /// `await` will be a no-op.
@@ -719,9 +712,9 @@ pub const VTable = struct {
 
     processExecutableOpen: *const fn (?*anyopaque, File.OpenFlags) std.process.OpenExecutableError!File,
     processExecutablePath: *const fn (?*anyopaque, buffer: []u8) std.process.ExecutablePathError!usize,
-    lockStderrWriter: *const fn (?*anyopaque, buffer: []u8) Cancelable!*File.Writer,
-    tryLockStderrWriter: *const fn (?*anyopaque, buffer: []u8) ?*File.Writer,
-    unlockStderrWriter: *const fn (?*anyopaque) void,
+    lockStderr: *const fn (?*anyopaque, buffer: []u8, ?Terminal.Mode) Cancelable!LockedStderr,
+    tryLockStderr: *const fn (?*anyopaque, buffer: []u8) Cancelable!?LockedStderr,
+    unlockStderr: *const fn (?*anyopaque) void,
 
     now: *const fn (?*anyopaque, Clock) Clock.Error!Timestamp,
     sleep: *const fn (?*anyopaque, Timeout) SleepError!void,
@@ -763,6 +756,7 @@ pub const UnexpectedError = error{
 
 pub const Dir = @import("Io/Dir.zig");
 pub const File = @import("Io/File.zig");
+pub const Terminal = @import("Io/Terminal.zig");
 
 pub const Clock = enum {
     /// A settable system-wide clock that measures real (i.e. wall-clock)
@@ -2177,22 +2171,34 @@ pub fn select(io: Io, s: anytype) Cancelable!SelectUnion(@TypeOf(s)) {
     }
 }
 
+pub const LockedStderr = struct {
+    file_writer: *File.Writer,
+    terminal_mode: Terminal.Mode,
+
+    pub fn terminal(ls: LockedStderr) Terminal {
+        return .{
+            .writer = &ls.file_writer.interface,
+            .mode = ls.terminal_mode,
+        };
+    }
+};
+
 /// For doing application-level writes to the standard error stream.
 /// Coordinates also with debug-level writes that are ignorant of Io interface
-/// and implementations. When this returns, `stderr_thread_mutex` will be
-/// locked.
+/// and implementations. When this returns, `std.process.stderr_thread_mutex`
+/// will be locked.
 ///
 /// See also:
-/// * `tryLockStderrWriter`
-pub fn lockStderrWriter(io: Io, buffer: []u8) Cancelable!*File.Writer {
-    return io.vtable.lockStderrWriter(io.userdata, buffer);
+/// * `tryLockStderr`
+pub fn lockStderr(io: Io, buffer: []u8, terminal_mode: ?Terminal.Mode) Cancelable!LockedStderr {
+    return io.vtable.lockStderr(io.userdata, buffer, terminal_mode);
 }
 
-/// Same as `lockStderrWriter` but uncancelable and non-blocking.
-pub fn tryLockStderrWriter(io: Io, buffer: []u8) ?*File.Writer {
-    return io.vtable.tryLockStderrWriter(io.userdata, buffer);
+/// Same as `lockStderr` but non-blocking.
+pub fn tryLockStderr(io: Io, buffer: []u8, terminal_mode: ?Terminal.Mode) Cancelable!?LockedStderr {
+    return io.vtable.tryLockStderr(io.userdata, buffer, terminal_mode);
 }
 
-pub fn unlockStderrWriter(io: Io) void {
-    return io.vtable.unlockStderrWriter(io.userdata);
+pub fn unlockStderr(io: Io) void {
+    return io.vtable.unlockStderr(io.userdata);
 }

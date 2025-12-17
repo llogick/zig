@@ -92,35 +92,33 @@ pub fn defaultLog(
     args: anytype,
 ) void {
     var buffer: [64]u8 = undefined;
-    const stderr = std.debug.lockStderrWriter(&buffer);
-    defer std.debug.unlockStderrWriter();
-    return defaultLogFileWriter(level, scope, format, args, stderr);
+    const stderr = std.debug.lockStderr(&buffer);
+    defer std.debug.unlockStderr();
+    return defaultLogFileTerminal(level, scope, format, args, stderr) catch {};
 }
 
-pub fn defaultLogFileWriter(
+pub fn defaultLogFileTerminal(
     comptime level: Level,
     comptime scope: @EnumLiteral(),
     comptime format: []const u8,
     args: anytype,
-    fw: *std.Io.File.Writer,
-) void {
-    fw.setColor(switch (level) {
+    t: std.Io.Terminal,
+) std.Io.Writer.Error!void {
+    t.setColor(switch (level) {
         .err => .red,
         .warn => .yellow,
         .info => .green,
         .debug => .magenta,
     }) catch {};
-    fw.setColor(.bold) catch {};
-    fw.interface.writeAll(level.asText()) catch return;
-    fw.setColor(.reset) catch {};
-    fw.setColor(.dim) catch {};
-    fw.setColor(.bold) catch {};
-    if (scope != .default) {
-        fw.interface.print("({s})", .{@tagName(scope)}) catch return;
-    }
-    fw.interface.writeAll(": ") catch return;
-    fw.setColor(.reset) catch {};
-    fw.interface.print(format ++ "\n", fw.mode.decorateArgs(args)) catch return;
+    t.setColor(.bold) catch {};
+    try t.writer.writeAll(level.asText());
+    t.setColor(.reset) catch {};
+    t.setColor(.dim) catch {};
+    t.setColor(.bold) catch {};
+    if (scope != .default) try t.writer.print("({t})", .{scope});
+    try t.writer.writeAll(": ");
+    t.setColor(.reset) catch {};
+    try t.writer.print(format ++ "\n", args);
 }
 
 /// Returns a scoped logging namespace that logs all messages using the scope

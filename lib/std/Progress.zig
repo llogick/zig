@@ -565,10 +565,10 @@ fn updateThreadRun(io: Io) void {
         maybeUpdateSize(resize_flag);
 
         const buffer, _ = computeRedraw(&serialized_buffer);
-        if (io.tryLockStderrWriter(&.{})) |fw| {
-            defer io.unlockStderrWriter();
+        if (io.tryLockStderr(&.{}, null) catch return) |locked_stderr| {
+            defer io.unlockStderr();
             global_progress.need_clear = true;
-            fw.writeAllUnescaped(buffer) catch return;
+            locked_stderr.file_writer.interface.writeAll(buffer) catch return;
         }
     }
 
@@ -576,18 +576,18 @@ fn updateThreadRun(io: Io) void {
         const resize_flag = wait(io, global_progress.refresh_rate_ns);
 
         if (@atomicLoad(bool, &global_progress.done, .monotonic)) {
-            const fw = io.lockStderrWriter(&.{}) catch return;
-            defer io.unlockStderrWriter();
-            return clearWrittenWithEscapeCodes(fw) catch {};
+            const stderr = io.lockStderr(&.{}, null) catch return;
+            defer io.unlockStderr();
+            return clearWrittenWithEscapeCodes(stderr.file_writer) catch {};
         }
 
         maybeUpdateSize(resize_flag);
 
         const buffer, _ = computeRedraw(&serialized_buffer);
-        if (io.tryLockStderrWriter(&.{})) |fw| {
-            defer io.unlockStderrWriter();
+        if (io.tryLockStderr(&.{}, null) catch return) |locked_stderr| {
+            defer io.unlockStderr();
             global_progress.need_clear = true;
-            fw.writeAllUnescaped(buffer) catch return;
+            locked_stderr.file_writer.interface.writeAll(buffer) catch return;
         }
     }
 }
@@ -609,11 +609,11 @@ fn windowsApiUpdateThreadRun(io: Io) void {
         maybeUpdateSize(resize_flag);
 
         const buffer, const nl_n = computeRedraw(&serialized_buffer);
-        if (io.tryLockStderrWriter()) |fw| {
-            defer io.unlockStderrWriter();
+        if (io.tryLockStderr(&.{}, null) catch return) |locked_stderr| {
+            defer io.unlockStderr();
             windowsApiWriteMarker();
             global_progress.need_clear = true;
-            fw.writeAllUnescaped(buffer) catch return;
+            locked_stderr.file_writer.interface.writeAll(buffer) catch return;
             windowsApiMoveToMarker(nl_n) catch return;
         }
     }
@@ -622,20 +622,20 @@ fn windowsApiUpdateThreadRun(io: Io) void {
         const resize_flag = wait(io, global_progress.refresh_rate_ns);
 
         if (@atomicLoad(bool, &global_progress.done, .monotonic)) {
-            _ = io.lockStderrWriter() catch return;
-            defer io.unlockStderrWriter();
+            _ = io.lockStderr(&.{}, null) catch return;
+            defer io.unlockStderr();
             return clearWrittenWindowsApi() catch {};
         }
 
         maybeUpdateSize(resize_flag);
 
         const buffer, const nl_n = computeRedraw(&serialized_buffer);
-        if (io.tryLockStderrWriter()) |fw| {
-            defer io.unlockStderrWriter();
+        if (io.tryLockStderr(&.{}, null) catch return) |locked_stderr| {
+            defer io.unlockStderr();
             clearWrittenWindowsApi() catch return;
             windowsApiWriteMarker();
             global_progress.need_clear = true;
-            fw.writeAllUnescaped(buffer) catch return;
+            locked_stderr.file_writer.interface.writeAll(buffer) catch return;
             windowsApiMoveToMarker(nl_n) catch return;
         }
     }
@@ -766,7 +766,7 @@ fn appendTreeSymbol(symbol: TreeSymbol, buf: []u8, start_i: usize) usize {
 
 pub fn clearWrittenWithEscapeCodes(file_writer: *Io.File.Writer) Io.Writer.Error!void {
     if (noop_impl or !global_progress.need_clear) return;
-    try file_writer.writeAllUnescaped(clear ++ progress_remove);
+    try file_writer.interface.writeAll(clear ++ progress_remove);
     global_progress.need_clear = false;
 }
 

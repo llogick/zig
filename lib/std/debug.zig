@@ -265,29 +265,34 @@ pub const sys_can_stack_trace = switch (builtin.cpu.arch) {
 /// separate from the application's `Io` instance.
 var static_single_threaded_io: Io.Threaded = .init_single_threaded;
 
-/// Allows the caller to freely write to stderr until `unlockStderrWriter` is called.
+/// Allows the caller to freely write to stderr until `unlockStderr` is called.
 ///
 /// During the lock, any `std.Progress` information is cleared from the terminal.
 ///
-/// The lock is recursive, so it is valid for the same thread to call `lockStderrWriter` multiple
-/// times. The primary motivation is that this allows the panic handler to safely dump the stack
-/// trace and panic message even if the mutex was held at the panic site.
+/// The lock is recursive, so it is valid for the same thread to call
+/// `lockStderr` multiple times, allowing the panic handler to safely
+/// dump the stack trace and panic message even if the mutex was held at the
+/// panic site.
 ///
 /// The returned `Writer` does not need to be manually flushed: flushing is
-/// performed automatically when the matching `unlockStderrWriter` call occurs.
+/// performed automatically when the matching `unlockStderr` call occurs.
 ///
 /// This is a low-level debugging primitive that bypasses the `Io` interface,
 /// writing directly to stderr using the most basic syscalls available. This
 /// function does not switch threads, switch stacks, or suspend.
 ///
-/// Alternatively, use the higher-level `Io.lockStderrWriter` to integrate with
-/// the application's chosen `Io` implementation.
-pub fn lockStderrWriter(buffer: []u8) *File.Writer {
-    return static_single_threaded_io.ioBasic().lockStderrWriter(buffer) catch unreachable;
+/// Alternatively, use the higher-level `Io.lockStderr` to integrate with the
+/// application's chosen `Io` implementation.
+pub fn lockStderr(buffer: []u8) Io.Terminal {
+    return (static_single_threaded_io.ioBasic().lockStderr(buffer, null) catch |err| switch (err) {
+        // Impossible to cancel because no calls to cancel using
+        // `static_single_threaded_io` exist.
+        error.Canceled => unreachable,
+    }).terminal();
 }
 
-pub fn unlockStderrWriter() void {
-    static_single_threaded_io.ioBasic().unlockStderrWriter();
+pub fn unlockStderr() void {
+    static_single_threaded_io.ioBasic().unlockStderr();
 }
 
 /// Writes to stderr, ignoring errors.
@@ -299,14 +304,14 @@ pub fn unlockStderrWriter() void {
 /// Uses a 64-byte buffer for formatted printing which is flushed before this
 /// function returns.
 ///
-/// Alternatively, use the higher-level `std.log` or `Io.lockStderrWriter` to
+/// Alternatively, use the higher-level `std.log` or `Io.lockStderr` to
 /// integrate with the application's chosen `Io` implementation.
 pub fn print(comptime fmt: []const u8, args: anytype) void {
     nosuspend {
         var buffer: [64]u8 = undefined;
-        const stderr = lockStderrWriter(&buffer);
-        defer unlockStderrWriter();
-        stderr.interface.print(fmt, stderr.mode.decorateArgs(args)) catch return;
+        const stderr = lockStderr(&buffer);
+        defer unlockStderr();
+        stderr.writer.print(fmt, args) catch return;
     }
 }
 
@@ -322,43 +327,44 @@ pub inline fn getSelfDebugInfo() !*SelfInfo {
 /// Tries to print a hexadecimal view of the bytes, unbuffered, and ignores any error returned.
 /// Obtains the stderr mutex while dumping.
 pub fn dumpHex(bytes: []const u8) void {
-    const bw, const ttyconf = lockStderrWriter(&.{});
-    defer unlockStderrWriter();
-    dumpHexFallible(bw, ttyconf, bytes) catch {};
+    const stderr = lockStderr(&.{});
+    defer unlockStderr();
+    dumpHexFallible(stderr, bytes) catch {};
 }
 
 /// Prints a hexadecimal view of the bytes, returning any error that occurs.
-pub fn dumpHexFallible(bw: *Writer, fwm: File.Writer.Mode, bytes: []const u8) !void {
+pub fn dumpHexFallible(t: Io.Terminal, bytes: []const u8) !void {
+    const w = t.writer;
     var chunks = mem.window(u8, bytes, 16, 16);
     while (chunks.next()) |window| {
         // 1. Print the address.
         const address = (@intFromPtr(bytes.ptr) + 0x10 * (std.math.divCeil(usize, chunks.index orelse bytes.len, 16) catch unreachable)) - 0x10;
-        try fwm.setColor(bw, .dim);
+        try t.setColor(.dim);
         // We print the address in lowercase and the bytes in uppercase hexadecimal to distinguish them more.
         // Also, make sure all lines are aligned by padding the address.
-        try bw.print("{x:0>[1]}  ", .{ address, @sizeOf(usize) * 2 });
-        try fwm.setColor(bw, .reset);
+        try w.print("{x:0>[1]}  ", .{ address, @sizeOf(usize) * 2 });
+        try t.setColor(.reset);
 
         // 2. Print the bytes.
         for (window, 0..) |byte, index| {
-            try bw.print("{X:0>2} ", .{byte});
-            if (index == 7) try bw.writeByte(' ');
+            try w.print("{X:0>2} ", .{byte});
+            if (index == 7) try w.writeByte(' ');
         }
-        try bw.writeByte(' ');
+        try w.writeByte(' ');
         if (window.len < 16) {
             var missing_columns = (16 - window.len) * 3;
             if (window.len < 8) missing_columns += 1;
-            try bw.splatByteAll(' ', missing_columns);
+            try w.splatByteAll(' ', missing_columns);
         }
 
         // 3. Print the characters.
         for (window) |byte| {
             if (std.ascii.isPrint(byte)) {
-                try bw.writeByte(byte);
+                try w.writeByte(byte);
             } else {
                 // Related: https://github.com/ziglang/zig/issues/7600
-                if (fwm == .terminal_winapi) {
-                    try bw.writeByte('.');
+                if (t.mode == .windows_api) {
+                    try w.writeByte('.');
                     continue;
                 }
 
@@ -366,14 +372,14 @@ pub fn dumpHexFallible(bw: *Writer, fwm: File.Writer.Mode, bytes: []const u8) !v
                 // We don't want to do this for all control codes because most control codes apart from
                 // the ones that Zig has escape sequences for are likely not very useful to print as symbols.
                 switch (byte) {
-                    '\n' => try bw.writeAll("␊"),
-                    '\r' => try bw.writeAll("␍"),
-                    '\t' => try bw.writeAll("␉"),
-                    else => try bw.writeByte('.'),
+                    '\n' => try w.writeAll("␊"),
+                    '\r' => try w.writeAll("␍"),
+                    '\t' => try w.writeAll("␉"),
+                    else => try w.writeByte('.'),
                 }
             }
         }
-        try bw.writeByte('\n');
+        try w.writeByte('\n');
     }
 }
 
@@ -545,26 +551,27 @@ pub fn defaultPanic(
             _ = panicking.fetchAdd(1, .seq_cst);
 
             trace: {
-                const stderr = lockStderrWriter(&.{});
-                defer unlockStderrWriter();
+                const stderr = lockStderr(&.{});
+                defer unlockStderr();
+                const writer = stderr.writer;
 
                 if (builtin.single_threaded) {
-                    stderr.interface.print("panic: ", .{}) catch break :trace;
+                    writer.print("panic: ", .{}) catch break :trace;
                 } else {
                     const current_thread_id = std.Thread.getCurrentId();
-                    stderr.interface.print("thread {d} panic: ", .{current_thread_id}) catch break :trace;
+                    writer.print("thread {d} panic: ", .{current_thread_id}) catch break :trace;
                 }
-                stderr.interface.print("{s}\n", .{msg}) catch break :trace;
+                writer.print("{s}\n", .{msg}) catch break :trace;
 
                 if (@errorReturnTrace()) |t| if (t.index > 0) {
-                    stderr.interface.writeAll("error return context:\n") catch break :trace;
-                    writeStackTrace(t, &stderr.interface, stderr.mode) catch break :trace;
-                    stderr.interface.writeAll("\nstack trace:\n") catch break :trace;
+                    writer.writeAll("error return context:\n") catch break :trace;
+                    writeStackTrace(t, stderr) catch break :trace;
+                    writer.writeAll("\nstack trace:\n") catch break :trace;
                 };
                 writeCurrentStackTrace(.{
                     .first_address = first_trace_addr orelse @returnAddress(),
                     .allow_unsafe_unwind = true, // we're crashing anyway, give it our all!
-                }, &stderr.interface, stderr.mode) catch break :trace;
+                }, stderr) catch break :trace;
             }
 
             waitForOtherThreadToFinishPanicking();
@@ -574,8 +581,8 @@ pub fn defaultPanic(
             // A panic happened while trying to print a previous panic message.
             // We're still holding the mutex but that's fine as we're going to
             // call abort().
-            const stderr = lockStderrWriter(&.{});
-            stderr.interface.writeAll("aborting due to recursive panic\n") catch {};
+            const stderr = lockStderr(&.{});
+            stderr.writer.writeAll("aborting due to recursive panic\n") catch {};
         },
         else => {}, // Panicked while printing the recursive panic message.
     }
@@ -656,28 +663,29 @@ pub noinline fn captureCurrentStackTrace(options: StackUnwindOptions, addr_buf: 
 /// Write the current stack trace to `writer`, annotated with source locations.
 ///
 /// See `captureCurrentStackTrace` to capture the trace addresses into a buffer instead of printing.
-pub noinline fn writeCurrentStackTrace(options: StackUnwindOptions, writer: *Writer, fwm: File.Writer.Mode) Writer.Error!void {
+pub noinline fn writeCurrentStackTrace(options: StackUnwindOptions, t: Io.Terminal) Writer.Error!void {
+    const writer = t.writer;
     if (!std.options.allow_stack_tracing) {
-        fwm.setColor(writer, .dim) catch {};
+        t.setColor(.dim) catch {};
         try writer.print("Cannot print stack trace: stack tracing is disabled\n", .{});
-        fwm.setColor(writer, .reset) catch {};
+        t.setColor(.reset) catch {};
         return;
     }
     const di_gpa = getDebugInfoAllocator();
     const di = getSelfDebugInfo() catch |err| switch (err) {
         error.UnsupportedTarget => {
-            fwm.setColor(writer, .dim) catch {};
+            t.setColor(.dim) catch {};
             try writer.print("Cannot print stack trace: debug info unavailable for target\n", .{});
-            fwm.setColor(writer, .reset) catch {};
+            t.setColor(.reset) catch {};
             return;
         },
     };
     var it: StackIterator = .init(options.context);
     defer it.deinit();
     if (!it.stratOk(options.allow_unsafe_unwind)) {
-        fwm.setColor(writer, .dim) catch {};
+        t.setColor(.dim) catch {};
         try writer.print("Cannot print stack trace: safe unwind unavailable for target\n", .{});
-        fwm.setColor(writer, .reset) catch {};
+        t.setColor(.reset) catch {};
         return;
     }
     var total_frames: usize = 0;
@@ -701,31 +709,31 @@ pub noinline fn writeCurrentStackTrace(options: StackUnwindOptions, writer: *Wri
                 error.Unexpected => "unexpected error",
             };
             if (it.stratOk(options.allow_unsafe_unwind)) {
-                fwm.setColor(writer, .dim) catch {};
+                t.setColor(.dim) catch {};
                 try writer.print(
                     "Unwind error at address `{s}:0x{x}` ({s}), remaining frames may be incorrect\n",
                     .{ module_name, unwind_error.address, caption },
                 );
-                fwm.setColor(writer, .reset) catch {};
+                t.setColor(.reset) catch {};
             } else {
-                fwm.setColor(writer, .dim) catch {};
+                t.setColor(.dim) catch {};
                 try writer.print(
                     "Unwind error at address `{s}:0x{x}` ({s}), stopping trace early\n",
                     .{ module_name, unwind_error.address, caption },
                 );
-                fwm.setColor(writer, .reset) catch {};
+                t.setColor(.reset) catch {};
                 return;
             }
         },
         .end => break,
         .frame => |ret_addr| {
             if (total_frames > 10_000) {
-                fwm.setColor(writer, .dim) catch {};
+                t.setColor(.dim) catch {};
                 try writer.print(
                     "Stopping trace after {d} frames (large frame count may indicate broken debug info)\n",
                     .{total_frames},
                 );
-                fwm.setColor(writer, .reset) catch {};
+                t.setColor(.reset) catch {};
                 return;
             }
             total_frames += 1;
@@ -735,7 +743,7 @@ pub noinline fn writeCurrentStackTrace(options: StackUnwindOptions, writer: *Wri
             }
             // `ret_addr` is the return address, which is *after* the function call.
             // Subtract 1 to get an address *in* the function call for a better source location.
-            try printSourceAtAddress(di_gpa, io, di, writer, ret_addr -| StackIterator.ra_call_offset, fwm);
+            try printSourceAtAddress(di_gpa, io, di, t, ret_addr -| StackIterator.ra_call_offset);
             printed_any_frame = true;
         },
     };
@@ -743,8 +751,8 @@ pub noinline fn writeCurrentStackTrace(options: StackUnwindOptions, writer: *Wri
 }
 /// A thin wrapper around `writeCurrentStackTrace` which writes to stderr and ignores write errors.
 pub fn dumpCurrentStackTrace(options: StackUnwindOptions) void {
-    const stderr = lockStderrWriter(&.{});
-    defer unlockStderrWriter();
+    const stderr = lockStderr(&.{});
+    defer unlockStderr();
     writeCurrentStackTrace(.{
         .first_address = a: {
             if (options.first_address) |a| break :a a;
@@ -753,38 +761,28 @@ pub fn dumpCurrentStackTrace(options: StackUnwindOptions) void {
         },
         .context = options.context,
         .allow_unsafe_unwind = options.allow_unsafe_unwind,
-    }, &stderr.interface, stderr.mode) catch |err| switch (err) {
+    }, stderr) catch |err| switch (err) {
         error.WriteFailed => {},
     };
 }
 
 pub const FormatStackTrace = struct {
     stack_trace: StackTrace,
+    terminal_mode: Io.Terminal.Mode = .no_color,
 
-    pub const Decorated = struct {
-        stack_trace: StackTrace,
-        file_writer_mode: File.Writer.Mode,
-
-        pub fn format(decorated: Decorated, writer: *Writer) Writer.Error!void {
-            try writer.writeByte('\n');
-            try writeStackTrace(&decorated.stack_trace, writer, decorated.file_writer_mode);
-        }
-    };
-
-    pub fn format(context: FormatStackTrace, writer: *Writer) Writer.Error!void {
-        return Decorated.format(.{
-            .stack_trace = context.stack_trace,
-            .file_writer_mode = .streaming,
-        }, writer);
+    pub fn format(fst: FormatStackTrace, writer: *Writer) Writer.Error!void {
+        try writer.writeByte('\n');
+        try writeStackTrace(&fst.stack_trace, .{ .writer = writer, .mode = fst.terminal_mode });
     }
 };
 
 /// Write a previously captured stack trace to `writer`, annotated with source locations.
-pub fn writeStackTrace(st: *const StackTrace, writer: *Writer, fwm: File.Writer.Mode) Writer.Error!void {
+pub fn writeStackTrace(st: *const StackTrace, t: Io.Terminal) Writer.Error!void {
+    const writer = t.writer;
     if (!std.options.allow_stack_tracing) {
-        fwm.setColor(writer, .dim) catch {};
+        t.setColor(.dim) catch {};
         try writer.print("Cannot print stack trace: stack tracing is disabled\n", .{});
-        fwm.setColor(writer, .reset) catch {};
+        t.setColor(.reset) catch {};
         return;
     }
 
@@ -795,9 +793,9 @@ pub fn writeStackTrace(st: *const StackTrace, writer: *Writer, fwm: File.Writer.
     const di_gpa = getDebugInfoAllocator();
     const di = getSelfDebugInfo() catch |err| switch (err) {
         error.UnsupportedTarget => {
-            fwm.setColor(writer, .dim) catch {};
+            t.setColor(.dim) catch {};
             try writer.print("Cannot print stack trace: debug info unavailable for target\n\n", .{});
-            fwm.setColor(writer, .reset) catch {};
+            t.setColor(.reset) catch {};
             return;
         },
     };
@@ -806,19 +804,19 @@ pub fn writeStackTrace(st: *const StackTrace, writer: *Writer, fwm: File.Writer.
     for (st.instruction_addresses[0..captured_frames]) |ret_addr| {
         // `ret_addr` is the return address, which is *after* the function call.
         // Subtract 1 to get an address *in* the function call for a better source location.
-        try printSourceAtAddress(di_gpa, io, di, writer, ret_addr -| StackIterator.ra_call_offset, fwm);
+        try printSourceAtAddress(di_gpa, io, di, t, ret_addr -| StackIterator.ra_call_offset);
     }
     if (n_frames > captured_frames) {
-        fwm.setColor(writer, .bold) catch {};
+        t.setColor(.bold) catch {};
         try writer.print("({d} additional stack frames skipped...)\n", .{n_frames - captured_frames});
-        fwm.setColor(writer, .reset) catch {};
+        t.setColor(.reset) catch {};
     }
 }
 /// A thin wrapper around `writeStackTrace` which writes to stderr and ignores write errors.
 pub fn dumpStackTrace(st: *const StackTrace) void {
-    const stderr = lockStderrWriter(&.{});
-    defer unlockStderrWriter();
-    writeStackTrace(st, &stderr.interface, stderr.mode) catch |err| switch (err) {
+    const stderr = lockStderr(&.{});
+    defer unlockStderr();
+    writeStackTrace(st, stderr) catch |err| switch (err) {
         error.WriteFailed => {},
     };
 }
@@ -1117,9 +1115,8 @@ fn printSourceAtAddress(
     gpa: Allocator,
     io: Io,
     debug_info: *SelfInfo,
-    writer: *Writer,
+    t: Io.Terminal,
     address: usize,
-    fwm: File.Writer.Mode,
 ) Writer.Error!void {
     const symbol: Symbol = debug_info.getSymbol(gpa, io, address) catch |err| switch (err) {
         error.MissingDebugInfo,
@@ -1127,40 +1124,39 @@ fn printSourceAtAddress(
         error.InvalidDebugInfo,
         => .unknown,
         error.ReadFailed, error.Unexpected, error.Canceled => s: {
-            fwm.setColor(writer, .dim) catch {};
-            try writer.print("Failed to read debug info from filesystem, trace may be incomplete\n\n", .{});
-            fwm.setColor(writer, .reset) catch {};
+            t.setColor(.dim) catch {};
+            try t.writer.print("Failed to read debug info from filesystem, trace may be incomplete\n\n", .{});
+            t.setColor(.reset) catch {};
             break :s .unknown;
         },
         error.OutOfMemory => s: {
-            fwm.setColor(writer, .dim) catch {};
-            try writer.print("Ran out of memory loading debug info, trace may be incomplete\n\n", .{});
-            fwm.setColor(writer, .reset) catch {};
+            t.setColor(.dim) catch {};
+            try t.writer.print("Ran out of memory loading debug info, trace may be incomplete\n\n", .{});
+            t.setColor(.reset) catch {};
             break :s .unknown;
         },
     };
     defer if (symbol.source_location) |sl| gpa.free(sl.file_name);
     return printLineInfo(
         io,
-        writer,
+        t,
         symbol.source_location,
         address,
         symbol.name orelse "???",
         symbol.compile_unit_name orelse debug_info.getModuleName(gpa, address) catch "???",
-        fwm,
     );
 }
 fn printLineInfo(
     io: Io,
-    writer: *Writer,
+    t: Io.Terminal,
     source_location: ?SourceLocation,
     address: usize,
     symbol_name: []const u8,
     compile_unit_name: []const u8,
-    fwm: File.Writer.Mode,
 ) Writer.Error!void {
     nosuspend {
-        fwm.setColor(writer, .bold) catch {};
+        const writer = t.writer;
+        t.setColor(.bold) catch {};
 
         if (source_location) |*sl| {
             try writer.print("{s}:{d}:{d}", .{ sl.file_name, sl.line, sl.column });
@@ -1168,11 +1164,11 @@ fn printLineInfo(
             try writer.writeAll("???:?:?");
         }
 
-        fwm.setColor(writer, .reset) catch {};
+        t.setColor(.reset) catch {};
         try writer.writeAll(": ");
-        fwm.setColor(writer, .dim) catch {};
+        t.setColor(.dim) catch {};
         try writer.print("0x{x} in {s} ({s})", .{ address, symbol_name, compile_unit_name });
-        fwm.setColor(writer, .reset) catch {};
+        t.setColor(.reset) catch {};
         try writer.writeAll("\n");
 
         // Show the matching source code line if possible
@@ -1183,9 +1179,9 @@ fn printLineInfo(
                     const space_needed = @as(usize, @intCast(sl.column - 1));
 
                     try writer.splatByteAll(' ', space_needed);
-                    fwm.setColor(writer, .green) catch {};
+                    t.setColor(.green) catch {};
                     try writer.writeAll("^");
-                    fwm.setColor(writer, .reset) catch {};
+                    t.setColor(.reset) catch {};
                 }
                 try writer.writeAll("\n");
             } else |_| {
@@ -1554,19 +1550,19 @@ pub fn defaultHandleSegfault(addr: ?usize, name: []const u8, opt_ctx: ?CpuContex
             _ = panicking.fetchAdd(1, .seq_cst);
 
             trace: {
-                const stderr = lockStderrWriter(&.{});
-                defer unlockStderrWriter();
+                const stderr = lockStderr(&.{});
+                defer unlockStderr();
 
                 if (addr) |a| {
-                    stderr.interface.print("{s} at address 0x{x}\n", .{ name, a }) catch break :trace;
+                    stderr.writer.print("{s} at address 0x{x}\n", .{ name, a }) catch break :trace;
                 } else {
-                    stderr.interface.print("{s} (no address available)\n", .{name}) catch break :trace;
+                    stderr.writer.print("{s} (no address available)\n", .{name}) catch break :trace;
                 }
                 if (opt_ctx) |context| {
                     writeCurrentStackTrace(.{
                         .context = context,
                         .allow_unsafe_unwind = true, // we're crashing anyway, give it our all!
-                    }, &stderr.interface, stderr.mode) catch break :trace;
+                    }, stderr) catch break :trace;
                 }
             }
         },
@@ -1575,8 +1571,8 @@ pub fn defaultHandleSegfault(addr: ?usize, name: []const u8, opt_ctx: ?CpuContex
             // A segfault happened while trying to print a previous panic message.
             // We're still holding the mutex but that's fine as we're going to
             // call abort().
-            const stderr = lockStderrWriter(&.{});
-            stderr.interface.writeAll("aborting due to recursive panic\n") catch {};
+            const stderr = lockStderr(&.{});
+            stderr.writer.writeAll("aborting due to recursive panic\n") catch {};
         },
         else => {}, // Panicked while printing the recursive panic message.
     }
@@ -1682,21 +1678,21 @@ pub fn ConfigurableTrace(comptime size: usize, comptime stack_frame_count: usize
         pub fn dump(t: @This()) void {
             if (!enabled) return;
 
-            const stderr = lockStderrWriter(&.{});
-            defer unlockStderrWriter();
+            const stderr = lockStderr(&.{});
+            defer unlockStderr();
             const end = @min(t.index, size);
             for (t.addrs[0..end], 0..) |frames_array, i| {
-                stderr.interface.print("{s}:\n", .{t.notes[i]}) catch return;
+                stderr.writer.print("{s}:\n", .{t.notes[i]}) catch return;
                 var frames_array_mutable = frames_array;
                 const frames = mem.sliceTo(frames_array_mutable[0..], 0);
                 const stack_trace: StackTrace = .{
                     .index = frames.len,
                     .instruction_addresses = frames,
                 };
-                writeStackTrace(&stack_trace, &stderr.interface, stderr.mode) catch return;
+                writeStackTrace(&stack_trace, stderr) catch return;
             }
             if (t.index > end) {
-                stderr.interface.print("{d} more traces not shown; consider increasing trace size\n", .{
+                stderr.writer.print("{d} more traces not shown; consider increasing trace size\n", .{
                     t.index - end,
                 }) catch return;
             }

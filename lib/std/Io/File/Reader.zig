@@ -64,24 +64,24 @@ pub const Mode = enum {
     streaming,
     positional,
     /// Avoid syscalls other than `read` and `readv`.
-    streaming_reading,
+    streaming_simple,
     /// Avoid syscalls other than `pread` and `preadv`.
-    positional_reading,
+    positional_simple,
     /// Indicates reading cannot continue because of a seek failure.
     failure,
 
     pub fn toStreaming(m: @This()) @This() {
         return switch (m) {
             .positional, .streaming => .streaming,
-            .positional_reading, .streaming_reading => .streaming_reading,
+            .positional_simple, .streaming_simple => .streaming_simple,
             .failure => .failure,
         };
     }
 
-    pub fn toReading(m: @This()) @This() {
+    pub fn toSimple(m: @This()) @This() {
         return switch (m) {
-            .positional, .positional_reading => .positional_reading,
-            .streaming, .streaming_reading => .streaming_reading,
+            .positional, .positional_simple => .positional_simple,
+            .streaming, .streaming_simple => .streaming_simple,
             .failure => .failure,
         };
     }
@@ -153,10 +153,10 @@ pub fn getSize(r: *Reader) SizeError!u64 {
 pub fn seekBy(r: *Reader, offset: i64) SeekError!void {
     const io = r.io;
     switch (r.mode) {
-        .positional, .positional_reading => {
+        .positional, .positional_simple => {
             setLogicalPos(r, @intCast(@as(i64, @intCast(logicalPos(r))) + offset));
         },
-        .streaming, .streaming_reading => {
+        .streaming, .streaming_simple => {
             const seek_err = r.seek_err orelse e: {
                 if (io.vtable.fileSeekBy(io.userdata, r.file, offset)) |_| {
                     setLogicalPos(r, @intCast(@as(i64, @intCast(logicalPos(r))) + offset));
@@ -183,10 +183,10 @@ pub fn seekBy(r: *Reader, offset: i64) SeekError!void {
 pub fn seekTo(r: *Reader, offset: u64) SeekError!void {
     const io = r.io;
     switch (r.mode) {
-        .positional, .positional_reading => {
+        .positional, .positional_simple => {
             setLogicalPos(r, offset);
         },
-        .streaming, .streaming_reading => {
+        .streaming, .streaming_simple => {
             const logical_pos = logicalPos(r);
             if (offset >= logical_pos) return seekBy(r, @intCast(offset - logical_pos));
             if (r.seek_err) |err| return err;
@@ -225,19 +225,19 @@ pub fn streamMode(r: *Reader, w: *Io.Writer, limit: Io.Limit, mode: Mode) Io.Rea
     switch (mode) {
         .positional, .streaming => return w.sendFile(r, limit) catch |write_err| switch (write_err) {
             error.Unimplemented => {
-                r.mode = r.mode.toReading();
+                r.mode = r.mode.toSimple();
                 return 0;
             },
             else => |e| return e,
         },
-        .positional_reading => {
+        .positional_simple => {
             const dest = limit.slice(try w.writableSliceGreedy(1));
             var data: [1][]u8 = .{dest};
             const n = try readVecPositional(r, &data);
             w.advance(n);
             return n;
         },
-        .streaming_reading => {
+        .streaming_simple => {
             const dest = limit.slice(try w.writableSliceGreedy(1));
             var data: [1][]u8 = .{dest};
             const n = try readVecStreaming(r, &data);
@@ -251,8 +251,8 @@ pub fn streamMode(r: *Reader, w: *Io.Writer, limit: Io.Limit, mode: Mode) Io.Rea
 fn readVec(io_reader: *Io.Reader, data: [][]u8) Io.Reader.Error!usize {
     const r: *Reader = @alignCast(@fieldParentPtr("interface", io_reader));
     switch (r.mode) {
-        .positional, .positional_reading => return readVecPositional(r, data),
-        .streaming, .streaming_reading => return readVecStreaming(r, data),
+        .positional, .positional_simple => return readVecPositional(r, data),
+        .streaming, .streaming_simple => return readVecStreaming(r, data),
         .failure => return error.ReadFailed,
     }
 }
@@ -320,7 +320,7 @@ fn discard(io_reader: *Io.Reader, limit: Io.Limit) Io.Reader.Error!usize {
     const io = r.io;
     const file = r.file;
     switch (r.mode) {
-        .positional, .positional_reading => {
+        .positional, .positional_simple => {
             const size = r.getSize() catch {
                 r.mode = r.mode.toStreaming();
                 return 0;
@@ -330,7 +330,7 @@ fn discard(io_reader: *Io.Reader, limit: Io.Limit) Io.Reader.Error!usize {
             setLogicalPos(r, logical_pos + delta);
             return delta;
         },
-        .streaming, .streaming_reading => {
+        .streaming, .streaming_simple => {
             // Unfortunately we can't seek forward without knowing the
             // size because the seek syscalls provided to us will not
             // return the true end position if a seek would exceed the
