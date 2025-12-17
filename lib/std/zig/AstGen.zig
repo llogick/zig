@@ -2161,10 +2161,9 @@ fn breakExpr(parent_gz: *GenZir, parent_scope: *Scope, node: Ast.Node.Index) Inn
     const opt_break_label, const opt_rhs = tree.nodeData(node).opt_token_and_opt_node;
 
     // Look for the label in the scope.
-    var scope = parent_scope;
-    find_scope: switch (scope.tag) {
-        .gen_zir => {
-            const gen_zir = scope.cast(GenZir).?;
+    find_scope: switch (parent_scope.unwrap()) {
+        .gen_zir => |gen_zir| {
+            const scope = &gen_zir.base;
 
             if (gen_zir.cur_defer_node.unwrap()) |cur_defer_node| {
                 // We are breaking out of a `defer` block.
@@ -2185,13 +2184,11 @@ fn breakExpr(parent_gz: *GenZir, parent_scope: *Scope, node: Ast.Node.Index) Inn
                     }
                 }
                 // gz without or with different label, continue to parent scopes.
-                scope = gen_zir.parent;
-                continue :find_scope scope.tag;
+                continue :find_scope gen_zir.parent.unwrap();
             } else if (!gen_zir.allow_unlabeled_control_flow) {
                 // This `break` is unlabeled and the gz we've found doesn't allow
                 // unlabeled control flow. Continue to parent scopes.
-                scope = gen_zir.parent;
-                continue :find_scope scope.tag;
+                continue :find_scope gen_zir.parent.unwrap();
             }
 
             const break_tag: Zir.Inst.Tag = if (gen_zir.is_inline)
@@ -2236,18 +2233,9 @@ fn breakExpr(parent_gz: *GenZir, parent_scope: *Scope, node: Ast.Node.Index) Inn
                 return .unreachable_value;
             }
         },
-        .local_val => {
-            scope = scope.cast(Scope.LocalVal).?.parent;
-            continue :find_scope scope.tag;
-        },
-        .local_ptr => {
-            scope = scope.cast(Scope.LocalPtr).?.parent;
-            continue :find_scope scope.tag;
-        },
-        .defer_normal, .defer_error => {
-            scope = scope.cast(Scope.Defer).?.parent;
-            continue :find_scope scope.tag;
-        },
+        .local_val => |local_val| continue :find_scope local_val.parent.unwrap(),
+        .local_ptr => |local_ptr| continue :find_scope local_ptr.parent.unwrap(),
+        .defer_normal, .defer_error => |defer_scope| continue :find_scope defer_scope.parent.unwrap(),
         .namespace => {
             if (opt_break_label.unwrap()) |break_label| {
                 const label_name = try astgen.identifierTokenString(break_label);
@@ -2270,10 +2258,9 @@ fn continueExpr(parent_gz: *GenZir, parent_scope: *Scope, node: Ast.Node.Index) 
     }
 
     // Look for the label in the scope.
-    var scope = parent_scope;
-    find_scope: switch (scope.tag) {
-        .gen_zir => {
-            const gen_zir = scope.cast(GenZir).?;
+    find_scope: switch (parent_scope.unwrap()) {
+        .gen_zir => |gen_zir| {
+            const scope = &gen_zir.base;
 
             if (gen_zir.cur_defer_node.unwrap()) |cur_defer_node| {
                 return astgen.failNodeNotes(node, "cannot continue out of defer expression", .{}, &.{
@@ -2305,24 +2292,21 @@ fn continueExpr(parent_gz: *GenZir, parent_scope: *Scope, node: Ast.Node.Index) 
                     }
                 }
                 // gz without or with different label, continue to parent scopes.
-                scope = gen_zir.parent;
-                continue :find_scope scope.tag;
+                continue :find_scope gen_zir.parent.unwrap();
             } else if (gen_zir.allow_unlabeled_control_flow) {
                 // This `continue` is unlabeled. If the gz we've found doesn't
                 // provide a `continue` target or corresponds to a labeled
                 // `switch`, ignore it and continue to parent scopes.
                 switch (gen_zir.continue_target) {
                     .none, .switch_continue => {
-                        scope = gen_zir.parent;
-                        continue :find_scope scope.tag;
+                        continue :find_scope gen_zir.parent.unwrap();
                     },
                     .@"break" => {},
                 }
             } else {
                 // We don't have a break label and the gz we found doesn't allow
                 // unlabeled control flow, so we continue to its parent scopes.
-                scope = gen_zir.parent;
-                continue :find_scope scope.tag;
+                continue :find_scope gen_zir.parent.unwrap();
             }
 
             switch (gen_zir.continue_target) {
@@ -2360,18 +2344,9 @@ fn continueExpr(parent_gz: *GenZir, parent_scope: *Scope, node: Ast.Node.Index) 
                 },
             }
         },
-        .local_val => {
-            scope = scope.cast(Scope.LocalVal).?.parent;
-            continue :find_scope scope.tag;
-        },
-        .local_ptr => {
-            scope = scope.cast(Scope.LocalPtr).?.parent;
-            continue :find_scope scope.tag;
-        },
-        .defer_normal, .defer_error => {
-            scope = scope.cast(Scope.Defer).?.parent;
-            continue :find_scope scope.tag;
-        },
+        .local_val => |local_val| continue :find_scope local_val.parent.unwrap(),
+        .local_ptr => |local_ptr| continue :find_scope local_ptr.parent.unwrap(),
+        .defer_normal, .defer_error => |defer_scope| continue :find_scope defer_scope.parent.unwrap(),
         .namespace => {
             if (opt_break_label.unwrap()) |break_label| {
                 const label_name = try astgen.identifierTokenString(break_label);
@@ -2466,33 +2441,29 @@ fn blockExpr(
 
 fn checkLabelRedefinition(astgen: *AstGen, parent_scope: *Scope, label: Ast.TokenIndex) !void {
     // Look for the label in the scope.
-    var scope = parent_scope;
-    while (true) {
-        switch (scope.tag) {
-            .gen_zir => {
-                const gen_zir = scope.cast(GenZir).?;
-                if (gen_zir.label) |prev_label| {
-                    if (try astgen.tokenIdentEql(label, prev_label.token)) {
-                        const label_name = try astgen.identifierTokenString(label);
-                        return astgen.failTokNotes(label, "redefinition of label '{s}'", .{
-                            label_name,
-                        }, &[_]u32{
-                            try astgen.errNoteTok(
-                                prev_label.token,
-                                "previous definition here",
-                                .{},
-                            ),
-                        });
-                    }
+    find_scope: switch (parent_scope.unwrap()) {
+        .gen_zir => |gen_zir| {
+            if (gen_zir.label) |prev_label| {
+                if (try astgen.tokenIdentEql(label, prev_label.token)) {
+                    const label_name = try astgen.identifierTokenString(label);
+                    return astgen.failTokNotes(label, "redefinition of label '{s}'", .{
+                        label_name,
+                    }, &[_]u32{
+                        try astgen.errNoteTok(
+                            prev_label.token,
+                            "previous definition here",
+                            .{},
+                        ),
+                    });
                 }
-                scope = gen_zir.parent;
-            },
-            .local_val => scope = scope.cast(Scope.LocalVal).?.parent,
-            .local_ptr => scope = scope.cast(Scope.LocalPtr).?.parent,
-            .defer_normal, .defer_error => scope = scope.cast(Scope.Defer).?.parent,
-            .namespace => break,
-            .top => unreachable,
-        }
+            }
+            continue :find_scope gen_zir.parent.unwrap();
+        },
+        .local_val => |local_val| continue :find_scope local_val.parent.unwrap(),
+        .local_ptr => |local_ptr| continue :find_scope local_ptr.parent.unwrap(),
+        .defer_normal, .defer_error => |defer_scope| continue :find_scope defer_scope.parent.unwrap(),
+        .namespace => break :find_scope,
+        .top => unreachable,
     }
 }
 
@@ -3007,18 +2978,16 @@ fn countDefers(outer_scope: *Scope, inner_scope: *Scope) struct {
     var need_err_code = false;
     var scope = inner_scope;
     while (scope != outer_scope) {
-        switch (scope.tag) {
-            .gen_zir => scope = scope.cast(GenZir).?.parent,
-            .local_val => scope = scope.cast(Scope.LocalVal).?.parent,
-            .local_ptr => scope = scope.cast(Scope.LocalPtr).?.parent,
-            .defer_normal => {
-                const defer_scope = scope.cast(Scope.Defer).?;
+        switch (scope.unwrap()) {
+            .gen_zir => |gen_zir| scope = gen_zir.parent,
+            .local_val => |local_val| scope = local_val.parent,
+            .local_ptr => |local_ptr| scope = local_ptr.parent,
+            .defer_normal => |defer_scope| {
                 scope = defer_scope.parent;
 
                 have_normal = true;
             },
-            .defer_error => {
-                const defer_scope = scope.cast(Scope.Defer).?;
+            .defer_error => |defer_scope| {
                 scope = defer_scope.parent;
 
                 have_err = true;
@@ -3054,17 +3023,15 @@ fn genDefers(
 
     var scope = inner_scope;
     while (scope != outer_scope) {
-        switch (scope.tag) {
-            .gen_zir => scope = scope.cast(GenZir).?.parent,
-            .local_val => scope = scope.cast(Scope.LocalVal).?.parent,
-            .local_ptr => scope = scope.cast(Scope.LocalPtr).?.parent,
-            .defer_normal => {
-                const defer_scope = scope.cast(Scope.Defer).?;
+        switch (scope.unwrap()) {
+            .gen_zir => |gen_zir| scope = gen_zir.parent,
+            .local_val => |local_val| scope = local_val.parent,
+            .local_ptr => |local_ptr| scope = local_ptr.parent,
+            .defer_normal => |defer_scope| {
                 scope = defer_scope.parent;
                 try gz.addDefer(defer_scope.index, defer_scope.len);
             },
-            .defer_error => {
-                const defer_scope = scope.cast(Scope.Defer).?;
+            .defer_error => |defer_scope| {
                 scope = defer_scope.parent;
                 switch (which_ones) {
                     .both_sans_err => {
@@ -3107,10 +3074,9 @@ fn checkUsed(gz: *GenZir, outer_scope: *Scope, inner_scope: *Scope) InnerError!v
 
     var scope = inner_scope;
     while (scope != outer_scope) {
-        switch (scope.tag) {
-            .gen_zir => scope = scope.cast(GenZir).?.parent,
-            .local_val => {
-                const s = scope.cast(Scope.LocalVal).?;
+        switch (scope.unwrap()) {
+            .gen_zir => |gen_zir| scope = gen_zir.parent,
+            .local_val => |s| {
                 if (s.used == .none and s.discarded == .none) {
                     try astgen.appendErrorTok(s.token_src, "unused {s}", .{@tagName(s.id_cat)});
                 } else if (s.used != .none and s.discarded != .none) {
@@ -3120,8 +3086,7 @@ fn checkUsed(gz: *GenZir, outer_scope: *Scope, inner_scope: *Scope) InnerError!v
                 }
                 scope = s.parent;
             },
-            .local_ptr => {
-                const s = scope.cast(Scope.LocalPtr).?;
+            .local_ptr => |s| {
                 if (s.used == .none and s.discarded == .none) {
                     try astgen.appendErrorTok(s.token_src, "unused {s}", .{@tagName(s.id_cat)});
                 } else {
@@ -3136,10 +3101,9 @@ fn checkUsed(gz: *GenZir, outer_scope: *Scope, inner_scope: *Scope) InnerError!v
                         });
                     }
                 }
-
                 scope = s.parent;
             },
-            .defer_normal, .defer_error => scope = scope.cast(Scope.Defer).?.parent,
+            .defer_normal, .defer_error => |defer_scope| scope = defer_scope.parent,
             .namespace => unreachable,
             .top => unreachable,
         }
@@ -4805,13 +4769,11 @@ fn testDecl(
 
             // Local variables, including function parameters.
             const name_str_index = try astgen.identAsString(test_name_token);
-            var s = scope;
             var found_already: ?Ast.Node.Index = null; // we have found a decl with the same name already
             var num_namespaces_out: u32 = 0;
             var capturing_namespace: ?*Scope.Namespace = null;
-            while (true) switch (s.tag) {
-                .local_val => {
-                    const local_val = s.cast(Scope.LocalVal).?;
+            find_scope: switch (scope.unwrap()) {
+                .local_val => |local_val| {
                     if (local_val.name == name_str_index) {
                         local_val.used = .fromToken(test_name_token);
                         return astgen.failTokNotes(test_name_token, "cannot test a {s}", .{
@@ -4822,10 +4784,9 @@ fn testDecl(
                             }),
                         });
                     }
-                    s = local_val.parent;
+                    continue :find_scope local_val.parent.unwrap();
                 },
-                .local_ptr => {
-                    const local_ptr = s.cast(Scope.LocalPtr).?;
+                .local_ptr => |local_ptr| {
                     if (local_ptr.name == name_str_index) {
                         local_ptr.used = .fromToken(test_name_token);
                         return astgen.failTokNotes(test_name_token, "cannot test a {s}", .{
@@ -4836,12 +4797,11 @@ fn testDecl(
                             }),
                         });
                     }
-                    s = local_ptr.parent;
+                    continue :find_scope local_ptr.parent.unwrap();
                 },
-                .gen_zir => s = s.cast(GenZir).?.parent,
-                .defer_normal, .defer_error => s = s.cast(Scope.Defer).?.parent,
-                .namespace => {
-                    const ns = s.cast(Scope.Namespace).?;
+                .gen_zir => |gen_zir| continue :find_scope gen_zir.parent.unwrap(),
+                .defer_normal, .defer_error => |defer_scope| continue :find_scope defer_scope.parent.unwrap(),
+                .namespace => |ns| {
                     if (ns.decls.get(name_str_index)) |i| {
                         if (found_already) |f| {
                             return astgen.failTokNotes(test_name_token, "ambiguous reference", .{}, &.{
@@ -4854,10 +4814,10 @@ fn testDecl(
                     }
                     num_namespaces_out += 1;
                     capturing_namespace = ns;
-                    s = ns.parent;
+                    continue :find_scope ns.parent.unwrap();
                 },
-                .top => break,
-            };
+                .top => break :find_scope,
+            }
             if (found_already == null) {
                 const ident_name = try astgen.identifierTokenString(test_name_token);
                 return astgen.failTok(test_name_token, "use of undeclared identifier '{s}'", .{ident_name});
@@ -8409,7 +8369,6 @@ fn localVarRef(
 ) InnerError!Zir.Inst.Ref {
     const astgen = gz.astgen;
     const name_str_index = try astgen.identAsString(ident_token);
-    var s = scope;
     var found_already: ?Ast.Node.Index = null; // we have found a decl with the same name already
     var found_needs_tunnel: bool = undefined; // defined when `found_already != null`
     var found_namespaces_out: u32 = undefined; // defined when `found_already != null`
@@ -8419,10 +8378,8 @@ fn localVarRef(
     // defined by `num_namespaces_out != 0`
     var capturing_namespace: *Scope.Namespace = undefined;
 
-    while (true) switch (s.tag) {
-        .local_val => {
-            const local_val = s.cast(Scope.LocalVal).?;
-
+    find_scope: switch (scope.unwrap()) {
+        .local_val => |local_val| {
             if (local_val.name == name_str_index) {
                 // Locals cannot shadow anything, so we do not need to look for ambiguous
                 // references in this case.
@@ -8445,10 +8402,9 @@ fn localVarRef(
 
                 return rvalueNoCoercePreRef(gz, ri, value_inst, ident);
             }
-            s = local_val.parent;
+            continue :find_scope local_val.parent.unwrap();
         },
-        .local_ptr => {
-            const local_ptr = s.cast(Scope.LocalPtr).?;
+        .local_ptr => |local_ptr| {
             if (local_ptr.name == name_str_index) {
                 if (ri.rl == .discard and ri.ctx == .assignment) {
                     local_ptr.discarded = .fromToken(ident_token);
@@ -8497,12 +8453,11 @@ fn localVarRef(
                     },
                 }
             }
-            s = local_ptr.parent;
+            continue :find_scope local_ptr.parent.unwrap();
         },
-        .gen_zir => s = s.cast(GenZir).?.parent,
-        .defer_normal, .defer_error => s = s.cast(Scope.Defer).?.parent,
-        .namespace => {
-            const ns = s.cast(Scope.Namespace).?;
+        .gen_zir => |gen_zir| continue :find_scope gen_zir.parent.unwrap(),
+        .defer_normal, .defer_error => |defer_scope| continue :find_scope defer_scope.parent.unwrap(),
+        .namespace => |ns| {
             if (ns.decls.get(name_str_index)) |i| {
                 if (found_already) |f| {
                     return astgen.failNodeNotes(ident, "ambiguous reference", .{}, &.{
@@ -8517,10 +8472,10 @@ fn localVarRef(
             }
             num_namespaces_out += 1;
             capturing_namespace = ns;
-            s = ns.parent;
+            continue :find_scope ns.parent.unwrap();
         },
-        .top => break,
-    };
+        .top => break :find_scope,
+    }
     if (found_already == null) {
         const ident_name = try astgen.identifierTokenString(ident_token);
         return astgen.failNode(ident, "use of undeclared identifier '{s}'", .{ident_name});
@@ -11812,6 +11767,26 @@ const Scope = struct {
         };
     }
 
+    fn unwrap(base: *Scope) Unwrapped {
+        return switch (base.tag) {
+            inline else => |tag| @unionInit(
+                Unwrapped,
+                @tagName(tag),
+                @alignCast(@fieldParentPtr("base", base)),
+            ),
+        };
+    }
+
+    const Unwrapped = union(Tag) {
+        gen_zir: *GenZir,
+        local_val: *LocalVal,
+        local_ptr: *LocalPtr,
+        defer_normal: *Defer,
+        defer_error: *Defer,
+        namespace: *Namespace,
+        top: *Top,
+    };
+
     const Tag = enum {
         gen_zir,
         local_val,
@@ -13408,11 +13383,9 @@ fn detectLocalShadowing(
         });
     }
 
-    var s = scope;
     var outer_scope = false;
-    while (true) switch (s.tag) {
-        .local_val => {
-            const local_val = s.cast(Scope.LocalVal).?;
+    find_scope: switch (scope.unwrap()) {
+        .local_val => |local_val| {
             if (local_val.name == ident_name) {
                 const name_slice = mem.span(astgen.nullTerminatedString(ident_name));
                 const name = try gpa.dupe(u8, name_slice);
@@ -13438,10 +13411,9 @@ fn detectLocalShadowing(
                     ),
                 });
             }
-            s = local_val.parent;
+            continue :find_scope local_val.parent.unwrap();
         },
-        .local_ptr => {
-            const local_ptr = s.cast(Scope.LocalPtr).?;
+        .local_ptr => |local_ptr| {
             if (local_ptr.name == ident_name) {
                 const name_slice = mem.span(astgen.nullTerminatedString(ident_name));
                 const name = try gpa.dupe(u8, name_slice);
@@ -13467,14 +13439,12 @@ fn detectLocalShadowing(
                     ),
                 });
             }
-            s = local_ptr.parent;
+            continue :find_scope local_ptr.parent.unwrap();
         },
-        .namespace => {
+        .namespace => |ns| {
             outer_scope = true;
-            const ns = s.cast(Scope.Namespace).?;
             const decl_node = ns.decls.get(ident_name) orelse {
-                s = ns.parent;
-                continue;
+                continue :find_scope ns.parent.unwrap();
             };
             const name_slice = mem.span(astgen.nullTerminatedString(ident_name));
             const name = try gpa.dupe(u8, name_slice);
@@ -13485,13 +13455,13 @@ fn detectLocalShadowing(
                 try astgen.errNoteNode(decl_node, "declared here", .{}),
             });
         },
-        .gen_zir => {
-            s = s.cast(GenZir).?.parent;
+        .gen_zir => |gen_zir| {
             outer_scope = true;
+            continue :find_scope gen_zir.parent.unwrap();
         },
-        .defer_normal, .defer_error => s = s.cast(Scope.Defer).?.parent,
-        .top => break,
-    };
+        .defer_normal, .defer_error => |defer_scope| continue :find_scope defer_scope.parent.unwrap(),
+        .top => break :find_scope,
+    }
 }
 
 const LineColumn = struct { u32, u32 };
@@ -13728,10 +13698,8 @@ fn scanContainer(
             continue;
         }
 
-        var s = namespace.parent;
-        while (true) switch (s.tag) {
-            .local_val => {
-                const local_val = s.cast(Scope.LocalVal).?;
+        find_scope: switch (namespace.parent.unwrap()) {
+            .local_val => |local_val| {
                 if (local_val.name == name_str_index) {
                     try astgen.appendErrorTokNotes(name_token, "declaration '{s}' shadows {s} from outer scope", .{
                         token_bytes, @tagName(local_val.id_cat),
@@ -13743,12 +13711,11 @@ fn scanContainer(
                         ),
                     });
                     any_invalid_declarations = true;
-                    break;
+                    break :find_scope;
                 }
-                s = local_val.parent;
+                continue :find_scope local_val.parent.unwrap();
             },
-            .local_ptr => {
-                const local_ptr = s.cast(Scope.LocalPtr).?;
+            .local_ptr => |local_ptr| {
                 if (local_ptr.name == name_str_index) {
                     try astgen.appendErrorTokNotes(name_token, "declaration '{s}' shadows {s} from outer scope", .{
                         token_bytes, @tagName(local_ptr.id_cat),
@@ -13760,15 +13727,15 @@ fn scanContainer(
                         ),
                     });
                     any_invalid_declarations = true;
-                    break;
+                    break :find_scope;
                 }
-                s = local_ptr.parent;
+                continue :find_scope local_ptr.parent.unwrap();
             },
-            .namespace => s = s.cast(Scope.Namespace).?.parent,
-            .gen_zir => s = s.cast(GenZir).?.parent,
-            .defer_normal, .defer_error => s = s.cast(Scope.Defer).?.parent,
-            .top => break,
-        };
+            .namespace => |ns| continue :find_scope ns.parent.unwrap(),
+            .gen_zir => |gen_zir| continue :find_scope gen_zir.parent.unwrap(),
+            .defer_normal, .defer_error => |defer_scope| continue :find_scope defer_scope.parent.unwrap(),
+            .top => break :find_scope,
+        }
     }
 
     if (!any_duplicates) {
