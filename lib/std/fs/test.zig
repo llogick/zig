@@ -3,7 +3,6 @@ const native_os = builtin.os.tag;
 
 const std = @import("../std.zig");
 const Io = std.Io;
-const fs = std.fs;
 const mem = std.mem;
 const wasi = std.os.wasi;
 const windows = std.os.windows;
@@ -14,11 +13,11 @@ const SymLinkFlags = std.Io.Dir.SymLinkFlags;
 
 const testing = std.testing;
 const expect = std.testing.expect;
-const expectError = std.testing.expectError;
 const expectEqual = std.testing.expectEqual;
-const tmpDir = std.testing.tmpDir;
-const expectEqualStrings = std.testing.expectEqualStrings;
 const expectEqualSlices = std.testing.expectEqualSlices;
+const expectEqualStrings = std.testing.expectEqualStrings;
+const expectError = std.testing.expectError;
+const tmpDir = std.testing.tmpDir;
 
 const PathType = enum {
     relative,
@@ -33,7 +32,7 @@ const PathType = enum {
         };
     }
 
-    pub const TransformError = Io.Dir.RealPathError || error{OutOfMemory};
+    pub const TransformError = Dir.RealPathError || error{OutOfMemory};
     pub const TransformFn = fn (allocator: mem.Allocator, dir: Dir, relative_path: [:0]const u8) TransformError![:0]const u8;
 
     pub fn getTransformFn(comptime path_type: PathType) TransformFn {
@@ -49,24 +48,24 @@ const PathType = enum {
                 fn transform(allocator: mem.Allocator, dir: Dir, relative_path: [:0]const u8) TransformError![:0]const u8 {
                     // The final path may not actually exist which would cause realpath to fail.
                     // So instead, we get the path of the dir and join it with the relative path.
-                    var fd_path_buf: [fs.max_path_bytes]u8 = undefined;
+                    var fd_path_buf: [Dir.max_path_bytes]u8 = undefined;
                     const dir_path = try std.os.getFdPath(dir.handle, &fd_path_buf);
-                    return fs.path.joinZ(allocator, &.{ dir_path, relative_path });
+                    return Dir.path.joinZ(allocator, &.{ dir_path, relative_path });
                 }
             }.transform,
             .unc => return struct {
                 fn transform(allocator: mem.Allocator, dir: Dir, relative_path: [:0]const u8) TransformError![:0]const u8 {
                     // Any drive absolute path (C:\foo) can be converted into a UNC path by
                     // using '127.0.0.1' as the server name and '<drive letter>$' as the share name.
-                    var fd_path_buf: [fs.max_path_bytes]u8 = undefined;
+                    var fd_path_buf: [Dir.max_path_bytes]u8 = undefined;
                     const dir_path = try std.os.getFdPath(dir.handle, &fd_path_buf);
                     const windows_path_type = windows.getWin32PathType(u8, dir_path);
                     switch (windows_path_type) {
-                        .unc_absolute => return fs.path.joinZ(allocator, &.{ dir_path, relative_path }),
+                        .unc_absolute => return Dir.path.joinZ(allocator, &.{ dir_path, relative_path }),
                         .drive_absolute => {
                             // `C:\<...>` -> `\\127.0.0.1\C$\<...>`
                             const prepended = "\\\\127.0.0.1\\";
-                            var path = try fs.path.joinZ(allocator, &.{ prepended, dir_path, relative_path });
+                            var path = try Dir.path.joinZ(allocator, &.{ prepended, dir_path, relative_path });
                             path[prepended.len + 1] = '$';
                             return path;
                         },
@@ -84,7 +83,7 @@ const TestContext = struct {
     path_sep: u8,
     arena: ArenaAllocator,
     tmp: testing.TmpDir,
-    dir: Io.Dir,
+    dir: Dir,
     transform_fn: *const PathType.TransformFn,
 
     pub fn init(path_type: PathType, path_sep: u8, allocator: mem.Allocator, transform_fn: *const PathType.TransformFn) TestContext {
@@ -154,7 +153,7 @@ fn testWithAllSupportedPathTypes(test_func: anytype) !void {
 
 fn testWithPathTypeIfSupported(comptime path_type: PathType, comptime path_sep: u8, test_func: anytype) !void {
     if (!(comptime path_type.isSupported(builtin.os))) return;
-    if (!(comptime fs.path.isSep(path_sep))) return;
+    if (!(comptime Dir.path.isSep(path_sep))) return;
 
     var ctx = TestContext.init(path_type, path_sep, testing.allocator, path_type.getTransformFn());
     defer ctx.deinit();
@@ -174,8 +173,8 @@ fn setupSymlink(io: Io, dir: Dir, target: []const u8, link: []const u8, flags: S
 
 // For use in test setup.  If the symlink creation fails on Windows with
 // AccessDenied, then make the test failure silent (it is not a Zig failure).
-fn setupSymlinkAbsolute(target: []const u8, link: []const u8, flags: SymLinkFlags) !void {
-    return fs.symLinkAbsolute(target, link, flags) catch |err| switch (err) {
+fn setupSymlinkAbsolute(io: Io, target: []const u8, link: []const u8, flags: SymLinkFlags) !void {
+    return Dir.symLinkAbsolute(io, target, link, flags) catch |err| switch (err) {
         error.AccessDenied => if (native_os == .windows) return error.SkipZigTest else return err,
         else => return err,
     };
@@ -211,7 +210,7 @@ test "Dir.readLink" {
             }
 
             // test 3: relative path symlink
-            const parent_file = ".." ++ fs.path.sep_str ++ "target.txt";
+            const parent_file = ".." ++ Dir.path.sep_str ++ "target.txt";
             const canonical_parent_file = try ctx.toCanonicalPathSep(parent_file);
             var subdir = try ctx.dir.makeOpenPath(io, "subdir", .{});
             defer subdir.close(io);
@@ -251,7 +250,7 @@ test "Dir.readLink on non-symlinks" {
 }
 
 fn testReadLink(io: Io, dir: Dir, target_path: []const u8, symlink_path: []const u8) !void {
-    var buffer: [fs.max_path_bytes]u8 = undefined;
+    var buffer: [Dir.max_path_bytes]u8 = undefined;
     const actual = try dir.readLink(io, symlink_path, &buffer);
     try expectEqualStrings(target_path, actual);
 }
@@ -267,9 +266,9 @@ fn testReadLinkW(allocator: mem.Allocator, dir: Dir, target_path: []const u8, sy
     try expectEqualSlices(u16, target_path_w, actual);
 }
 
-fn testReadLinkAbsolute(target_path: []const u8, symlink_path: []const u8) !void {
-    var buffer: [fs.max_path_bytes]u8 = undefined;
-    const given = try fs.readLinkAbsolute(symlink_path, buffer[0..]);
+fn testReadLinkAbsolute(io: Io, target_path: []const u8, symlink_path: []const u8) !void {
+    var buffer: [Dir.max_path_bytes]u8 = undefined;
+    const given = try Dir.readLinkAbsolute(io, symlink_path, buffer[0..]);
     try expectEqualStrings(target_path, given);
 }
 
@@ -309,7 +308,7 @@ test "openDir" {
             try ctx.dir.makeDir(io, subdir_path, .default_dir);
 
             for ([_][]const u8{ "", ".", ".." }) |sub_path| {
-                const dir_path = try fs.path.join(allocator, &.{ subdir_path, sub_path });
+                const dir_path = try Dir.path.join(allocator, &.{ subdir_path, sub_path });
                 var dir = try ctx.dir.openDir(io, dir_path, .{});
                 defer dir.close(io);
             }
@@ -321,13 +320,16 @@ test "accessAbsolute" {
     if (native_os == .wasi) return error.SkipZigTest;
     if (native_os == .openbsd) return error.SkipZigTest;
 
+    const io = testing.io;
+    const gpa = testing.allocator;
+
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
-    const base_path = try tmp.dir.realpathAlloc(testing.allocator, ".");
-    defer testing.allocator.free(base_path);
+    const base_path = try tmp.dir.realPathAlloc(io, ".", gpa);
+    defer gpa.free(base_path);
 
-    try fs.accessAbsolute(base_path, .{});
+    try Dir.accessAbsolute(io, base_path, .{});
 }
 
 test "openDirAbsolute" {
@@ -335,6 +337,7 @@ test "openDirAbsolute" {
     if (native_os == .openbsd) return error.SkipZigTest;
 
     const io = testing.io;
+    const gpa = testing.allocator;
 
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
@@ -342,8 +345,8 @@ test "openDirAbsolute" {
     const tmp_ino = (try tmp.dir.stat(io)).inode;
 
     try tmp.dir.makeDir(io, "subdir", .default_dir);
-    const sub_path = try tmp.dir.realpathAlloc(testing.allocator, "subdir");
-    defer testing.allocator.free(sub_path);
+    const sub_path = try tmp.dir.realPathAlloc(io, "subdir", gpa);
+    defer gpa.free(sub_path);
 
     // Can open sub_path
     var tmp_sub = try Dir.openDirAbsolute(io, sub_path, .{});
@@ -353,7 +356,7 @@ test "openDirAbsolute" {
 
     {
         // Can open sub_path + ".."
-        const dir_path = try fs.path.join(testing.allocator, &.{ sub_path, ".." });
+        const dir_path = try Dir.path.join(testing.allocator, &.{ sub_path, ".." });
         defer testing.allocator.free(dir_path);
 
         var dir = try Dir.openDirAbsolute(io, dir_path, .{});
@@ -365,7 +368,7 @@ test "openDirAbsolute" {
 
     {
         // Can open sub_path + "."
-        const dir_path = try fs.path.join(testing.allocator, &.{ sub_path, "." });
+        const dir_path = try Dir.path.join(testing.allocator, &.{ sub_path, "." });
         defer testing.allocator.free(dir_path);
 
         var dir = try Dir.openDirAbsolute(io, dir_path, .{});
@@ -377,7 +380,7 @@ test "openDirAbsolute" {
 
     {
         // Can open subdir + "..", with some extra "."
-        const dir_path = try fs.path.join(testing.allocator, &.{ sub_path, ".", "..", "." });
+        const dir_path = try Dir.path.join(testing.allocator, &.{ sub_path, ".", "..", "." });
         defer testing.allocator.free(dir_path);
 
         var dir = try Dir.openDirAbsolute(io, dir_path, .{});
@@ -391,7 +394,7 @@ test "openDirAbsolute" {
 test "openDir cwd parent '..'" {
     const io = testing.io;
 
-    var dir = Io.Dir.cwd().openDir(io, "..", .{}) catch |err| {
+    var dir = Dir.cwd().openDir(io, "..", .{}) catch |err| {
         if (native_os == .wasi and err == error.PermissionDenied) {
             return; // This is okay. WASI disallows escaping from the fs sandbox
         }
@@ -407,6 +410,7 @@ test "openDir non-cwd parent '..'" {
     }
 
     const io = testing.io;
+    const gpa = testing.allocator;
 
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
@@ -417,11 +421,11 @@ test "openDir non-cwd parent '..'" {
     var dir = try subdir.openDir(io, "..", .{});
     defer dir.close(io);
 
-    const expected_path = try tmp.dir.realpathAlloc(testing.allocator, ".");
-    defer testing.allocator.free(expected_path);
+    const expected_path = try tmp.dir.realPathAlloc(io, ".", gpa);
+    defer gpa.free(expected_path);
 
-    const actual_path = try dir.realpathAlloc(testing.allocator, ".");
-    defer testing.allocator.free(actual_path);
+    const actual_path = try dir.realPathAlloc(io, ".", gpa);
+    defer gpa.free(actual_path);
 
     try expectEqualStrings(expected_path, actual_path);
 }
@@ -440,27 +444,27 @@ test "readLinkAbsolute" {
     try tmp.dir.makeDir(io, "subdir", .default_dir);
 
     // Get base abs path
-    var arena = ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
+    var arena_allocator = ArenaAllocator.init(testing.allocator);
+    defer arena_allocator.deinit();
+    const arena = arena_allocator.allocator();
 
-    const base_path = try tmp.dir.realpathAlloc(allocator, ".");
+    const base_path = try tmp.dir.realPathAlloc(io, ".", arena);
 
     {
-        const target_path = try fs.path.join(allocator, &.{ base_path, "file.txt" });
-        const symlink_path = try fs.path.join(allocator, &.{ base_path, "symlink1" });
+        const target_path = try Dir.path.join(arena, &.{ base_path, "file.txt" });
+        const symlink_path = try Dir.path.join(arena, &.{ base_path, "symlink1" });
 
         // Create symbolic link by path
-        try setupSymlinkAbsolute(target_path, symlink_path, .{});
-        try testReadLinkAbsolute(target_path, symlink_path);
+        try setupSymlinkAbsolute(io, target_path, symlink_path, .{});
+        try testReadLinkAbsolute(io, target_path, symlink_path);
     }
     {
-        const target_path = try fs.path.join(allocator, &.{ base_path, "subdir" });
-        const symlink_path = try fs.path.join(allocator, &.{ base_path, "symlink2" });
+        const target_path = try Dir.path.join(arena, &.{ base_path, "subdir" });
+        const symlink_path = try Dir.path.join(arena, &.{ base_path, "symlink2" });
 
         // Create symbolic link to a directory by path
-        try setupSymlinkAbsolute(target_path, symlink_path, .{ .is_directory = true });
-        try testReadLinkAbsolute(target_path, symlink_path);
+        try setupSymlinkAbsolute(io, target_path, symlink_path, .{ .is_directory = true });
+        try testReadLinkAbsolute(io, target_path, symlink_path);
     }
 }
 
@@ -492,8 +496,8 @@ test "Dir.Iterator" {
     }
 
     try expectEqual(@as(usize, 2), entries.items.len); // note that the Iterator skips '.' and '..'
-    try testing.expect(contains(&entries, .{ .name = "some_file", .kind = .file }));
-    try testing.expect(contains(&entries, .{ .name = "some_dir", .kind = .directory }));
+    try expect(contains(&entries, .{ .name = "some_file", .kind = .file }));
+    try expect(contains(&entries, .{ .name = "some_dir", .kind = .directory }));
 }
 
 test "Dir.Iterator many entries" {
@@ -529,7 +533,7 @@ test "Dir.Iterator many entries" {
     i = 0;
     while (i < num) : (i += 1) {
         const name = try std.fmt.bufPrint(&buf, "{}", .{i});
-        try testing.expect(contains(&entries, .{ .name = name, .kind = .file }));
+        try expect(contains(&entries, .{ .name = name, .kind = .file }));
     }
 }
 
@@ -563,8 +567,8 @@ test "Dir.Iterator twice" {
         }
 
         try expectEqual(@as(usize, 2), entries.items.len); // note that the Iterator skips '.' and '..'
-        try testing.expect(contains(&entries, .{ .name = "some_file", .kind = .file }));
-        try testing.expect(contains(&entries, .{ .name = "some_dir", .kind = .directory }));
+        try expect(contains(&entries, .{ .name = "some_file", .kind = .file }));
+        try expect(contains(&entries, .{ .name = "some_dir", .kind = .directory }));
     }
 }
 
@@ -599,8 +603,8 @@ test "Dir.Iterator reset" {
         }
 
         try expectEqual(@as(usize, 2), entries.items.len); // note that the Iterator skips '.' and '..'
-        try testing.expect(contains(&entries, .{ .name = "some_file", .kind = .file }));
-        try testing.expect(contains(&entries, .{ .name = "some_dir", .kind = .directory }));
+        try expect(contains(&entries, .{ .name = "some_file", .kind = .file }));
+        try expect(contains(&entries, .{ .name = "some_dir", .kind = .directory }));
 
         iter.reset();
     }
@@ -619,7 +623,7 @@ test "Dir.Iterator but dir is deleted during iteration" {
     var iterator = subdir.iterate();
 
     // Create something to iterate over within the subdir
-    try tmp.dir.makePath(io, "subdir" ++ fs.path.sep_str ++ "b");
+    try tmp.dir.makePath(io, "subdir" ++ Dir.path.sep_str ++ "b");
 
     // Then, before iterating, delete the directory that we're iterating.
     // This is a contrived reproduction, but this could happen outside of the program, in another thread, etc.
@@ -629,7 +633,7 @@ test "Dir.Iterator but dir is deleted during iteration" {
 
     // Now, when we try to iterate, the next call should return null immediately.
     const entry = try iterator.next();
-    try std.testing.expect(entry == null);
+    try std.expect(entry == null);
 
     // On Linux, we can opt-in to receiving a more specific error by calling `nextLinux`
     if (native_os == .linux) {
@@ -657,25 +661,25 @@ test "Dir.realpath smoke test" {
             const allocator = ctx.arena.allocator();
             const test_file_path = try ctx.transformPath("test_file");
             const test_dir_path = try ctx.transformPath("test_dir");
-            var buf: [fs.max_path_bytes]u8 = undefined;
+            var buf: [Dir.max_path_bytes]u8 = undefined;
 
             // FileNotFound if the path doesn't exist
-            try expectError(error.FileNotFound, ctx.dir.realpathAlloc(allocator, test_file_path));
-            try expectError(error.FileNotFound, ctx.dir.realpath(test_file_path, &buf));
-            try expectError(error.FileNotFound, ctx.dir.realpathAlloc(allocator, test_dir_path));
-            try expectError(error.FileNotFound, ctx.dir.realpath(test_dir_path, &buf));
+            try expectError(error.FileNotFound, ctx.dir.realPathAlloc(io, test_file_path, allocator));
+            try expectError(error.FileNotFound, ctx.dir.realPath(io, test_file_path, &buf));
+            try expectError(error.FileNotFound, ctx.dir.realPathAlloc(io, test_dir_path, allocator));
+            try expectError(error.FileNotFound, ctx.dir.realPath(io, test_dir_path, &buf));
 
             // Now create the file and dir
             try ctx.dir.writeFile(io, .{ .sub_path = test_file_path, .data = "" });
             try ctx.dir.makeDir(io, test_dir_path, .default_dir);
 
             const base_path = try ctx.transformPath(".");
-            const base_realpath = try ctx.dir.realpathAlloc(allocator, base_path);
-            const expected_file_path = try fs.path.join(
+            const base_realpath = try ctx.dir.realPathAlloc(io, base_path, allocator);
+            const expected_file_path = try Dir.path.join(
                 allocator,
                 &.{ base_realpath, "test_file" },
             );
-            const expected_dir_path = try fs.path.join(
+            const expected_dir_path = try Dir.path.join(
                 allocator,
                 &.{ base_realpath, "test_dir" },
             );
@@ -691,10 +695,10 @@ test "Dir.realpath smoke test" {
 
             // Next, test alloc version
             {
-                const file_path = try ctx.dir.realpathAlloc(allocator, test_file_path);
+                const file_path = try ctx.dir.realPathAlloc(io, test_file_path, allocator);
                 try expectEqualStrings(expected_file_path, file_path);
 
-                const dir_path = try ctx.dir.realpathAlloc(allocator, test_dir_path);
+                const dir_path = try ctx.dir.realPathAlloc(io, test_dir_path, allocator);
                 try expectEqualStrings(expected_dir_path, dir_path);
             }
         }
@@ -715,7 +719,7 @@ test "readFileAlloc" {
     try expectEqualStrings("", buf1);
 
     const write_buf: []const u8 = "this is a test.\nthis is a test.\nthis is a test.\nthis is a test.\n";
-    try file.writeAll(write_buf);
+    try file.writeStreamingAll(io, write_buf);
 
     {
         // max_bytes > file_size
@@ -779,7 +783,7 @@ test "statFile on dangling symlink" {
         fn impl(ctx: *TestContext) !void {
             const io = ctx.io;
             const symlink_name = try ctx.transformPath("dangling-symlink");
-            const symlink_target = "." ++ fs.path.sep_str ++ "doesnotexist";
+            const symlink_target = "." ++ Dir.path.sep_str ++ "doesnotexist";
 
             try setupSymlink(io, ctx.dir, symlink_target, symlink_name, .{});
 
@@ -803,8 +807,8 @@ test "directory operations on files" {
             try expectError(error.NotDir, ctx.dir.deleteDir(io, test_file_name));
 
             if (ctx.path_type == .absolute and comptime PathType.absolute.isSupported(builtin.os)) {
-                try expectError(error.PathAlreadyExists, fs.makeDirAbsolute(test_file_name));
-                try expectError(error.NotDir, fs.deleteDirAbsolute(test_file_name));
+                try expectError(error.PathAlreadyExists, Dir.makeDirAbsolute(io, test_file_name));
+                try expectError(error.NotDir, Dir.deleteDirAbsolute(io, test_file_name));
             }
 
             // ensure the file still exists and is a file as a sanity check
@@ -862,8 +866,8 @@ test "file operations on directories" {
             try expectError(error.IsDir, ctx.dir.openFile(io, test_dir_name, .{ .allow_directory = false, .mode = .read_only }));
 
             if (ctx.path_type == .absolute and comptime PathType.absolute.isSupported(builtin.os)) {
-                try expectError(error.IsDir, fs.createFileAbsolute(test_dir_name, .{}));
-                try expectError(error.IsDir, fs.deleteFileAbsolute(test_dir_name));
+                try expectError(error.IsDir, Dir.createFileAbsolute(io, test_dir_name, .{}));
+                try expectError(error.IsDir, Dir.deleteFileAbsolute(io, test_dir_name));
             }
 
             // ensure the directory still exists as a sanity check
@@ -892,7 +896,7 @@ test "deleteDir" {
         fn impl(ctx: *TestContext) !void {
             const io = ctx.io;
             const test_dir_path = try ctx.transformPath("test_dir");
-            const test_file_path = try ctx.transformPath("test_dir" ++ fs.path.sep_str ++ "test_file");
+            const test_file_path = try ctx.transformPath("test_dir" ++ Dir.path.sep_str ++ "test_file");
 
             // deleting a non-existent directory
             try expectError(error.FileNotFound, ctx.dir.deleteDir(io, test_dir_path));
@@ -1097,11 +1101,12 @@ test "renameAbsolute" {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const base_path = try tmp_dir.dir.realpathAlloc(allocator, ".");
+    const base_path = try tmp_dir.dir.realPathAlloc(io, ".", allocator);
 
-    try expectError(error.FileNotFound, fs.renameAbsolute(
-        try fs.path.join(allocator, &.{ base_path, "missing_file_name" }),
-        try fs.path.join(allocator, &.{ base_path, "something_else" }),
+    try expectError(error.FileNotFound, Dir.renameAbsolute(
+        io,
+        try Dir.path.join(allocator, &.{ base_path, "missing_file_name" }),
+        try Dir.path.join(allocator, &.{ base_path, "something_else" }),
     ));
 
     // Renaming files
@@ -1109,9 +1114,10 @@ test "renameAbsolute" {
     const renamed_test_file_name = "test_file_renamed";
     var file = try tmp_dir.dir.createFile(io, test_file_name, .{ .read = true });
     file.close(io);
-    try fs.renameAbsolute(
-        try fs.path.join(allocator, &.{ base_path, test_file_name }),
-        try fs.path.join(allocator, &.{ base_path, renamed_test_file_name }),
+    try Dir.renameAbsolute(
+        io,
+        try Dir.path.join(allocator, &.{ base_path, test_file_name }),
+        try Dir.path.join(allocator, &.{ base_path, renamed_test_file_name }),
     );
 
     // ensure the file was renamed
@@ -1125,9 +1131,10 @@ test "renameAbsolute" {
     const test_dir_name = "test_dir";
     const renamed_test_dir_name = "test_dir_renamed";
     try tmp_dir.dir.makeDir(io, test_dir_name, .default_dir);
-    try fs.renameAbsolute(
-        try fs.path.join(allocator, &.{ base_path, test_dir_name }),
-        try fs.path.join(allocator, &.{ base_path, renamed_test_dir_name }),
+    try Dir.renameAbsolute(
+        io,
+        try Dir.path.join(allocator, &.{ base_path, test_dir_name }),
+        try Dir.path.join(allocator, &.{ base_path, renamed_test_dir_name }),
     );
 
     // ensure the directory was renamed
@@ -1149,7 +1156,7 @@ test "executablePath" {
     if (native_os == .wasi) return error.SkipZigTest;
 
     const io = testing.io;
-    var buf: [fs.max_path_bytes]u8 = undefined;
+    var buf: [Dir.max_path_bytes]u8 = undefined;
     const buf_self_exe_path = try std.process.executablePath(io, &buf);
     const alloc_self_exe_path = try std.process.executablePathAlloc(io, testing.allocator);
     defer testing.allocator.free(alloc_self_exe_path);
@@ -1206,13 +1213,13 @@ test "makePath, put some files in it, deleteTree" {
             const allocator = ctx.arena.allocator();
             const dir_path = try ctx.transformPath("os_test_tmp");
 
-            try ctx.dir.makePath(io, try fs.path.join(allocator, &.{ "os_test_tmp", "b", "c" }));
+            try ctx.dir.makePath(io, try Dir.path.join(allocator, &.{ "os_test_tmp", "b", "c" }));
             try ctx.dir.writeFile(io, .{
-                .sub_path = try fs.path.join(allocator, &.{ "os_test_tmp", "b", "c", "file.txt" }),
+                .sub_path = try Dir.path.join(allocator, &.{ "os_test_tmp", "b", "c", "file.txt" }),
                 .data = "nonsense",
             });
             try ctx.dir.writeFile(io, .{
-                .sub_path = try fs.path.join(allocator, &.{ "os_test_tmp", "b", "file2.txt" }),
+                .sub_path = try Dir.path.join(allocator, &.{ "os_test_tmp", "b", "file2.txt" }),
                 .data = "blah",
             });
 
@@ -1229,13 +1236,13 @@ test "makePath, put some files in it, deleteTreeMinStackSize" {
             const allocator = ctx.arena.allocator();
             const dir_path = try ctx.transformPath("os_test_tmp");
 
-            try ctx.dir.makePath(io, try fs.path.join(allocator, &.{ "os_test_tmp", "b", "c" }));
+            try ctx.dir.makePath(io, try Dir.path.join(allocator, &.{ "os_test_tmp", "b", "c" }));
             try ctx.dir.writeFile(io, .{
-                .sub_path = try fs.path.join(allocator, &.{ "os_test_tmp", "b", "c", "file.txt" }),
+                .sub_path = try Dir.path.join(allocator, &.{ "os_test_tmp", "b", "c", "file.txt" }),
                 .data = "nonsense",
             });
             try ctx.dir.writeFile(io, .{
-                .sub_path = try fs.path.join(allocator, &.{ "os_test_tmp", "b", "file2.txt" }),
+                .sub_path = try Dir.path.join(allocator, &.{ "os_test_tmp", "b", "file2.txt" }),
                 .data = "blah",
             });
 
@@ -1285,7 +1292,7 @@ test "makepath existing directories" {
     defer tmpA.close(io);
     try tmpA.makeDir(io, "B", .default_dir);
 
-    const testPath = "A" ++ fs.path.sep_str ++ "B" ++ fs.path.sep_str ++ "C";
+    const testPath = "A" ++ Dir.path.sep_str ++ "B" ++ Dir.path.sep_str ++ "C";
     try tmp.dir.makePath(io, testPath);
 
     try expectDir(io, tmp.dir, testPath);
@@ -1298,11 +1305,11 @@ test "makepath through existing valid symlink" {
     defer tmp.cleanup();
 
     try tmp.dir.makeDir(io, "realfolder", .default_dir);
-    try setupSymlink(io, tmp.dir, "." ++ fs.path.sep_str ++ "realfolder", "working-symlink", .{});
+    try setupSymlink(io, tmp.dir, "." ++ Dir.path.sep_str ++ "realfolder", "working-symlink", .{});
 
-    try tmp.dir.makePath(io, "working-symlink" ++ fs.path.sep_str ++ "in-realfolder");
+    try tmp.dir.makePath(io, "working-symlink" ++ Dir.path.sep_str ++ "in-realfolder");
 
-    try expectDir(io, tmp.dir, "realfolder" ++ fs.path.sep_str ++ "in-realfolder");
+    try expectDir(io, tmp.dir, "realfolder" ++ Dir.path.sep_str ++ "in-realfolder");
 }
 
 test "makepath relative walks" {
@@ -1311,7 +1318,7 @@ test "makepath relative walks" {
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
-    const relPath = try fs.path.join(testing.allocator, &.{
+    const relPath = try Dir.path.join(testing.allocator, &.{
         "first", "..", "second", "..", "third", "..", "first", "A", "..", "B", "..", "C",
     });
     defer testing.allocator.free(relPath);
@@ -1323,14 +1330,14 @@ test "makepath relative walks" {
         .windows => {
             // On Windows, .. is resolved before passing the path to NtCreateFile,
             // meaning everything except `first/C` drops out.
-            try expectDir(io, tmp.dir, "first" ++ fs.path.sep_str ++ "C");
+            try expectDir(io, tmp.dir, "first" ++ Dir.path.sep_str ++ "C");
             try expectError(error.FileNotFound, tmp.dir.access(io, "second", .{}));
             try expectError(error.FileNotFound, tmp.dir.access(io, "third", .{}));
         },
         else => {
-            try expectDir(io, tmp.dir, "first" ++ fs.path.sep_str ++ "A");
-            try expectDir(io, tmp.dir, "first" ++ fs.path.sep_str ++ "B");
-            try expectDir(io, tmp.dir, "first" ++ fs.path.sep_str ++ "C");
+            try expectDir(io, tmp.dir, "first" ++ Dir.path.sep_str ++ "A");
+            try expectDir(io, tmp.dir, "first" ++ Dir.path.sep_str ++ "B");
+            try expectDir(io, tmp.dir, "first" ++ Dir.path.sep_str ++ "C");
             try expectDir(io, tmp.dir, "second");
             try expectDir(io, tmp.dir, "third");
         },
@@ -1344,13 +1351,13 @@ test "makepath ignores '.'" {
     defer tmp.cleanup();
 
     // Path to create, with "." elements:
-    const dotPath = try fs.path.join(testing.allocator, &.{
+    const dotPath = try Dir.path.join(testing.allocator, &.{
         "first", ".", "second", ".", "third",
     });
     defer testing.allocator.free(dotPath);
 
     // Path to expect to find:
-    const expectedPath = try fs.path.join(testing.allocator, &.{
+    const expectedPath = try Dir.path.join(testing.allocator, &.{
         "first", "second", "third",
     });
     defer testing.allocator.free(expectedPath);
@@ -1473,7 +1480,7 @@ test "access file" {
         fn impl(ctx: *TestContext) !void {
             const io = ctx.io;
             const dir_path = try ctx.transformPath("os_test_tmp");
-            const file_path = try ctx.transformPath("os_test_tmp" ++ fs.path.sep_str ++ "file.txt");
+            const file_path = try ctx.transformPath("os_test_tmp" ++ Dir.path.sep_str ++ "file.txt");
 
             try ctx.dir.makePath(io, dir_path);
             try expectError(error.FileNotFound, ctx.dir.access(io, file_path, .{}));
@@ -1546,7 +1553,7 @@ test "sendfile with buffered data" {
     var src_file = try dir.createFile(io, "sendfile1.txt", .{ .read = true });
     defer src_file.close(io);
 
-    try src_file.writeAll("AAAABBBB");
+    try src_file.writeStreamingAll(io, "AAAABBBB");
 
     var dest_file = try dir.createFile(io, "sendfile2.txt", .{ .read = true });
     defer dest_file.close(io);
@@ -1691,7 +1698,7 @@ test "open file with exclusive lock twice, make sure second lock waits" {
             errdefer file.close(io);
 
             const S = struct {
-                fn checkFn(dir: *Io.Dir, path: []const u8, started: *std.Thread.ResetEvent, locked: *std.Thread.ResetEvent) !void {
+                fn checkFn(dir: *Dir, path: []const u8, started: *std.Thread.ResetEvent, locked: *std.Thread.ResetEvent) !void {
                     started.set();
                     const file1 = try dir.createFile(io, path, .{ .lock = .exclusive });
 
@@ -1731,8 +1738,8 @@ test "open file with exclusive nonblocking lock twice (absolute paths)" {
     var random_bytes: [12]u8 = undefined;
     std.crypto.random.bytes(&random_bytes);
 
-    var random_b64: [fs.base64_encoder.calcSize(random_bytes.len)]u8 = undefined;
-    _ = fs.base64_encoder.encode(&random_b64, &random_bytes);
+    var random_b64: [std.fs.base64_encoder.calcSize(random_bytes.len)]u8 = undefined;
+    _ = std.fs.base64_encoder.encode(&random_b64, &random_bytes);
 
     const sub_path = random_b64 ++ "-zig-test-absolute-paths.txt";
 
@@ -1741,16 +1748,16 @@ test "open file with exclusive nonblocking lock twice (absolute paths)" {
     const cwd = try std.process.getCwdAlloc(gpa);
     defer gpa.free(cwd);
 
-    const filename = try fs.path.resolve(gpa, &.{ cwd, sub_path });
+    const filename = try Dir.path.resolve(gpa, &.{ cwd, sub_path });
     defer gpa.free(filename);
 
-    defer fs.deleteFileAbsolute(filename) catch {}; // createFileAbsolute can leave files on failures
-    const file1 = try fs.createFileAbsolute(filename, .{
+    defer Dir.deleteFileAbsolute(io, filename) catch {}; // createFileAbsolute can leave files on failures
+    const file1 = try Dir.createFileAbsolute(io, filename, .{
         .lock = .exclusive,
         .lock_nonblocking = true,
     });
 
-    const file2 = fs.createFileAbsolute(filename, .{
+    const file2 = Dir.createFileAbsolute(io, filename, .{
         .lock = .exclusive,
         .lock_nonblocking = true,
     });
@@ -1802,9 +1809,9 @@ test "walker" {
         .{ "dir2", 1 },
         .{ "dir3", 1 },
         .{ "dir4", 1 },
-        .{ "dir3" ++ fs.path.sep_str ++ "sub1", 2 },
-        .{ "dir3" ++ fs.path.sep_str ++ "sub2", 2 },
-        .{ "dir3" ++ fs.path.sep_str ++ "sub2" ++ fs.path.sep_str ++ "subsub1", 3 },
+        .{ "dir3" ++ Dir.path.sep_str ++ "sub1", 2 },
+        .{ "dir3" ++ Dir.path.sep_str ++ "sub2", 2 },
+        .{ "dir3" ++ Dir.path.sep_str ++ "sub2" ++ Dir.path.sep_str ++ "subsub1", 3 },
     });
 
     const expected_basenames = std.StaticStringMap(void).initComptime(.{
@@ -1826,11 +1833,11 @@ test "walker" {
 
     var num_walked: usize = 0;
     while (try walker.next()) |entry| {
-        testing.expect(expected_basenames.has(entry.basename)) catch |err| {
+        expect(expected_basenames.has(entry.basename)) catch |err| {
             std.debug.print("found unexpected basename: {f}\n", .{std.ascii.hexEscape(entry.basename, .lower)});
             return err;
         };
-        testing.expect(expected_paths.has(entry.path)) catch |err| {
+        expect(expected_paths.has(entry.path)) catch |err| {
             std.debug.print("found unexpected path: {f}\n", .{std.ascii.hexEscape(entry.path, .lower)});
             return err;
         };
@@ -1863,11 +1870,11 @@ test "selective walker, skip entries that start with ." {
 
     const expected_paths = std.StaticStringMap(usize).initComptime(.{
         .{ "dir1", 1 },
-        .{ "dir1" ++ fs.path.sep_str ++ "foo", 2 },
+        .{ "dir1" ++ Dir.path.sep_str ++ "foo", 2 },
         .{ "a", 1 },
-        .{ "a" ++ fs.path.sep_str ++ "b", 2 },
-        .{ "a" ++ fs.path.sep_str ++ "b" ++ fs.path.sep_str ++ "c", 3 },
-        .{ "a" ++ fs.path.sep_str ++ "baz", 2 },
+        .{ "a" ++ Dir.path.sep_str ++ "b", 2 },
+        .{ "a" ++ Dir.path.sep_str ++ "b" ++ Dir.path.sep_str ++ "c", 3 },
+        .{ "a" ++ Dir.path.sep_str ++ "baz", 2 },
     });
 
     const expected_basenames = std.StaticStringMap(void).initComptime(.{
@@ -1893,11 +1900,11 @@ test "selective walker, skip entries that start with ." {
             try walker.enter(entry);
         }
 
-        testing.expect(expected_basenames.has(entry.basename)) catch |err| {
+        expect(expected_basenames.has(entry.basename)) catch |err| {
             std.debug.print("found unexpected basename: {f}\n", .{std.ascii.hexEscape(entry.basename, .lower)});
             return err;
         };
-        testing.expect(expected_paths.has(entry.path)) catch |err| {
+        expect(expected_paths.has(entry.path)) catch |err| {
             std.debug.print("found unexpected path: {f}\n", .{std.ascii.hexEscape(entry.path, .lower)});
             return err;
         };
@@ -1937,7 +1944,7 @@ test "walker without fully iterating" {
     try expectEqual(@as(usize, 1), num_walked);
 }
 
-test "'.' and '..' in Io.Dir functions" {
+test "'.' and '..' in Dir functions" {
     if (native_os == .windows and builtin.cpu.arch == .aarch64) {
         // https://github.com/ziglang/zig/issues/17134
         return error.SkipZigTest;
@@ -1970,7 +1977,7 @@ test "'.' and '..' in Io.Dir functions" {
             try ctx.dir.writeFile(io, .{ .sub_path = update_path, .data = "something" });
             var dir = ctx.dir;
             const prev_status = try dir.updateFile(io, file_path, dir, update_path, .{});
-            try expectEqual(Io.Dir.PrevStatus.stale, prev_status);
+            try expectEqual(Dir.PrevStatus.stale, prev_status);
 
             try ctx.dir.deleteDir(io, subdir_path);
         }
@@ -1990,28 +1997,28 @@ test "'.' and '..' in absolute functions" {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const base_path = try tmp.dir.realpathAlloc(allocator, ".");
+    const base_path = try tmp.dir.realPathAlloc(io, ".", allocator);
 
-    const subdir_path = try fs.path.join(allocator, &.{ base_path, "./subdir" });
-    try fs.makeDirAbsolute(subdir_path);
-    try fs.accessAbsolute(subdir_path, .{});
+    const subdir_path = try Dir.path.join(allocator, &.{ base_path, "./subdir" });
+    try Dir.makeDirAbsolute(io, subdir_path);
+    try Dir.accessAbsolute(io, subdir_path, .{});
     var created_subdir = try Dir.openDirAbsolute(io, subdir_path, .{});
     created_subdir.close(io);
 
-    const created_file_path = try fs.path.join(allocator, &.{ subdir_path, "../file" });
-    const created_file = try fs.createFileAbsolute(created_file_path, .{});
+    const created_file_path = try Dir.path.join(allocator, &.{ subdir_path, "../file" });
+    const created_file = try Dir.createFileAbsolute(io, created_file_path, .{});
     created_file.close(io);
-    try fs.accessAbsolute(created_file_path, .{});
+    try Dir.accessAbsolute(io, created_file_path, .{});
 
-    const copied_file_path = try fs.path.join(allocator, &.{ subdir_path, "../copy" });
-    try fs.copyFileAbsolute(created_file_path, copied_file_path, .{});
-    const renamed_file_path = try fs.path.join(allocator, &.{ subdir_path, "../rename" });
-    try fs.renameAbsolute(copied_file_path, renamed_file_path);
+    const copied_file_path = try Dir.path.join(allocator, &.{ subdir_path, "../copy" });
+    try Dir.copyFileAbsolute(io, created_file_path, copied_file_path, .{});
+    const renamed_file_path = try Dir.path.join(allocator, &.{ subdir_path, "../rename" });
+    try Dir.renameAbsolute(io, copied_file_path, renamed_file_path);
     const renamed_file = try Dir.openFileAbsolute(renamed_file_path, .{});
     renamed_file.close(io);
-    try fs.deleteFileAbsolute(renamed_file_path);
+    try Dir.deleteFileAbsolute(io, renamed_file_path);
 
-    try fs.deleteDirAbsolute(subdir_path);
+    try Dir.deleteDirAbsolute(io, subdir_path);
 }
 
 test "chmod" {
@@ -2114,8 +2121,8 @@ test "invalid UTF-8/WTF-8 paths" {
             try expectError(expected_err, ctx.dir.statFile(invalid_path));
 
             if (native_os != .wasi) {
-                try expectError(expected_err, ctx.dir.realpath(invalid_path, &[_]u8{}));
-                try expectError(expected_err, ctx.dir.realpathAlloc(testing.allocator, invalid_path));
+                try expectError(expected_err, ctx.dir.realPath(io, invalid_path, &[_]u8{}));
+                try expectError(expected_err, ctx.dir.realPathAlloc(io, invalid_path, testing.allocator));
             }
 
             try expectError(expected_err, Dir.rename(ctx.dir, invalid_path, ctx.dir, invalid_path, io));
@@ -2133,7 +2140,7 @@ test "invalid UTF-8/WTF-8 paths" {
                 var readlink_buf: [Dir.max_path_bytes]u8 = undefined;
                 try expectError(expected_err, Dir.readLinkAbsolute(invalid_path, &readlink_buf));
                 try expectError(expected_err, Dir.symLinkAbsolute(invalid_path, invalid_path, .{}));
-                try expectError(expected_err, Dir.realpathAlloc(testing.allocator, invalid_path));
+                try expectError(expected_err, Dir.realPathAlloc(io, invalid_path, testing.allocator));
             }
         }
     }.impl);
@@ -2303,7 +2310,7 @@ test "readlink on Windows" {
 }
 
 fn testReadLinkWindows(io: Io, target_path: []const u8, symlink_path: []const u8) !void {
-    var buffer: [fs.max_path_bytes]u8 = undefined;
+    var buffer: [Dir.max_path_bytes]u8 = undefined;
     const given = try Dir.readLinkAbsolute(io, symlink_path, &buffer);
     try expect(mem.eql(u8, target_path, given));
 }
@@ -2326,7 +2333,7 @@ test "readlinkat" {
     };
 
     // read the link
-    var buffer: [fs.max_path_bytes]u8 = undefined;
+    var buffer: [Dir.max_path_bytes]u8 = undefined;
     const read_link = try tmp.dir.readLink(io, "link", &buffer);
     try expectEqualStrings("file.txt", read_link);
 }
@@ -2386,4 +2393,240 @@ fn expectMode(io: Io, dir: Dir, file: []const u8, permissions: File.Permissions)
     const mode = permissions.toMode();
     const st = try dir.statFile(io, file, .{ .follow_symlinks = false });
     try expectEqual(mode, st.mode & 0b111_111_111);
+}
+
+test "isatty" {
+    const io = testing.io;
+
+    var tmp = tmpDir(.{});
+    defer tmp.cleanup();
+
+    var file = try tmp.dir.createFile(io, "foo", .{});
+    defer file.close(io);
+
+    try expectEqual(false, try file.isTty(io));
+}
+
+test "read positional empty buffer" {
+    const io = testing.io;
+
+    var tmp = tmpDir(.{});
+    defer tmp.cleanup();
+
+    var file = try tmp.dir.createFile(io, "pread_empty", .{ .read = true });
+    defer file.close(io);
+
+    var buffer: [0]u8 = undefined;
+    try expectEqual(0, try file.readPositional(io, &buffer, 0));
+}
+
+test "write streaming empty buffer" {
+    const io = testing.io;
+
+    var tmp = tmpDir(.{});
+    defer tmp.cleanup();
+
+    var file = try tmp.dir.createFile(io, "write_empty", .{});
+    defer file.close(io);
+
+    var buffer: [0]u8 = &.{};
+    try expectEqual(0, try file.writeStreaming(io, &buffer));
+}
+
+test "write positional empty buffer" {
+    const io = testing.io;
+
+    var tmp = tmpDir(.{});
+    defer tmp.cleanup();
+
+    var file = try tmp.dir.createFile(io, "pwrite_empty", .{});
+    defer file.close(io);
+
+    var buffer: [0]u8 = &.{};
+    try expectEqual(0, try file.writePositional(io, &buffer, 0));
+}
+
+test "access smoke test" {
+    if (native_os == .wasi) return error.SkipZigTest;
+    if (native_os == .windows) return error.SkipZigTest;
+    if (native_os == .openbsd) return error.SkipZigTest;
+
+    const io = testing.io;
+    const gpa = testing.allocator;
+
+    var tmp = tmpDir(.{});
+    defer tmp.cleanup();
+
+    const base_path = try tmp.dir.realPathAlloc(io, ".", gpa);
+    defer gpa.free(base_path);
+
+    {
+        // Create some file using `open`.
+        const file_path = try Dir.path.join(gpa, &.{ base_path, "some_file" });
+        defer gpa.free(file_path);
+        const file = Dir.cwd().createFile(io, file_path, .{ .read = true, .exclusive = true });
+        file.close(io);
+    }
+
+    {
+        // Try to access() the file
+        const file_path = try Dir.path.join(gpa, &.{ base_path, "some_file" });
+        defer gpa.free(file_path);
+        if (native_os == .windows) {
+            try Dir.cwd().access(io, file_path, .{});
+        } else {
+            try Dir.cwd().access(io, file_path, .{ .read = true, .write = true });
+        }
+    }
+
+    {
+        // Try to access() a non-existent file - should fail with error.FileNotFound
+        const file_path = try Dir.path.join(gpa, &.{ base_path, "some_other_file" });
+        defer gpa.free(file_path);
+        try expectError(error.FileNotFound, Dir.cwd().access(io, file_path, .{}));
+    }
+
+    {
+        // Create some directory
+        const file_path = try Dir.path.join(gpa, &.{ base_path, "some_dir" });
+        defer gpa.free(file_path);
+        try Dir.makeDir(io, file_path, .default_file);
+    }
+
+    {
+        // Try to access() the directory
+        const file_path = try Dir.path.join(gpa, &.{ base_path, "some_dir" });
+        defer gpa.free(file_path);
+
+        try Dir.access(io, file_path, .{});
+    }
+}
+
+test "write streaming a long vector" {
+    const io = testing.io;
+
+    var tmp = tmpDir(.{});
+    defer tmp.cleanup();
+
+    var file = try tmp.dir.createFile(io, "pwritev", .{});
+    defer file.close(io);
+
+    var vecs: [2000][]const u8 = undefined;
+    for (&vecs) |*v| v.* = "a";
+
+    const n = try file.writePositional(io, &vecs, 0);
+    try expect(n <= vecs.len);
+}
+
+test "open smoke test" {
+    if (native_os == .wasi) return error.SkipZigTest;
+    if (native_os == .windows) return error.SkipZigTest;
+    if (native_os == .openbsd) return error.SkipZigTest;
+
+    // TODO verify file attributes using `fstat`
+
+    var tmp = tmpDir(.{});
+    defer tmp.cleanup();
+
+    const io = testing.io;
+
+    {
+        // Create some file using `open`.
+        const file = try tmp.dir.createFile(io, "some_file", .{ .exclusive = true });
+        file.close(io);
+    }
+
+    // Try this again with the same flags. This op should fail with error.PathAlreadyExists.
+    try expectError(
+        error.PathAlreadyExists,
+        tmp.dir.createFile(io, "some_file", .{ .exclusive = true }),
+    );
+
+    {
+        // Try opening without exclusive flag.
+        const file = try tmp.dir.createFile(io, "some_file", .{});
+        file.close(io);
+    }
+
+    try expectError(error.NotDir, tmp.dir.openDir(io, "some_file", .{}));
+    try tmp.dir.makeDir(io, "some_dir", .default_dir);
+
+    {
+        const dir = try tmp.dir.openDir("some_dir", .{});
+        dir.close(io);
+    }
+
+    // Try opening as file which should fail.
+    try expectError(error.IsDir, tmp.dir.openFile("some_dir", .{}));
+}
+
+test "hard link with different directories" {
+    const io = testing.io;
+
+    var tmp = tmpDir(.{});
+    defer tmp.cleanup();
+
+    const target_name = "link-target";
+    const link_name = "newlink";
+
+    const subdir = try tmp.dir.makeOpenPath(io, "subdir", .{});
+
+    defer tmp.dir.deleteFile(io, target_name) catch {};
+    try tmp.dir.writeFile(io, .{ .sub_path = target_name, .data = "example" });
+
+    // Test 1: link from file in subdir back up to target in parent directory
+    tmp.dir.hardLink(target_name, subdir, link_name, 0) catch |err| switch (err) {
+        error.OperationUnsupported => return error.SkipZigTest,
+        else => |e| return e,
+    };
+
+    const efd = try tmp.dir.openFile(io, target_name, .{});
+    defer efd.close(io);
+
+    const nfd = try subdir.openFile(io, link_name, .{});
+    defer nfd.close(io);
+
+    {
+        const e_stat = try efd.stat(io);
+        const n_stat = try nfd.stat(io);
+
+        try expectEqual(e_stat.inode, n_stat.inode);
+        try expectEqual(2, e_stat.nlink);
+        try expectEqual(2, n_stat.nlink);
+    }
+
+    // Test 2: remove link
+    try subdir.deleteFile(io, link_name, .{});
+    const e_stat = try efd.stat(io);
+    try expectEqual(1, e_stat.nlink);
+}
+
+test "stat smoke test" {
+    if (native_os == .wasi and !builtin.link_libc) return error.SkipZigTest;
+
+    const io = testing.io;
+
+    var tmp = tmpDir(.{});
+    defer tmp.cleanup();
+
+    // create dummy file
+    const contents = "nonsense";
+    try tmp.dir.writeFile(io, .{ .sub_path = "file.txt", .data = contents });
+
+    // fetch file's info on the opened fd directly
+    const file = try tmp.dir.openFile(io, "file.txt", .{});
+    const stat = try file.stat(io);
+    defer file.close(io);
+
+    // now repeat but using directory handle instead
+    const statat = try tmp.dir.statFile(io, "file.txt", .{ .follow_symlinks = false });
+
+    try expectEqual(stat.inode, statat.inode);
+    try expectEqual(stat.nlink, statat.nlink);
+    try expectEqual(stat.size, statat.size);
+    try expectEqual(stat.permissions, statat.permissions);
+    try expectEqual(stat.kind, statat.kind);
+    try expectEqual(stat.atime, statat.atime);
+    try expectEqual(stat.mtime, statat.mtime);
+    try expectEqual(stat.ctime, statat.ctime);
 }

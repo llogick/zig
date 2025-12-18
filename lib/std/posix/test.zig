@@ -1,25 +1,24 @@
 const builtin = @import("builtin");
 const native_os = builtin.target.os.tag;
+const AtomicRmwOp = std.builtin.AtomicRmwOp;
+const AtomicOrder = std.builtin.AtomicOrder;
 
 const std = @import("../std.zig");
 const Io = std.Io;
+const Dir = std.Io.Dir;
 const posix = std.posix;
-const testing = std.testing;
-const expect = std.testing.expect;
-const expectEqual = std.testing.expectEqual;
-const expectError = std.testing.expectError;
-const fs = std.fs;
 const mem = std.mem;
 const elf = std.elf;
 const linux = std.os.linux;
-const a = std.testing.allocator;
-const AtomicRmwOp = std.builtin.AtomicRmwOp;
-const AtomicOrder = std.builtin.AtomicOrder;
-const tmpDir = std.testing.tmpDir;
-const AT = posix.AT;
+const AT = std.posix.AT;
 
-// NOTE: several additional tests are in test/standalone/posix/.  Any tests that mutate
-// process-wide POSIX state (cwd, signals, etc) cannot be Zig unit tests and should be over there.
+const testing = std.testing;
+const expect = std.testing.expect;
+const expectEqual = std.testing.expectEqual;
+const expectEqualSlices = std.testing.expectEqualSlices;
+const expectEqualStrings = std.testing.expectEqualStrings;
+const expectError = std.testing.expectError;
+const tmpDir = std.testing.tmpDir;
 
 // https://github.com/ziglang/zig/issues/20288
 test "WTF-8 to WTF-16 conversion buffer overflows" {
@@ -41,165 +40,6 @@ test "check WASI CWD" {
             try expectEqual(3, posix.AT.FDCWD);
         }
     }
-}
-
-test "open smoke test" {
-    if (native_os == .wasi) return error.SkipZigTest;
-    if (native_os == .windows) return error.SkipZigTest;
-    if (native_os == .openbsd) return error.SkipZigTest;
-
-    // TODO verify file attributes using `fstat`
-
-    var tmp = tmpDir(.{});
-    defer tmp.cleanup();
-
-    const base_path = try tmp.dir.realpathAlloc(a, ".");
-    defer a.free(base_path);
-
-    const mode: posix.mode_t = if (native_os == .windows) 0 else 0o666;
-
-    {
-        // Create some file using `open`.
-        const file_path = try fs.path.join(a, &.{ base_path, "some_file" });
-        defer a.free(file_path);
-        const fd = try posix.open(file_path, .{ .ACCMODE = .RDWR, .CREAT = true, .EXCL = true }, mode);
-        posix.close(fd);
-    }
-
-    {
-        // Try this again with the same flags. This op should fail with error.PathAlreadyExists.
-        const file_path = try fs.path.join(a, &.{ base_path, "some_file" });
-        defer a.free(file_path);
-        try expectError(error.PathAlreadyExists, posix.open(file_path, .{ .ACCMODE = .RDWR, .CREAT = true, .EXCL = true }, mode));
-    }
-
-    {
-        // Try opening without `EXCL` flag.
-        const file_path = try fs.path.join(a, &.{ base_path, "some_file" });
-        defer a.free(file_path);
-        const fd = try posix.open(file_path, .{ .ACCMODE = .RDWR, .CREAT = true }, mode);
-        posix.close(fd);
-    }
-
-    {
-        // Try opening as a directory which should fail.
-        const file_path = try fs.path.join(a, &.{ base_path, "some_file" });
-        defer a.free(file_path);
-        try expectError(error.NotDir, posix.open(file_path, .{ .ACCMODE = .RDWR, .DIRECTORY = true }, mode));
-    }
-
-    {
-        // Create some directory
-        const file_path = try fs.path.join(a, &.{ base_path, "some_dir" });
-        defer a.free(file_path);
-        try posix.mkdir(file_path, mode);
-    }
-
-    {
-        // Open dir using `open`
-        const file_path = try fs.path.join(a, &.{ base_path, "some_dir" });
-        defer a.free(file_path);
-        const fd = try posix.open(file_path, .{ .ACCMODE = .RDONLY, .DIRECTORY = true }, mode);
-        posix.close(fd);
-    }
-
-    {
-        // Try opening as file which should fail.
-        const file_path = try fs.path.join(a, &.{ base_path, "some_dir" });
-        defer a.free(file_path);
-        try expectError(error.IsDir, posix.open(file_path, .{ .ACCMODE = .RDWR }, mode));
-    }
-}
-
-fn getLinkInfo(fd: posix.fd_t) !struct { posix.ino_t, posix.nlink_t } {
-    if (native_os == .linux) {
-        const stx = try linux.wrapped.statx(
-            fd,
-            "",
-            posix.AT.EMPTY_PATH,
-            .{ .INO = true, .NLINK = true },
-        );
-        std.debug.assert(stx.mask.INO);
-        std.debug.assert(stx.mask.NLINK);
-        return .{ stx.ino, stx.nlink };
-    }
-
-    const st = try posix.fstat(fd);
-    return .{ st.ino, st.nlink };
-}
-
-test "linkat with different directories" {
-    switch (native_os) {
-        .wasi, .linux, .illumos => {},
-        else => return error.SkipZigTest,
-    }
-
-    const io = testing.io;
-
-    var tmp = tmpDir(.{});
-    defer tmp.cleanup();
-
-    const target_name = "link-target";
-    const link_name = "newlink";
-
-    const subdir = try tmp.dir.makeOpenPath(io, "subdir", .{});
-
-    defer tmp.dir.deleteFile(io, target_name) catch {};
-    try tmp.dir.writeFile(io, .{ .sub_path = target_name, .data = "example" });
-
-    // Test 1: link from file in subdir back up to target in parent directory
-    try posix.linkat(tmp.dir.handle, target_name, subdir.handle, link_name, 0);
-
-    const efd = try tmp.dir.openFile(io, target_name, .{});
-    defer efd.close(io);
-
-    const nfd = try subdir.openFile(io, link_name, .{});
-    defer nfd.close(io);
-
-    {
-        const eino, _ = try getLinkInfo(efd.handle);
-        const nino, const nlink = try getLinkInfo(nfd.handle);
-        try testing.expectEqual(eino, nino);
-        try testing.expectEqual(@as(posix.nlink_t, 2), nlink);
-    }
-
-    // Test 2: remove link
-    try posix.unlinkat(subdir.handle, link_name, 0);
-    _, const elink = try getLinkInfo(efd.handle);
-    try testing.expectEqual(@as(posix.nlink_t, 1), elink);
-}
-
-test "fstatat" {
-    if (posix.Stat == void) return error.SkipZigTest;
-    if (native_os == .wasi and !builtin.link_libc) return error.SkipZigTest;
-
-    var tmp = tmpDir(.{});
-    defer tmp.cleanup();
-
-    // create dummy file
-    const contents = "nonsense";
-    try tmp.dir.writeFile(.{ .sub_path = "file.txt", .data = contents });
-
-    // fetch file's info on the opened fd directly
-    const file = try tmp.dir.openFile("file.txt", .{});
-    const stat = try posix.fstat(file.handle);
-    defer file.close();
-
-    // now repeat but using `fstatat` instead
-    const statat = try posix.fstatat(tmp.dir.fd, "file.txt", posix.AT.SYMLINK_NOFOLLOW);
-
-    try expectEqual(stat.dev, statat.dev);
-    try expectEqual(stat.ino, statat.ino);
-    try expectEqual(stat.nlink, statat.nlink);
-    try expectEqual(stat.mode, statat.mode);
-    try expectEqual(stat.uid, statat.uid);
-    try expectEqual(stat.gid, statat.gid);
-    try expectEqual(stat.rdev, statat.rdev);
-    try expectEqual(stat.size, statat.size);
-    try expectEqual(stat.blksize, statat.blksize);
-    // The stat.blocks/statat.blocks count is managed by the filesystem and may
-    // change if the file is stored in a journal or "inline".
-    // try expectEqual(stat.blocks, statat.blocks);
 }
 
 test "getrandom" {
@@ -232,7 +72,7 @@ test "sigaltstack" {
     // Setting a stack size less than MINSIGSTKSZ returns ENOMEM
     st.flags = 0;
     st.size = 1;
-    try testing.expectError(error.SizeTooSmall, posix.sigaltstack(&st, null));
+    try expectError(error.SizeTooSmall, posix.sigaltstack(&st, null));
 }
 
 // If the type is not available use void to avoid erroring out when `iter_fn` is
@@ -304,7 +144,7 @@ test "pipe" {
     try expect((try posix.write(fds[1], "hello")) == 5);
     var buf: [16]u8 = undefined;
     try expect((try posix.read(fds[0], buf[0..])) == 5);
-    try testing.expectEqualSlices(u8, buf[0..5], "hello");
+    try expectEqualSlices(u8, buf[0..5], "hello");
     posix.close(fds[1]);
     posix.close(fds[0]);
 }
@@ -315,6 +155,8 @@ test "argsAlloc" {
 }
 
 test "memfd_create" {
+    const io = testing.io;
+
     // memfd_create is only supported by linux and freebsd.
     switch (native_os) {
         .linux => {},
@@ -325,15 +167,14 @@ test "memfd_create" {
         else => return error.SkipZigTest,
     }
 
-    const fd = try posix.memfd_create("test", 0);
-    defer posix.close(fd);
-    try expect((try posix.write(fd, "test")) == 4);
-    try posix.lseek_SET(fd, 0);
+    const file: Io.File = .{ .handle = try posix.memfd_create("test", 0) };
+    defer file.close(io);
+    try file.writePositionalAll(io, "test", 0);
 
     var buf: [10]u8 = undefined;
-    const bytes_read = try posix.read(fd, &buf);
+    const bytes_read = try file.readPositionalAll(io, &buf, 0);
     try expect(bytes_read == 4);
-    try expect(mem.eql(u8, buf[0..4], "test"));
+    try expectEqualStrings("test", buf[0..4]);
 }
 
 test "mmap" {
@@ -357,14 +198,14 @@ test "mmap" {
         );
         defer posix.munmap(data);
 
-        try testing.expectEqual(@as(usize, 1234), data.len);
+        try expectEqual(@as(usize, 1234), data.len);
 
         // By definition the data returned by mmap is zero-filled
-        try testing.expect(mem.eql(u8, data, &[_]u8{0x00} ** 1234));
+        try expect(mem.eql(u8, data, &[_]u8{0x00} ** 1234));
 
         // Make sure the memory is writeable as requested
         @memset(data, 0x55);
-        try testing.expect(mem.eql(u8, data, &[_]u8{0x55} ** 1234));
+        try expect(mem.eql(u8, data, &[_]u8{0x55} ** 1234));
     }
 
     const test_out_file = "os_tmp_test";
@@ -403,7 +244,7 @@ test "mmap" {
 
         var i: usize = 0;
         while (i < alloc_size / @sizeOf(u32)) : (i += 1) {
-            try testing.expectEqual(i, try stream.takeInt(u32, .little));
+            try expectEqual(i, try stream.takeInt(u32, .little));
         }
     }
 
@@ -428,7 +269,7 @@ test "mmap" {
 
         var i: usize = alloc_size / 2 / @sizeOf(u32);
         while (i < alloc_size / @sizeOf(u32)) : (i += 1) {
-            try testing.expectEqual(i, try stream.takeInt(u32, .little));
+            try expectEqual(i, try stream.takeInt(u32, .little));
         }
     }
 }
@@ -498,7 +339,7 @@ test "fsync" {
     const file = try tmp.dir.createFile(io, test_out_file, .{});
     defer file.close(io);
 
-    try posix.fsync(file.handle);
+    try file.sync(io);
     try posix.fdatasync(file.handle);
 }
 
@@ -536,9 +377,9 @@ test "sigrtmin/max" {
         return error.SkipZigTest;
     }
 
-    try std.testing.expect(posix.sigrtmin() >= 32);
-    try std.testing.expect(posix.sigrtmin() >= posix.system.sigrtmin());
-    try std.testing.expect(posix.sigrtmin() < posix.system.sigrtmax());
+    try expect(posix.sigrtmin() >= 32);
+    try expect(posix.sigrtmin() >= posix.system.sigrtmin());
+    try expect(posix.sigrtmin() < posix.system.sigrtmax());
 }
 
 test "sigset empty/full" {
@@ -622,18 +463,18 @@ test "dup & dup2" {
 
         var duped = Io.File{ .handle = try posix.dup(file.handle) };
         defer duped.close(io);
-        try duped.writeAll("dup");
+        try duped.writeStreamingAll(io, "dup");
 
         // Tests aren't run in parallel so using the next fd shouldn't be an issue.
         const new_fd = duped.handle + 1;
         try posix.dup2(file.handle, new_fd);
         var dup2ed = Io.File{ .handle = new_fd };
         defer dup2ed.close(io);
-        try dup2ed.writeAll("dup2");
+        try dup2ed.writeStreamingAll(io, "dup2");
     }
 
     var buffer: [8]u8 = undefined;
-    try testing.expectEqualStrings("dupdup2", try tmp.dir.readFile("os_dup_test", &buffer));
+    try expectEqualStrings("dupdup2", try tmp.dir.readFile(io, "os_dup_test", &buffer));
 }
 
 test "getpid" {
@@ -651,144 +492,75 @@ test "getppid" {
     try expect(posix.getppid() >= 0);
 }
 
-test "writev longer than IOV_MAX" {
-    if (native_os == .windows or native_os == .wasi) return error.SkipZigTest;
-
-    const io = testing.io;
-
-    var tmp = tmpDir(.{});
-    defer tmp.cleanup();
-
-    var file = try tmp.dir.createFile(io, "pwritev", .{});
-    defer file.close(io);
-
-    const iovecs = [_]posix.iovec_const{.{ .base = "a", .len = 1 }} ** (posix.IOV_MAX + 1);
-    const amt = try file.writev(&iovecs);
-    try testing.expectEqual(@as(usize, posix.IOV_MAX), amt);
-}
-
 test "rename smoke test" {
     if (native_os == .wasi) return error.SkipZigTest;
     if (native_os == .windows) return error.SkipZigTest;
     if (native_os == .openbsd) return error.SkipZigTest;
 
+    const io = testing.io;
+    const gpa = testing.allocator;
+
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
-    const base_path = try tmp.dir.realpathAlloc(a, ".");
-    defer a.free(base_path);
+    const base_path = try tmp.dir.realPathAlloc(io, ".", gpa);
+    defer gpa.free(base_path);
 
     const mode: posix.mode_t = if (native_os == .windows) 0 else 0o666;
 
     {
         // Create some file using `open`.
-        const file_path = try fs.path.join(a, &.{ base_path, "some_file" });
-        defer a.free(file_path);
+        const file_path = try Dir.path.join(gpa, &.{ base_path, "some_file" });
+        defer gpa.free(file_path);
         const fd = try posix.open(file_path, .{ .ACCMODE = .RDWR, .CREAT = true, .EXCL = true }, mode);
         posix.close(fd);
 
         // Rename the file
-        const new_file_path = try fs.path.join(a, &.{ base_path, "some_other_file" });
-        defer a.free(new_file_path);
-        try Io.Dir.renameAbsolute(file_path, new_file_path);
+        const new_file_path = try Dir.path.join(gpa, &.{ base_path, "some_other_file" });
+        defer gpa.free(new_file_path);
+        try Io.Dir.renameAbsolute(io, file_path, new_file_path);
     }
 
     {
         // Try opening renamed file
-        const file_path = try fs.path.join(a, &.{ base_path, "some_other_file" });
-        defer a.free(file_path);
+        const file_path = try Dir.path.join(gpa, &.{ base_path, "some_other_file" });
+        defer gpa.free(file_path);
         const fd = try posix.open(file_path, .{ .ACCMODE = .RDWR }, mode);
         posix.close(fd);
     }
 
     {
         // Try opening original file - should fail with error.FileNotFound
-        const file_path = try fs.path.join(a, &.{ base_path, "some_file" });
-        defer a.free(file_path);
+        const file_path = try Dir.path.join(gpa, &.{ base_path, "some_file" });
+        defer gpa.free(file_path);
         try expectError(error.FileNotFound, posix.open(file_path, .{ .ACCMODE = .RDWR }, mode));
     }
 
     {
         // Create some directory
-        const file_path = try fs.path.join(a, &.{ base_path, "some_dir" });
-        defer a.free(file_path);
+        const file_path = try Dir.path.join(gpa, &.{ base_path, "some_dir" });
+        defer gpa.free(file_path);
         try posix.mkdir(file_path, mode);
 
         // Rename the directory
-        const new_file_path = try fs.path.join(a, &.{ base_path, "some_other_dir" });
-        defer a.free(new_file_path);
-        try Io.Dir.renameAbsolute(file_path, new_file_path);
+        const new_file_path = try Dir.path.join(gpa, &.{ base_path, "some_other_dir" });
+        defer gpa.free(new_file_path);
+        try Io.Dir.renameAbsolute(io, file_path, new_file_path);
     }
 
     {
         // Try opening renamed directory
-        const file_path = try fs.path.join(a, &.{ base_path, "some_other_dir" });
-        defer a.free(file_path);
+        const file_path = try Dir.path.join(gpa, &.{ base_path, "some_other_dir" });
+        defer gpa.free(file_path);
         const fd = try posix.open(file_path, .{ .ACCMODE = .RDONLY, .DIRECTORY = true }, mode);
         posix.close(fd);
     }
 
     {
         // Try opening original directory - should fail with error.FileNotFound
-        const file_path = try fs.path.join(a, &.{ base_path, "some_dir" });
-        defer a.free(file_path);
+        const file_path = try Dir.path.join(gpa, &.{ base_path, "some_dir" });
+        defer gpa.free(file_path);
         try expectError(error.FileNotFound, posix.open(file_path, .{ .ACCMODE = .RDONLY, .DIRECTORY = true }, mode));
-    }
-}
-
-test "access smoke test" {
-    if (native_os == .wasi) return error.SkipZigTest;
-    if (native_os == .windows) return error.SkipZigTest;
-    if (native_os == .openbsd) return error.SkipZigTest;
-
-    const io = testing.io;
-
-    var tmp = tmpDir(.{});
-    defer tmp.cleanup();
-
-    const base_path = try tmp.dir.realpathAlloc(a, ".");
-    defer a.free(base_path);
-
-    const mode: posix.mode_t = if (native_os == .windows) 0 else 0o666;
-    {
-        // Create some file using `open`.
-        const file_path = try fs.path.join(a, &.{ base_path, "some_file" });
-        defer a.free(file_path);
-        const fd = try posix.open(file_path, .{ .ACCMODE = .RDWR, .CREAT = true, .EXCL = true }, mode);
-        posix.close(fd);
-    }
-
-    {
-        // Try to access() the file
-        const file_path = try fs.path.join(a, &.{ base_path, "some_file" });
-        defer a.free(file_path);
-        if (native_os == .windows) {
-            try posix.access(io, file_path, posix.F_OK);
-        } else {
-            try posix.access(io, file_path, posix.F_OK | posix.W_OK | posix.R_OK);
-        }
-    }
-
-    {
-        // Try to access() a non-existent file - should fail with error.FileNotFound
-        const file_path = try fs.path.join(a, &.{ base_path, "some_other_file" });
-        defer a.free(file_path);
-        try expectError(error.FileNotFound, posix.access(io, file_path, posix.F_OK));
-    }
-
-    {
-        // Create some directory
-        const file_path = try fs.path.join(a, &.{ base_path, "some_dir" });
-        defer a.free(file_path);
-        try posix.mkdir(file_path, mode);
-    }
-
-    {
-        // Try to access() the directory
-        const file_path = try fs.path.join(a, &.{ base_path, "some_dir" });
-        defer a.free(file_path);
-
-        try posix.access(io, file_path, posix.F_OK);
     }
 }
 
@@ -809,89 +581,3 @@ test "timerfd" {
     const expect_disarmed_timer: linux.itimerspec = .{ .it_interval = .{ .sec = 0, .nsec = 0 }, .it_value = .{ .sec = 0, .nsec = 0 } };
     try expectEqual(expect_disarmed_timer, git);
 }
-
-test "isatty" {
-    const io = testing.io;
-
-    var tmp = tmpDir(.{});
-    defer tmp.cleanup();
-
-    var file = try tmp.dir.createFile(io, "foo", .{});
-    defer file.close(io);
-
-    try expectEqual(posix.isatty(file.handle), false);
-}
-
-test "pread with empty buffer" {
-    const io = testing.io;
-
-    var tmp = tmpDir(.{});
-    defer tmp.cleanup();
-
-    var file = try tmp.dir.createFile(io, "pread_empty", .{ .read = true });
-    defer file.close(io);
-
-    const bytes = try a.alloc(u8, 0);
-    defer a.free(bytes);
-
-    const rc = try posix.pread(file.handle, bytes, 0);
-    try expectEqual(rc, 0);
-}
-
-test "write with empty buffer" {
-    const io = testing.io;
-
-    var tmp = tmpDir(.{});
-    defer tmp.cleanup();
-
-    var file = try tmp.dir.createFile(io, "write_empty", .{});
-    defer file.close(io);
-
-    const bytes = try a.alloc(u8, 0);
-    defer a.free(bytes);
-
-    const rc = try posix.write(file.handle, bytes);
-    try expectEqual(rc, 0);
-}
-
-test "pwrite with empty buffer" {
-    const io = testing.io;
-
-    var tmp = tmpDir(.{});
-    defer tmp.cleanup();
-
-    var file = try tmp.dir.createFile(io, "pwrite_empty", .{});
-    defer file.close(io);
-
-    const bytes = try a.alloc(u8, 0);
-    defer a.free(bytes);
-
-    const rc = try posix.pwrite(file.handle, bytes, 0);
-    try expectEqual(rc, 0);
-}
-
-const CommonOpenFlags = packed struct {
-    ACCMODE: posix.ACCMODE = .RDONLY,
-    CREAT: bool = false,
-    EXCL: bool = false,
-    LARGEFILE: bool = false,
-    DIRECTORY: bool = false,
-    CLOEXEC: bool = false,
-    NONBLOCK: bool = false,
-
-    pub fn lower(cof: CommonOpenFlags) posix.O {
-        var result: posix.O = if (native_os == .wasi) .{
-            .read = cof.ACCMODE != .WRONLY,
-            .write = cof.ACCMODE != .RDONLY,
-        } else .{
-            .ACCMODE = cof.ACCMODE,
-        };
-        result.CREAT = cof.CREAT;
-        result.EXCL = cof.EXCL;
-        result.DIRECTORY = cof.DIRECTORY;
-        result.NONBLOCK = cof.NONBLOCK;
-        if (@hasField(posix.O, "CLOEXEC")) result.CLOEXEC = cof.CLOEXEC;
-        if (@hasField(posix.O, "LARGEFILE")) result.LARGEFILE = cof.LARGEFILE;
-        return result;
-    }
-};
