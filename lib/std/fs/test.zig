@@ -251,7 +251,7 @@ test "Dir.readLink on non-symlinks" {
 
 fn testReadLink(io: Io, dir: Dir, target_path: []const u8, symlink_path: []const u8) !void {
     var buffer: [Dir.max_path_bytes]u8 = undefined;
-    const actual = try dir.readLink(io, symlink_path, &buffer);
+    const actual = buffer[0..try dir.readLink(io, symlink_path, &buffer)];
     try expectEqualStrings(target_path, actual);
 }
 
@@ -289,7 +289,7 @@ test "File.stat on a File that is a symlink returns Kind.sym_link" {
 
             try setupSymlink(io, ctx.dir, dir_target_path, "symlink", .{ .is_directory = true });
 
-            var symlink: Dir = try ctx.dir.openDir("symlink", .{ .follow_symlinks = false });
+            var symlink: Dir = try ctx.dir.openDir(io, "symlink", .{ .follow_symlinks = false });
             defer symlink.close(io);
 
             const stat = try symlink.stat(io);
@@ -807,7 +807,7 @@ test "directory operations on files" {
             try expectError(error.NotDir, ctx.dir.deleteDir(io, test_file_name));
 
             if (ctx.path_type == .absolute and comptime PathType.absolute.isSupported(builtin.os)) {
-                try expectError(error.PathAlreadyExists, Dir.makeDirAbsolute(io, test_file_name));
+                try expectError(error.PathAlreadyExists, Dir.makeDirAbsolute(io, test_file_name, .default_dir));
                 try expectError(error.NotDir, Dir.deleteDirAbsolute(io, test_file_name));
             }
 
@@ -1104,9 +1104,9 @@ test "renameAbsolute" {
     const base_path = try tmp_dir.dir.realPathAlloc(io, ".", allocator);
 
     try expectError(error.FileNotFound, Dir.renameAbsolute(
-        io,
         try Dir.path.join(allocator, &.{ base_path, "missing_file_name" }),
         try Dir.path.join(allocator, &.{ base_path, "something_else" }),
+        io,
     ));
 
     // Renaming files
@@ -1115,9 +1115,9 @@ test "renameAbsolute" {
     var file = try tmp_dir.dir.createFile(io, test_file_name, .{ .read = true });
     file.close(io);
     try Dir.renameAbsolute(
-        io,
         try Dir.path.join(allocator, &.{ base_path, test_file_name }),
         try Dir.path.join(allocator, &.{ base_path, renamed_test_file_name }),
+        io,
     );
 
     // ensure the file was renamed
@@ -1132,9 +1132,9 @@ test "renameAbsolute" {
     const renamed_test_dir_name = "test_dir_renamed";
     try tmp_dir.dir.makeDir(io, test_dir_name, .default_dir);
     try Dir.renameAbsolute(
-        io,
         try Dir.path.join(allocator, &.{ base_path, test_dir_name }),
         try Dir.path.join(allocator, &.{ base_path, renamed_test_dir_name }),
+        io,
     );
 
     // ensure the directory was renamed
@@ -1430,7 +1430,7 @@ test "writev, readv" {
     var src_file = try tmp.dir.createFile(io, "test.txt", .{ .read = true });
     defer src_file.close(io);
 
-    var writer = src_file.writerStreaming(&.{});
+    var writer = src_file.writerStreaming(io, &.{});
 
     try writer.interface.writeVecAll(&write_vecs);
     try writer.interface.flush();
@@ -1590,10 +1590,10 @@ test "copyFile" {
             try ctx.dir.writeFile(io, .{ .sub_path = src_file, .data = data });
             defer ctx.dir.deleteFile(io, src_file) catch {};
 
-            try ctx.dir.copyFile(src_file, ctx.dir, dest_file, .{});
+            try ctx.dir.copyFile(src_file, ctx.dir, dest_file, io, .{});
             defer ctx.dir.deleteFile(io, dest_file) catch {};
 
-            try ctx.dir.copyFile(src_file, ctx.dir, dest_file2, .{ .override_mode = File.default_mode });
+            try ctx.dir.copyFile(src_file, ctx.dir, dest_file2, io, .{ .override_mode = File.default_mode });
             defer ctx.dir.deleteFile(io, dest_file2) catch {};
 
             try expectFileContents(io, ctx.dir, dest_file, data);
@@ -1968,7 +1968,7 @@ test "'.' and '..' in Dir functions" {
             created_file.close(io);
             try ctx.dir.access(io, file_path, .{});
 
-            try ctx.dir.copyFile(file_path, ctx.dir, copy_path, .{});
+            try ctx.dir.copyFile(file_path, ctx.dir, copy_path, io, .{});
             try ctx.dir.rename(copy_path, ctx.dir, rename_path, io);
             const renamed_file = try ctx.dir.openFile(io, rename_path, .{});
             renamed_file.close(io);
@@ -2000,7 +2000,7 @@ test "'.' and '..' in absolute functions" {
     const base_path = try tmp.dir.realPathAlloc(io, ".", allocator);
 
     const subdir_path = try Dir.path.join(allocator, &.{ base_path, "./subdir" });
-    try Dir.makeDirAbsolute(io, subdir_path);
+    try Dir.makeDirAbsolute(io, subdir_path, .default_dir);
     try Dir.accessAbsolute(io, subdir_path, .{});
     var created_subdir = try Dir.openDirAbsolute(io, subdir_path, .{});
     created_subdir.close(io);
@@ -2011,10 +2011,10 @@ test "'.' and '..' in absolute functions" {
     try Dir.accessAbsolute(io, created_file_path, .{});
 
     const copied_file_path = try Dir.path.join(allocator, &.{ subdir_path, "../copy" });
-    try Dir.copyFileAbsolute(io, created_file_path, copied_file_path, .{});
+    try Dir.copyFileAbsolute(created_file_path, copied_file_path, io, .{});
     const renamed_file_path = try Dir.path.join(allocator, &.{ subdir_path, "../rename" });
-    try Dir.renameAbsolute(io, copied_file_path, renamed_file_path);
-    const renamed_file = try Dir.openFileAbsolute(renamed_file_path, .{});
+    try Dir.renameAbsolute(copied_file_path, renamed_file_path, io);
+    const renamed_file = try Dir.openFileAbsolute(io, renamed_file_path, .{});
     renamed_file.close(io);
     try Dir.deleteFileAbsolute(io, renamed_file_path);
 
@@ -2044,7 +2044,7 @@ test "chmod" {
     try expectEqual(0o700, (try dir.stat(io)).permissions.toMode() & 0o7777);
 }
 
-test "chown" {
+test "change ownership" {
     if (native_os == .windows or native_os == .wasi)
         return error.SkipZigTest;
 
@@ -2055,13 +2055,13 @@ test "chown" {
 
     const file = try tmp.dir.createFile(io, "test_file", .{});
     defer file.close(io);
-    try file.chown(null, null);
+    try file.setOwner(io, null, null);
 
     try tmp.dir.makeDir(io, "test_dir", .default_dir);
 
     var dir = try tmp.dir.openDir(io, "test_dir", .{ .iterate = true });
     defer dir.close(io);
-    try dir.chown(null, null);
+    try dir.setOwner(io, null, null);
 }
 
 test "invalid UTF-8/WTF-8 paths" {
@@ -2116,7 +2116,7 @@ test "invalid UTF-8/WTF-8 paths" {
 
             var dir = ctx.dir;
             try expectError(expected_err, dir.updateFile(io, invalid_path, dir, invalid_path, .{}));
-            try expectError(expected_err, ctx.dir.copyFile(invalid_path, ctx.dir, invalid_path, .{}));
+            try expectError(expected_err, ctx.dir.copyFile(invalid_path, ctx.dir, invalid_path, io, .{}));
 
             try expectError(expected_err, ctx.dir.statFile(invalid_path));
 
@@ -2128,12 +2128,12 @@ test "invalid UTF-8/WTF-8 paths" {
             try expectError(expected_err, Dir.rename(ctx.dir, invalid_path, ctx.dir, invalid_path, io));
 
             if (native_os != .wasi and ctx.path_type != .relative) {
-                try expectError(expected_err, Dir.copyFileAbsolute(invalid_path, invalid_path, .{}));
-                try expectError(expected_err, Dir.makeDirAbsolute(invalid_path));
+                try expectError(expected_err, Dir.copyFileAbsolute(invalid_path, invalid_path, io, .{}));
+                try expectError(expected_err, Dir.makeDirAbsolute(io, invalid_path, .default_dir));
                 try expectError(expected_err, Dir.deleteDirAbsolute(invalid_path));
-                try expectError(expected_err, Dir.renameAbsolute(invalid_path, invalid_path));
+                try expectError(expected_err, Dir.renameAbsolute(invalid_path, invalid_path, io));
                 try expectError(expected_err, Dir.openDirAbsolute(io, invalid_path, .{}));
-                try expectError(expected_err, Dir.openFileAbsolute(invalid_path, .{}));
+                try expectError(expected_err, Dir.openFileAbsolute(io, invalid_path, .{}));
                 try expectError(expected_err, Dir.accessAbsolute(invalid_path, .{}));
                 try expectError(expected_err, Dir.createFileAbsolute(invalid_path, .{}));
                 try expectError(expected_err, Dir.deleteFileAbsolute(invalid_path));
@@ -2157,7 +2157,7 @@ test "read file non vectored" {
     const file = try tmp_dir.dir.createFile(io, "input.txt", .{ .read = true });
     defer file.close(io);
     {
-        var file_writer: File.Writer = .init(file, &.{});
+        var file_writer: File.Writer = .init(file, io, &.{});
         try file_writer.interface.writeAll(contents);
         try file_writer.interface.flush();
     }
@@ -2189,7 +2189,7 @@ test "seek keeping partial buffer" {
     const file = try tmp_dir.dir.createFile(io, "input.txt", .{ .read = true });
     defer file.close(io);
     {
-        var file_writer: File.Writer = .init(file, &.{});
+        var file_writer: File.Writer = .init(file, io, &.{});
         try file_writer.interface.writeAll(contents);
         try file_writer.interface.flush();
     }
@@ -2251,7 +2251,7 @@ test "seekTo flushes buffered data" {
     defer file.close(io);
     {
         var buf: [16]u8 = undefined;
-        var file_writer = file.writer(io, file, &buf);
+        var file_writer = file.writer(io, &buf);
 
         try file_writer.interface.writeAll(contents);
         try file_writer.seekTo(8);
@@ -2285,7 +2285,7 @@ test "File.Writer sendfile with buffered contents" {
         try in_r.interface.fill(2);
 
         var out_buf: [1]u8 = undefined;
-        var out_w = out.writerStreaming(&out_buf);
+        var out_w = out.writerStreaming(io, &out_buf);
         try out_w.interface.writeByte('a');
         try expectEqual(3, try out_w.interface.sendFileAll(&in_r, .unlimited));
         try out_w.interface.flush();
@@ -2325,16 +2325,17 @@ test "readlinkat" {
     try tmp.dir.writeFile(io, .{ .sub_path = "file.txt", .data = "nonsense" });
 
     // create a symbolic link
-    tmp.dir.symLink("file.txt", "link", .{}) catch |err| switch (err) {
+    tmp.dir.symLink(io, "file.txt", "link", .{}) catch |err| switch (err) {
         error.AccessDenied => {
             // Symlink requires admin privileges on windows, so this test can legitimately fail.
             if (native_os == .windows) return error.SkipZigTest;
         },
+        else => |e| return e,
     };
 
     // read the link
     var buffer: [Dir.max_path_bytes]u8 = undefined;
-    const read_link = try tmp.dir.readLink(io, "link", &buffer);
+    const read_link = buffer[0..try tmp.dir.readLink(io, "link", &buffer)];
     try expectEqualStrings("file.txt", read_link);
 }
 
@@ -2351,7 +2352,7 @@ test "fchmodat smoke test" {
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
-    try expectError(error.FileNotFound, tmp.dir.setPermissions(io, "regfile", 0o666, .{}));
+    try expectError(error.FileNotFound, tmp.dir.setFilePermissions(io, "regfile", .fromMode(0o666), .{}));
     const file = try tmp.dir.createFile(io, "regfile", .{
         .exclusive = true,
         .permissions = .fromMode(0o644),
@@ -2384,15 +2385,15 @@ test "fchmodat smoke test" {
         error.OperationNotSupported => test_link = false,
         else => |e| return e,
     };
-    if (test_link)
-        try expectMode(tmp.dir.handle, "symlink", 0o600);
-    try expectMode(tmp.dir.handle, "regfile", 0o640);
+    if (test_link) try expectMode(io, tmp.dir, "symlink", .fromMode(0o600));
+    try expectMode(io, tmp.dir, "regfile", .fromMode(0o640));
 }
 
 fn expectMode(io: Io, dir: Dir, file: []const u8, permissions: File.Permissions) !void {
     const mode = permissions.toMode();
     const st = try dir.statFile(io, file, .{ .follow_symlinks = false });
-    try expectEqual(mode, st.mode & 0b111_111_111);
+    const found_mode = st.permissions.toMode();
+    try expectEqual(mode, found_mode & 0b111_111_111);
 }
 
 test "isatty" {
@@ -2417,7 +2418,7 @@ test "read positional empty buffer" {
     defer file.close(io);
 
     var buffer: [0]u8 = undefined;
-    try expectEqual(0, try file.readPositional(io, &buffer, 0));
+    try expectEqual(0, try file.readPositional(io, &.{&buffer}, 0));
 }
 
 test "write streaming empty buffer" {
@@ -2429,8 +2430,8 @@ test "write streaming empty buffer" {
     var file = try tmp.dir.createFile(io, "write_empty", .{});
     defer file.close(io);
 
-    var buffer: [0]u8 = &.{};
-    try expectEqual(0, try file.writeStreaming(io, &buffer));
+    const buffer: [0]u8 = .{};
+    try file.writeStreamingAll(io, &buffer);
 }
 
 test "write positional empty buffer" {
@@ -2442,8 +2443,8 @@ test "write positional empty buffer" {
     var file = try tmp.dir.createFile(io, "pwrite_empty", .{});
     defer file.close(io);
 
-    var buffer: [0]u8 = &.{};
-    try expectEqual(0, try file.writePositional(io, &buffer, 0));
+    const buffer: [0]u8 = .{};
+    try expectEqual(0, try file.writePositional(io, &.{&buffer}, 0));
 }
 
 test "access smoke test" {
@@ -2452,53 +2453,38 @@ test "access smoke test" {
     if (native_os == .openbsd) return error.SkipZigTest;
 
     const io = testing.io;
-    const gpa = testing.allocator;
 
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
-    const base_path = try tmp.dir.realPathAlloc(io, ".", gpa);
-    defer gpa.free(base_path);
-
     {
         // Create some file using `open`.
-        const file_path = try Dir.path.join(gpa, &.{ base_path, "some_file" });
-        defer gpa.free(file_path);
-        const file = Dir.cwd().createFile(io, file_path, .{ .read = true, .exclusive = true });
+        const file = try tmp.dir.createFile(io, "some_file", .{ .read = true, .exclusive = true });
         file.close(io);
     }
 
     {
         // Try to access() the file
-        const file_path = try Dir.path.join(gpa, &.{ base_path, "some_file" });
-        defer gpa.free(file_path);
         if (native_os == .windows) {
-            try Dir.cwd().access(io, file_path, .{});
+            try tmp.dir.access(io, "some_file", .{});
         } else {
-            try Dir.cwd().access(io, file_path, .{ .read = true, .write = true });
+            try tmp.dir.access(io, "some_file", .{ .read = true, .write = true });
         }
     }
 
     {
         // Try to access() a non-existent file - should fail with error.FileNotFound
-        const file_path = try Dir.path.join(gpa, &.{ base_path, "some_other_file" });
-        defer gpa.free(file_path);
-        try expectError(error.FileNotFound, Dir.cwd().access(io, file_path, .{}));
+        try expectError(error.FileNotFound, tmp.dir.access(io, "some_other_file", .{}));
     }
 
     {
         // Create some directory
-        const file_path = try Dir.path.join(gpa, &.{ base_path, "some_dir" });
-        defer gpa.free(file_path);
-        try Dir.makeDir(io, file_path, .default_file);
+        try tmp.dir.makeDir(io, "some_dir", .default_file);
     }
 
     {
         // Try to access() the directory
-        const file_path = try Dir.path.join(gpa, &.{ base_path, "some_dir" });
-        defer gpa.free(file_path);
-
-        try Dir.access(io, file_path, .{});
+        try tmp.dir.access(io, "some_dir", .{});
     }
 }
 
@@ -2552,12 +2538,12 @@ test "open smoke test" {
     try tmp.dir.makeDir(io, "some_dir", .default_dir);
 
     {
-        const dir = try tmp.dir.openDir("some_dir", .{});
+        const dir = try tmp.dir.openDir(io, "some_dir", .{});
         dir.close(io);
     }
 
     // Try opening as file which should fail.
-    try expectError(error.IsDir, tmp.dir.openFile("some_dir", .{}));
+    try expectError(error.IsDir, tmp.dir.openFile(io, "some_dir", .{}));
 }
 
 test "hard link with different directories" {
@@ -2575,7 +2561,7 @@ test "hard link with different directories" {
     try tmp.dir.writeFile(io, .{ .sub_path = target_name, .data = "example" });
 
     // Test 1: link from file in subdir back up to target in parent directory
-    tmp.dir.hardLink(target_name, subdir, link_name, 0) catch |err| switch (err) {
+    tmp.dir.hardLink(target_name, subdir, link_name, io, .{}) catch |err| switch (err) {
         error.OperationUnsupported => return error.SkipZigTest,
         else => |e| return e,
     };
@@ -2596,7 +2582,7 @@ test "hard link with different directories" {
     }
 
     // Test 2: remove link
-    try subdir.deleteFile(io, link_name, .{});
+    try subdir.deleteFile(io, link_name);
     const e_stat = try efd.stat(io);
     try expectEqual(1, e_stat.nlink);
 }

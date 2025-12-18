@@ -518,7 +518,7 @@ test "rename smoke test" {
         // Rename the file
         const new_file_path = try Dir.path.join(gpa, &.{ base_path, "some_other_file" });
         defer gpa.free(new_file_path);
-        try Io.Dir.renameAbsolute(io, file_path, new_file_path);
+        try Io.Dir.renameAbsolute(file_path, new_file_path, io);
     }
 
     {
@@ -545,7 +545,7 @@ test "rename smoke test" {
         // Rename the directory
         const new_file_path = try Dir.path.join(gpa, &.{ base_path, "some_other_dir" });
         defer gpa.free(new_file_path);
-        try Io.Dir.renameAbsolute(io, file_path, new_file_path);
+        try Io.Dir.renameAbsolute(file_path, new_file_path, io);
     }
 
     {

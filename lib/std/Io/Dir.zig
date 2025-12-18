@@ -982,7 +982,7 @@ pub fn rename(
     return io.vtable.dirRename(io.userdata, old_dir, old_sub_path, new_dir, new_sub_path);
 }
 
-pub fn renameAbsolute(io: Io, old_path: []const u8, new_path: []const u8) RenameError!void {
+pub fn renameAbsolute(old_path: []const u8, new_path: []const u8, io: Io) RenameError!void {
     assert(path.isAbsolute(old_path));
     assert(path.isAbsolute(new_path));
     const my_cwd = cwd();
