@@ -1682,18 +1682,18 @@ fn hashFileFallible(io: Io, dir: Io.Dir, hashed_file: *HashedFile) HashedFile.Er
             hasher.update(&.{ 0, 0 });
             var file_header: FileHeader = .{};
             while (true) {
-                const bytes_read = try file.read(&buf);
+                const bytes_read = try file.readPositional(io, &.{&buf}, file_size);
                 if (bytes_read == 0) break;
                 file_size += bytes_read;
                 hasher.update(buf[0..bytes_read]);
                 file_header.update(buf[0..bytes_read]);
             }
             if (file_header.isExecutable()) {
-                try setExecutable(file);
+                try setExecutable(io, file);
             }
         },
         .link => {
-            const link_name = try dir.readLink(io, hashed_file.fs_path, &buf);
+            const link_name = buf[0..try dir.readLink(io, hashed_file.fs_path, &buf)];
             if (fs.path.sep != canonical_sep) {
                 // Package hashes are intended to be consistent across
                 // platforms which means we must normalize path separators
@@ -1711,12 +1711,9 @@ fn deleteFileFallible(io: Io, dir: Io.Dir, deleted_file: *DeletedFile) DeletedFi
     try dir.deleteFile(io, deleted_file.fs_path);
 }
 
-fn setExecutable(file: Io.File) !void {
+fn setExecutable(io: Io, file: Io.File) !void {
     if (!Io.File.Permissions.has_executable_bit) return;
-
-    const S = std.posix.S;
-    const mode = Io.File.default_mode | S.IXUSR | S.IXGRP | S.IXOTH;
-    try file.chmod(mode);
+    try file.setPermissions(io, .executable_file);
 }
 
 const DeletedFile = struct {
@@ -1738,7 +1735,7 @@ const HashedFile = struct {
 
     const Error =
         Io.File.OpenError ||
-        Io.File.Reader.Error ||
+        Io.File.ReadPositionalError ||
         Io.File.StatError ||
         Io.File.SetPermissionsError ||
         Io.Dir.ReadLinkError;

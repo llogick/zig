@@ -175,6 +175,7 @@ fn runLinkTasks(q: *Queue, comp: *Compilation) void {
                 lf.post_prelink = true;
             } else |err| switch (err) {
                 error.OutOfMemory => comp.link_diags.setAllocFailure(),
+                error.Canceled => @panic("TODO"),
                 error.LinkFailure => {},
             }
         }

@@ -618,14 +618,16 @@ pub fn flush(
         };
         const emit = self.base.emit;
         invalidateKernelCache(emit.root_dir.handle, emit.sub_path) catch |err| switch (err) {
-            else => |e| return diags.fail("failed to invalidate kernel cache: {s}", .{@errorName(e)}),
+            else => |e| return diags.fail("failed to invalidate kernel cache: {t}", .{e}),
         };
     }
 }
 
 /// --verbose-link output
 fn dumpArgv(self: *MachO, comp: *Compilation) !void {
-    const gpa = self.base.comp.gpa;
+    const gpa = comp.gpa;
+    const io = comp.io;
+
     var arena_allocator = std.heap.ArenaAllocator.init(gpa);
     defer arena_allocator.deinit();
     const arena = arena_allocator.allocator();
@@ -820,7 +822,7 @@ fn dumpArgv(self: *MachO, comp: *Compilation) !void {
         if (comp.ubsan_rt_obj) |obj| try argv.append(try obj.full_object_path.toString(arena));
     }
 
-    Compilation.dump_argv(argv.items);
+    try Compilation.dumpArgv(io, argv.items);
 }
 
 /// TODO delete this, libsystem must be resolved when setting up the compilation pipeline

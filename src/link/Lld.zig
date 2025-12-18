@@ -1588,7 +1588,7 @@ fn spawnLld(comp: *Compilation, arena: Allocator, argv: []const []const u8) !voi
 
     if (comp.verbose_link) {
         // Skip over our own name so that the LLD linker name is the first argv item.
-        Compilation.dump_argv(argv[1..]);
+        try Compilation.dumpArgv(io, argv[1..]);
     }
 
     // If possible, we run LLD as a child process because it does not always

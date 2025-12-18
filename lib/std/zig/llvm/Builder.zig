@@ -9576,10 +9576,10 @@ pub fn asmValue(
     return (try self.asmConst(ty, info, assembly, constraints)).toValue();
 }
 
-pub fn dump(b: *Builder) void {
+pub fn dump(b: *Builder, io: Io) void {
     var buffer: [4000]u8 = undefined;
     const stderr: Io.File = .stderr();
-    b.printToFile(stderr, &buffer) catch {};
+    b.printToFile(io, stderr, &buffer) catch {};
 }
 
 pub fn printToFilePath(b: *Builder, io: Io, dir: Io.Dir, path: []const u8) !void {

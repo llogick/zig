@@ -11167,16 +11167,16 @@ pub fn mutateVarInit(ip: *InternPool, io: Io, index: Index, init_index: Index) v
     @atomicStore(u32, &extra_items[item.data + std.meta.fieldIndex(Tag.Variable, "init").?], @intFromEnum(init_index), .release);
 }
 
-pub fn dump(ip: *const InternPool, io: Io) Io.Cancelable!void {
+pub fn dump(ip: *const InternPool) void {
     var buffer: [4096]u8 = undefined;
-    const stderr = try io.lockStderr(&buffer, null);
-    defer io.unlockStderr();
+    const stderr = std.debug.lockStderr(&buffer);
+    defer std.debug.unlockStderr();
     const w = &stderr.file_writer.interface;
-    try dumpStatsFallible(ip, w, std.heap.page_allocator);
-    try dumpAllFallible(ip, w);
+    dumpStatsFallible(ip, w, std.heap.page_allocator) catch return;
+    dumpAllFallible(ip, w) catch return;
 }
 
-fn dumpStatsFallible(ip: *const InternPool, w: *Io.Writer, arena: Allocator) anyerror!void {
+fn dumpStatsFallible(ip: *const InternPool, w: *Io.Writer, arena: Allocator) !void {
     var items_len: usize = 0;
     var extra_len: usize = 0;
     var limbs_len: usize = 0;
@@ -11429,9 +11429,9 @@ fn dumpStatsFallible(ip: *const InternPool, w: *Io.Writer, arena: Allocator) any
     };
     counts.sort(SortContext{ .map = &counts });
     const len = @min(50, counts.count());
-    w.print("  top 50 tags:\n", .{});
+    try w.print("  top 50 tags:\n", .{});
     for (counts.keys()[0..len], counts.values()[0..len]) |tag, stats| {
-        w.print("    {t}: {d} occurrences, {d} total bytes\n", .{ tag, stats.count, stats.bytes });
+        try w.print("    {t}: {d} occurrences, {d} total bytes\n", .{ tag, stats.count, stats.bytes });
     }
 }
 
@@ -11534,12 +11534,12 @@ fn dumpAllFallible(ip: *const InternPool, w: *Io.Writer) anyerror!void {
     }
 }
 
-pub fn dumpGenericInstances(ip: *const InternPool, io: Io, allocator: Allocator) Io.Cancelable!void {
+pub fn dumpGenericInstances(ip: *const InternPool, allocator: Allocator) void {
     var buffer: [4096]u8 = undefined;
-    const stderr_writer = try io.lockStderr(&buffer, null);
-    defer io.unlockStderr();
-    const w = &stderr_writer.interface;
-    try ip.dumpGenericInstancesFallible(allocator, w);
+    const stderr = std.debug.lockStderr(&buffer);
+    defer std.debug.unlockStderr();
+    const w = &stderr.file_writer.interface;
+    ip.dumpGenericInstancesFallible(allocator, w) catch return;
 }
 
 pub fn dumpGenericInstancesFallible(ip: *const InternPool, allocator: Allocator, w: *Io.Writer) !void {

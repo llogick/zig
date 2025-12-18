@@ -3828,8 +3828,9 @@ pub fn flush(
     const comp = wasm.base.comp;
     const diags = &comp.link_diags;
     const gpa = comp.gpa;
+    const io = comp.io;
 
-    if (comp.verbose_link) Compilation.dump_argv(wasm.dump_argv_list.items);
+    if (comp.verbose_link) try Compilation.dumpArgv(io, wasm.dump_argv_list.items);
 
     if (wasm.base.zcu_object_basename) |raw| {
         const zcu_obj_path: Path = try comp.resolveEmitPathFlush(arena, .temp, raw);

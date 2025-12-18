@@ -2101,6 +2101,7 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
                         error.Canceled => |e| return e,
                         else => {},
                     },
+                    error.OutOfMemory => |e| return e,
                 };
             }
         }
@@ -2708,7 +2709,7 @@ fn printVerboseLlvmCpuFeatures(
     root_name: []const u8,
     target: *const std.Target,
     cf: [*:0]const u8,
-) Writer.Error!void {
+) (Writer.Error || Allocator.Error)!void {
     try w.print("compilation: {s}\n", .{root_name});
     try w.print("  target: {s}\n", .{try target.zigTriple(arena)});
     try w.print("  cpu: {s}\n", .{target.cpu.model.name});
@@ -3113,7 +3114,7 @@ pub fn update(comp: *Compilation, main_progress_node: std.Progress.Node) UpdateE
 
         if (build_options.enable_debug_extensions and comp.verbose_intern_pool) {
             std.debug.print("intern pool stats for '{s}':\n", .{comp.root_name});
-            zcu.intern_pool.dump(io);
+            zcu.intern_pool.dump();
         }
 
         if (build_options.enable_debug_extensions and comp.verbose_generic_instances) {
@@ -3320,11 +3321,8 @@ pub fn resolveEmitPathFlush(
         },
     }
 }
-fn flush(
-    comp: *Compilation,
-    arena: Allocator,
-    tid: Zcu.PerThread.Id,
-) Allocator.Error!void {
+
+fn flush(comp: *Compilation, arena: Allocator, tid: Zcu.PerThread.Id) (Io.Cancelable || Allocator.Error)!void {
     const io = comp.io;
     if (comp.zcu) |zcu| {
         if (zcu.llvm_object) |llvm_object| {
@@ -3390,7 +3388,7 @@ fn flush(
         // This is needed before reading the error flags.
         lf.flush(arena, tid, comp.link_prog_node) catch |err| switch (err) {
             error.LinkFailure => {}, // Already reported.
-            error.OutOfMemory => return error.OutOfMemory,
+            error.OutOfMemory, error.Canceled => |e| return e,
         };
     }
     if (comp.zcu) |zcu| {
@@ -3614,6 +3612,7 @@ fn emitFromCObject(
     new_ext: []const u8,
     unresolved_emit_path: []const u8,
 ) Allocator.Error!void {
+    const io = comp.io;
     // The dirname and stem (i.e. everything but the extension), of the sub path of the C object.
     // We'll append `new_ext` to it to get the path to the right thing (asm, LLVM IR, etc).
     const c_obj_dir_and_stem: []const u8 = p: {
@@ -3623,23 +3622,18 @@ fn emitFromCObject(
     };
     const src_path: Cache.Path = .{
         .root_dir = c_obj_path.root_dir,
-        .sub_path = try std.fmt.allocPrint(arena, "{s}{s}", .{
-            c_obj_dir_and_stem,
-            new_ext,
-        }),
+        .sub_path = try std.fmt.allocPrint(arena, "{s}{s}", .{ c_obj_dir_and_stem, new_ext }),
     };
     const emit_path = comp.resolveEmitPath(unresolved_emit_path);
 
-    src_path.root_dir.handle.copyFile(
+    Io.Dir.copyFile(
+        src_path.root_dir.handle,
         src_path.sub_path,
         emit_path.root_dir.handle,
         emit_path.sub_path,
+        io,
         .{},
-    ) catch |err| log.err("unable to copy '{f}' to '{f}': {s}", .{
-        src_path,
-        emit_path,
-        @errorName(err),
-    });
+    ) catch |err| log.err("unable to copy '{f}' to '{f}': {t}", .{ src_path, emit_path, err });
 }
 
 /// Having the file open for writing is problematic as far as executing the
@@ -7787,7 +7781,7 @@ pub fn lockAndSetMiscFailure(
 
 pub fn dumpArgv(io: Io, argv: []const []const u8) Io.Cancelable!void {
     var buffer: [64]u8 = undefined;
-    const stderr = try io.lockStderr(&buffer);
+    const stderr = try io.lockStderr(&buffer, null);
     defer io.unlockStderr();
     const w = &stderr.file_writer.interface;
     return dumpArgvWriter(w, argv) catch |err| switch (err) {

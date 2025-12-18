@@ -476,8 +476,8 @@ pub const Node = extern struct {
                     return n;
                 },
                 .streaming,
-                .streaming_reading,
-                .positional_reading,
+                .streaming_simple,
+                .positional_simple,
                 .failure,
                 => {
                     const dest = limit.slice(interface.unusedCapacitySlice());

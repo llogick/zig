@@ -10139,7 +10139,7 @@ fn initLockedStderr(
     t.stderr_writer.interface.buffer = buffer;
     return .{
         .file_writer = &t.stderr_writer,
-        .terminal_mode = t.stderr_mode,
+        .terminal_mode = terminal_mode orelse t.stderr_mode,
     };
 }
 

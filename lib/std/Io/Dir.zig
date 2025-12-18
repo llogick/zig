@@ -1739,7 +1739,7 @@ pub fn setFilePermissions(
     new_permissions: File.Permissions,
     options: SetFilePermissionsOptions,
 ) SetFilePermissionsError!void {
-    return io.vtable.dirSetFilePermissions(io.userdata, sub_path, dir, new_permissions, options);
+    return io.vtable.dirSetFilePermissions(io.userdata, dir, sub_path, new_permissions, options);
 }
 
 pub const SetOwnerError = File.SetOwnerError;

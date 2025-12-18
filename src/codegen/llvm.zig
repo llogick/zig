@@ -965,10 +965,10 @@ pub const Object = struct {
         const context, const module = emit: {
             if (options.pre_ir_path) |path| {
                 if (std.mem.eql(u8, path, "-")) {
-                    o.builder.dump();
+                    o.builder.dump(io);
                 } else {
-                    o.builder.printToFilePath(Io.Dir.cwd(), path) catch |err| {
-                        log.err("failed printing LLVM module to \"{s}\": {s}", .{ path, @errorName(err) });
+                    o.builder.printToFilePath(io, Io.Dir.cwd(), path) catch |err| {
+                        log.err("failed printing LLVM module to \"{s}\": {t}", .{ path, err });
                     };
                 }
             }
@@ -982,12 +982,12 @@ pub const Object = struct {
 
             if (options.pre_bc_path) |path| {
                 var file = Io.Dir.cwd().createFile(io, path, .{}) catch |err|
-                    return diags.fail("failed to create '{s}': {s}", .{ path, @errorName(err) });
+                    return diags.fail("failed to create '{s}': {t}", .{ path, err });
                 defer file.close(io);
 
                 const ptr: [*]const u8 = @ptrCast(bitcode.ptr);
-                file.writeAll(ptr[0..(bitcode.len * 4)]) catch |err|
-                    return diags.fail("failed to write to '{s}': {s}", .{ path, @errorName(err) });
+                file.writeStreamingAll(io, ptr[0..(bitcode.len * 4)]) catch |err|
+                    return diags.fail("failed to write to '{s}': {t}", .{ path, err });
             }
 
             if (options.asm_path == null and options.bin_path == null and
@@ -995,12 +995,12 @@ pub const Object = struct {
 
             if (options.post_bc_path) |path| {
                 var file = Io.Dir.cwd().createFile(io, path, .{}) catch |err|
-                    return diags.fail("failed to create '{s}': {s}", .{ path, @errorName(err) });
+                    return diags.fail("failed to create '{s}': {t}", .{ path, err });
                 defer file.close(io);
 
                 const ptr: [*]const u8 = @ptrCast(bitcode.ptr);
-                file.writeAll(ptr[0..(bitcode.len * 4)]) catch |err|
-                    return diags.fail("failed to write to '{s}': {s}", .{ path, @errorName(err) });
+                file.writeStreamingAll(io, ptr[0..(bitcode.len * 4)]) catch |err|
+                    return diags.fail("failed to write to '{s}': {t}", .{ path, err });
             }
 
             if (!build_options.have_llvm or !comp.config.use_lib_llvm) {

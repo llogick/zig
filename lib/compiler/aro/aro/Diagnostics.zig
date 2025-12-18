@@ -541,11 +541,11 @@ fn addMessage(d: *Diagnostics, msg: Message) Compilation.Error!void {
 
     switch (d.output) {
         .ignore => {},
-        .to_writer => |writer| {
-            var config = writer.color;
-            if (d.color == false) config = .no_color;
-            if (d.color == true and config == .no_color) config = .escape_codes;
-            msg.write(writer.writer, config, d.details) catch {
+        .to_writer => |t| {
+            var new_mode = t.mode;
+            if (d.color == false) new_mode = .no_color;
+            if (d.color == true and new_mode == .no_color) new_mode = .escape_codes;
+            msg.write(.{ .writer = t.writer, .mode = new_mode }, d.details) catch {
                 return error.FatalError;
             };
         },

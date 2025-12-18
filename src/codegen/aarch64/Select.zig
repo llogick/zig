@@ -11280,7 +11280,7 @@ pub fn dumpValues(isel: *Select, which: enum { only_referenced, all }) void {
 
     errdefer |err| @panic(@errorName(err));
 
-    const locked_stderr = std.debug.lockStderr(&.{}, null);
+    const locked_stderr = std.debug.lockStderr(&.{});
     defer std.debug.unlockStderr();
     const stderr = &locked_stderr.file_writer.interface;
 

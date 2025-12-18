@@ -900,10 +900,9 @@ pub const File = struct {
         }
     }
 
-    pub const FlushError = error{
+    pub const FlushError = Io.Cancelable || Allocator.Error || error{
         /// Indicates an error will be present in `Compilation.link_diags`.
         LinkFailure,
-        OutOfMemory,
     };
 
     /// Commit pending changes and write headers. Takes into account final output mode.

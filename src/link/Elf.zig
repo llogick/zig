@@ -748,9 +748,10 @@ pub fn flush(self: *Elf, arena: Allocator, tid: Zcu.PerThread.Id, prog_node: std
     defer tracy.end();
 
     const comp = self.base.comp;
+    const io = comp.io;
     const diags = &comp.link_diags;
 
-    if (comp.verbose_link) Compilation.dump_argv(self.dump_argv_list.items);
+    if (comp.verbose_link) try Compilation.dumpArgv(io, self.dump_argv_list.items);
 
     const sub_prog_node = prog_node.start("ELF Flush", 0);
     defer sub_prog_node.end();
@@ -758,7 +759,7 @@ pub fn flush(self: *Elf, arena: Allocator, tid: Zcu.PerThread.Id, prog_node: std
     return flushInner(self, arena, tid) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.LinkFailure => return error.LinkFailure,
-        else => |e| return diags.fail("ELF flush failed: {s}", .{@errorName(e)}),
+        else => |e| return diags.fail("ELF flush failed: {t}", .{e}),
     };
 }
 
