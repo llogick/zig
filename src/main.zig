@@ -3985,9 +3985,8 @@ fn createModule(
             resolved_target.is_native_os and resolved_target.is_native_abi and
             create_module.want_native_include_dirs)
         {
-            var paths = std.zig.system.NativePaths.detect(arena, target) catch |err| {
-                fatal("unable to detect native system paths: {s}", .{@errorName(err)});
-            };
+            var paths = std.zig.system.NativePaths.detect(arena, io, target) catch |err|
+                fatal("unable to detect native system paths: {t}", .{err});
             for (paths.warnings.items) |warning| {
                 warn("{s}", .{warning});
             }

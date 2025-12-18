@@ -177,9 +177,9 @@ pub fn findNative(gpa: Allocator, io: Io, args: FindNativeOptions) FindError!Lib
     var self: LibCInstallation = .{};
 
     if (is_darwin and args.target.os.tag.isDarwin()) {
-        if (!std.zig.system.darwin.isSdkInstalled(gpa))
+        if (!std.zig.system.darwin.isSdkInstalled(gpa, io))
             return error.DarwinSdkNotFound;
-        const sdk = std.zig.system.darwin.getSdk(gpa, args.target) orelse
+        const sdk = std.zig.system.darwin.getSdk(gpa, io, args.target) orelse
             return error.DarwinSdkNotFound;
         defer gpa.free(sdk);
 

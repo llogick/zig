@@ -617,7 +617,7 @@ pub fn flush(
             else => |e| return diags.fail("failed to write code signature: {s}", .{@errorName(e)}),
         };
         const emit = self.base.emit;
-        invalidateKernelCache(emit.root_dir.handle, emit.sub_path) catch |err| switch (err) {
+        invalidateKernelCache(io, emit.root_dir.handle, emit.sub_path) catch |err| switch (err) {
             else => |e| return diags.fail("failed to invalidate kernel cache: {t}", .{e}),
         };
     }
@@ -3621,11 +3621,11 @@ pub fn getTarget(self: *const MachO) *const std.Target {
 /// into a new inode, remove the original file, and rename the copy to match
 /// the original file. This is super messy, but there doesn't seem any other
 /// way to please the XNU.
-pub fn invalidateKernelCache(dir: Io.Dir, sub_path: []const u8) !void {
+pub fn invalidateKernelCache(io: Io, dir: Io.Dir, sub_path: []const u8) !void {
     const tracy = trace(@src());
     defer tracy.end();
     if (builtin.target.os.tag.isDarwin() and builtin.target.cpu.arch == .aarch64) {
-        try dir.copyFile(sub_path, dir, sub_path, .{});
+        try dir.copyFile(sub_path, dir, sub_path, io, .{});
     }
 }
 

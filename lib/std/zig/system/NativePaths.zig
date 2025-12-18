@@ -1,10 +1,11 @@
-const std = @import("../../std.zig");
+const NativePaths = @This();
 const builtin = @import("builtin");
+
+const std = @import("../../std.zig");
+const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const process = std.process;
 const mem = std.mem;
-
-const NativePaths = @This();
 
 arena: Allocator,
 include_dirs: std.ArrayList([]const u8) = .empty,
@@ -13,7 +14,7 @@ framework_dirs: std.ArrayList([]const u8) = .empty,
 rpaths: std.ArrayList([]const u8) = .empty,
 warnings: std.ArrayList([]const u8) = .empty,
 
-pub fn detect(arena: Allocator, native_target: *const std.Target) !NativePaths {
+pub fn detect(arena: Allocator, io: Io, native_target: *const std.Target) !NativePaths {
     var self: NativePaths = .{ .arena = arena };
     var is_nix = false;
     if (process.getEnvVarOwned(arena, "NIX_CFLAGS_COMPILE")) |nix_cflags_compile| {
@@ -115,8 +116,8 @@ pub fn detect(arena: Allocator, native_target: *const std.Target) !NativePaths {
 
     // TODO: consider also adding macports paths
     if (builtin.target.os.tag.isDarwin()) {
-        if (std.zig.system.darwin.isSdkInstalled(arena)) sdk: {
-            const sdk = std.zig.system.darwin.getSdk(arena, native_target) orelse break :sdk;
+        if (std.zig.system.darwin.isSdkInstalled(arena, io)) sdk: {
+            const sdk = std.zig.system.darwin.getSdk(arena, io, native_target) orelse break :sdk;
             try self.addLibDir(try std.fs.path.join(arena, &.{ sdk, "usr/lib" }));
             try self.addFrameworkDir(try std.fs.path.join(arena, &.{ sdk, "System/Library/Frameworks" }));
             try self.addIncludeDir(try std.fs.path.join(arena, &.{ sdk, "usr/include" }));
