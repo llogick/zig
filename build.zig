@@ -707,7 +707,7 @@ pub fn build(b: *std.Build) !void {
                 .powerpc64le => 560_870_604,
                 .riscv64 => 449_924_710,
                 .s390x => 1_946_743_603,
-                .x86_64 => 2_139_993_292,
+                .x86_64 => 2_389_779_251,
                 else => 2_200_000_000,
             },
             .macos => switch (b.graph.host.result.cpu.arch) {
