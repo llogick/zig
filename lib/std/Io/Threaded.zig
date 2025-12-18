@@ -1621,7 +1621,7 @@ fn dirMakePath(
                 // stat the file and return an error if it's not a directory
                 // this is important because otherwise a dangling symlink
                 // could cause an infinite loop
-                const fstat = dirStatFile(t, dir, component.path, .{});
+                const fstat = try dirStatFile(t, dir, component.path, .{});
                 if (fstat.kind != .directory) return error.NotDir;
             },
             error.FileNotFound => |e| {
@@ -3796,7 +3796,7 @@ fn dirReadWindows(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) D
         // the remaining unprocessed entries, then backtrack and return what we have so far.
         if (name_index + std.unicode.calcWtf8Len(name_wtf16le) > unreserved_start + dr.index) {
             // We should always be able to fit at least one entry into the buffer no matter what
-            std.debug.assert(buffer_index != 0);
+            assert(buffer_index != 0);
             dr.index = backtrack_index;
             break;
         }

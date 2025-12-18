@@ -101,10 +101,8 @@ pub const Reader = struct {
     /// Fill position of `buffer`.
     end: usize,
 
-    pub const min_buffer_len = switch (native_os) {
-        .windows => std.mem.alignForward(usize, max_name_bytes, @alignOf(usize)),
-        else => 32, // TODO: what is this based on?
-    };
+    /// A length for `buffer` that allows all implementations to function.
+    pub const min_buffer_len = std.mem.alignForward(usize, max_name_bytes, @alignOf(usize));
 
     pub const State = enum {
         /// Indicates the next call to `read` should rewind and start over the
@@ -120,6 +118,7 @@ pub const Reader = struct {
         SystemResources,
     } || Io.UnexpectedError || Io.Cancelable;
 
+    /// Asserts that `buffer` has length at least `min_buffer_len`.
     pub fn init(dir: Dir, buffer: []align(@alignOf(usize)) u8) Reader {
         assert(buffer.len >= min_buffer_len);
         return .{
@@ -164,7 +163,13 @@ pub const Reader = struct {
 /// see `Walker`.
 pub const Iterator = struct {
     reader: Reader,
-    reader_buffer: [2048]u8 align(@alignOf(usize)),
+    reader_buffer: [reader_buffer_len]u8 align(@alignOf(usize)),
+
+    pub const reader_buffer_len = 2048;
+
+    comptime {
+        assert(reader_buffer_len >= Reader.min_buffer_len);
+    }
 
     pub const Error = Reader.Error;
 
