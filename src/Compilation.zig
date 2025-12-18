@@ -2092,14 +2092,16 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
         }
 
         if (options.verbose_llvm_cpu_features) {
-            if (options.root_mod.resolved_target.llvm_cpu_features) |cf| print: {
-                const stderr = try io.lockStderrWriter(&.{});
-                defer io.unlockStderrWriter();
-                const w = &stderr.interface;
-                w.print("compilation: {s}\n", .{options.root_name}) catch break :print;
-                w.print("  target: {s}\n", .{try target.zigTriple(arena)}) catch break :print;
-                w.print("  cpu: {s}\n", .{target.cpu.model.name}) catch break :print;
-                w.print("  features: {s}\n", .{cf}) catch {};
+            if (options.root_mod.resolved_target.llvm_cpu_features) |cf| {
+                const stderr = try io.lockStderr(&.{}, null);
+                defer io.unlockStderr();
+                const w = &stderr.file_writer.interface;
+                printVerboseLlvmCpuFeatures(w, arena, options.root_name, target, cf) catch |err| switch (err) {
+                    error.WriteFailed => switch (stderr.file_writer.err.?) {
+                        error.Canceled => |e| return e,
+                        else => {},
+                    },
+                };
             }
         }
 
@@ -2698,6 +2700,19 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
     }
     log.debug("queued oneshot prelink tasks: {d}", .{comp.oneshot_prelink_tasks.items.len});
     return comp;
+}
+
+fn printVerboseLlvmCpuFeatures(
+    w: *Writer,
+    arena: Allocator,
+    root_name: []const u8,
+    target: *const std.Target,
+    cf: [*:0]const u8,
+) Writer.Error!void {
+    try w.print("compilation: {s}\n", .{root_name});
+    try w.print("  target: {s}\n", .{try target.zigTriple(arena)});
+    try w.print("  cpu: {s}\n", .{target.cpu.model.name});
+    try w.print("  features: {s}\n", .{cf});
 }
 
 pub fn destroy(comp: *Compilation) void {
@@ -4259,9 +4274,9 @@ pub fn getAllErrorsAlloc(comp: *Compilation) error{OutOfMemory}!ErrorBundle {
             // However, we haven't reported any such error.
             // This is a compiler bug.
             print_ctx: {
-                const stderr = std.debug.lockStderrWriter(&.{});
-                defer std.debug.unlockStderrWriter();
-                const w = &stderr.interface;
+                const stderr = std.debug.lockStderr(&.{}).terminal();
+                defer std.debug.unlockStderr();
+                const w = stderr.writer;
                 w.writeAll("referenced transitive analysis errors, but none actually emitted\n") catch break :print_ctx;
                 w.print("{f} [transitive failure]\n", .{zcu.fmtAnalUnit(failed_unit)}) catch break :print_ctx;
                 while (ref) |r| {
@@ -7772,11 +7787,11 @@ pub fn lockAndSetMiscFailure(
 
 pub fn dumpArgv(io: Io, argv: []const []const u8) Io.Cancelable!void {
     var buffer: [64]u8 = undefined;
-    const stderr = try io.lockStderrWriter(&buffer);
-    defer io.unlockStderrWriter();
-    const w = &stderr.interface;
+    const stderr = try io.lockStderr(&buffer);
+    defer io.unlockStderr();
+    const w = &stderr.file_writer.interface;
     return dumpArgvWriter(w, argv) catch |err| switch (err) {
-        error.WriteFailed => switch (stderr.err.?) {
+        error.WriteFailed => switch (stderr.file_writer.err.?) {
             error.Canceled => return error.Canceled,
             else => return,
         },

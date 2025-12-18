@@ -6333,25 +6333,25 @@ var fixed_buffer_mem: [100 * 1024]u8 = undefined;
 
 fn testParse(io: Io, source: [:0]const u8, allocator: Allocator, anything_changed: *bool) ![]u8 {
     var buffer: [64]u8 = undefined;
-    const stderr = try io.lockStderrWriter(&buffer);
-    defer io.unlockStderrWriter();
+    const stderr = try io.lockStderr(&buffer, null);
+    defer io.unlockStderr();
 
     var tree = try std.zig.Ast.parse(allocator, source, .zig);
     defer tree.deinit(allocator);
 
     for (tree.errors) |parse_error| {
         const loc = tree.tokenLocation(0, parse_error.token);
-        try stderr.printUnescaped("(memory buffer):{d}:{d}: error: ", .{ loc.line + 1, loc.column + 1 });
-        try tree.renderError(parse_error, &stderr.interface);
-        try stderr.interface.print("\n{s}\n", .{source[loc.line_start..loc.line_end]});
+        try stderr.writer.print("(memory buffer):{d}:{d}: error: ", .{ loc.line + 1, loc.column + 1 });
+        try tree.renderError(parse_error, stderr.writer);
+        try stderr.writer.print("\n{s}\n", .{source[loc.line_start..loc.line_end]});
         {
             var i: usize = 0;
             while (i < loc.column) : (i += 1) {
-                try stderr.writeAllUnescaped(" ");
+                try stderr.writer.writeAll(" ");
             }
-            try stderr.writeAllUnescaped("^");
+            try stderr.writer.writeAll("^");
         }
-        try stderr.writeAllUnescaped("\n");
+        try stderr.writer.writeAll("\n");
     }
     if (tree.errors.len != 0) {
         return error.ParseError;

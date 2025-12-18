@@ -76,9 +76,9 @@ pub fn dump(air: Air, pt: Zcu.PerThread, liveness: ?Air.Liveness) void {
     const comp = pt.zcu.comp;
     const io = comp.io;
     var buffer: [512]u8 = undefined;
-    const stderr = try io.lockStderrWriter(&buffer);
-    defer io.unlockStderrWriter();
-    const w = &stderr.interface;
+    const stderr = try io.lockStderr(&buffer, null);
+    defer io.unlockStderr();
+    const w = &stderr.file_writer.interface;
     air.write(w, pt, liveness);
 }
 
@@ -86,9 +86,9 @@ pub fn dumpInst(air: Air, inst: Air.Inst.Index, pt: Zcu.PerThread, liveness: ?Ai
     const comp = pt.zcu.comp;
     const io = comp.io;
     var buffer: [512]u8 = undefined;
-    const stderr = try io.lockStderrWriter(&buffer);
-    defer io.unlockStderrWriter();
-    const w = &stderr.interface;
+    const stderr = try io.lockStderr(&buffer, null);
+    defer io.unlockStderr();
+    const w = &stderr.file_writer.interface;
     air.writeInst(w, inst, pt, liveness);
 }
 

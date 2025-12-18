@@ -92,7 +92,7 @@ pub fn defaultLog(
     args: anytype,
 ) void {
     var buffer: [64]u8 = undefined;
-    const stderr = std.debug.lockStderr(&buffer);
+    const stderr = std.debug.lockStderr(&buffer).terminal();
     defer std.debug.unlockStderr();
     return defaultLogFileTerminal(level, scope, format, args, stderr) catch {};
 }

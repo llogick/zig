@@ -925,20 +925,21 @@ const CliNamedModules = struct {
 fn getGeneratedFilePath(compile: *Compile, comptime tag_name: []const u8, asking_step: ?*Step) ![]const u8 {
     const step = &compile.step;
     const b = step.owner;
-    const io = b.graph.io;
+    const graph = b.graph;
+    const io = graph.io;
     const maybe_path: ?*GeneratedFile = @field(compile, tag_name);
 
     const generated_file = maybe_path orelse {
-        const stderr = try io.lockStderrWriter(&.{});
-        std.Build.dumpBadGetPathHelp(&compile.step, &stderr.interface, stderr.mode, compile.step.owner, asking_step) catch {};
-        io.unlockStderrWriter();
+        const stderr = try io.lockStderr(&.{}, graph.stderr_mode);
+        std.Build.dumpBadGetPathHelp(&compile.step, stderr.terminal(), compile.step.owner, asking_step) catch {};
+        io.unlockStderr();
         @panic("missing emit option for " ++ tag_name);
     };
 
     const path = generated_file.path orelse {
-        const stderr = try io.lockStderrWriter(&.{});
-        std.Build.dumpBadGetPathHelp(&compile.step, &stderr.interface, stderr.mode, compile.step.owner, asking_step) catch {};
-        io.unlockStderrWriter();
+        const stderr = try io.lockStderr(&.{}, graph.stderr_mode);
+        std.Build.dumpBadGetPathHelp(&compile.step, stderr.terminal(), compile.step.owner, asking_step) catch {};
+        io.unlockStderr();
         @panic(tag_name ++ " is null. Is there a missing step dependency?");
     };
 
@@ -1907,7 +1908,7 @@ fn checkCompileErrors(compile: *Compile) !void {
         try actual_eb.renderToWriter(.{
             .include_reference_trace = false,
             .include_source_line = false,
-        }, &aw.writer, .streaming);
+        }, &aw.writer);
         break :ae try aw.toOwnedSlice();
     };
 

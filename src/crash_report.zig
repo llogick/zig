@@ -95,9 +95,9 @@ fn dumpCrashContext() Io.Writer.Error!void {
 
     // TODO: this does mean that a different thread could grab the stderr mutex between the context
     // and the actual panic printing, which would be quite confusing.
-    const stderr = std.debug.lockStderrWriter(&.{});
-    defer std.debug.unlockStderrWriter();
-    const w = &stderr.interface;
+    const stderr = std.debug.lockStderr(&.{});
+    defer std.debug.unlockStderr();
+    const w = &stderr.file_writer.interface;
 
     try w.writeAll("Compiler crash context:\n");
 

@@ -1856,7 +1856,7 @@ pub fn totalSystemMemory() TotalSystemMemoryError!u64 {
 /// and does not return.
 pub fn cleanExit(io: Io) void {
     if (builtin.mode == .Debug) return;
-    _ = io.lockStderrWriter(&.{}) catch {};
+    _ = io.lockStderr(&.{}, .no_color) catch {};
     exit(0);
 }
 

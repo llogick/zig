@@ -1559,7 +1559,8 @@ fn spawnChildAndCollect(
 ) !?EvalGenericResult {
     const b = run.step.owner;
     const arena = b.allocator;
-    const io = b.graph.io;
+    const graph = b.graph;
+    const io = graph.io;
 
     if (fuzz_context != null) {
         assert(!has_side_effects);
@@ -1625,11 +1626,12 @@ fn spawnChildAndCollect(
         if (!run.disable_zig_progress and !inherit) {
             child.progress_node = options.progress_node;
         }
-        if (inherit) {
-            const stderr = try io.lockStderrWriter(&.{});
-            try setColorEnvironmentVariables(run, env_map, stderr.mode);
-        }
-        defer if (inherit) io.unlockStderrWriter();
+        const terminal_mode: Io.Terminal.Mode = if (inherit) m: {
+            const stderr = try io.lockStderr(&.{}, graph.stderr_mode);
+            break :m stderr.terminal_mode;
+        } else .no_color;
+        defer if (inherit) io.unlockStderr();
+        try setColorEnvironmentVariables(run, env_map, terminal_mode);
         var timer = try std.time.Timer.start();
         const res = try evalGeneric(run, &child);
         run.step.result_duration_ns = timer.read();
@@ -1637,7 +1639,7 @@ fn spawnChildAndCollect(
     }
 }
 
-fn setColorEnvironmentVariables(run: *Run, env_map: *EnvMap, fwm: Io.File.Writer.Mode) !void {
+fn setColorEnvironmentVariables(run: *Run, env_map: *EnvMap, terminal_mode: Io.Terminal.Mode) !void {
     color: switch (run.color) {
         .manual => {},
         .enable => {
@@ -1648,9 +1650,9 @@ fn setColorEnvironmentVariables(run: *Run, env_map: *EnvMap, fwm: Io.File.Writer
             try env_map.put("NO_COLOR", "1");
             env_map.remove("CLICOLOR_FORCE");
         },
-        .inherit => switch (fwm) {
-            .terminal_escaped => continue :color .enable,
-            else => continue :color .disable,
+        .inherit => switch (terminal_mode) {
+            .no_color, .windows_api => continue :color .disable,
+            .escape_codes => continue :color .enable,
         },
         .auto => {
             const capture_stderr = run.captured_stderr != null or switch (run.stdio) {

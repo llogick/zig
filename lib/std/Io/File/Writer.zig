@@ -229,7 +229,7 @@ pub fn seekToUnbuffered(w: *Writer, offset: u64) SeekError!void {
         .positional, .positional_simple => {
             w.pos = offset;
         },
-        .streaming, .streaming_simple, .terminal_escaped, .terminal_winapi => {
+        .streaming, .streaming_simple => {
             if (w.seek_err) |err| return err;
             io.vtable.fileSeekTo(io.userdata, w.file, offset) catch |err| {
                 w.seek_err = err;

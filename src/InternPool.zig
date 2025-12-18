@@ -11169,9 +11169,9 @@ pub fn mutateVarInit(ip: *InternPool, io: Io, index: Index, init_index: Index) v
 
 pub fn dump(ip: *const InternPool, io: Io) Io.Cancelable!void {
     var buffer: [4096]u8 = undefined;
-    const stderr_writer = try io.lockStderrWriter(&buffer);
-    defer io.unlockStderrWriter();
-    const w = &stderr_writer.interface;
+    const stderr = try io.lockStderr(&buffer, null);
+    defer io.unlockStderr();
+    const w = &stderr.file_writer.interface;
     try dumpStatsFallible(ip, w, std.heap.page_allocator);
     try dumpAllFallible(ip, w);
 }
@@ -11536,8 +11536,8 @@ fn dumpAllFallible(ip: *const InternPool, w: *Io.Writer) anyerror!void {
 
 pub fn dumpGenericInstances(ip: *const InternPool, io: Io, allocator: Allocator) Io.Cancelable!void {
     var buffer: [4096]u8 = undefined;
-    const stderr_writer = try io.lockStderrWriter(&buffer);
-    defer io.unlockStderrWriter();
+    const stderr_writer = try io.lockStderr(&buffer, null);
+    defer io.unlockStderr();
     const w = &stderr_writer.interface;
     try ip.dumpGenericInstancesFallible(allocator, w);
 }

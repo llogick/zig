@@ -4560,10 +4560,10 @@ fn runCodegenInner(pt: Zcu.PerThread, func_index: InternPool.Index, air: *Air) e
 
     if (build_options.enable_debug_extensions and comp.verbose_air) p: {
         const io = comp.io;
-        const stderr = try io.lockStderrWriter(&.{});
-        defer io.unlockStderrWriter();
-        printVerboseAir(pt, liveness, fqn, air, &stderr.interface) catch |err| switch (err) {
-            error.WriteFailed => switch (stderr.err.?) {
+        const stderr = try io.lockStderr(&.{}, null);
+        defer io.unlockStderr();
+        printVerboseAir(pt, liveness, fqn, air, &stderr.file_writer.interface) catch |err| switch (err) {
+            error.WriteFailed => switch (stderr.file_writer.err.?) {
                 error.Canceled => |e| return e,
                 else => break :p,
             },

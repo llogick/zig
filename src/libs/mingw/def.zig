@@ -1039,9 +1039,9 @@ fn testParse(
     const module = parse(std.testing.allocator, source, machine_type, .mingw, &diagnostics) catch |err| switch (err) {
         error.OutOfMemory => |e| return e,
         error.ParseError => {
-            const stderr = try io.lockStderrWriter(&.{});
-            defer io.unlockStderrWriter();
-            const w = &stderr.interface;
+            const stderr = try io.lockStderr(&.{}, null);
+            defer io.unlockStderr();
+            const w = &stderr.file_writer.interface;
             try diagnostics.writeMsg(w, source);
             try w.writeByte('\n');
             return err;

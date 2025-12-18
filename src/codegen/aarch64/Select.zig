@@ -11274,16 +11274,15 @@ fn initValueAdvanced(
 }
 pub fn dumpValues(isel: *Select, which: enum { only_referenced, all }) void {
     const zcu = isel.pt.zcu;
-    const io = zcu.comp.io;
     const gpa = zcu.gpa;
     const ip = &zcu.intern_pool;
     const nav = ip.getNav(isel.nav_index);
 
     errdefer |err| @panic(@errorName(err));
 
-    const stderr_writer = io.lockStderrWriter(&.{}) catch return;
-    defer io.unlockStderrWriter();
-    const stderr = &stderr_writer.interface;
+    const locked_stderr = std.debug.lockStderr(&.{}, null);
+    defer std.debug.unlockStderr();
+    const stderr = &locked_stderr.file_writer.interface;
 
     var reverse_live_values: std.AutoArrayHashMapUnmanaged(Value.Index, std.ArrayList(Air.Inst.Index)) = .empty;
     defer {

@@ -7178,7 +7178,7 @@ fn fileWriteFileStreaming(
                 break :o .{ &off, @min(@intFromEnum(limit), size - file_reader.pos, max_count) };
             },
             .streaming => .{ null, limit.minInt(max_count) },
-            .streaming_reading, .positional_reading => break :sf,
+            .streaming_simple, .positional_simple => break :sf,
             .failure => return error.ReadFailed,
         };
         const current_thread = Thread.getCurrent(t);
@@ -7251,7 +7251,7 @@ fn fileWriteFileStreaming(
         }
         var off_in: i64 = undefined;
         const off_in_ptr: ?*i64 = switch (file_reader.mode) {
-            .positional_reading, .streaming_reading => return error.Unimplemented,
+            .positional_simple, .streaming_simple => return error.Unimplemented,
             .positional => p: {
                 off_in = @intCast(file_reader.pos);
                 break :p &off_in;
@@ -7427,7 +7427,7 @@ fn fileWriteFilePositional(
         }
         var off_in: i64 = undefined;
         const off_in_ptr: ?*i64 = switch (file_reader.mode) {
-            .positional_reading, .streaming_reading => return error.Unimplemented,
+            .positional_simple, .streaming_simple => return error.Unimplemented,
             .positional => p: {
                 off_in = @intCast(file_reader.pos);
                 break :p &off_in;

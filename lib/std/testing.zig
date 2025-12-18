@@ -368,8 +368,8 @@ pub fn expectEqualSlices(comptime T: type, expected: []const T, actual: []const 
         break :diff_index if (expected.len == actual.len) return else shortest;
     };
     if (!backend_can_print) return error.TestExpectedEqual;
-    if (io.lockStderrWriter(&.{})) |stderr| {
-        defer io.unlockStderrWriter();
+    if (io.lockStderr(&.{}, null)) |stderr| {
+        defer io.unlockStderr();
         failEqualSlices(T, expected, actual, diff_index, &stderr.interface, stderr.mode) catch {};
     } else |_| {}
     return error.TestExpectedEqual;
@@ -381,7 +381,7 @@ fn failEqualSlices(
     actual: []const T,
     diff_index: usize,
     w: *Io.Writer,
-    fwm: Io.File.Writer.Mode,
+    terminal_mode: Io.Terminal.Mode,
 ) !void {
     try w.print("slices differ. first difference occurs at index {d} (0x{X})\n", .{ diff_index, diff_index });
 
@@ -404,12 +404,12 @@ fn failEqualSlices(
     var differ = if (T == u8) BytesDiffer{
         .expected = expected_window,
         .actual = actual_window,
-        .file_writer_mode = fwm,
+        .terminal_mode = terminal_mode,
     } else SliceDiffer(T){
         .start_index = window_start,
         .expected = expected_window,
         .actual = actual_window,
-        .file_writer_mode = fwm,
+        .terminal_mode = terminal_mode,
     };
 
     // Print indexes as hex for slices of u8 since it's more likely to be binary data where
@@ -466,21 +466,22 @@ fn SliceDiffer(comptime T: type) type {
         start_index: usize,
         expected: []const T,
         actual: []const T,
-        file_writer_mode: Io.File.Writer.Mode,
+        terminal_mode: Io.Terminal.Mode,
 
         const Self = @This();
 
         pub fn write(self: Self, writer: *Io.Writer) !void {
+            const t: Io.Terminal = .{ .writer = writer, .mode = self.terminal_mode };
             for (self.expected, 0..) |value, i| {
                 const full_index = self.start_index + i;
                 const diff = if (i < self.actual.len) !std.meta.eql(self.actual[i], value) else true;
-                if (diff) try self.file_writer_mode.setColor(writer, .red);
+                if (diff) try t.setColor(writer, .red);
                 if (@typeInfo(T) == .pointer) {
                     try writer.print("[{}]{*}: {any}\n", .{ full_index, value, value });
                 } else {
                     try writer.print("[{}]: {any}\n", .{ full_index, value });
                 }
-                if (diff) try self.file_writer_mode.setColor(writer, .reset);
+                if (diff) try t.setColor(writer, .reset);
             }
         }
     };
@@ -489,7 +490,7 @@ fn SliceDiffer(comptime T: type) type {
 const BytesDiffer = struct {
     expected: []const u8,
     actual: []const u8,
-    file_writer_mode: Io.File.Writer.Mode,
+    terminal_mode: Io.Terminal.Mode,
 
     pub fn write(self: BytesDiffer, writer: *Io.Writer) !void {
         var expected_iterator = std.mem.window(u8, self.expected, 16, 16);
@@ -516,7 +517,7 @@ const BytesDiffer = struct {
                     try self.writeDiff(writer, "{c}", .{byte}, diff);
                 } else {
                     // TODO: remove this `if` when https://github.com/ziglang/zig/issues/7600 is fixed
-                    if (self.file_writer_mode == .terminal_winapi) {
+                    if (self.terminal_mode == .windows_api) {
                         try self.writeDiff(writer, ".", .{}, diff);
                         continue;
                     }

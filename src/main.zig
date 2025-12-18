@@ -4429,9 +4429,9 @@ fn runOrTest(
     // the error message and invocation below.
     if (process.can_execv and arg_mode == .run) {
         // execv releases the locks; no need to destroy the Compilation here.
-        _ = try io.lockStderrWriter(&.{});
+        _ = try io.lockStderr(&.{}, .no_color);
         const err = process.execve(gpa, argv.items, &env_map);
-        io.unlockStderrWriter();
+        io.unlockStderr();
         try warnAboutForeignBinaries(io, arena, arg_mode, target, link_libc);
         const cmd = try std.mem.join(arena, " ", argv.items);
         fatal("the following command failed to execve with '{t}':\n{s}", .{ err, cmd });
@@ -4448,8 +4448,8 @@ fn runOrTest(
         comp_destroyed.* = true;
 
         const term_result = t: {
-            _ = try io.lockStderrWriter(&.{});
-            defer io.unlockStderrWriter();
+            _ = try io.lockStderr(&.{}, .no_color);
+            defer io.unlockStderr();
             break :t child.spawnAndWait(io);
         };
         const term = term_result catch |err| {
@@ -5418,8 +5418,8 @@ fn cmdBuild(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) 
             child.stderr_behavior = .Inherit;
 
             const term = t: {
-                _ = try io.lockStderrWriter(&.{});
-                defer io.unlockStderrWriter();
+                _ = try io.lockStderr(&.{}, .no_color);
+                defer io.unlockStderr();
                 break :t child.spawnAndWait(io) catch |err|
                     fatal("failed to spawn build runner {s}: {t}", .{ child_argv.items[0], err });
             };

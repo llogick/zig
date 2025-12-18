@@ -713,7 +713,7 @@ pub const VTable = struct {
     processExecutableOpen: *const fn (?*anyopaque, File.OpenFlags) std.process.OpenExecutableError!File,
     processExecutablePath: *const fn (?*anyopaque, buffer: []u8) std.process.ExecutablePathError!usize,
     lockStderr: *const fn (?*anyopaque, buffer: []u8, ?Terminal.Mode) Cancelable!LockedStderr,
-    tryLockStderr: *const fn (?*anyopaque, buffer: []u8) Cancelable!?LockedStderr,
+    tryLockStderr: *const fn (?*anyopaque, buffer: []u8, ?Terminal.Mode) Cancelable!?LockedStderr,
     unlockStderr: *const fn (?*anyopaque) void,
 
     now: *const fn (?*anyopaque, Clock) Clock.Error!Timestamp,

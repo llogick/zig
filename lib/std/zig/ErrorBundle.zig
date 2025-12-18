@@ -166,51 +166,53 @@ pub const RenderToStderrError = Io.Cancelable || Io.File.Writer.Error;
 
 pub fn renderToStderr(eb: ErrorBundle, io: Io, options: RenderOptions, color: std.zig.Color) RenderToStderrError!void {
     var buffer: [256]u8 = undefined;
-    const stderr = try io.lockStderrWriter(&buffer);
-    defer io.unlockStderrWriter();
-    renderToWriter(eb, options, &stderr.interface, color.getTtyConf(stderr.mode)) catch |err| switch (err) {
-        error.WriteFailed => return stderr.err.?,
+    const stderr = try io.lockStderr(&buffer, color.terminalMode());
+    defer io.unlockStderr();
+    renderToTerminal(eb, options, stderr.terminal()) catch |err| switch (err) {
+        error.WriteFailed => return stderr.file_writer.err.?,
         else => |e| return e,
     };
 }
 
-pub fn renderToWriter(
-    eb: ErrorBundle,
-    options: RenderOptions,
-    w: *Writer,
-    fwm: Io.File.Writer.Mode,
-) Io.File.Writer.Mode.SetColorError!void {
+pub fn renderToWriter(eb: ErrorBundle, options: RenderOptions, w: *Writer) Writer.Error!void {
+    return renderToTerminal(eb, options, .{ .writer = w, .mode = .no_color }) catch |err| switch (err) {
+        error.WriteFailed => |e| return e,
+        else => unreachable,
+    };
+}
+
+pub fn renderToTerminal(eb: ErrorBundle, options: RenderOptions, t: Io.Terminal) Io.Terminal.SetColorError!void {
     if (eb.extra.len == 0) return;
     for (eb.getMessages()) |err_msg| {
-        try renderErrorMessageToWriter(eb, options, err_msg, w, fwm, "error", .red, 0);
+        try renderErrorMessage(eb, options, err_msg, t, "error", .red, 0);
     }
 
     if (options.include_log_text) {
         const log_text = eb.getCompileLogOutput();
         if (log_text.len != 0) {
-            try w.writeAll("\nCompile Log Output:\n");
-            try w.writeAll(log_text);
+            try t.writer.writeAll("\nCompile Log Output:\n");
+            try t.writer.writeAll(log_text);
         }
     }
 }
 
-fn renderErrorMessageToWriter(
+fn renderErrorMessage(
     eb: ErrorBundle,
     options: RenderOptions,
     err_msg_index: MessageIndex,
-    w: *Writer,
-    fwm: Io.File.Writer.Mode,
+    t: Io.Terminal,
     kind: []const u8,
-    color: Io.File.Writer.Color,
+    color: Io.Terminal.Color,
     indent: usize,
-) Io.File.Writer.Mode.SetColorError!void {
+) Io.Terminal.SetColorError!void {
+    const w = t.writer;
     const err_msg = eb.getErrorMessage(err_msg_index);
     if (err_msg.src_loc != .none) {
         const src = eb.extraData(SourceLocation, @intFromEnum(err_msg.src_loc));
         var prefix: Writer.Discarding = .init(&.{});
         try w.splatByteAll(' ', indent);
         prefix.count += indent;
-        try fwm.setColor(w, .bold);
+        try t.setColor(.bold);
         try w.print("{s}:{d}:{d}: ", .{
             eb.nullTerminatedString(src.data.src_path),
             src.data.line + 1,
@@ -221,7 +223,7 @@ fn renderErrorMessageToWriter(
             src.data.line + 1,
             src.data.column + 1,
         });
-        try fwm.setColor(w, color);
+        try t.setColor(color);
         try w.writeAll(kind);
         prefix.count += kind.len;
         try w.writeAll(": ");
@@ -229,17 +231,17 @@ fn renderErrorMessageToWriter(
         // This is the length of the part before the error message:
         // e.g. "file.zig:4:5: error: "
         const prefix_len: usize = @intCast(prefix.count);
-        try fwm.setColor(w, .reset);
-        try fwm.setColor(w, .bold);
+        try t.setColor(.reset);
+        try t.setColor(.bold);
         if (err_msg.count == 1) {
             try writeMsg(eb, err_msg, w, prefix_len);
             try w.writeByte('\n');
         } else {
             try writeMsg(eb, err_msg, w, prefix_len);
-            try fwm.setColor(w, .dim);
+            try t.setColor(.dim);
             try w.print(" ({d} times)\n", .{err_msg.count});
         }
-        try fwm.setColor(w, .reset);
+        try t.setColor(.reset);
         if (src.data.source_line != 0 and options.include_source_line) {
             const line = eb.nullTerminatedString(src.data.source_line);
             for (line) |b| switch (b) {
@@ -252,19 +254,19 @@ fn renderErrorMessageToWriter(
             // -1 since span.main includes the caret
             const after_caret = src.data.span_end -| src.data.span_main -| 1;
             try w.splatByteAll(' ', src.data.column - before_caret);
-            try fwm.setColor(w, .green);
+            try t.setColor(.green);
             try w.splatByteAll('~', before_caret);
             try w.writeByte('^');
             try w.splatByteAll('~', after_caret);
             try w.writeByte('\n');
-            try fwm.setColor(w, .reset);
+            try t.setColor(.reset);
         }
         for (eb.getNotes(err_msg_index)) |note| {
-            try renderErrorMessageToWriter(eb, options, note, w, fwm, "note", .cyan, indent);
+            try renderErrorMessage(eb, options, note, t, "note", .cyan, indent);
         }
         if (src.data.reference_trace_len > 0 and options.include_reference_trace) {
-            try fwm.setColor(w, .reset);
-            try fwm.setColor(w, .dim);
+            try t.setColor(.reset);
+            try t.setColor(.dim);
             try w.print("referenced by:\n", .{});
             var ref_index = src.end;
             for (0..src.data.reference_trace_len) |_| {
@@ -291,25 +293,25 @@ fn renderErrorMessageToWriter(
                     );
                 }
             }
-            try fwm.setColor(w, .reset);
+            try t.setColor(.reset);
         }
     } else {
-        try fwm.setColor(w, color);
+        try t.setColor(color);
         try w.splatByteAll(' ', indent);
         try w.writeAll(kind);
         try w.writeAll(": ");
-        try fwm.setColor(w, .reset);
+        try t.setColor(.reset);
         const msg = eb.nullTerminatedString(err_msg.msg);
         if (err_msg.count == 1) {
             try w.print("{s}\n", .{msg});
         } else {
             try w.print("{s}", .{msg});
-            try fwm.setColor(w, .dim);
+            try t.setColor(.dim);
             try w.print(" ({d} times)\n", .{err_msg.count});
         }
-        try fwm.setColor(w, .reset);
+        try t.setColor(.reset);
         for (eb.getNotes(err_msg_index)) |note| {
-            try renderErrorMessageToWriter(eb, options, note, w, fwm, "note", .cyan, indent + 4);
+            try renderErrorMessage(eb, options, note, t, "note", .cyan, indent + 4);
         }
     }
 }

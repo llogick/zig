@@ -286,8 +286,8 @@ pub fn main() !void {
                 const next_arg = nextArg(args, &arg_idx) orelse
                     fatalWithHint("expected u16 after '{s}'", .{arg});
                 debounce_interval_ms = std.fmt.parseUnsigned(u16, next_arg, 0) catch |err| {
-                    fatal("unable to parse debounce interval '{s}' as unsigned 16-bit integer: {s}\n", .{
-                        next_arg, @errorName(err),
+                    fatal("unable to parse debounce interval '{s}' as unsigned 16-bit integer: {t}\n", .{
+                        next_arg, err,
                     });
                 };
             } else if (mem.eql(u8, arg, "--webui")) {
@@ -429,6 +429,12 @@ pub fn main() !void {
         }
     }
 
+    graph.stderr_mode = switch (color) {
+        .auto => try .detect(io, .stderr()),
+        .on => .escape_codes,
+        .off => .no_color,
+    };
+
     if (webui_listen != null) {
         if (watch) fatal("using '--webui' and '--watch' together is not yet supported; consider omitting '--watch' in favour of the web UI \"Rebuild\" button", .{});
         if (builtin.single_threaded) fatal("'--webui' is not yet supported on single-threaded hosts", .{});
@@ -522,7 +528,7 @@ pub fn main() !void {
             // Perhaps in the future there could be an Advanced Options flag
             // such as --debug-build-runner-leaks which would make this code
             // return instead of calling exit.
-            _ = io.lockStderrWriter(&.{}) catch {};
+            _ = io.lockStderr(&.{}, graph.stderr_mode) catch {};
             process.exit(1);
         },
         else => |e| return e,
@@ -554,9 +560,9 @@ pub fn main() !void {
     }
 
     rebuild: while (true) : (if (run.error_style.clearOnUpdate()) {
-        const stderr = try io.lockStderrWriter(&stdio_buffer_allocation);
-        defer io.unlockStderrWriter();
-        try stderr.writeAllUnescaped("\x1B[2J\x1B[3J\x1B[H");
+        const stderr = try io.lockStderr(&stdio_buffer_allocation, graph.stderr_mode);
+        defer io.unlockStderr();
+        try stderr.file_writer.interface.writeAll("\x1B[2J\x1B[3J\x1B[H");
     }) {
         if (run.web_server) |*ws| ws.startBuild();
 
@@ -730,7 +736,8 @@ fn runStepNames(
     fuzz: ?std.Build.Fuzz.Mode,
 ) !void {
     const gpa = run.gpa;
-    const io = b.graph.io;
+    const graph = b.graph;
+    const io = graph.io;
     const step_stack = &run.step_stack;
 
     {
@@ -856,20 +863,19 @@ fn runStepNames(
             .none => break :summary,
         }
 
-        const stderr = try io.lockStderrWriter(&stdio_buffer_allocation);
-        defer io.unlockStderrWriter();
-
-        const w = &stderr.interface;
-        const fwm = stderr.mode;
+        const stderr = try io.lockStderr(&stdio_buffer_allocation, graph.stderr_mode);
+        defer io.unlockStderr();
+        const t = stderr.terminal();
+        const w = &stderr.file_writer.interface;
 
         const total_count = success_count + failure_count + pending_count + skipped_count;
-        fwm.setColor(w, .cyan) catch {};
-        fwm.setColor(w, .bold) catch {};
+        t.setColor(.cyan) catch {};
+        t.setColor(.bold) catch {};
         w.writeAll("Build Summary: ") catch {};
-        fwm.setColor(w, .reset) catch {};
+        t.setColor(.reset) catch {};
         w.print("{d}/{d} steps succeeded", .{ success_count, total_count }) catch {};
         {
-            fwm.setColor(w, .dim) catch {};
+            t.setColor(.dim) catch {};
             var first = true;
             if (skipped_count > 0) {
                 w.print("{s}{d} skipped", .{ if (first) " (" else ", ", skipped_count }) catch {};
@@ -880,12 +886,12 @@ fn runStepNames(
                 first = false;
             }
             if (!first) w.writeByte(')') catch {};
-            fwm.setColor(w, .reset) catch {};
+            t.setColor(.reset) catch {};
         }
 
         if (test_count > 0) {
             w.print("; {d}/{d} tests passed", .{ test_pass_count, test_count }) catch {};
-            fwm.setColor(w, .dim) catch {};
+            t.setColor(.dim) catch {};
             var first = true;
             if (test_skip_count > 0) {
                 w.print("{s}{d} skipped", .{ if (first) " (" else ", ", test_skip_count }) catch {};
@@ -904,7 +910,7 @@ fn runStepNames(
                 first = false;
             }
             if (!first) w.writeByte(')') catch {};
-            fwm.setColor(w, .reset) catch {};
+            t.setColor(.reset) catch {};
         }
 
         w.writeAll("\n") catch {};
@@ -918,7 +924,7 @@ fn runStepNames(
         var print_node: PrintNode = .{ .parent = null };
         if (step_names.len == 0) {
             print_node.last = true;
-            printTreeStep(b, b.default_step, run, w, fwm, &print_node, &step_stack_copy) catch {};
+            printTreeStep(b, b.default_step, run, t, &print_node, &step_stack_copy) catch {};
         } else {
             const last_index = if (run.summary == .all) b.top_level_steps.count() else blk: {
                 var i: usize = step_names.len;
@@ -937,7 +943,7 @@ fn runStepNames(
             for (step_names, 0..) |step_name, i| {
                 const tls = b.top_level_steps.get(step_name).?;
                 print_node.last = i + 1 == last_index;
-                printTreeStep(b, &tls.step, run, w, fwm, &print_node, &step_stack_copy) catch {};
+                printTreeStep(b, &tls.step, run, t, &print_node, &step_stack_copy) catch {};
             }
         }
         w.writeByte('\n') catch {};
@@ -954,7 +960,7 @@ fn runStepNames(
         if (run.error_style.verboseContext()) break :code 1; // failure; print build command
         break :code 2; // failure; do not print build command
     };
-    _ = io.lockStderrWriter(&.{}) catch {};
+    _ = io.lockStderr(&.{}, graph.stderr_mode) catch {};
     process.exit(code);
 }
 
@@ -963,33 +969,30 @@ const PrintNode = struct {
     last: bool = false,
 };
 
-fn printPrefix(node: *PrintNode, w: *Writer, fwm: File.Writer.Mode) !void {
+fn printPrefix(node: *PrintNode, stderr: Io.Terminal) !void {
     const parent = node.parent orelse return;
+    const writer = stderr.writer;
     if (parent.parent == null) return;
-    try printPrefix(parent, w, fwm);
+    try printPrefix(parent, stderr);
     if (parent.last) {
-        try w.writeAll("   ");
+        try writer.writeAll("   ");
     } else {
-        try w.writeAll(switch (fwm) {
-            .terminal_escaped => "\x1B\x28\x30\x78\x1B\x28\x42  ", // │
+        try writer.writeAll(switch (stderr.mode) {
+            .escape_codes => "\x1B\x28\x30\x78\x1B\x28\x42  ", // │
             else => "|  ",
         });
     }
 }
 
-fn printChildNodePrefix(w: *Writer, fwm: File.Writer.Mode) !void {
-    try w.writeAll(switch (fwm) {
-        .terminal_escaped => "\x1B\x28\x30\x6d\x71\x1B\x28\x42 ", // └─
+fn printChildNodePrefix(stderr: Io.Terminal) !void {
+    try stderr.writer.writeAll(switch (stderr.mode) {
+        .escape_codes => "\x1B\x28\x30\x6d\x71\x1B\x28\x42 ", // └─
         else => "+- ",
     });
 }
 
-fn printStepStatus(
-    s: *Step,
-    stderr: *Writer,
-    fwm: File.Writer.Mode,
-    run: *const Run,
-) !void {
+fn printStepStatus(s: *Step, stderr: Io.Terminal, run: *const Run) !void {
+    const writer = stderr.writer;
     switch (s.state) {
         .precheck_unstarted => unreachable,
         .precheck_started => unreachable,
@@ -997,139 +1000,135 @@ fn printStepStatus(
         .running => unreachable,
 
         .dependency_failure => {
-            try fwm.setColor(stderr, .dim);
-            try stderr.writeAll(" transitive failure\n");
-            try fwm.setColor(stderr, .reset);
+            try stderr.setColor(.dim);
+            try writer.writeAll(" transitive failure\n");
+            try stderr.setColor(.reset);
         },
 
         .success => {
-            try fwm.setColor(stderr, .green);
+            try stderr.setColor(.green);
             if (s.result_cached) {
-                try stderr.writeAll(" cached");
+                try writer.writeAll(" cached");
             } else if (s.test_results.test_count > 0) {
                 const pass_count = s.test_results.passCount();
                 assert(s.test_results.test_count == pass_count + s.test_results.skip_count);
-                try stderr.print(" {d} pass", .{pass_count});
+                try writer.print(" {d} pass", .{pass_count});
                 if (s.test_results.skip_count > 0) {
-                    try fwm.setColor(stderr, .reset);
-                    try stderr.writeAll(", ");
-                    try fwm.setColor(stderr, .yellow);
-                    try stderr.print("{d} skip", .{s.test_results.skip_count});
+                    try stderr.setColor(.reset);
+                    try writer.writeAll(", ");
+                    try stderr.setColor(.yellow);
+                    try writer.print("{d} skip", .{s.test_results.skip_count});
                 }
-                try fwm.setColor(stderr, .reset);
-                try stderr.print(" ({d} total)", .{s.test_results.test_count});
+                try stderr.setColor(.reset);
+                try writer.print(" ({d} total)", .{s.test_results.test_count});
             } else {
-                try stderr.writeAll(" success");
+                try writer.writeAll(" success");
             }
-            try fwm.setColor(stderr, .reset);
+            try stderr.setColor(.reset);
             if (s.result_duration_ns) |ns| {
-                try fwm.setColor(stderr, .dim);
+                try stderr.setColor(.dim);
                 if (ns >= std.time.ns_per_min) {
-                    try stderr.print(" {d}m", .{ns / std.time.ns_per_min});
+                    try writer.print(" {d}m", .{ns / std.time.ns_per_min});
                 } else if (ns >= std.time.ns_per_s) {
-                    try stderr.print(" {d}s", .{ns / std.time.ns_per_s});
+                    try writer.print(" {d}s", .{ns / std.time.ns_per_s});
                 } else if (ns >= std.time.ns_per_ms) {
-                    try stderr.print(" {d}ms", .{ns / std.time.ns_per_ms});
+                    try writer.print(" {d}ms", .{ns / std.time.ns_per_ms});
                 } else if (ns >= std.time.ns_per_us) {
-                    try stderr.print(" {d}us", .{ns / std.time.ns_per_us});
+                    try writer.print(" {d}us", .{ns / std.time.ns_per_us});
                 } else {
-                    try stderr.print(" {d}ns", .{ns});
+                    try writer.print(" {d}ns", .{ns});
                 }
-                try fwm.setColor(stderr, .reset);
+                try stderr.setColor(.reset);
             }
             if (s.result_peak_rss != 0) {
                 const rss = s.result_peak_rss;
-                try fwm.setColor(stderr, .dim);
+                try stderr.setColor(.dim);
                 if (rss >= 1000_000_000) {
-                    try stderr.print(" MaxRSS:{d}G", .{rss / 1000_000_000});
+                    try writer.print(" MaxRSS:{d}G", .{rss / 1000_000_000});
                 } else if (rss >= 1000_000) {
-                    try stderr.print(" MaxRSS:{d}M", .{rss / 1000_000});
+                    try writer.print(" MaxRSS:{d}M", .{rss / 1000_000});
                 } else if (rss >= 1000) {
-                    try stderr.print(" MaxRSS:{d}K", .{rss / 1000});
+                    try writer.print(" MaxRSS:{d}K", .{rss / 1000});
                 } else {
-                    try stderr.print(" MaxRSS:{d}B", .{rss});
+                    try writer.print(" MaxRSS:{d}B", .{rss});
                 }
-                try fwm.setColor(stderr, .reset);
+                try stderr.setColor(.reset);
             }
-            try stderr.writeAll("\n");
+            try writer.writeAll("\n");
         },
         .skipped, .skipped_oom => |skip| {
-            try fwm.setColor(stderr, .yellow);
-            try stderr.writeAll(" skipped");
+            try stderr.setColor(.yellow);
+            try writer.writeAll(" skipped");
             if (skip == .skipped_oom) {
-                try stderr.writeAll(" (not enough memory)");
-                try fwm.setColor(stderr, .dim);
-                try stderr.print(" upper bound of {d} exceeded runner limit ({d})", .{ s.max_rss, run.max_rss });
-                try fwm.setColor(stderr, .yellow);
+                try writer.writeAll(" (not enough memory)");
+                try stderr.setColor(.dim);
+                try writer.print(" upper bound of {d} exceeded runner limit ({d})", .{ s.max_rss, run.max_rss });
+                try stderr.setColor(.yellow);
             }
-            try stderr.writeAll("\n");
-            try fwm.setColor(stderr, .reset);
+            try writer.writeAll("\n");
+            try stderr.setColor(.reset);
         },
         .failure => {
-            try printStepFailure(s, stderr, fwm, false);
-            try fwm.setColor(stderr, .reset);
+            try printStepFailure(s, stderr, false);
+            try stderr.setColor(.reset);
         },
     }
 }
 
-fn printStepFailure(
-    s: *Step,
-    stderr: *Writer,
-    fwm: File.Writer.Mode,
-    dim: bool,
-) !void {
+fn printStepFailure(s: *Step, stderr: Io.Terminal, dim: bool) !void {
+    const w = stderr.writer;
     if (s.result_error_bundle.errorMessageCount() > 0) {
-        try fwm.setColor(stderr, .red);
-        try stderr.print(" {d} errors\n", .{
+        try stderr.setColor(.red);
+        try w.print(" {d} errors\n", .{
             s.result_error_bundle.errorMessageCount(),
         });
     } else if (!s.test_results.isSuccess()) {
         // These first values include all of the test "statuses". Every test is either passsed,
         // skipped, failed, crashed, or timed out.
-        try fwm.setColor(stderr, .green);
-        try stderr.print(" {d} pass", .{s.test_results.passCount()});
-        try fwm.setColor(stderr, .reset);
-        if (dim) try fwm.setColor(stderr, .dim);
+        try stderr.setColor(.green);
+        try w.print(" {d} pass", .{s.test_results.passCount()});
+        try stderr.setColor(.reset);
+        if (dim) try stderr.setColor(.dim);
         if (s.test_results.skip_count > 0) {
-            try stderr.writeAll(", ");
-            try fwm.setColor(stderr, .yellow);
-            try stderr.print("{d} skip", .{s.test_results.skip_count});
-            try fwm.setColor(stderr, .reset);
-            if (dim) try fwm.setColor(stderr, .dim);
+            try w.writeAll(", ");
+            try stderr.setColor(.yellow);
+            try w.print("{d} skip", .{s.test_results.skip_count});
+            try stderr.setColor(.reset);
+            if (dim) try stderr.setColor(.dim);
         }
         if (s.test_results.fail_count > 0) {
-            try stderr.writeAll(", ");
-            try fwm.setColor(stderr, .red);
-            try stderr.print("{d} fail", .{s.test_results.fail_count});
-            try fwm.setColor(stderr, .reset);
-            if (dim) try fwm.setColor(stderr, .dim);
+            try w.writeAll(", ");
+            try stderr.setColor(.red);
+            try w.print("{d} fail", .{s.test_results.fail_count});
+            try stderr.setColor(.reset);
+            if (dim) try stderr.setColor(.dim);
         }
         if (s.test_results.crash_count > 0) {
-            try stderr.writeAll(", ");
-            try fwm.setColor(stderr, .red);
-            try stderr.print("{d} crash", .{s.test_results.crash_count});
-            try fwm.setColor(stderr, .reset);
-            if (dim) try fwm.setColor(stderr, .dim);
+            try w.writeAll(", ");
+            try stderr.setColor(.red);
+            try w.print("{d} crash", .{s.test_results.crash_count});
+            try stderr.setColor(.reset);
+            if (dim) try stderr.setColor(.dim);
         }
         if (s.test_results.timeout_count > 0) {
-            try stderr.writeAll(", ");
-            try fwm.setColor(stderr, .red);
-            try stderr.print("{d} timeout", .{s.test_results.timeout_count});
-            try fwm.setColor(stderr, .reset);
-            if (dim) try fwm.setColor(stderr, .dim);
+            try w.writeAll(", ");
+            try stderr.setColor(.red);
+            try w.print("{d} timeout", .{s.test_results.timeout_count});
+            try stderr.setColor(.reset);
+            if (dim) try stderr.setColor(.dim);
         }
-        try stderr.print(" ({d} total)", .{s.test_results.test_count});
+        try w.print(" ({d} total)", .{s.test_results.test_count});
 
         // Memory leaks are intentionally written after the total, because is isn't a test *status*,
         // but just a flag that any tests -- even passed ones -- can have. We also use a different
         // separator, so it looks like:
         //   2 pass, 1 skip, 2 fail (5 total); 2 leaks
         if (s.test_results.leak_count > 0) {
-            try stderr.writeAll("; ");
-            try fwm.setColor(stderr, .red);
-            try stderr.print("{d} leaks", .{s.test_results.leak_count});
-            try fwm.setColor(stderr, .reset);
-            if (dim) try fwm.setColor(stderr, .dim);
+            try w.writeAll("; ");
+            try stderr.setColor(.red);
+            try w.print("{d} leaks", .{s.test_results.leak_count});
+            try stderr.setColor(.reset);
+            if (dim) try stderr.setColor(.dim);
         }
 
         // It's usually not helpful to know how many error logs there were because they tend to
@@ -1142,21 +1141,21 @@ fn printStepFailure(
             break :show alt_results.isSuccess();
         };
         if (show_err_logs) {
-            try stderr.writeAll("; ");
-            try fwm.setColor(stderr, .red);
-            try stderr.print("{d} error logs", .{s.test_results.log_err_count});
-            try fwm.setColor(stderr, .reset);
-            if (dim) try fwm.setColor(stderr, .dim);
+            try w.writeAll("; ");
+            try stderr.setColor(.red);
+            try w.print("{d} error logs", .{s.test_results.log_err_count});
+            try stderr.setColor(.reset);
+            if (dim) try stderr.setColor(.dim);
         }
 
-        try stderr.writeAll("\n");
+        try w.writeAll("\n");
     } else if (s.result_error_msgs.items.len > 0) {
-        try fwm.setColor(stderr, .red);
-        try stderr.writeAll(" failure\n");
+        try stderr.setColor(.red);
+        try w.writeAll(" failure\n");
     } else {
         assert(s.result_stderr.len > 0);
-        try fwm.setColor(stderr, .red);
-        try stderr.writeAll(" stderr\n");
+        try stderr.setColor(.red);
+        try w.writeAll(" w\n");
     }
 }
 
@@ -1164,11 +1163,11 @@ fn printTreeStep(
     b: *std.Build,
     s: *Step,
     run: *const Run,
-    stderr: *Writer,
-    fwm: File.Writer.Mode,
+    stderr: Io.Terminal,
     parent_node: *PrintNode,
     step_stack: *std.AutoArrayHashMapUnmanaged(*Step, void),
 ) !void {
+    const writer = stderr.writer;
     const first = step_stack.swapRemove(s);
     const summary = run.summary;
     const skip = switch (summary) {
@@ -1178,26 +1177,26 @@ fn printTreeStep(
         .failures => s.state == .success,
     };
     if (skip) return;
-    try printPrefix(parent_node, stderr, fwm);
+    try printPrefix(parent_node, stderr);
 
     if (parent_node.parent != null) {
         if (parent_node.last) {
-            try printChildNodePrefix(stderr, fwm);
+            try printChildNodePrefix(stderr);
         } else {
-            try stderr.writeAll(switch (fwm) {
-                .terminal_escaped => "\x1B\x28\x30\x74\x71\x1B\x28\x42 ", // ├─
+            try writer.writeAll(switch (stderr.mode) {
+                .escape_codes => "\x1B\x28\x30\x74\x71\x1B\x28\x42 ", // ├─
                 else => "+- ",
             });
         }
     }
 
-    if (!first) try fwm.setColor(stderr, .dim);
+    if (!first) try stderr.setColor(.dim);
 
     // dep_prefix omitted here because it is redundant with the tree.
-    try stderr.writeAll(s.name);
+    try writer.writeAll(s.name);
 
     if (first) {
-        try printStepStatus(s, stderr, fwm, run);
+        try printStepStatus(s, stderr, run);
 
         const last_index = if (summary == .all) s.dependencies.items.len -| 1 else blk: {
             var i: usize = s.dependencies.items.len;
@@ -1219,17 +1218,17 @@ fn printTreeStep(
                 .parent = parent_node,
                 .last = i == last_index,
             };
-            try printTreeStep(b, dep, run, stderr, fwm, &print_node, step_stack);
+            try printTreeStep(b, dep, run, stderr, &print_node, step_stack);
         }
     } else {
         if (s.dependencies.items.len == 0) {
-            try stderr.writeAll(" (reused)\n");
+            try writer.writeAll(" (reused)\n");
         } else {
-            try stderr.print(" (+{d} more reused dependencies)\n", .{
+            try writer.print(" (+{d} more reused dependencies)\n", .{
                 s.dependencies.items.len,
             });
         }
-        try fwm.setColor(stderr, .reset);
+        try stderr.setColor(.reset);
     }
 }
 
@@ -1300,7 +1299,8 @@ fn workerMakeOneStep(
     prog_node: std.Progress.Node,
     run: *Run,
 ) void {
-    const io = b.graph.io;
+    const graph = b.graph;
+    const io = graph.io;
     const gpa = run.gpa;
 
     // First, check the conditions for running this step. If they are not met,
@@ -1369,11 +1369,11 @@ fn workerMakeOneStep(
     const show_error_msgs = s.result_error_msgs.items.len > 0;
     const show_stderr = s.result_stderr.len > 0;
     if (show_error_msgs or show_compile_errors or show_stderr) {
-        const stderr = io.lockStderrWriter(&stdio_buffer_allocation) catch |err| switch (err) {
+        const stderr = io.lockStderr(&stdio_buffer_allocation, graph.stderr_mode) catch |err| switch (err) {
             error.Canceled => return,
         };
-        defer io.unlockStderrWriter();
-        printErrorMessages(gpa, s, .{}, &stderr.interface, stderr.mode, run.error_style, run.multiline_errors) catch {};
+        defer io.unlockStderr();
+        printErrorMessages(gpa, s, .{}, stderr.terminal(), run.error_style, run.multiline_errors) catch {};
     }
 
     handle_result: {
@@ -1440,11 +1440,11 @@ pub fn printErrorMessages(
     gpa: Allocator,
     failing_step: *Step,
     options: std.zig.ErrorBundle.RenderOptions,
-    stderr: *Writer,
-    fwm: File.Writer.Mode,
+    stderr: Io.Terminal,
     error_style: ErrorStyle,
     multiline_errors: MultilineErrors,
 ) !void {
+    const writer = stderr.writer;
     if (error_style.verboseContext()) {
         // Provide context for where these error messages are coming from by
         // printing the corresponding Step subtree.
@@ -1456,70 +1456,70 @@ pub fn printErrorMessages(
         }
 
         // Now, `step_stack` has the subtree that we want to print, in reverse order.
-        try fwm.setColor(stderr, .dim);
+        try stderr.setColor(.dim);
         var indent: usize = 0;
         while (step_stack.pop()) |s| : (indent += 1) {
             if (indent > 0) {
-                try stderr.splatByteAll(' ', (indent - 1) * 3);
-                try printChildNodePrefix(stderr, fwm);
+                try writer.splatByteAll(' ', (indent - 1) * 3);
+                try printChildNodePrefix(stderr);
             }
 
-            try stderr.writeAll(s.name);
+            try writer.writeAll(s.name);
 
             if (s == failing_step) {
-                try printStepFailure(s, stderr, fwm, true);
+                try printStepFailure(s, stderr, true);
             } else {
-                try stderr.writeAll("\n");
+                try writer.writeAll("\n");
             }
         }
-        try fwm.setColor(stderr, .reset);
+        try stderr.setColor(.reset);
     } else {
         // Just print the failing step itself.
-        try fwm.setColor(stderr, .dim);
-        try stderr.writeAll(failing_step.name);
-        try printStepFailure(failing_step, stderr, fwm, true);
-        try fwm.setColor(stderr, .reset);
+        try stderr.setColor(.dim);
+        try writer.writeAll(failing_step.name);
+        try printStepFailure(failing_step, stderr, true);
+        try stderr.setColor(.reset);
     }
 
     if (failing_step.result_stderr.len > 0) {
-        try stderr.writeAll(failing_step.result_stderr);
+        try writer.writeAll(failing_step.result_stderr);
         if (!mem.endsWith(u8, failing_step.result_stderr, "\n")) {
-            try stderr.writeAll("\n");
+            try writer.writeAll("\n");
         }
     }
 
-    try failing_step.result_error_bundle.renderToWriter(options, stderr, fwm);
+    try failing_step.result_error_bundle.renderToTerminal(options, stderr);
 
     for (failing_step.result_error_msgs.items) |msg| {
-        try fwm.setColor(stderr, .red);
-        try stderr.writeAll("error:");
-        try fwm.setColor(stderr, .reset);
+        try stderr.setColor(.red);
+        try writer.writeAll("error:");
+        try stderr.setColor(.reset);
         if (std.mem.indexOfScalar(u8, msg, '\n') == null) {
-            try stderr.print(" {s}\n", .{msg});
+            try writer.print(" {s}\n", .{msg});
         } else switch (multiline_errors) {
             .indent => {
                 var it = std.mem.splitScalar(u8, msg, '\n');
-                try stderr.print(" {s}\n", .{it.first()});
+                try writer.print(" {s}\n", .{it.first()});
                 while (it.next()) |line| {
-                    try stderr.print("       {s}\n", .{line});
+                    try writer.print("       {s}\n", .{line});
                 }
             },
-            .newline => try stderr.print("\n{s}\n", .{msg}),
-            .none => try stderr.print(" {s}\n", .{msg}),
+            .newline => try writer.print("\n{s}\n", .{msg}),
+            .none => try writer.print(" {s}\n", .{msg}),
         }
     }
 
     if (error_style.verboseContext()) {
         if (failing_step.result_failed_command) |cmd_str| {
-            try fwm.setColor(stderr, .red);
-            try stderr.writeAll("failed command: ");
-            try fwm.setColor(stderr, .reset);
-            try stderr.writeAll(cmd_str);
-            try stderr.writeByte('\n');
+            try stderr.setColor(.red);
+            try writer.writeAll("failed command: ");
+            try stderr.setColor(.reset);
+            try writer.writeAll(cmd_str);
+            try writer.writeByte('\n');
         }
     }
 
-    try stderr.writeByte('\n');
+    try writer.writeByte('\n');
 }
 
 fn printSteps(builder: *std.Build, w: *Writer) !void {

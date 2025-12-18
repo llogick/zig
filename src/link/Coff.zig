@@ -2382,9 +2382,9 @@ pub fn dump(coff: *Coff, tid: Zcu.PerThread.Id) Io.Cancelable!void {
     const comp = coff.base.comp;
     const io = comp.io;
     var buffer: [512]u8 = undefined;
-    const stderr = try io.lockStderrWriter(&buffer);
-    defer io.unlockStderrWriter();
-    const w = &stderr.interface;
+    const stderr = try io.lockStderr(&buffer, null);
+    defer io.unlockStderr();
+    const w = &stderr.file_writer.interface;
     coff.printNode(tid, w, .root, 0) catch |err| switch (err) {
         error.WriteFailed => return stderr.err.?,
     };

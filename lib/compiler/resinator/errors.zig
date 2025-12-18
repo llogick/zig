@@ -69,10 +69,10 @@ pub const Diagnostics = struct {
 
     pub fn renderToStderr(self: *Diagnostics, cwd: Io.Dir, source: []const u8, source_mappings: ?SourceMappings) void {
         const io = self.io;
-        const stderr = io.lockStderrWriter(&.{});
-        defer io.unlockStderrWriter();
+        const stderr = io.lockStderr(&.{}, null);
+        defer io.unlockStderr();
         for (self.errors.items) |err_details| {
-            renderErrorMessage(io, &stderr.interface, stderr.mode, cwd, err_details, source, self.strings.items, source_mappings) catch return;
+            renderErrorMessage(io, stderr.terminal(), cwd, err_details, source, self.strings.items, source_mappings) catch return;
         }
     }
 

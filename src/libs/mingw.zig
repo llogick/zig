@@ -314,14 +314,14 @@ pub fn buildImportLib(comp: *Compilation, lib_name: []const u8) !void {
 
     if (comp.verbose_cc) {
         var buffer: [256]u8 = undefined;
-        const stderr = try io.lockStderrWriter(&buffer);
-        defer io.unlockStderrWriter();
-        const w = &stderr.interface;
+        const stderr = try io.lockStderr(&buffer, null);
+        defer io.unlockStderr();
+        const w = &stderr.file_writer.interface;
         w.print("def file: {s}\n", .{def_file_path}) catch |err| switch (err) {
-            error.WriteFailed => return stderr.err.?,
+            error.WriteFailed => return stderr.file_writer.err.?,
         };
         w.print("include dir: {s}\n", .{include_dir}) catch |err| switch (err) {
-            error.WriteFailed => return stderr.err.?,
+            error.WriteFailed => return stderr.file_writer.err.?,
         };
     }
 
@@ -339,12 +339,12 @@ pub fn buildImportLib(comp: *Compilation, lib_name: []const u8) !void {
 
     if (aro_comp.diagnostics.output.to_list.messages.items.len != 0) {
         var buffer: [64]u8 = undefined;
-        const stderr = try io.lockStderrWriter(&buffer);
-        defer io.unlockStderrWriter();
+        const stderr = try io.lockStderr(&buffer, null);
+        defer io.unlockStderr();
         for (aro_comp.diagnostics.output.to_list.messages.items) |msg| {
             if (msg.kind == .@"fatal error" or msg.kind == .@"error") {
-                msg.write(&stderr.interface, stderr.mode, true) catch |err| switch (err) {
-                    error.WriteFailed => return stderr.err.?,
+                msg.write(stderr.terminal(), true) catch |err| switch (err) {
+                    error.WriteFailed => return stderr.file_writer.err.?,
                 };
                 return error.AroPreprocessorFailed;
             }
@@ -365,9 +365,9 @@ pub fn buildImportLib(comp: *Compilation, lib_name: []const u8) !void {
             error.OutOfMemory => |e| return e,
             error.ParseError => {
                 var buffer: [64]u8 = undefined;
-                const stderr = try io.lockStderrWriter(&buffer);
-                defer io.unlockStderrWriter();
-                const w = &stderr.interface;
+                const stderr = try io.lockStderr(&buffer, null);
+                defer io.unlockStderr();
+                const w = &stderr.file_writer.interface;
                 try w.writeAll("error: ");
                 try def_diagnostics.writeMsg(w, input);
                 try w.writeByte('\n');

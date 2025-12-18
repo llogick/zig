@@ -35,8 +35,8 @@ pub fn main() !void {
     const args = try std.process.argsAlloc(arena);
 
     if (args.len < 2) {
-        const stderr = io.lockStderrWriter(&.{});
-        try renderErrorMessage(&stderr.interface, stderr.mode, .err, "expected zig lib dir as first argument", .{});
+        const stderr = try io.lockStderr(&.{}, null);
+        try renderErrorMessage(stderr.terminal(), .err, "expected zig lib dir as first argument", .{});
         std.process.exit(1);
     }
     const zig_lib_dir = args[1];
@@ -80,9 +80,9 @@ pub fn main() !void {
             // so that there is a clear separation between the cli diagnostics and whatever
             // gets printed after
             if (cli_diagnostics.errors.items.len > 0) {
-                const stderr = io.lockStderrWriter(&.{});
-                defer io.unlockStderrWriter();
-                try stderr.interface.writeByte('\n');
+                const stderr = try io.lockStderr(&.{}, null);
+                defer io.unlockStderr();
+                try stderr.file_writer.interface.writeByte('\n');
             }
         }
         break :options options;
@@ -130,15 +130,12 @@ pub fn main() !void {
             var stderr_buf: [512]u8 = undefined;
             var diagnostics: aro.Diagnostics = .{ .output = output: {
                 if (zig_integration) break :output .{ .to_list = .{ .arena = .init(gpa) } };
-                const stderr = io.lockStderrWriter(&stderr_buf);
-                break :output .{ .to_writer = .{
-                    .writer = &stderr.interface,
-                    .color = stderr.mode,
-                } };
+                const stderr = try io.lockStderr(&stderr_buf, null);
+                break :output .{ .to_writer = stderr.terminal() };
             } };
             defer {
                 diagnostics.deinit();
-                if (!zig_integration) std.debug.unlockStderrWriter();
+                if (!zig_integration) std.debug.unlockStderr();
             }
 
             var comp = aro.Compilation.init(aro_arena, aro_arena, io, &diagnostics, Io.Dir.cwd());
@@ -699,9 +696,9 @@ const ErrorHandler = union(enum) {
             },
             .stderr => {
                 // aro errors have already been emitted
-                const stderr = io.lockStderrWriter(&.{});
-                defer io.unlockStderrWriter();
-                try renderErrorMessage(&stderr.interface, stderr.mode, .err, "{s}", .{fail_msg});
+                const stderr = io.lockStderr(&.{}, null);
+                defer io.unlockStderr();
+                try renderErrorMessage(stderr.terminal(), .err, "{s}", .{fail_msg});
             },
         }
     }
@@ -745,9 +742,9 @@ const ErrorHandler = union(enum) {
                 try server.serveErrorBundle(error_bundle);
             },
             .stderr => {
-                const stderr = io.lockStderrWriter(&.{});
-                defer io.unlockStderrWriter();
-                try renderErrorMessage(&stderr.interface, stderr.mode, msg_type, format, args);
+                const stderr = try io.lockStderr(&.{}, null);
+                defer io.unlockStderr();
+                try renderErrorMessage(stderr.terminal(), msg_type, format, args);
             },
         }
     }

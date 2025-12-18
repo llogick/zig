@@ -328,16 +328,17 @@ pub fn cast(step: *Step, comptime T: type) ?*T {
 }
 
 /// For debugging purposes, prints identifying information about this Step.
-pub fn dump(step: *Step, w: *Io.Writer, fwm: Io.File.Writer.Mode) void {
+pub fn dump(step: *Step, t: Io.Terminal) void {
+    const w = t.writer;
     if (step.debug_stack_trace.instruction_addresses.len > 0) {
         w.print("name: '{s}'. creation stack trace:\n", .{step.name}) catch {};
-        std.debug.writeStackTrace(&step.debug_stack_trace, w, fwm) catch {};
+        std.debug.writeStackTrace(&step.debug_stack_trace, t) catch {};
     } else {
         const field = "debug_stack_frames_count";
         comptime assert(@hasField(Build, field));
-        fwm.setColor(w, .yellow) catch {};
+        t.setColor(.yellow) catch {};
         w.print("name: '{s}'. no stack trace collected for this step, see std.Build." ++ field ++ "\n", .{step.name}) catch {};
-        fwm.setColor(w, .reset) catch {};
+        t.setColor(.reset) catch {};
     }
 }
 

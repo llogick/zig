@@ -46,25 +46,18 @@ pub const SrcHasher = std.crypto.hash.Blake3;
 pub const SrcHash = [16]u8;
 
 pub const Color = enum {
-    /// Determine whether stderr is a terminal or not automatically.
+    /// Auto-detect whether stream supports terminal colors.
     auto,
-    /// Assume stderr is not a terminal.
+    /// Force-enable colors.
     off,
-    /// Assume stderr is a terminal.
+    /// Suppress colors.
     on,
 
-    pub fn getTtyConf(color: Color, detected: Io.File.Writer.Mode) Io.File.Writer.Mode {
+    pub fn terminalMode(color: Color) ?Io.Terminal.Mode {
         return switch (color) {
-            .auto => detected,
-            .on => .terminal_escaped,
-            .off => .streaming,
-        };
-    }
-    pub fn detectTtyConf(color: Color, io: Io) Io.File.Writer.Mode {
-        return switch (color) {
-            .auto => .detect(io, .stderr()),
-            .on => .terminal_escaped,
-            .off => .streaming,
+            .auto => null,
+            .on => .escape_codes,
+            .off => .no_color,
         };
     }
 };

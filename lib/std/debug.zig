@@ -283,12 +283,12 @@ var static_single_threaded_io: Io.Threaded = .init_single_threaded;
 ///
 /// Alternatively, use the higher-level `Io.lockStderr` to integrate with the
 /// application's chosen `Io` implementation.
-pub fn lockStderr(buffer: []u8) Io.Terminal {
-    return (static_single_threaded_io.ioBasic().lockStderr(buffer, null) catch |err| switch (err) {
+pub fn lockStderr(buffer: []u8) Io.LockedStderr {
+    return static_single_threaded_io.ioBasic().lockStderr(buffer, null) catch |err| switch (err) {
         // Impossible to cancel because no calls to cancel using
         // `static_single_threaded_io` exist.
         error.Canceled => unreachable,
-    }).terminal();
+    };
 }
 
 pub fn unlockStderr() void {
@@ -311,7 +311,7 @@ pub fn print(comptime fmt: []const u8, args: anytype) void {
         var buffer: [64]u8 = undefined;
         const stderr = lockStderr(&buffer);
         defer unlockStderr();
-        stderr.writer.print(fmt, args) catch return;
+        stderr.file_writer.interface.print(fmt, args) catch return;
     }
 }
 
@@ -327,7 +327,7 @@ pub inline fn getSelfDebugInfo() !*SelfInfo {
 /// Tries to print a hexadecimal view of the bytes, unbuffered, and ignores any error returned.
 /// Obtains the stderr mutex while dumping.
 pub fn dumpHex(bytes: []const u8) void {
-    const stderr = lockStderr(&.{});
+    const stderr = lockStderr(&.{}).terminal();
     defer unlockStderr();
     dumpHexFallible(stderr, bytes) catch {};
 }
@@ -551,7 +551,7 @@ pub fn defaultPanic(
             _ = panicking.fetchAdd(1, .seq_cst);
 
             trace: {
-                const stderr = lockStderr(&.{});
+                const stderr = lockStderr(&.{}).terminal();
                 defer unlockStderr();
                 const writer = stderr.writer;
 
@@ -581,7 +581,7 @@ pub fn defaultPanic(
             // A panic happened while trying to print a previous panic message.
             // We're still holding the mutex but that's fine as we're going to
             // call abort().
-            const stderr = lockStderr(&.{});
+            const stderr = lockStderr(&.{}).terminal();
             stderr.writer.writeAll("aborting due to recursive panic\n") catch {};
         },
         else => {}, // Panicked while printing the recursive panic message.
@@ -751,7 +751,7 @@ pub noinline fn writeCurrentStackTrace(options: StackUnwindOptions, t: Io.Termin
 }
 /// A thin wrapper around `writeCurrentStackTrace` which writes to stderr and ignores write errors.
 pub fn dumpCurrentStackTrace(options: StackUnwindOptions) void {
-    const stderr = lockStderr(&.{});
+    const stderr = lockStderr(&.{}).terminal();
     defer unlockStderr();
     writeCurrentStackTrace(.{
         .first_address = a: {
@@ -814,7 +814,7 @@ pub fn writeStackTrace(st: *const StackTrace, t: Io.Terminal) Writer.Error!void 
 }
 /// A thin wrapper around `writeStackTrace` which writes to stderr and ignores write errors.
 pub fn dumpStackTrace(st: *const StackTrace) void {
-    const stderr = lockStderr(&.{});
+    const stderr = lockStderr(&.{}).terminal();
     defer unlockStderr();
     writeStackTrace(st, stderr) catch |err| switch (err) {
         error.WriteFailed => {},
@@ -1550,7 +1550,7 @@ pub fn defaultHandleSegfault(addr: ?usize, name: []const u8, opt_ctx: ?CpuContex
             _ = panicking.fetchAdd(1, .seq_cst);
 
             trace: {
-                const stderr = lockStderr(&.{});
+                const stderr = lockStderr(&.{}).terminal();
                 defer unlockStderr();
 
                 if (addr) |a| {
@@ -1571,7 +1571,7 @@ pub fn defaultHandleSegfault(addr: ?usize, name: []const u8, opt_ctx: ?CpuContex
             // A segfault happened while trying to print a previous panic message.
             // We're still holding the mutex but that's fine as we're going to
             // call abort().
-            const stderr = lockStderr(&.{});
+            const stderr = lockStderr(&.{}).terminal();
             stderr.writer.writeAll("aborting due to recursive panic\n") catch {};
         },
         else => {}, // Panicked while printing the recursive panic message.
@@ -1678,7 +1678,7 @@ pub fn ConfigurableTrace(comptime size: usize, comptime stack_frame_count: usize
         pub fn dump(t: @This()) void {
             if (!enabled) return;
 
-            const stderr = lockStderr(&.{});
+            const stderr = lockStderr(&.{}).terminal();
             defer unlockStderr();
             const end = @min(t.index, size);
             for (t.addrs[0..end], 0..) |frames_array, i| {

@@ -14,9 +14,9 @@ const std = @import("../std.zig");
 pub fn call(msg: []const u8, ra: ?usize) noreturn {
     @branchHint(.cold);
     _ = ra;
-    const stderr = std.debug.lockStderrWriter(&.{});
-    stderr.interface.writeAll(msg) catch {};
-    stderr.interface.flush(msg) catch {};
+    const stderr_writer = std.debug.lockStderr(&.{}, null).terminal().writer;
+    stderr_writer.writeAll(msg) catch {};
+    stderr_writer.flush(msg) catch {};
     @trap();
 }
 

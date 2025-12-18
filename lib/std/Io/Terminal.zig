@@ -130,25 +130,3 @@ pub fn setColor(t: Terminal, color: Color) Io.Writer.Error!void {
         },
     }
 }
-
-pub fn disableEscape(t: *Terminal) Mode {
-    const prev = t.mode;
-    t.mode = t.mode.toUnescaped();
-    return prev;
-}
-
-pub fn restoreEscape(t: *Terminal, mode: Mode) void {
-    t.mode = mode;
-}
-
-pub fn writeAllUnescaped(t: *Terminal, bytes: []const u8) Io.Writer.Error!void {
-    const prev_mode = t.disableEscape();
-    defer t.restoreEscape(prev_mode);
-    return t.interface.writeAll(bytes);
-}
-
-pub fn printUnescaped(t: *Terminal, comptime fmt: []const u8, args: anytype) Io.Writer.Error!void {
-    const prev_mode = t.disableEscape();
-    defer t.restoreEscape(prev_mode);
-    return t.interface.print(fmt, args);
-}

@@ -158,7 +158,8 @@ fn rebuildTestsWorkerRun(run: *Step.Run, gpa: Allocator, parent_prog_node: std.P
 }
 
 fn rebuildTestsWorkerRunFallible(run: *Step.Run, gpa: Allocator, parent_prog_node: std.Progress.Node) !void {
-    const io = run.step.owner.graph.io;
+    const graph = run.step.owner.graph;
+    const io = graph.io;
     const compile = run.producer.?;
     const prog_node = parent_prog_node.start(compile.step.name, 0);
     defer prog_node.end();
@@ -171,9 +172,9 @@ fn rebuildTestsWorkerRunFallible(run: *Step.Run, gpa: Allocator, parent_prog_nod
 
     if (show_error_msgs or show_compile_errors or show_stderr) {
         var buf: [256]u8 = undefined;
-        const stderr = try io.lockStderrWriter(&buf);
-        defer io.unlockStderrWriter();
-        build_runner.printErrorMessages(gpa, &compile.step, .{}, &stderr.interface, stderr.mode, .verbose, .indent) catch {};
+        const stderr = try io.lockStderr(&buf, graph.stderr_mode);
+        defer io.unlockStderr();
+        build_runner.printErrorMessages(gpa, &compile.step, .{}, stderr.terminal(), .verbose, .indent) catch {};
     }
 
     const rebuilt_bin_path = result catch |err| switch (err) {
@@ -186,7 +187,8 @@ fn rebuildTestsWorkerRunFallible(run: *Step.Run, gpa: Allocator, parent_prog_nod
 fn fuzzWorkerRun(fuzz: *Fuzz, run: *Step.Run, unit_test_index: u32) void {
     const owner = run.step.owner;
     const gpa = owner.allocator;
-    const io = owner.graph.io;
+    const graph = owner.graph;
+    const io = graph.io;
     const test_name = run.cached_test_metadata.?.testName(unit_test_index);
 
     const prog_node = fuzz.prog_node.start(test_name, 0);
@@ -195,11 +197,11 @@ fn fuzzWorkerRun(fuzz: *Fuzz, run: *Step.Run, unit_test_index: u32) void {
     run.rerunInFuzzMode(fuzz, unit_test_index, prog_node) catch |err| switch (err) {
         error.MakeFailed => {
             var buf: [256]u8 = undefined;
-            const stderr = io.lockStderrWriter(&buf) catch |e| switch (e) {
+            const stderr = io.lockStderr(&buf, graph.stderr_mode) catch |e| switch (e) {
                 error.Canceled => return,
             };
-            defer io.unlockStderrWriter();
-            build_runner.printErrorMessages(gpa, &run.step, .{}, &stderr.interface, stderr.mode, .verbose, .indent) catch {};
+            defer io.unlockStderr();
+            build_runner.printErrorMessages(gpa, &run.step, .{}, stderr.terminal(), .verbose, .indent) catch {};
             return;
         },
         else => {

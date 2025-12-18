@@ -129,6 +129,9 @@ pub const Graph = struct {
     dependency_cache: InitializedDepMap = .empty,
     allow_so_scripts: ?bool = null,
     time_report: bool,
+    /// Similar to the `Io.Terminal.Mode` returned by `Io.lockStderr`, but also
+    /// respects the '--color' flag.
+    stderr_mode: ?Io.Terminal.Mode = null,
 };
 
 const AvailableDeps = []const struct { []const u8, []const u8 };
@@ -2255,9 +2258,10 @@ pub const GeneratedFile = struct {
 
     pub fn getPath3(gen: GeneratedFile, src_builder: *Build, asking_step: ?*Step) Io.Cancelable![]const u8 {
         return gen.path orelse {
-            const io = gen.step.owner.graph.io;
-            const stderr = try io.lockStderrWriter(&.{});
-            dumpBadGetPathHelp(gen.step, &stderr.interface, stderr.mode, src_builder, asking_step) catch {};
+            const graph = gen.step.owner.graph;
+            const io = graph.io;
+            const stderr = try io.lockStderr(&.{}, graph.stderr_mode);
+            dumpBadGetPathHelp(gen.step, stderr.terminal(), src_builder, asking_step) catch {};
             @panic("misconfigured build script");
         };
     }
@@ -2468,13 +2472,15 @@ pub const LazyPath = union(enum) {
                 // TODO make gen.file.path not be absolute and use that as the
                 // basis for not traversing up too many directories.
 
+                const graph = src_builder.graph;
+
                 var file_path: Cache.Path = .{
                     .root_dir = Cache.Directory.cwd(),
                     .sub_path = gen.file.path orelse {
-                        const io = src_builder.graph.io;
-                        const stderr = try io.lockStderrWriter(&.{});
-                        dumpBadGetPathHelp(gen.file.step, &stderr.interface, stderr.mode, src_builder, asking_step) catch {};
-                        io.unlockStderrWriter();
+                        const io = graph.io;
+                        const stderr = try io.lockStderr(&.{}, graph.stderr_mode);
+                        dumpBadGetPathHelp(gen.file.step, stderr.terminal(), src_builder, asking_step) catch {};
+                        io.unlockStderr();
                         @panic("misconfigured build script");
                     },
                 };
@@ -2564,43 +2570,36 @@ fn dumpBadDirnameHelp(
     comptime msg: []const u8,
     args: anytype,
 ) anyerror!void {
-    const stderr = std.debug.lockStderrWriter(&.{});
-    defer std.debug.unlockStderrWriter();
-
-    const w = &stderr.interface;
-    const fwm = stderr.mode;
+    const stderr = std.debug.lockStderr(&.{}).terminal();
+    defer std.debug.unlockStderr();
+    const w = stderr.writer;
 
     try w.print(msg, args);
 
     if (fail_step) |s| {
-        fwm.setColor(w, .red) catch {};
+        stderr.setColor(.red) catch {};
         try w.writeAll("    The step was created by this stack trace:\n");
-        fwm.setColor(w, .reset) catch {};
+        stderr.setColor(.reset) catch {};
 
-        s.dump(w, fwm);
+        s.dump(stderr);
     }
 
     if (asking_step) |as| {
-        fwm.setColor(w, .red) catch {};
+        stderr.setColor(.red) catch {};
         try w.print("    The step '{s}' that is missing a dependency on the above step was created by this stack trace:\n", .{as.name});
-        fwm.setColor(w, .reset) catch {};
+        stderr.setColor(.reset) catch {};
 
-        as.dump(w, fwm);
+        as.dump(stderr);
     }
 
-    fwm.setColor(w, .red) catch {};
-    try w.writeAll("    Hope that helps. Proceeding to panic.\n");
-    fwm.setColor(w, .reset) catch {};
+    stderr.setColor(.red) catch {};
+    try w.writeAll("    Proceeding to panic.\n");
+    stderr.setColor(.reset) catch {};
 }
 
 /// In this function the stderr mutex has already been locked.
-pub fn dumpBadGetPathHelp(
-    s: *Step,
-    w: *Io.Writer,
-    fwm: File.Writer.Mode,
-    src_builder: *Build,
-    asking_step: ?*Step,
-) anyerror!void {
+pub fn dumpBadGetPathHelp(s: *Step, t: Io.Terminal, src_builder: *Build, asking_step: ?*Step) anyerror!void {
+    const w = t.writer;
     try w.print(
         \\getPath() was called on a GeneratedFile that wasn't built yet.
         \\  source package path: {s}
@@ -2611,21 +2610,21 @@ pub fn dumpBadGetPathHelp(
         s.name,
     });
 
-    fwm.setColor(w, .red) catch {};
+    t.setColor(.red) catch {};
     try w.writeAll("    The step was created by this stack trace:\n");
-    fwm.setColor(w, .reset) catch {};
+    t.setColor(.reset) catch {};
 
-    s.dump(w, fwm);
+    s.dump(t);
     if (asking_step) |as| {
-        fwm.setColor(w, .red) catch {};
+        t.setColor(.red) catch {};
         try w.print("    The step '{s}' that is missing a dependency on the above step was created by this stack trace:\n", .{as.name});
-        fwm.setColor(w, .reset) catch {};
+        t.setColor(.reset) catch {};
 
-        as.dump(w, fwm);
+        as.dump(t);
     }
-    fwm.setColor(w, .red) catch {};
-    try w.writeAll("    Hope that helps. Proceeding to panic.\n");
-    fwm.setColor(w, .reset) catch {};
+    t.setColor(.red) catch {};
+    try w.writeAll("    Proceeding to panic.\n");
+    t.setColor(.reset) catch {};
 }
 
 pub const InstallDir = union(enum) {

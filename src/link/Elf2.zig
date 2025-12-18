@@ -3733,9 +3733,9 @@ pub fn dump(elf: *Elf, tid: Zcu.PerThread.Id) Io.Cancelable!void {
     const comp = elf.base.comp;
     const io = comp.io;
     var buffer: [512]u8 = undefined;
-    const stderr = try io.lockStderrWriter(&buffer);
-    defer io.unlockStderrWriter();
-    const w = &stderr.interface;
+    const stderr = try io.lockStderr(&buffer, null);
+    defer io.lockStderr();
+    const w = &stderr.file_writer.interface;
     elf.printNode(tid, w, .root, 0) catch |err| switch (err) {
         error.WriteFailed => return stderr.err.?,
     };

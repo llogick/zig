@@ -126,14 +126,14 @@ pub const Diagnostics = struct {
     }
 
     pub fn renderToStderr(self: *Diagnostics, io: Io, args: []const []const u8) void {
-        const stderr = io.lockStderrWriter(&.{});
-        defer io.unlockStderrWriter();
-        self.renderToWriter(args, &stderr.interface, stderr.mode) catch return;
+        const stderr = io.lockStderr(&.{}, null);
+        defer io.unlockStderr();
+        self.renderToWriter(args, stderr.terminal()) catch return;
     }
 
-    pub fn renderToWriter(self: *Diagnostics, args: []const []const u8, writer: *std.Io.Writer, config: std.Io.tty.Config) !void {
+    pub fn renderToWriter(self: *Diagnostics, args: []const []const u8, t: Io.Terminal) !void {
         for (self.errors.items) |err_details| {
-            try renderErrorMessage(writer, config, err_details, args);
+            try renderErrorMessage(t, err_details, args);
         }
     }
 
