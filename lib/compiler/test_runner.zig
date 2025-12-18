@@ -224,7 +224,7 @@ fn mainTerminal() void {
     var skip_count: usize = 0;
     var fail_count: usize = 0;
     var fuzz_count: usize = 0;
-    const root_node = if (builtin.fuzz) std.Progress.Node.none else std.Progress.start(.{
+    const root_node = if (builtin.fuzz) std.Progress.Node.none else std.Progress.start(runner_threaded_io.io(), .{
         .root_name = "Test",
         .estimated_total_items = test_fn_list.len,
     });

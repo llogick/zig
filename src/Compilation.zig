@@ -6270,7 +6270,7 @@ fn updateCObject(comp: *Compilation, c_object: *CObject, c_obj_prog_node: std.Pr
             }
 
             if (comp.verbose_cc) {
-                dumpArgv(io, argv.items);
+                try dumpArgv(io, argv.items);
             }
 
             const err = std.process.execv(arena, argv.items);
@@ -6316,7 +6316,7 @@ fn updateCObject(comp: *Compilation, c_object: *CObject, c_obj_prog_node: std.Pr
         }
 
         if (comp.verbose_cc) {
-            dumpArgv(io, argv.items);
+            try dumpArgv(io, argv.items);
         }
 
         // Just to save disk space, we delete the files that are never needed again.
@@ -6358,7 +6358,7 @@ fn updateCObject(comp: *Compilation, c_object: *CObject, c_obj_prog_node: std.Pr
                 var stderr_reader = child.stderr.?.readerStreaming(io, &.{});
                 const stderr = try stderr_reader.interface.allocRemaining(arena, .limited(std.math.maxInt(u32)));
 
-                const term = child.wait() catch |err| {
+                const term = child.wait(io) catch |err| {
                     return comp.failCObj(c_object, "failed to spawn zig clang {s}: {s}", .{ argv.items[0], @errorName(err) });
                 };
 

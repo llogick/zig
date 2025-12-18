@@ -6804,7 +6804,7 @@ fn fileWritePositional(
 
     try current_thread.beginSyscall();
     while (true) {
-        const rc = pwritev_sym(file.handle, &iovecs, iovlen, @bitCast(offset));
+        const rc = pwritev_sym(file.handle, &iovecs, @intCast(iovlen), @bitCast(offset));
         switch (posix.errno(rc)) {
             .SUCCESS => {
                 current_thread.endSyscall();
@@ -6923,7 +6923,7 @@ fn fileWriteStreaming(
 
     try current_thread.beginSyscall();
     while (true) {
-        const rc = posix.system.writev(file.handle, &iovecs, iovlen);
+        const rc = posix.system.writev(file.handle, &iovecs, @intCast(iovlen));
         switch (posix.errno(rc)) {
             .SUCCESS => {
                 current_thread.endSyscall();

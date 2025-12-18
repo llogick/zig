@@ -370,7 +370,8 @@ pub fn expectEqualSlices(comptime T: type, expected: []const T, actual: []const 
     if (!backend_can_print) return error.TestExpectedEqual;
     if (io.lockStderr(&.{}, null)) |stderr| {
         defer io.unlockStderr();
-        failEqualSlices(T, expected, actual, diff_index, &stderr.interface, stderr.mode) catch {};
+        const w = &stderr.file_writer.interface;
+        failEqualSlices(T, expected, actual, diff_index, w, stderr.terminal_mode) catch {};
     } else |_| {}
     return error.TestExpectedEqual;
 }
@@ -475,13 +476,13 @@ fn SliceDiffer(comptime T: type) type {
             for (self.expected, 0..) |value, i| {
                 const full_index = self.start_index + i;
                 const diff = if (i < self.actual.len) !std.meta.eql(self.actual[i], value) else true;
-                if (diff) try t.setColor(writer, .red);
+                if (diff) try t.setColor(.red);
                 if (@typeInfo(T) == .pointer) {
                     try writer.print("[{}]{*}: {any}\n", .{ full_index, value, value });
                 } else {
                     try writer.print("[{}]: {any}\n", .{ full_index, value });
                 }
-                if (diff) try t.setColor(writer, .reset);
+                if (diff) try t.setColor(.reset);
             }
         }
     };
@@ -538,10 +539,14 @@ const BytesDiffer = struct {
         }
     }
 
+    fn terminal(self: *const BytesDiffer, writer: *Io.Writer) Io.Terminal {
+        return .{ .writer = writer, .mode = self.terminal_mode };
+    }
+
     fn writeDiff(self: BytesDiffer, writer: *Io.Writer, comptime fmt: []const u8, args: anytype, diff: bool) !void {
-        if (diff) try self.file_writer_mode.setColor(writer, .red);
+        if (diff) try self.terminal(writer).setColor(.red);
         try writer.print(fmt, args);
-        if (diff) try self.file_writer_mode.setColor(writer, .reset);
+        if (diff) try self.terminal(writer).setColor(.reset);
     }
 };
 
