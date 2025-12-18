@@ -1593,7 +1593,7 @@ test "copyFile" {
             try ctx.dir.copyFile(src_file, ctx.dir, dest_file, io, .{});
             defer ctx.dir.deleteFile(io, dest_file) catch {};
 
-            try ctx.dir.copyFile(src_file, ctx.dir, dest_file2, io, .{ .override_mode = File.default_mode });
+            try ctx.dir.copyFile(src_file, ctx.dir, dest_file2, io, .{ .permissions = File.default_mode });
             defer ctx.dir.deleteFile(io, dest_file2) catch {};
 
             try expectFileContents(io, ctx.dir, dest_file, data);

@@ -564,7 +564,7 @@ pub fn updateFile(
     defer src_file.close(io);
 
     const src_stat = try src_file.stat(io);
-    const actual_permissions = options.override_permissions orelse src_stat.permissions;
+    const actual_permissions = options.permissions orelse src_stat.permissions;
     check_dest_stat: {
         const dest_stat = blk: {
             var dest_file = dest_dir.openFile(io, dest_path, .{}) catch |err| switch (err) {
@@ -1645,7 +1645,7 @@ fn deleteTreeOpenInitialSubpath(dir: Dir, io: Io, sub_path: []const u8, kind_hin
 
 pub const CopyFileOptions = struct {
     /// When this is `null` the permissions are copied from the source file.
-    override_permissions: ?File.Permissions = null,
+    permissions: ?File.Permissions = null,
 };
 
 pub const CopyFileError = File.OpenError || File.StatError ||
@@ -1677,7 +1677,7 @@ pub fn copyFile(
     var file_reader: File.Reader = .init(.{ .handle = file.handle }, io, &.{});
     defer file_reader.file.close(io);
 
-    const permissions = options.override_permissions orelse blk: {
+    const permissions = options.permissions orelse blk: {
         const st = try file_reader.file.stat(io);
         file_reader.size = st.size;
         break :blk st.permissions;
