@@ -101,7 +101,10 @@ pub const Reader = struct {
     /// Fill position of `buffer`.
     end: usize,
 
-    pub const min_buffer_len = 32;
+    pub const min_buffer_len = switch (native_os) {
+        .windows => std.mem.alignForward(usize, max_name_bytes, @alignOf(usize)),
+        else => 32, // TODO: what is this based on?
+    };
 
     pub const State = enum {
         /// Indicates the next call to `read` should rewind and start over the

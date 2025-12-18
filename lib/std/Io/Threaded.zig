@@ -3674,10 +3674,147 @@ fn dirReadHaiku(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Dir
 }
 
 fn dirReadWindows(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Dir.Reader.Error!usize {
-    _ = userdata;
-    _ = dr;
-    _ = buffer;
-    @panic("TODO");
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+    const w = windows;
+
+    // We want to be able to use the `dr.buffer` for both the NtQueryDirectoryFile call (which
+    // returns WTF-16 names) *and* as a buffer for storing those WTF-16 names as WTF-8 to be able
+    // to return them in `Dir.Entry.name`. However, the problem that needs to be overcome in order to do
+    // that is that each WTF-16 code unit can be encoded as a maximum of 3 WTF-8 bytes, which means
+    // that it's not guaranteed that the memory used for the WTF-16 name will be sufficient
+    // for the WTF-8 encoding of the same name (for example, € is encoded as one WTF-16 code unit,
+    // [2 bytes] but encoded in WTF-8 as 3 bytes).
+    //
+    // The approach taken here is to "reserve" enough space in the `dr.buffer` to ensure that
+    // at least one entry with the maximum possible WTF-8 name length can be stored without clobbering
+    // any entries that follow it. That is, we determine how much space is needed to allow that,
+    // and then only provide the remaining portion of `dr.buffer` to the NtQueryDirectoryFile
+    // call. The WTF-16 names can then be safely converted using the full `dr.buffer` slice, making
+    // sure that each name can only potentially overwrite the data of its own entry.
+    //
+    // The worst case, where an entry's name is both the maximum length of a component and
+    // made up entirely of code points that are encoded as one WTF-16 code unit/three WTF-8 bytes,
+    // would therefore look like the diagram below, and only one entry would be able to be returned:
+    //
+    //     |   reserved  | remaining unreserved buffer |
+    //                   | entry 1 | entry 2 |   ...   |
+    //     | wtf-8 name of entry 1 |
+    //
+    // However, in the average case we will be able to store more than one WTF-8 name at a time in the
+    // available buffer and therefore we will be able to populate more than one `Dir.Entry` at a time.
+    // That might look something like this (where name 1, name 2, etc are the converted WTF-8 names):
+    //
+    //     |   reserved  | remaining unreserved buffer |
+    //                   | entry 1 | entry 2 |   ...   |
+    //     | name 1 | name 2 | name 3 | name 4 |  ...  |
+    //
+    // Note: More than the minimum amount of space could be reserved to make the "worst case"
+    // less likely, but since the worst-case also requires a maximum length component to matter,
+    // it's unlikely for it to become a problem in normal scenarios even if all names on the filesystem
+    // are made up of non-ASCII characters that have the "one WTF-16 code unit <-> three WTF-8 bytes"
+    // property (e.g. code points >= U+0800 and <= U+FFFF), as it's unlikely for a significant
+    // number of components to be maximum length.
+
+    // We need `3 * NAME_MAX` bytes to store a max-length component as WTF-8 safely.
+    // Because needing to store a max-length component depends on a `FileName` *with* the maximum
+    // component length, we know that the corresponding populated `FILE_BOTH_DIR_INFORMATION` will
+    // be of size `@sizeOf(w.FILE_BOTH_DIR_INFORMATION) + 2 * NAME_MAX` bytes, so we only need to
+    // reserve enough to get us to up to having `3 * NAME_MAX` bytes available when taking into account
+    // that we have the ability to write over top of the reserved memory + the full footprint of that
+    // particular `FILE_BOTH_DIR_INFORMATION`.
+    const reserve_needed = w.NAME_MAX - @sizeOf(w.FILE_BOTH_DIR_INFORMATION);
+    const unreserved_start = std.mem.alignForward(usize, reserve_needed, @alignOf(usize));
+    const unreserved_buffer = dr.buffer[unreserved_start..];
+    // This is enforced by `Dir.Reader`
+    assert(unreserved_buffer.len >= @sizeOf(w.FILE_BOTH_DIR_INFORMATION) + w.NAME_MAX * 2);
+
+    var name_index: usize = 0;
+    var buffer_index: usize = 0;
+    while (buffer.len - buffer_index != 0) {
+        if (dr.end - dr.index == 0) {
+            // Refill the buffer, unless we've already created references to
+            // buffered data.
+            if (buffer_index != 0) break;
+
+            try current_thread.checkCancel();
+            var io_status_block: w.IO_STATUS_BLOCK = undefined;
+            const rc = w.ntdll.NtQueryDirectoryFile(
+                dr.dir.handle,
+                null,
+                null,
+                null,
+                &io_status_block,
+                unreserved_buffer.ptr,
+                unreserved_buffer.len,
+                .BothDirectory,
+                w.FALSE,
+                null,
+                @intFromBool(dr.state == .reset),
+            );
+            dr.state = .reading;
+            if (io_status_block.Information == 0) {
+                dr.state = .finished;
+                return 0;
+            }
+            dr.index = 0;
+            dr.end = io_status_block.Information;
+            switch (rc) {
+                .SUCCESS => {},
+                .ACCESS_DENIED => return error.AccessDenied, // Double-check that the Dir was opened with iteration ability
+                else => return w.unexpectedStatus(rc),
+            }
+        }
+
+        // While the official API docs guarantee FILE_BOTH_DIR_INFORMATION to be aligned properly
+        // this may not always be the case (e.g. due to faulty VM/sandboxing tools)
+        const dir_info: *align(2) w.FILE_BOTH_DIR_INFORMATION = @ptrCast(@alignCast(&unreserved_buffer[dr.index]));
+        const backtrack_index = dr.index;
+        if (dir_info.NextEntryOffset != 0) {
+            dr.index += dir_info.NextEntryOffset;
+        } else {
+            dr.index = dr.end;
+        }
+
+        const name_wtf16le = @as([*]u16, @ptrCast(&dir_info.FileName))[0 .. dir_info.FileNameLength / 2];
+
+        if (std.mem.eql(u16, name_wtf16le, &[_]u16{'.'}) or std.mem.eql(u16, name_wtf16le, &[_]u16{ '.', '.' })) {
+            continue;
+        }
+
+        // Read any relevant information from the `dir_info` now since it's possible the WTF-8
+        // name will overwrite it.
+        const kind: File.Kind = blk: {
+            const attrs = dir_info.FileAttributes;
+            if (attrs.REPARSE_POINT) break :blk .sym_link;
+            if (attrs.DIRECTORY) break :blk .directory;
+            break :blk .file;
+        };
+        const inode: File.INode = dir_info.FileIndex;
+
+        // If there's no more space for WTF-8 names without bleeding over into
+        // the remaining unprocessed entries, then backtrack and return what we have so far.
+        if (name_index + std.unicode.calcWtf8Len(name_wtf16le) > unreserved_start + dr.index) {
+            // We should always be able to fit at least one entry into the buffer no matter what
+            std.debug.assert(buffer_index != 0);
+            dr.index = backtrack_index;
+            break;
+        }
+
+        const name_buf = dr.buffer[name_index..];
+        const name_wtf8_len = std.unicode.wtf16LeToWtf8(name_buf, name_wtf16le);
+        const name_wtf8 = name_buf[0..name_wtf8_len];
+        name_index += name_wtf8_len;
+
+        buffer[buffer_index] = .{
+            .name = name_wtf8,
+            .kind = kind,
+            .inode = inode,
+        };
+        buffer_index += 1;
+    }
+
+    return buffer_index;
 }
 
 fn dirReadWasi(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Dir.Reader.Error!usize {
