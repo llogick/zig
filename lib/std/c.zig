@@ -162,7 +162,7 @@ pub const nlink_t = switch (native_os) {
     .freebsd, .serenity => u64,
     .openbsd, .netbsd, .illumos => u32,
     .haiku => i32,
-    else => void,
+    else => u0,
 };
 
 pub const uid_t = switch (native_os) {

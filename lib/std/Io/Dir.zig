@@ -989,6 +989,39 @@ pub fn renameAbsolute(io: Io, old_path: []const u8, new_path: []const u8) Rename
     return io.vtable.dirRename(io.userdata, my_cwd, old_path, my_cwd, new_path);
 }
 
+pub const HardLinkOptions = struct {
+    follow_symlinks: bool = true,
+};
+
+pub const HardLinkError = error{
+    AccessDenied,
+    PermissionDenied,
+    DiskQuota,
+    PathAlreadyExists,
+    HardwareFailure,
+    /// Either the OS or the filesystem does not support hard links.
+    OperationUnsupported,
+    SymLinkLoop,
+    LinkQuotaExceeded,
+    FileNotFound,
+    SystemResources,
+    NoSpaceLeft,
+    ReadOnlyFileSystem,
+    NotSameFileSystem,
+    NotDir,
+} || Io.Cancelable || PathNameError || Io.UnexpectedError;
+
+pub fn hardLink(
+    old_dir: Dir,
+    old_sub_path: []const u8,
+    new_dir: Dir,
+    new_sub_path: []const u8,
+    io: Io,
+    options: HardLinkOptions,
+) HardLinkError!void {
+    return io.vtable.dirHardLink(io.userdata, old_dir, old_sub_path, new_dir, new_sub_path, options);
+}
+
 /// Use with `symLink`, `symLinkAtomic`, and `symLinkAbsolute` to
 /// specify whether the symlink will point to a file or a directory. This value
 /// is ignored on all hosts except Windows where creating symlinks to different

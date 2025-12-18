@@ -1829,19 +1829,21 @@ fn dirStatFileLinux(
             dir.handle,
             sub_path_posix,
             flags,
-            .{ .TYPE = true, .MODE = true, .ATIME = true, .MTIME = true, .CTIME = true, .INO = true, .SIZE = true },
+            .{
+                .TYPE = true,
+                .MODE = true,
+                .ATIME = true,
+                .MTIME = true,
+                .CTIME = true,
+                .INO = true,
+                .SIZE = true,
+                .NLINK = true,
+            },
             &statx,
         );
         switch (sys.errno(rc)) {
             .SUCCESS => {
                 current_thread.endSyscall();
-                assert(statx.mask.TYPE);
-                assert(statx.mask.MODE);
-                assert(statx.mask.ATIME);
-                assert(statx.mask.MTIME);
-                assert(statx.mask.CTIME);
-                assert(statx.mask.INO);
-                assert(statx.mask.SIZE);
                 return statFromLinux(&statx);
             },
             .INTR => {
@@ -2082,19 +2084,21 @@ fn fileStatLinux(userdata: ?*anyopaque, file: File) File.StatError!File.Stat {
             file.handle,
             "",
             linux.AT.EMPTY_PATH,
-            .{ .TYPE = true, .MODE = true, .ATIME = true, .MTIME = true, .CTIME = true, .INO = true, .SIZE = true },
+            .{
+                .TYPE = true,
+                .MODE = true,
+                .ATIME = true,
+                .MTIME = true,
+                .CTIME = true,
+                .INO = true,
+                .SIZE = true,
+                .NLINK = true,
+            },
             &statx,
         );
         switch (sys.errno(rc)) {
             .SUCCESS => {
                 current_thread.endSyscall();
-                assert(statx.mask.TYPE);
-                assert(statx.mask.MODE);
-                assert(statx.mask.ATIME);
-                assert(statx.mask.MTIME);
-                assert(statx.mask.CTIME);
-                assert(statx.mask.INO);
-                assert(statx.mask.SIZE);
                 return statFromLinux(&statx);
             },
             .INTR => {
@@ -10499,11 +10503,20 @@ fn clockToWasi(clock: Io.Clock) std.os.wasi.clockid_t {
 }
 
 fn statFromLinux(stx: *const std.os.linux.Statx) File.Stat {
+    assert(stx.mask.TYPE);
+    assert(stx.mask.MODE);
+    assert(stx.mask.ATIME);
+    assert(stx.mask.MTIME);
+    assert(stx.mask.CTIME);
+    assert(stx.mask.INO);
+    assert(stx.mask.SIZE);
+    assert(stx.mask.NLINK);
     const atime = stx.atime;
     const mtime = stx.mtime;
     const ctime = stx.ctime;
     return .{
         .inode = stx.ino,
+        .nlink = stx.nlink,
         .size = stx.size,
         .permissions = .fromMode(stx.mode),
         .kind = switch (stx.mode & std.os.linux.S.IFMT) {
@@ -10528,6 +10541,7 @@ fn statFromPosix(st: *const posix.Stat) File.Stat {
     const ctime = st.ctime();
     return .{
         .inode = st.ino,
+        .nlink = st.nlink,
         .size = @bitCast(st.size),
         .permissions = .fromMode(st.mode),
         .kind = k: {

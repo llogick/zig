@@ -17,6 +17,7 @@ pub const Atomic = @import("File/Atomic.zig");
 
 pub const Handle = std.posix.fd_t;
 pub const INode = std.posix.ino_t;
+pub const NLink = std.posix.nlink_t;
 pub const Uid = std.posix.uid_t;
 pub const Gid = std.posix.gid_t;
 
@@ -47,6 +48,7 @@ pub const Stat = struct {
     /// The FileIndex on Windows is similar. It is a number for a file that
     /// is unique to each filesystem.
     inode: INode,
+    nlink: NLink,
     size: u64,
     permissions: Permissions,
     kind: Kind,
@@ -101,9 +103,11 @@ pub const OpenFlags = struct {
     mode: OpenMode = .read_only,
 
     /// Determines the behavior when opening a path that refers to a directory.
+    ///
     /// If set to true, directories may be opened, but `error.IsDir` is still
     /// possible in certain scenarios, e.g. attempting to open a directory with
     /// write permissions.
+    ///
     /// If set to false, `error.IsDir` will always be returned when opening a directory.
     ///
     /// When set to false:
@@ -289,7 +293,7 @@ pub fn sync(file: File, io: Io) SyncError!void {
     return io.vtable.fileSync(io.userdata, file);
 }
 
-/// Test whether the file refers to a terminal.
+/// Test whether the file refers to a terminal (similar to libc "isatty").
 ///
 /// See also:
 /// * `enableAnsiEscapeCodes`
