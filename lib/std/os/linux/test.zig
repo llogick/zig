@@ -18,7 +18,7 @@ test "fallocate" {
     defer tmp.cleanup();
 
     const path = "test_fallocate";
-    const file = try tmp.dir.createFile(io, path, .{ .truncate = true, .mode = 0o666 });
+    const file = try tmp.dir.createFile(io, path, .{ .truncate = true, .permissions = .fromMode(0o666) });
     defer file.close(io);
 
     try expect((try file.stat(io)).size == 0);
@@ -125,7 +125,7 @@ test "fadvise" {
     defer file.close(io);
 
     var buf: [2048]u8 = undefined;
-    try file.writeAll(&buf);
+    try file.writeStreamingAll(io, &buf);
 
     const ret = linux.fadvise(file.handle, 0, 0, linux.POSIX_FADV.SEQUENTIAL);
     try expectEqual(@as(usize, 0), ret);
