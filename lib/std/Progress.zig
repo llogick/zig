@@ -497,10 +497,17 @@ pub fn start(io: Io, options: Options) Node {
             global_progress.terminal = stderr;
             if (stderr.enableAnsiEscapeCodes(io)) |_| {
                 global_progress.terminal_mode = .ansi_escape_codes;
-            } else |_| if (is_windows and stderr.isTty(io)) {
-                global_progress.terminal_mode = TerminalMode{ .windows_api = .{
-                    .code_page = windows.kernel32.GetConsoleOutputCP(),
-                } };
+            } else |_| if (is_windows) {
+                if (stderr.isTty(io)) {
+                    global_progress.terminal_mode = TerminalMode{ .windows_api = .{
+                        .code_page = windows.kernel32.GetConsoleOutputCP(),
+                    } };
+                } else |err| switch (err) {
+                    error.Canceled => {
+                        // TODO: recancel here, or block cancelation for this function
+                        return Node.none;
+                    },
+                }
             }
 
             if (global_progress.terminal_mode == .off) {
