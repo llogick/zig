@@ -777,7 +777,7 @@ pub fn openatZ(dir_fd: fd_t, file_path: [*:0]const u8, flags: O, mode: mode_t) O
             .NFILE => return error.SystemFdQuotaExceeded,
             .NODEV => return error.NoDevice,
             .NOENT => return error.FileNotFound,
-            .SRCH => return error.ProcessNotFound,
+            .SRCH => return error.FileNotFound,
             .NOMEM => return error.SystemResources,
             .NOSPC => return error.NoSpaceLeft,
             .NOTDIR => return error.NotDir,
@@ -2759,16 +2759,16 @@ pub fn dl_iterate_phdr(
 
     // Last return value from the callback function.
     while (it.next()) |entry| {
-        const phdrs: []elf.ElfN.Phdr = if (entry.l_addr != 0) phdrs: {
-            const ehdr: *elf.ElfN.Ehdr = @ptrFromInt(entry.l_addr);
+        const phdrs: []elf.ElfN.Phdr = if (entry.addr != 0) phdrs: {
+            const ehdr: *elf.ElfN.Ehdr = @ptrFromInt(entry.addr);
             assert(mem.eql(u8, ehdr.ident[0..4], elf.MAGIC));
-            const phdrs: [*]elf.ElfN.Phdr = @ptrFromInt(entry.l_addr + ehdr.phoff);
+            const phdrs: [*]elf.ElfN.Phdr = @ptrFromInt(entry.addr + ehdr.phoff);
             break :phdrs phdrs[0..ehdr.phnum];
         } else getSelfPhdrs();
 
         var info: dl_phdr_info = .{
-            .addr = entry.l_addr,
-            .name = entry.l_name,
+            .addr = entry.addr,
+            .name = entry.name,
             .phdr = phdrs.ptr,
             .phnum = @intCast(phdrs.len),
         };

@@ -43,7 +43,9 @@ pub const Error = error{
     /// In WASI, this error occurs when the file descriptor does
     /// not hold the required rights to read from it.
     AccessDenied,
-    /// Unable to read file due to lock.
+    /// Unable to read file due to lock. Depending on the `Io` implementation,
+    /// reading from a locked file may return this error, or may ignore the
+    /// lock.
     LockViolation,
 } || Io.Cancelable || Io.UnexpectedError;
 

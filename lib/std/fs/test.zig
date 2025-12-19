@@ -1796,7 +1796,7 @@ test "read from locked file" {
                 const f = try ctx.dir.createFile(io, filename, .{ .read = true });
                 defer f.close(io);
                 var buffer: [1]u8 = undefined;
-                _ = try f.read(&buffer);
+                _ = try f.readPositional(io, &.{&buffer}, 0);
             }
             {
                 const f = try ctx.dir.createFile(io, filename, .{
@@ -1806,11 +1806,13 @@ test "read from locked file" {
                 defer f.close(io);
                 const f2 = try ctx.dir.openFile(io, filename, .{});
                 defer f2.close(io);
+                // On POSIX locks may be ignored, however on Windows they cause
+                // LockViolation.
                 var buffer: [1]u8 = undefined;
                 if (builtin.os.tag == .windows) {
-                    try expectError(error.LockViolation, f2.read(&buffer));
+                    try expectError(error.LockViolation, f2.readPositional(io, &.{&buffer}, 0));
                 } else {
-                    try expectEqual(0, f2.read(&buffer));
+                    try expectEqual(0, f2.readPositional(io, &.{&buffer}, 0));
                 }
             }
         }

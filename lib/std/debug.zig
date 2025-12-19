@@ -1610,14 +1610,8 @@ test "manage resources correctly" {
     var discarding: Writer.Discarding = .init(&.{});
     var di: SelfInfo = .init;
     defer di.deinit(gpa);
-    try printSourceAtAddress(
-        gpa,
-        io,
-        &di,
-        &discarding.writer,
-        S.showMyTrace(),
-        .no_color,
-    );
+    const t: Io.Terminal = .{ .writer = &discarding.writer, .mode = .no_color };
+    try printSourceAtAddress(gpa, io, &di, t, S.showMyTrace());
 }
 
 /// This API helps you track where a value originated and where it was mutated,

@@ -55,11 +55,11 @@ pub const DynLib = struct {
 // An iterator is provided in order to traverse the linked list in a idiomatic
 // fashion.
 const LinkMap = extern struct {
-    l_addr: usize,
-    l_name: [*:0]const u8,
-    l_ld: ?*elf.Dyn,
-    l_next: ?*LinkMap,
-    l_prev: ?*LinkMap,
+    addr: usize,
+    name: [*:0]const u8,
+    ld: ?*elf.Dyn,
+    next: ?*LinkMap,
+    prev: ?*LinkMap,
 
     pub const Iterator = struct {
         current: ?*LinkMap,
@@ -70,7 +70,7 @@ const LinkMap = extern struct {
 
         pub fn next(self: *Iterator) ?*LinkMap {
             if (self.current) |it| {
-                self.current = it.l_next;
+                self.current = it.next;
                 return it;
             }
             return null;
@@ -79,10 +79,10 @@ const LinkMap = extern struct {
 };
 
 const RDebug = extern struct {
-    r_version: i32,
-    r_map: ?*LinkMap,
-    r_brk: usize,
-    r_ldbase: usize,
+    version: i32,
+    map: ?*LinkMap,
+    brk: usize,
+    ldbase: usize,
 };
 
 /// TODO fix comparisons of extern symbol pointers so we don't need this helper function.
@@ -107,8 +107,8 @@ pub fn linkmap_iterator() error{InvalidExe}!LinkMap.Iterator {
                 elf.DT_DEBUG => {
                     const ptr = @as(?*RDebug, @ptrFromInt(_DYNAMIC[i].d_val));
                     if (ptr) |r_debug| {
-                        if (r_debug.r_version != 1) return error.InvalidExe;
-                        break :init r_debug.r_map;
+                        if (r_debug.version != 1) return error.InvalidExe;
+                        break :init r_debug.map;
                     }
                 },
                 elf.DT_PLTGOT => {
@@ -142,6 +142,8 @@ const ElfDynLibError = error{
     Streaming,
 } || posix.OpenError || posix.MMapError;
 
+var static_single_threaded_io: Io.Threaded = .init_single_threaded;
+
 pub const ElfDynLib = struct {
     strings: [*:0]u8,
     syms: [*]elf.Sym,
@@ -157,7 +159,7 @@ pub const ElfDynLib = struct {
         dt_gnu_hash: *elf.gnu_hash.Header,
     };
 
-    fn openPath(path: []const u8, io: Io) !Io.Dir {
+    fn openPath(io: Io, path: []const u8) !Io.Dir {
         if (path.len == 0) return error.NotDir;
         var parts = std.mem.tokenizeScalar(u8, path, '/');
         var parent = if (path[0] == '/') try Io.Dir.cwd().openDir(io, "/", .{}) else Io.Dir.cwd();
@@ -172,7 +174,7 @@ pub const ElfDynLib = struct {
     fn resolveFromSearchPath(io: Io, search_path: []const u8, file_name: []const u8, delim: u8) ?posix.fd_t {
         var paths = std.mem.tokenizeScalar(u8, search_path, delim);
         while (paths.next()) |p| {
-            var dir = openPath(p) catch continue;
+            var dir = openPath(io, p) catch continue;
             defer dir.close(io);
             const fd = posix.openat(dir.handle, file_name, .{
                 .ACCMODE = .RDONLY,
@@ -221,7 +223,9 @@ pub const ElfDynLib = struct {
     }
 
     /// Trusts the file. Malicious file will be able to execute arbitrary code.
-    pub fn open(io: Io, path: []const u8) Error!ElfDynLib {
+    pub fn open(path: []const u8) Error!ElfDynLib {
+        const io = static_single_threaded_io.ioBasic();
+
         const fd = try resolveFromName(io, path);
         defer posix.close(fd);
 
@@ -551,11 +555,9 @@ fn checkver(def_arg: *elf.Verdef, vsym_arg: elf.Versym, vername: []const u8, str
 }
 
 test "ElfDynLib" {
-    if (native_os != .linux) {
-        return error.SkipZigTest;
-    }
-
+    if (native_os != .linux) return error.SkipZigTest;
     try testing.expectError(error.FileNotFound, ElfDynLib.open("invalid_so.so"));
+    try testing.expectError(error.FileNotFound, ElfDynLib.openZ("invalid_so.so"));
 }
 
 /// Separated to avoid referencing `WindowsDynLib`, because its field types may not
