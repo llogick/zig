@@ -5153,7 +5153,7 @@ fn posixFchmodat(
     if (have_fchmodat_flags or flags == 0) {
         try current_thread.beginSyscall();
         while (true) {
-            const rc = if (have_fchmodat_flags)
+            const rc = if (have_fchmodat_flags or builtin.link_libc)
                 posix.system.fchmodat(dir_fd, path, mode, flags)
             else
                 posix.system.fchmodat(dir_fd, path, mode);
