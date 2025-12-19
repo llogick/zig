@@ -149,8 +149,9 @@ pub const UnwindContext = struct {
         return ctx.cur.getRegs().bp;
     }
 };
-pub fn unwindFrame(si: *SelfInfo, gpa: Allocator, context: *UnwindContext) Error!usize {
+pub fn unwindFrame(si: *SelfInfo, gpa: Allocator, io: Io, context: *UnwindContext) Error!usize {
     _ = si;
+    _ = io;
     _ = gpa;
 
     const current_regs = context.cur.getRegs();
@@ -391,7 +392,7 @@ const Module = struct {
                 .section_view = section_view,
             };
         };
-        errdefer if (mapped_file) |*mf| mf.deinit();
+        errdefer if (mapped_file) |*mf| mf.deinit(io);
 
         const coff_image_base = coff_obj.getImageBase();
 
