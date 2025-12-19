@@ -728,6 +728,7 @@ pub fn io(t: *Threaded) Io {
             .dirSetFilePermissions = dirSetFilePermissions,
             .dirSetTimestamps = dirSetTimestamps,
             .dirSetTimestampsNow = dirSetTimestampsNow,
+            .dirHardLink = dirHardLink,
 
             .fileStat = fileStat,
             .fileLength = fileLength,
@@ -862,6 +863,7 @@ pub fn ioBasic(t: *Threaded) Io {
             .dirSetFilePermissions = dirSetFilePermissions,
             .dirSetTimestamps = dirSetTimestamps,
             .dirSetTimestampsNow = dirSetTimestampsNow,
+            .dirHardLink = dirHardLink,
 
             .fileStat = fileStat,
             .fileLength = fileLength,
@@ -6256,6 +6258,116 @@ fn dirOpenDirWasi(
                     .PERM => return error.PermissionDenied,
                     .BUSY => return error.DeviceBusy,
                     .NOTCAPABLE => return error.AccessDenied,
+                    .ILSEQ => return error.BadPathName,
+                    else => |err| return posix.unexpectedErrno(err),
+                }
+            },
+        }
+    }
+}
+
+fn dirHardLink(
+    userdata: ?*anyopaque,
+    old_dir: Dir,
+    old_sub_path: []const u8,
+    new_dir: Dir,
+    new_sub_path: []const u8,
+    options: Dir.HardLinkOptions,
+) Dir.HardLinkError!void {
+    if (is_windows) return error.OperationUnsupported;
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+
+    if (native_os == .wasi and !builtin.link_libc) {
+        const flags: std.os.wasi.lookupflags_t = .{
+            .SYMLINK_FOLLOW = options.follow_symlinks,
+        };
+        try current_thread.beginSyscall();
+        while (true) {
+            switch (std.os.wasi.path_link(
+                old_dir.handle,
+                flags,
+                old_sub_path.ptr,
+                old_sub_path.len,
+                new_dir.handle,
+                new_sub_path.ptr,
+                new_sub_path.len,
+            )) {
+                .SUCCESS => return current_thread.endSyscall(),
+                .INTR => {
+                    try current_thread.checkCancel();
+                    continue;
+                },
+                .CANCELED => return current_thread.endSyscallCanceled(),
+                else => |e| {
+                    current_thread.endSyscall();
+                    switch (e) {
+                        .ACCES => return error.AccessDenied,
+                        .DQUOT => return error.DiskQuota,
+                        .EXIST => return error.PathAlreadyExists,
+                        .FAULT => |err| return errnoBug(err),
+                        .IO => return error.HardwareFailure,
+                        .LOOP => return error.SymLinkLoop,
+                        .MLINK => return error.LinkQuotaExceeded,
+                        .NAMETOOLONG => return error.NameTooLong,
+                        .NOENT => return error.FileNotFound,
+                        .NOMEM => return error.SystemResources,
+                        .NOSPC => return error.NoSpaceLeft,
+                        .NOTDIR => return error.NotDir,
+                        .PERM => return error.PermissionDenied,
+                        .ROFS => return error.ReadOnlyFileSystem,
+                        .XDEV => return error.NotSameFileSystem,
+                        .INVAL => |err| return errnoBug(err),
+                        .ILSEQ => return error.BadPathName,
+                        else => |err| return posix.unexpectedErrno(err),
+                    }
+                },
+            }
+        }
+    }
+
+    var old_path_buffer: [posix.PATH_MAX]u8 = undefined;
+    var new_path_buffer: [posix.PATH_MAX]u8 = undefined;
+
+    const old_sub_path_posix = try pathToPosix(old_sub_path, &old_path_buffer);
+    const new_sub_path_posix = try pathToPosix(new_sub_path, &new_path_buffer);
+
+    const flags: u32 = if (!options.follow_symlinks) posix.AT.SYMLINK_NOFOLLOW else 0;
+
+    try current_thread.beginSyscall();
+    while (true) {
+        switch (posix.errno(posix.system.linkat(
+            old_dir.handle,
+            old_sub_path_posix,
+            new_dir.handle,
+            new_sub_path_posix,
+            flags,
+        ))) {
+            .SUCCESS => return current_thread.endSyscall(),
+            .INTR => {
+                try current_thread.checkCancel();
+                continue;
+            },
+            .CANCELED => return current_thread.endSyscallCanceled(),
+            else => |e| {
+                current_thread.endSyscall();
+                switch (e) {
+                    .ACCES => return error.AccessDenied,
+                    .DQUOT => return error.DiskQuota,
+                    .EXIST => return error.PathAlreadyExists,
+                    .FAULT => |err| return errnoBug(err),
+                    .IO => return error.HardwareFailure,
+                    .LOOP => return error.SymLinkLoop,
+                    .MLINK => return error.LinkQuotaExceeded,
+                    .NAMETOOLONG => return error.NameTooLong,
+                    .NOENT => return error.FileNotFound,
+                    .NOMEM => return error.SystemResources,
+                    .NOSPC => return error.NoSpaceLeft,
+                    .NOTDIR => return error.NotDir,
+                    .PERM => return error.PermissionDenied,
+                    .ROFS => return error.ReadOnlyFileSystem,
+                    .XDEV => return error.NotSameFileSystem,
+                    .INVAL => |err| return errnoBug(err),
                     .ILSEQ => return error.BadPathName,
                     else => |err| return posix.unexpectedErrno(err),
                 }

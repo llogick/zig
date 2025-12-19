@@ -683,6 +683,7 @@ pub const VTable = struct {
     dirSetFilePermissions: *const fn (?*anyopaque, Dir, []const u8, File.Permissions, Dir.SetFilePermissionsOptions) Dir.SetFilePermissionsError!void,
     dirSetTimestamps: *const fn (?*anyopaque, Dir, []const u8, last_accessed: Timestamp, last_modified: Timestamp, Dir.SetTimestampsOptions) Dir.SetTimestampsError!void,
     dirSetTimestampsNow: *const fn (?*anyopaque, Dir, []const u8, Dir.SetTimestampsOptions) Dir.SetTimestampsError!void,
+    dirHardLink: *const fn (?*anyopaque, old_dir: Dir, old_sub_path: []const u8, new_dir: Dir, new_sub_path: []const u8, Dir.HardLinkOptions) Dir.HardLinkError!void,
 
     fileStat: *const fn (?*anyopaque, File) File.StatError!File.Stat,
     fileLength: *const fn (?*anyopaque, File) File.LengthError!u64,

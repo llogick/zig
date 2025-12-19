@@ -1561,14 +1561,14 @@ pub fn link(oldpath: [*:0]const u8, newpath: [*:0]const u8) usize {
     }
 }
 
-pub fn linkat(oldfd: fd_t, oldpath: [*:0]const u8, newfd: fd_t, newpath: [*:0]const u8, flags: i32) usize {
+pub fn linkat(oldfd: fd_t, oldpath: [*:0]const u8, newfd: fd_t, newpath: [*:0]const u8, flags: u32) usize {
     return syscall5(
         .linkat,
         @as(usize, @bitCast(@as(isize, oldfd))),
         @intFromPtr(oldpath),
         @as(usize, @bitCast(@as(isize, newfd))),
         @intFromPtr(newpath),
-        @as(usize, @bitCast(@as(isize, flags))),
+        flags,
     );
 }
 
