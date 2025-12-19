@@ -2193,17 +2193,21 @@ pub fn executablePath(io: Io, out_buffer: []u8) ExecutablePathError!usize {
 ///
 /// On Windows, the result is encoded as [WTF-8](https://wtf-8.codeberg.page/).
 /// On other platforms, the result is an opaque sequence of bytes with no particular encoding.
-pub fn executableDirPath(out_buffer: []u8) ExecutablePathError!usize {
-    const n = try executablePath(out_buffer);
+pub fn executableDirPath(io: Io, out_buffer: []u8) ExecutablePathError!usize {
+    const n = try executablePath(io, out_buffer);
     // Assert that the OS APIs return absolute paths, and therefore dirname
     // will not return null.
-    return std.fs.path.dirname(out_buffer[0..n]).?;
+    return std.fs.path.dirname(out_buffer[0..n]).?.len;
 }
 
 /// Same as `executableDirPath` except allocates the result.
-pub fn executableDirPathAlloc(allocator: Allocator) ![]u8 {
+pub fn executableDirPathAlloc(io: Io, allocator: Allocator) ExecutablePathAllocError![]u8 {
     var buffer: [max_path_bytes]u8 = undefined;
-    return allocator.dupe(u8, try executableDirPath(&buffer));
+    const dir_path_len = executableDirPath(io, &buffer) catch |err| switch (err) {
+        error.NameTooLong => unreachable,
+        else => |e| return e,
+    };
+    return allocator.dupe(u8, buffer[0..dir_path_len]);
 }
 
 pub const OpenExecutableError = File.OpenError || ExecutablePathError || File.LockError;
