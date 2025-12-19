@@ -4485,7 +4485,7 @@ fn dirDeleteDirPosix(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8) Dir.
                     .NOMEM => return error.SystemResources,
                     .ROFS => return error.ReadOnlyFileSystem,
                     .EXIST => |err| return errnoBug(err),
-                    .NOTEMPTY => |err| return errnoBug(err), // Not passing AT.REMOVEDIR
+                    .NOTEMPTY => return error.DirNotEmpty,
                     .ILSEQ => return error.BadPathName,
                     .INVAL => |err| return errnoBug(err), // invalid flags, or pathname has . as last component
                     .BADF => |err| return errnoBug(err), // File descriptor used after closed.
