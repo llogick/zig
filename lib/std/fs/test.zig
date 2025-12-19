@@ -1380,12 +1380,12 @@ test "makepath ignores '.'" {
     try expectDir(io, tmp.dir, expectedPath);
 }
 
-fn testFilenameLimits(io: Io, iterable_dir: Dir, maxed_filename: []const u8) !void {
+fn testFilenameLimits(io: Io, iterable_dir: Dir, maxed_filename: []const u8, maxed_dirname: []const u8) !void {
     // create a file, a dir, and a nested file all with maxed filenames
     {
         try iterable_dir.writeFile(io, .{ .sub_path = maxed_filename, .data = "" });
 
-        var maxed_dir = try iterable_dir.makeOpenPath(io, maxed_filename, .{});
+        var maxed_dir = try iterable_dir.makeOpenPath(io, maxed_dirname, .{});
         defer maxed_dir.close(io);
 
         try maxed_dir.writeFile(io, .{ .sub_path = maxed_filename, .data = "" });
@@ -1427,18 +1427,23 @@ test "max file name component lengths" {
 
     if (native_os == .windows) {
         // U+FFFF is the character with the largest code point that is encoded as a single
-        // UTF-16 code unit, so Windows allows for NAME_MAX of them.
-        const maxed_windows_filename = ("\u{FFFF}".*) ** windows.NAME_MAX;
-        try testFilenameLimits(io, tmp.dir, &maxed_windows_filename);
+        // WTF-16 code unit, so Windows allows for NAME_MAX of them.
+        const maxed_windows_filename1 = ("\u{FFFF}".*) ** windows.NAME_MAX;
+        // This is also a code point that is encoded as one WTF-16 code unit, but
+        // three WTF-8 bytes, so it exercises the limits of both WTF-16 and WTF-8 encodings.
+        const maxed_windows_filename2 = ("€".*) ** windows.NAME_MAX;
+        try testFilenameLimits(io, tmp.dir, &maxed_windows_filename1, &maxed_windows_filename2);
     } else if (native_os == .wasi) {
         // On WASI, the maxed filename depends on the host OS, so in order for this test to
         // work on any host, we need to use a length that will work for all platforms
         // (i.e. the minimum max_name_bytes of all supported platforms).
-        const maxed_wasi_filename = [_]u8{'1'} ** 255;
-        try testFilenameLimits(io, tmp.dir, &maxed_wasi_filename);
+        const maxed_wasi_filename1 = [_]u8{'1'} ** 255;
+        const maxed_wasi_filename2 = [_]u8{'2'} ** 255;
+        try testFilenameLimits(io, tmp.dir, &maxed_wasi_filename1, &maxed_wasi_filename2);
     } else {
-        const maxed_ascii_filename = [_]u8{'1'} ** std.fs.max_name_bytes;
-        try testFilenameLimits(io, tmp.dir, &maxed_ascii_filename);
+        const maxed_ascii_filename1 = [_]u8{'1'} ** std.fs.max_name_bytes;
+        const maxed_ascii_filename2 = [_]u8{'2'} ** std.fs.max_name_bytes;
+        try testFilenameLimits(io, tmp.dir, &maxed_ascii_filename1, &maxed_ascii_filename2);
     }
 }
 
