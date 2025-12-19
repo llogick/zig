@@ -1368,13 +1368,29 @@ test "makepath ignores '.'" {
 }
 
 fn testFilenameLimits(io: Io, iterable_dir: Dir, maxed_filename: []const u8) !void {
-    // setup, create a dir and a nested file both with maxed filenames, and walk the dir
+    // create a file, a dir, and a nested file all with maxed filenames
     {
+        try iterable_dir.writeFile(io, .{ .sub_path = maxed_filename, .data = "" });
+
         var maxed_dir = try iterable_dir.makeOpenPath(io, maxed_filename, .{});
         defer maxed_dir.close(io);
 
         try maxed_dir.writeFile(io, .{ .sub_path = maxed_filename, .data = "" });
+    }
+    // Low level API with minimum buffer length
+    {
+        var reader_buf: [Dir.Reader.min_buffer_len]u8 align(@alignOf(usize)) = undefined;
+        var reader: Dir.Reader = .init(iterable_dir, &reader_buf);
 
+        var count: usize = 0;
+        while (try reader.next(io)) |entry| {
+            try expectEqualStrings(maxed_filename, entry.name);
+            count += 1;
+        }
+        try expectEqual(@as(usize, 2), count);
+    }
+    // High level walk API
+    {
         var walker = try iterable_dir.walk(testing.allocator);
         defer walker.deinit();
 
@@ -1383,7 +1399,7 @@ fn testFilenameLimits(io: Io, iterable_dir: Dir, maxed_filename: []const u8) !vo
             try expectEqualStrings(maxed_filename, entry.basename);
             count += 1;
         }
-        try expectEqual(@as(usize, 2), count);
+        try expectEqual(@as(usize, 3), count);
     }
 
     // ensure that we can delete the tree
