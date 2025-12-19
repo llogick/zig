@@ -11,8 +11,8 @@ io: Io,
 file: File,
 err: ?Error = null,
 mode: Mode = .positional,
-/// Tracks the true seek position in the file. To obtain the logical
-/// position, add the buffer size to this value.
+/// Tracks the true seek position in the file. To obtain the logical position,
+/// use `logicalPos`.
 pos: u64 = 0,
 write_file_err: ?WriteFileError = null,
 seek_err: ?SeekError = null,
@@ -219,6 +219,10 @@ fn sendFileStreaming(w: *Writer, file_reader: *Io.File.Reader, limit: Io.Limit) 
 pub fn seekTo(w: *Writer, offset: u64) (SeekError || Io.Writer.Error)!void {
     try w.interface.flush();
     try seekToUnbuffered(w, offset);
+}
+
+pub fn logicalPos(w: *const Writer) u64 {
+    return w.pos + w.interface.end;
 }
 
 /// Asserts that no data is currently buffered.

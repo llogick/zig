@@ -1384,8 +1384,8 @@ test "check that changing a file makes cache fail" {
     try tmp.dir.writeFile(io, .{ .sub_path = temp_file, .data = original_temp_file_contents });
 
     // Wait for file timestamps to tick
-    const initial_time = try testGetCurrentFileTimestamp(tmp.dir);
-    while ((try testGetCurrentFileTimestamp(tmp.dir)).nanoseconds == initial_time.nanoseconds) {
+    const initial_time = try testGetCurrentFileTimestamp(io, tmp.dir);
+    while ((try testGetCurrentFileTimestamp(io, tmp.dir)).nanoseconds == initial_time.nanoseconds) {
         try std.Io.Clock.Duration.sleep(.{ .clock = .boot, .raw = .fromNanoseconds(1) }, io);
     }
 
@@ -1502,8 +1502,8 @@ test "Manifest with files added after initial hash work" {
     try tmp.dir.writeFile(io, .{ .sub_path = temp_file2, .data = "Hello world the second!\n" });
 
     // Wait for file timestamps to tick
-    const initial_time = try testGetCurrentFileTimestamp(tmp.dir);
-    while ((try testGetCurrentFileTimestamp(tmp.dir)).nanoseconds == initial_time.nanoseconds) {
+    const initial_time = try testGetCurrentFileTimestamp(io, tmp.dir);
+    while ((try testGetCurrentFileTimestamp(io, tmp.dir)).nanoseconds == initial_time.nanoseconds) {
         try std.Io.Clock.Duration.sleep(.{ .clock = .boot, .raw = .fromNanoseconds(1) }, io);
     }
 
@@ -1553,8 +1553,8 @@ test "Manifest with files added after initial hash work" {
         try tmp.dir.writeFile(io, .{ .sub_path = temp_file2, .data = "Hello world the second, updated\n" });
 
         // Wait for file timestamps to tick
-        const initial_time2 = try testGetCurrentFileTimestamp(tmp.dir);
-        while ((try testGetCurrentFileTimestamp(tmp.dir)).nanoseconds == initial_time2.nanoseconds) {
+        const initial_time2 = try testGetCurrentFileTimestamp(io, tmp.dir);
+        while ((try testGetCurrentFileTimestamp(io, tmp.dir)).nanoseconds == initial_time2.nanoseconds) {
             try std.Io.Clock.Duration.sleep(.{ .clock = .boot, .raw = .fromNanoseconds(1) }, io);
         }
 

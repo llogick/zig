@@ -18,8 +18,8 @@ io: Io,
 file: File,
 err: ?Error = null,
 mode: Mode = .positional,
-/// Tracks the true seek position in the file. To obtain the logical
-/// position, use `logicalPos`.
+/// Tracks the true seek position in the file. To obtain the logical position,
+/// use `logicalPos`.
 pos: u64 = 0,
 size: ?u64 = null,
 size_err: ?SizeError = null,

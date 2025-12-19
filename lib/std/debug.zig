@@ -384,12 +384,13 @@ pub fn dumpHexFallible(t: Io.Terminal, bytes: []const u8) !void {
 }
 
 test dumpHexFallible {
+    const gpa = testing.allocator;
     const bytes: []const u8 = &.{ 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x01, 0x12, 0x13 };
-    var aw: Writer.Allocating = .init(testing.allocator);
+    var aw: Writer.Allocating = .init(gpa);
     defer aw.deinit();
 
-    try dumpHexFallible(&aw.writer, .no_color, bytes);
-    const expected = try std.fmt.allocPrint(testing.allocator,
+    try dumpHexFallible(.{ .writer = &aw.writer, .mode = .no_color }, bytes);
+    const expected = try std.fmt.allocPrint(gpa,
         \\{x:0>[2]}  00 11 22 33 44 55 66 77  88 99 AA BB CC DD EE FF  .."3DUfw........
         \\{x:0>[2]}  01 12 13                                          ...
         \\
@@ -398,7 +399,7 @@ test dumpHexFallible {
         @intFromPtr(bytes.ptr) + 16,
         @sizeOf(usize) * 2,
     });
-    defer testing.allocator.free(expected);
+    defer gpa.free(expected);
     try testing.expectEqualStrings(expected, aw.written());
 }
 

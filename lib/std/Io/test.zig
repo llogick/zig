@@ -64,33 +64,28 @@ test "write a file, read it, then delete it" {
     try tmp.dir.deleteFile(io, tmp_file_name);
 }
 
-test "File seek ops" {
+test "File.Writer.seekTo" {
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
     const io = testing.io;
 
+    var data: [8192]u8 = undefined;
+    @memset(&data, 0x55);
+
     const tmp_file_name = "temp_test_file.txt";
     var file = try tmp.dir.createFile(io, tmp_file_name, .{});
     defer file.close(io);
 
-    try file.writeAll(&([_]u8{0x55} ** 8192));
+    var fw = file.writerStreaming(io, &.{});
 
-    // Seek to the end
-    try file.seekFromEnd(0);
-    try expect((try file.getPos()) == try file.length(io));
-    // Negative delta
-    try file.seekBy(-4096);
-    try expect((try file.getPos()) == 4096);
-    // Positive delta
-    try file.seekBy(10);
-    try expect((try file.getPos()) == 4106);
-    // Absolute position
-    try file.seekTo(1234);
-    try expect((try file.getPos()) == 1234);
+    try fw.interface.writeAll(&data);
+    try expect(fw.logicalPos() == try file.length(io));
+    try fw.seekTo(1234);
+    try expect(fw.logicalPos() == 1234);
 }
 
-test "setLength" {
+test "File.setLength" {
     const io = testing.io;
 
     var tmp = tmpDir(.{});
@@ -99,20 +94,22 @@ test "setLength" {
     const tmp_file_name = "temp_test_file.txt";
     var file = try tmp.dir.createFile(io, tmp_file_name, .{});
     defer file.close(io);
+
+    var fw = file.writerStreaming(io, &.{});
 
     // Verify that the file size changes and the file offset is not moved
     try expect((try file.length(io)) == 0);
-    try expect((try file.getPos()) == 0);
+    try expect(fw.logicalPos() == 0);
     try file.setLength(io, 8192);
     try expect((try file.length(io)) == 8192);
-    try expect((try file.getPos()) == 0);
-    try file.seekTo(100);
+    try expect(fw.logicalPos() == 0);
+    try fw.seekTo(100);
     try file.setLength(io, 4096);
     try expect((try file.length(io)) == 4096);
-    try expect((try file.getPos()) == 100);
+    try expect(fw.logicalPos() == 100);
     try file.setLength(io, 0);
     try expect((try file.length(io)) == 0);
-    try expect((try file.getPos()) == 100);
+    try expect(fw.logicalPos() == 100);
 }
 
 test "legacy setLength" {

@@ -211,7 +211,7 @@ pub fn setName(self: Thread, io: Io, name: []const u8) SetNameError!void {
             const file = try Io.Dir.cwd().openFile(io, path, .{ .mode = .write_only });
             defer file.close(io);
 
-            try file.writeAll(name);
+            try file.writeStreamingAll(io, name);
             return;
         },
         .windows => {
@@ -1676,14 +1676,14 @@ const LinuxThreadImpl = struct {
     }
 };
 
-fn testThreadName(thread: *Thread) !void {
+fn testThreadName(io: Io, thread: *Thread) !void {
     const testCases = &[_][]const u8{
         "mythread",
         "b" ** max_name_len,
     };
 
     inline for (testCases) |tc| {
-        try thread.setName(tc);
+        try thread.setName(io, tc);
 
         var name_buffer: [max_name_len:0]u8 = undefined;
 
@@ -1698,6 +1698,8 @@ fn testThreadName(thread: *Thread) !void {
 test "setName, getName" {
     if (builtin.single_threaded) return error.SkipZigTest;
 
+    const io = testing.io;
+
     const Context = struct {
         start_wait_event: ResetEvent = .unset,
         test_done_event: ResetEvent = .unset,
@@ -1711,11 +1713,11 @@ test "setName, getName" {
             ctx.start_wait_event.wait();
 
             switch (native_os) {
-                .windows => testThreadName(&ctx.thread) catch |err| switch (err) {
+                .windows => testThreadName(io, &ctx.thread) catch |err| switch (err) {
                     error.Unsupported => return error.SkipZigTest,
                     else => return err,
                 },
-                else => try testThreadName(&ctx.thread),
+                else => try testThreadName(io, &ctx.thread),
             }
 
             // Signal our test is done
@@ -1735,14 +1737,14 @@ test "setName, getName" {
 
     switch (native_os) {
         .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => {
-            const res = thread.setName("foobar");
+            const res = thread.setName(io, "foobar");
             try std.testing.expectError(error.Unsupported, res);
         },
-        .windows => testThreadName(&thread) catch |err| switch (err) {
+        .windows => testThreadName(io, &thread) catch |err| switch (err) {
             error.Unsupported => return error.SkipZigTest,
             else => return err,
         },
-        else => try testThreadName(&thread),
+        else => try testThreadName(io, &thread),
     }
 
     context.thread_done_event.set();
