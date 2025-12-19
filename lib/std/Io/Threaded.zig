@@ -1744,7 +1744,7 @@ fn dirMakeOpenPathWindows(
                 // stat the file and return an error if it's not a directory
                 // this is important because otherwise a dangling symlink
                 // could cause an infinite loop
-                const fstat = dirStatFileWindows(t, dir, component.path, .{
+                const fstat = try dirStatFileWindows(t, dir, component.path, .{
                     .follow_symlinks = options.follow_symlinks,
                 });
                 if (fstat.kind != .directory) return error.NotDir;
@@ -2146,7 +2146,7 @@ fn fileStatWindows(userdata: ?*anyopaque, file: File) File.StatError!File.Stat {
     return .{
         .inode = info.InternalInformation.IndexNumber,
         .size = @as(u64, @bitCast(info.StandardInformation.EndOfFile)),
-        .mode = 0,
+        .permissions = .default_file,
         .kind = if (info.BasicInformation.FileAttributes.REPARSE_POINT) reparse_point: {
             var tag_info: windows.FILE.ATTRIBUTE_TAG_INFO = undefined;
             const tag_rc = windows.ntdll.NtQueryInformationFile(file.handle, &io_status_block, &tag_info, @sizeOf(windows.FILE.ATTRIBUTE_TAG_INFO), .AttributeTag);
@@ -2168,6 +2168,7 @@ fn fileStatWindows(userdata: ?*anyopaque, file: File) File.StatError!File.Stat {
         .atime = windows.fromSysTime(info.BasicInformation.LastAccessTime),
         .mtime = windows.fromSysTime(info.BasicInformation.LastWriteTime),
         .ctime = windows.fromSysTime(info.BasicInformation.ChangeTime),
+        .nlink = {},
     };
 }
 
@@ -2584,26 +2585,33 @@ fn dirCreateFileWindows(
             .OPEN_IF,
     });
     errdefer w.CloseHandle(handle);
+
     var io_status_block: w.IO_STATUS_BLOCK = undefined;
-    const range_off: w.LARGE_INTEGER = 0;
-    const range_len: w.LARGE_INTEGER = 1;
     const exclusive = switch (flags.lock) {
         .none => return .{ .handle = handle },
         .shared => false,
         .exclusive => true,
     };
-    try w.LockFile(
+    const status = w.ntdll.NtLockFile(
         handle,
         null,
         null,
         null,
         &io_status_block,
-        &range_off,
-        &range_len,
+        &windows_lock_range_off,
+        &windows_lock_range_len,
         null,
         @intFromBool(flags.lock_nonblocking),
         @intFromBool(exclusive),
     );
+    switch (status) {
+        .SUCCESS => {},
+        .INSUFFICIENT_RESOURCES => return error.SystemResources,
+        .LOCK_NOT_GRANTED => return error.WouldBlock,
+        .ACCESS_VIOLATION => |err| return windows.statusBug(err), // bad io_status_block pointer
+        else => return windows.unexpectedStatus(status),
+    }
+
     return .{ .handle = handle };
 }
 
@@ -2992,25 +3000,30 @@ pub fn dirOpenFileWtf16(
     };
     errdefer w.CloseHandle(handle);
 
-    const range_off: w.LARGE_INTEGER = 0;
-    const range_len: w.LARGE_INTEGER = 1;
     const exclusive = switch (flags.lock) {
         .none => return .{ .handle = handle },
         .shared => false,
         .exclusive => true,
     };
-    try w.LockFile(
+    const status = w.ntdll.NtLockFile(
         handle,
         null,
         null,
         null,
         &io_status_block,
-        &range_off,
-        &range_len,
+        &windows_lock_range_off,
+        &windows_lock_range_len,
         null,
         @intFromBool(flags.lock_nonblocking),
         @intFromBool(exclusive),
     );
+    switch (status) {
+        .SUCCESS => {},
+        .INSUFFICIENT_RESOURCES => return error.SystemResources,
+        .LOCK_NOT_GRANTED => return error.WouldBlock,
+        .ACCESS_VIOLATION => |err| return windows.statusBug(err), // bad io_status_block pointer
+        else => return windows.unexpectedStatus(status),
+    }
     return .{ .handle = handle };
 }
 
@@ -3750,7 +3763,7 @@ fn dirReadWindows(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) D
                 null,
                 &io_status_block,
                 unreserved_buffer.ptr,
-                unreserved_buffer.len,
+                std.math.cast(w.ULONG, unreserved_buffer.len) orelse std.math.maxInt(w.ULONG),
                 .BothDirectory,
                 w.FALSE,
                 null,
@@ -3849,15 +3862,14 @@ fn dirRealPathWindows(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, out
 
     var path_name_w = try w.sliceToPrefixedFileW(dir.handle, sub_path);
 
-    const access_mask = w.GENERIC_READ | w.SYNCHRONIZE;
-    const share_access = w.FILE_SHARE_READ | w.FILE_SHARE_WRITE | w.FILE_SHARE_DELETE;
-    const creation = w.FILE_OPEN;
     const h_file = blk: {
         const res = w.OpenFile(path_name_w.span(), .{
             .dir = dir.handle,
-            .access_mask = access_mask,
-            .share_access = share_access,
-            .creation = creation,
+            .access_mask = .{
+                .GENERIC = .{ .READ = true },
+                .STANDARD = .{ .SYNCHRONIZE = true },
+            },
+            .creation = .OPEN,
             .filter = .any,
         }) catch |err| switch (err) {
             error.WouldBlock => unreachable,
@@ -4220,7 +4232,8 @@ fn dirDeleteWindows(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, remov
 
     try current_thread.checkCancel();
 
-    const sub_path_w = try w.sliceToPrefixedFileW(dir.handle, sub_path);
+    const sub_path_w_buf = try w.sliceToPrefixedFileW(dir.handle, sub_path);
+    const sub_path_w = sub_path_w_buf.span();
 
     const path_len_bytes = @as(u16, @intCast(sub_path_w.len * 2));
     var nt_name: w.UNICODE_STRING = .{
@@ -4239,31 +4252,32 @@ fn dirDeleteWindows(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, remov
         return error.FileBusy;
     }
 
-    const create_options_flags: w.ULONG = if (remove_dir)
-        w.FILE_DIRECTORY_FILE | w.FILE_OPEN_REPARSE_POINT
-    else
-        w.FILE_NON_DIRECTORY_FILE | w.FILE_OPEN_REPARSE_POINT;
-
-    var attr: w.OBJECT_ATTRIBUTES = .{
-        .Length = @sizeOf(w.OBJECT_ATTRIBUTES),
-        .RootDirectory = if (std.fs.path.isAbsoluteWindowsWtf16(sub_path_w)) null else dir.handle,
-        .Attributes = w.OBJ_CASE_INSENSITIVE,
-        .ObjectName = &nt_name,
-        .SecurityDescriptor = null,
-        .SecurityQualityOfService = null,
-    };
     var io_status_block: w.IO_STATUS_BLOCK = undefined;
     var tmp_handle: w.HANDLE = undefined;
     var rc = w.ntdll.NtCreateFile(
         &tmp_handle,
-        w.SYNCHRONIZE | w.DELETE,
-        &attr,
+        .{ .STANDARD = .{
+            .RIGHTS = .{ .DELETE = true },
+            .SYNCHRONIZE = true,
+        } },
+        &.{
+            .Length = @sizeOf(w.OBJECT_ATTRIBUTES),
+            .RootDirectory = if (std.fs.path.isAbsoluteWindowsWtf16(sub_path_w)) null else dir.handle,
+            .Attributes = .{},
+            .ObjectName = &nt_name,
+            .SecurityDescriptor = null,
+            .SecurityQualityOfService = null,
+        },
         &io_status_block,
         null,
-        0,
-        w.FILE_SHARE_READ | w.FILE_SHARE_WRITE | w.FILE_SHARE_DELETE,
-        w.FILE_OPEN,
-        create_options_flags,
+        .{},
+        .VALID_FLAGS,
+        .OPEN,
+        .{
+            .DIRECTORY_FILE = remove_dir,
+            .NON_DIRECTORY_FILE = !remove_dir,
+            .OPEN_REPARSE_POINT = true, // would we ever want to delete the target instead?
+        },
         null,
         0,
     );
@@ -4463,16 +4477,24 @@ fn dirRenameWindows(
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
-    const old_path_w = try windows.sliceToPrefixedFileW(old_dir.handle, old_sub_path);
-    const new_path_w = try windows.sliceToPrefixedFileW(new_dir.handle, new_sub_path);
+    const old_path_w_buf = try windows.sliceToPrefixedFileW(old_dir.handle, old_sub_path);
+    const old_path_w = old_path_w_buf.span();
+    const new_path_w_buf = try windows.sliceToPrefixedFileW(new_dir.handle, new_sub_path);
+    const new_path_w = new_path_w_buf.span();
     const replace_if_exists = true;
 
     try current_thread.checkCancel();
 
     const src_fd = w.OpenFile(old_path_w, .{
         .dir = old_dir.handle,
-        .access_mask = w.SYNCHRONIZE | w.GENERIC_WRITE | w.DELETE,
-        .creation = w.FILE_OPEN,
+        .access_mask = .{
+            .GENERIC = .{ .WRITE = true },
+            .STANDARD = .{
+                .RIGHTS = .{ .DELETE = true },
+                .SYNCHRONIZE = true,
+            },
+        },
+        .creation = .OPEN,
         .filter = .any, // This function is supposed to rename both files and directories.
         .follow_symlinks = false,
     }) catch |err| switch (err) {
@@ -4729,9 +4751,12 @@ fn dirSymLinkWindows(
     };
 
     const symlink_handle = w.OpenFile(sym_link_path_w.span(), .{
-        .access_mask = w.SYNCHRONIZE | w.GENERIC_READ | w.GENERIC_WRITE,
+        .access_mask = .{
+            .GENERIC = .{ .READ = true, .WRITE = true },
+            .STANDARD = .{ .SYNCHRONIZE = true },
+        },
         .dir = dir,
-        .creation = w.FILE_CREATE,
+        .creation = .CREATE,
         .filter = if (flags.is_directory) .dir_only else .non_directory_only,
     }) catch |err| switch (err) {
         error.IsDir => return error.PathAlreadyExists,
@@ -4913,55 +4938,14 @@ fn dirReadLinkWindows(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, buf
 
     try current_thread.checkCancel();
 
-    var sub_path_w = try windows.sliceToPrefixedFileW(dir.handle, sub_path);
+    var sub_path_w_buf = try windows.sliceToPrefixedFileW(dir.handle, sub_path);
 
-    const result_handle = w.OpenFile(sub_path_w.span(), .{
-        .access_mask = w.FILE_READ_ATTRIBUTES | w.SYNCHRONIZE,
-        .dir = dir,
-        .creation = w.FILE_OPEN,
-        .follow_symlinks = false,
-        .filter = .any,
-    }) catch |err| switch (err) {
-        error.IsDir, error.NotDir => return error.Unexpected, // filter = .any
-        error.PathAlreadyExists => return error.Unexpected, // FILE_OPEN
-        error.WouldBlock => return error.Unexpected,
-        error.NoDevice => return error.FileNotFound,
-        error.PipeBusy => return error.AccessDenied,
-        else => |e| return e,
-    };
-    defer w.CloseHandle(result_handle);
+    const result_w = try w.ReadLink(dir.handle, sub_path_w_buf.span(), &sub_path_w_buf.data);
 
-    var reparse_buf: [w.MAXIMUM_REPARSE_DATA_BUFFER_SIZE]u8 align(@alignOf(w.REPARSE_DATA_BUFFER)) = undefined;
-    _ = w.DeviceIoControl(result_handle, w.FSCTL_GET_REPARSE_POINT, null, reparse_buf[0..]) catch |err| switch (err) {
-        error.AccessDenied => return error.Unexpected,
-        error.UnrecognizedVolume => return error.Unexpected,
-        else => |e| return e,
-    };
-
-    const reparse_struct: *const w.REPARSE_DATA_BUFFER = @ptrCast(@alignCast(&reparse_buf[0]));
-    const wide_result = switch (reparse_struct.ReparseTag) {
-        w.IO_REPARSE_TAG_SYMLINK => r: {
-            const buf: *const w.SYMBOLIC_LINK_REPARSE_BUFFER = @ptrCast(@alignCast(&reparse_struct.DataBuffer[0]));
-            const offset = buf.SubstituteNameOffset >> 1;
-            const len = buf.SubstituteNameLength >> 1;
-            const path_buf: [*]const u16 = &buf.PathBuffer;
-            const is_relative = buf.Flags & w.SYMLINK_FLAG_RELATIVE != 0;
-            break :r try w.parseReadLinkPath(path_buf[offset..][0..len], is_relative, buffer);
-        },
-        w.IO_REPARSE_TAG_MOUNT_POINT => r: {
-            const buf: *const w.MOUNT_POINT_REPARSE_BUFFER = @ptrCast(@alignCast(&reparse_struct.DataBuffer[0]));
-            const offset = buf.SubstituteNameOffset >> 1;
-            const len = buf.SubstituteNameLength >> 1;
-            const path_buf: [*]const u16 = &buf.PathBuffer;
-            break :r try w.parseReadLinkPath(path_buf[offset..][0..len], false, buffer);
-        },
-        else => return error.UnsupportedReparsePointType,
-    };
-
-    const len = std.unicode.calcWtf8Len(wide_result);
+    const len = std.unicode.calcWtf8Len(result_w);
     if (len > buffer.len) return error.NameTooLong;
 
-    return std.unicode.wtf16LeToWtf8(buffer, wide_result);
+    return std.unicode.wtf16LeToWtf8(buffer, result_w);
 }
 
 fn dirReadLinkWasi(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, buffer: []u8) Dir.ReadLinkError!usize {
@@ -6061,10 +6045,9 @@ fn fileTryLock(userdata: ?*anyopaque, file: File, lock: File.Lock) File.LockErro
 
 fn fileUnlock(userdata: ?*anyopaque, file: File) void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
 
     if (is_windows) {
-        try current_thread.checkCancel();
         var io_status_block: windows.IO_STATUS_BLOCK = undefined;
         const status = windows.ntdll.NtUnlockFile(
             file.handle,
@@ -6131,7 +6114,7 @@ fn fileDowngradeLock(userdata: ?*anyopaque, file: File) File.DowngradeLockError!
             &io_status_block,
             &windows_lock_range_off,
             &windows_lock_range_len,
-            null,
+            0,
         );
         if (is_debug) switch (status) {
             .SUCCESS => {},
@@ -6841,17 +6824,16 @@ fn processExecutablePath(userdata: ?*anyopaque, out_buffer: []u8) std.process.Ex
             // If ImagePathName is a symlink, then it will contain the path of the
             // symlink, not the path that the symlink points to. We want the path
             // that the symlink points to, though, so we need to get the realpath.
-            var path_name_w = try w.wToPrefixedFileW(null, image_path_name);
+            var path_name_w_buf = try w.wToPrefixedFileW(null, image_path_name);
 
-            const access_mask = w.GENERIC_READ | w.SYNCHRONIZE;
-            const share_access = w.FILE_SHARE_READ | w.FILE_SHARE_WRITE | w.FILE_SHARE_DELETE;
-            const creation = w.FILE_OPEN;
             const h_file = blk: {
-                const res = w.OpenFile(path_name_w.span(), .{
+                const res = w.OpenFile(path_name_w_buf.span(), .{
                     .dir = null,
-                    .access_mask = access_mask,
-                    .share_access = share_access,
-                    .creation = creation,
+                    .access_mask = .{
+                        .GENERIC = .{ .READ = true },
+                        .STANDARD = .{ .SYNCHRONIZE = true },
+                    },
+                    .creation = .OPEN,
                     .filter = .any,
                 }) catch |err| switch (err) {
                     error.WouldBlock => unreachable,
@@ -6861,7 +6843,7 @@ fn processExecutablePath(userdata: ?*anyopaque, out_buffer: []u8) std.process.Ex
             };
             defer w.CloseHandle(h_file);
 
-            const wide_slice = w.GetFinalPathNameByHandle(h_file, .{}, out_buffer);
+            const wide_slice = try w.GetFinalPathNameByHandle(h_file, .{}, &path_name_w_buf.data);
 
             const len = std.unicode.calcWtf8Len(wide_slice);
             if (len > out_buffer.len)

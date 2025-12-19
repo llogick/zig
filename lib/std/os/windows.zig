@@ -3582,7 +3582,7 @@ test QueryObjectName {
     //any file will do; canonicalization works on NTFS junctions and symlinks, hardlinks remain separate paths.
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const handle = tmp.dir.fd;
+    const handle = tmp.dir.handle;
     var out_buffer: [PATH_MAX_WIDE]u16 = undefined;
 
     const result_path = try QueryObjectName(handle, &out_buffer);
@@ -3845,7 +3845,7 @@ test GetFinalPathNameByHandle {
     //any file will do
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const handle = tmp.dir.fd;
+    const handle = tmp.dir.handle;
     var buffer: [PATH_MAX_WIDE]u16 = undefined;
 
     //check with sufficient size
@@ -4638,7 +4638,7 @@ pub fn wToPrefixedFileW(dir: ?HANDLE, path: [:0]const u16) Wtf16ToPrefixedFileWE
             }
             // We can also skip GetFinalPathNameByHandle if the handle matches
             // the handle returned by Io.Dir.cwd()
-            if (dir.? == Io.Dir.cwd().fd) {
+            if (dir.? == Io.Dir.cwd().handle) {
                 break :path_to_get path;
             }
             // At this point, we know we have a relative path that had too many

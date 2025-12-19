@@ -56,7 +56,7 @@ pub const Mode = union(enum) {
             error.NotTerminalDevice, error.Unexpected => {},
         }
 
-        if (is_windows and file.isTty(io)) {
+        if (is_windows and try file.isTty(io)) {
             const windows = std.os.windows;
             var info: windows.CONSOLE_SCREEN_BUFFER_INFO = undefined;
             if (windows.kernel32.GetConsoleScreenBufferInfo(file.handle, &info) != 0) {
@@ -74,7 +74,7 @@ pub const Mode = union(enum) {
 
 pub const SetColorError = std.os.windows.SetConsoleTextAttributeError || Io.Writer.Error;
 
-pub fn setColor(t: Terminal, color: Color) Io.Writer.Error!void {
+pub fn setColor(t: Terminal, color: Color) SetColorError!void {
     switch (t.mode) {
         .no_color => return,
         .escape_codes => {

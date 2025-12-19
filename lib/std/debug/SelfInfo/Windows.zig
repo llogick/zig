@@ -222,7 +222,7 @@ const Module = struct {
                 pdb.file_reader.file.close(io);
                 pdb.deinit();
             }
-            if (di.mapped_file) |*mf| mf.deinit();
+            if (di.mapped_file) |*mf| mf.deinit(io);
 
             var arena = di.arena.promote(gpa);
             arena.deinit();
@@ -331,7 +331,6 @@ const Module = struct {
                 error.SystemResources,
                 error.WouldBlock,
                 error.AccessDenied,
-                error.ProcessNotFound,
                 error.PermissionDenied,
                 error.NoSpaceLeft,
                 error.DeviceBusy,
