@@ -115,6 +115,12 @@ pub const OpenFlags = struct {
     /// * On other operating systems, the behavior is implemented with an additional
     ///   `fstat` syscall.
     allow_directory: bool = true,
+    /// Indicates intent for only some operations to be performed on this
+    /// opened file:
+    /// * `close`
+    /// * `stat`
+    /// On Linux and FreeBSD, this corresponds to `std.posix.O.PATH`.
+    path_only: bool = false,
 
     /// Open the file with an advisory lock to coordinate with other processes
     /// accessing it at the same time. An exclusive lock will prevent other

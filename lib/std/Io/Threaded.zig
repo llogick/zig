@@ -2721,6 +2721,7 @@ fn dirOpenFilePosix(
         .wasi => .{
             .read = flags.mode != .write_only,
             .write = flags.mode != .read_only,
+            .NOFOLLOW = !flags.follow_symlinks,
         },
         else => .{
             .ACCMODE = switch (flags.mode) {
@@ -2728,11 +2729,13 @@ fn dirOpenFilePosix(
                 .write_only => .WRONLY,
                 .read_write => .RDWR,
             },
+            .NOFOLLOW = !flags.follow_symlinks,
         },
     };
     if (@hasField(posix.O, "CLOEXEC")) os_flags.CLOEXEC = true;
     if (@hasField(posix.O, "LARGEFILE")) os_flags.LARGEFILE = true;
     if (@hasField(posix.O, "NOCTTY")) os_flags.NOCTTY = !flags.allow_ctty;
+    if (@hasField(posix.O, "PATH") and flags.path_only) os_flags.PATH = true;
 
     // Use the O locking flags if the os supports them to acquire the lock
     // atomically. Note that the NONBLOCK flag is removed after the openat()

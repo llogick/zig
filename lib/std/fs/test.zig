@@ -295,8 +295,8 @@ fn testReadLinkAbsolute(io: Io, target_path: []const u8, symlink_path: []const u
 test "File.stat on a File that is a symlink returns Kind.sym_link" {
     const io = testing.io;
 
-    // This test requires getting a file descriptor of a symlink which
-    // is not possible on all targets
+    // This test requires getting a file descriptor of a symlink which is not
+    // possible on all targets.
     switch (builtin.target.os.tag) {
         .windows, .linux => {},
         else => return error.SkipZigTest,
@@ -309,7 +309,10 @@ test "File.stat on a File that is a symlink returns Kind.sym_link" {
 
             try setupSymlink(io, ctx.dir, dir_target_path, "symlink", .{ .is_directory = true });
 
-            var symlink: Dir = try ctx.dir.openDir(io, "symlink", .{ .follow_symlinks = false });
+            var symlink: File = try ctx.dir.openFile(io, "symlink", .{
+                .follow_symlinks = false,
+                .path_only = true,
+            });
             defer symlink.close(io);
 
             const stat = try symlink.stat(io);
