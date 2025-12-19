@@ -1203,23 +1203,21 @@ fn printLineFromFile(io: Io, writer: *Writer, source_location: SourceLocation) !
     const cwd: Io.Dir = .cwd();
     var file = try cwd.openFile(io, source_location.file_name, .{});
     defer file.close(io);
-    // TODO fstat and make sure that the file has the correct size
 
     var buffer: [4096]u8 = undefined;
     var file_reader: File.Reader = .init(file, io, &buffer);
     var line_index: usize = 0;
-    while (try file_reader.interface.takeDelimiter('\n')) |line| {
+    const r = &file_reader.interface;
+    while (true) {
         line_index += 1;
         if (line_index == source_location.line) {
             // TODO delete hard tabs from the language
-            mem.replaceScalar(u8, line, '\t', ' ');
-            try writer.writeAll(line);
-            // Make sure printing last line of file inserts extra newline.
+            _ = try r.streamDelimiterEnding(writer, '\n');
             try writer.writeByte('\n');
             return;
         }
+        _ = try r.discardDelimiterInclusive('\n');
     }
-    return error.EndOfStream;
 }
 
 test printLineFromFile {
