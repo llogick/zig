@@ -218,16 +218,10 @@ test "Dir.readLink" {
             // test 1: symlink to a file
             try setupSymlink(io, ctx.dir, file_target_path, "symlink1", .{});
             try testReadLink(io, ctx.dir, canonical_file_target_path, "symlink1");
-            if (builtin.os.tag == .windows) {
-                try testReadLinkW(testing.allocator, ctx.dir, canonical_file_target_path, "symlink1");
-            }
 
             // test 2: symlink to a directory (can be different on Windows)
             try setupSymlink(io, ctx.dir, dir_target_path, "symlink2", .{ .is_directory = true });
             try testReadLink(io, ctx.dir, canonical_dir_target_path, "symlink2");
-            if (builtin.os.tag == .windows) {
-                try testReadLinkW(testing.allocator, ctx.dir, canonical_dir_target_path, "symlink2");
-            }
 
             // test 3: relative path symlink
             const parent_file = ".." ++ Dir.path.sep_str ++ "target.txt";
@@ -236,9 +230,6 @@ test "Dir.readLink" {
             defer subdir.close(io);
             try setupSymlink(io, subdir, canonical_parent_file, "relative-link.txt", .{});
             try testReadLink(io, subdir, canonical_parent_file, "relative-link.txt");
-            if (builtin.os.tag == .windows) {
-                try testReadLinkW(testing.allocator, subdir, canonical_parent_file, "relative-link.txt");
-            }
         }
     }.impl);
 }
@@ -273,17 +264,6 @@ fn testReadLink(io: Io, dir: Dir, target_path: []const u8, symlink_path: []const
     var buffer: [Dir.max_path_bytes]u8 = undefined;
     const actual = buffer[0..try dir.readLink(io, symlink_path, &buffer)];
     try expectEqualStrings(target_path, actual);
-}
-
-fn testReadLinkW(allocator: Allocator, dir: Dir, target_path: []const u8, symlink_path: []const u8) !void {
-    const target_path_w = try std.unicode.wtf8ToWtf16LeAlloc(allocator, target_path);
-    defer allocator.free(target_path_w);
-    // Calling the W functions directly requires the path to be NT-prefixed
-    const symlink_path_w = try std.os.windows.sliceToPrefixedFileW(dir.handle, symlink_path);
-    const wtf16_buffer = try allocator.alloc(u16, target_path_w.len);
-    defer allocator.free(wtf16_buffer);
-    const actual = try dir.readLinkW(symlink_path_w.span(), wtf16_buffer);
-    try expectEqualSlices(u16, target_path_w, actual);
 }
 
 fn testReadLinkAbsolute(io: Io, target_path: []const u8, symlink_path: []const u8) !void {
@@ -2153,6 +2133,7 @@ test "invalid UTF-8/WTF-8 paths" {
             try expectError(expected_err, Dir.rename(ctx.dir, invalid_path, ctx.dir, invalid_path, io));
 
             if (native_os != .wasi and ctx.path_type != .relative) {
+                var buf: [Dir.max_path_bytes]u8 = undefined;
                 try expectError(expected_err, Dir.copyFileAbsolute(invalid_path, invalid_path, io, .{}));
                 try expectError(expected_err, Dir.makeDirAbsolute(io, invalid_path, .default_dir));
                 try expectError(expected_err, Dir.deleteDirAbsolute(io, invalid_path));
@@ -2162,10 +2143,10 @@ test "invalid UTF-8/WTF-8 paths" {
                 try expectError(expected_err, Dir.accessAbsolute(io, invalid_path, .{}));
                 try expectError(expected_err, Dir.createFileAbsolute(io, invalid_path, .{}));
                 try expectError(expected_err, Dir.deleteFileAbsolute(io, invalid_path));
-                var readlink_buf: [Dir.max_path_bytes]u8 = undefined;
-                try expectError(expected_err, Dir.readLinkAbsolute(io, invalid_path, &readlink_buf));
+                try expectError(expected_err, Dir.readLinkAbsolute(io, invalid_path, &buf));
                 try expectError(expected_err, Dir.symLinkAbsolute(io, invalid_path, invalid_path, .{}));
-                try expectError(expected_err, Dir.realPathAbsoluteAlloc(io, invalid_path, testing.allocator));
+                try expectError(expected_err, Dir.realPathFileAbsolute(io, invalid_path, &buf));
+                try expectError(expected_err, Dir.realPathFileAbsoluteAlloc(io, invalid_path, testing.allocator));
             }
         }
     }.impl);
