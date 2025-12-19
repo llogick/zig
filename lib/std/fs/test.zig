@@ -1376,24 +1376,46 @@ fn testFilenameLimits(io: Io, iterable_dir: Dir, maxed_filename: []const u8, max
         var reader_buf: [Dir.Reader.min_buffer_len]u8 align(@alignOf(usize)) = undefined;
         var reader: Dir.Reader = .init(iterable_dir, &reader_buf);
 
-        var count: usize = 0;
+        var file_count: usize = 0;
+        var dir_count: usize = 0;
         while (try reader.next(io)) |entry| {
-            try expectEqualStrings(maxed_filename, entry.name);
-            count += 1;
+            switch (entry.kind) {
+                .file => {
+                    try expectEqualStrings(maxed_filename, entry.name);
+                    file_count += 1;
+                },
+                .directory => {
+                    try expectEqualStrings(maxed_dirname, entry.name);
+                    dir_count += 1;
+                },
+                else => return error.TestFailed,
+            }
         }
-        try expectEqual(@as(usize, 2), count);
+        try expectEqual(@as(usize, 1), file_count);
+        try expectEqual(@as(usize, 1), dir_count);
     }
     // High level walk API
     {
         var walker = try iterable_dir.walk(testing.allocator);
         defer walker.deinit();
 
-        var count: usize = 0;
+        var file_count: usize = 0;
+        var dir_count: usize = 0;
         while (try walker.next(io)) |entry| {
-            try expectEqualStrings(maxed_filename, entry.basename);
-            count += 1;
+            switch (entry.kind) {
+                .file => {
+                    try expectEqualStrings(maxed_filename, entry.basename);
+                    file_count += 1;
+                },
+                .directory => {
+                    try expectEqualStrings(maxed_dirname, entry.basename);
+                    dir_count += 1;
+                },
+                else => return error.TestFailed,
+            }
         }
-        try expectEqual(@as(usize, 3), count);
+        try expectEqual(@as(usize, 2), file_count);
+        try expectEqual(@as(usize, 1), dir_count);
     }
 
     // ensure that we can delete the tree
