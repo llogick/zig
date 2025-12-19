@@ -218,6 +218,32 @@ test "Dir.readLink" {
     }.impl);
 }
 
+test "Dir.readLink on non-symlinks" {
+    try testWithAllSupportedPathTypes(struct {
+        fn impl(ctx: *TestContext) !void {
+            const file_path = try ctx.transformPath("file.txt");
+            try ctx.dir.writeFile(.{ .sub_path = file_path, .data = "nonsense" });
+            const dir_path = try ctx.transformPath("subdir");
+            try ctx.dir.makeDir(dir_path);
+
+            // file
+            var buffer: [fs.max_path_bytes]u8 = undefined;
+            try std.testing.expectError(error.NotLink, ctx.dir.readLink(file_path, &buffer));
+            if (builtin.os.tag == .windows) {
+                var file_path_w = try std.os.windows.sliceToPrefixedFileW(ctx.dir.fd, file_path);
+                try std.testing.expectError(error.NotLink, ctx.dir.readLinkW(file_path_w.span(), &file_path_w.data));
+            }
+
+            // dir
+            try std.testing.expectError(error.NotLink, ctx.dir.readLink(dir_path, &buffer));
+            if (builtin.os.tag == .windows) {
+                var dir_path_w = try std.os.windows.sliceToPrefixedFileW(ctx.dir.fd, dir_path);
+                try std.testing.expectError(error.NotLink, ctx.dir.readLinkW(dir_path_w.span(), &dir_path_w.data));
+            }
+        }
+    }.impl);
+}
+
 fn testReadLink(dir: Dir, target_path: []const u8, symlink_path: []const u8) !void {
     var buffer: [fs.max_path_bytes]u8 = undefined;
     const actual = try dir.readLink(symlink_path, buffer[0..]);
