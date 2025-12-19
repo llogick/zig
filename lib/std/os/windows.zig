@@ -3599,7 +3599,6 @@ test QueryObjectName {
 
 pub const GetFinalPathNameByHandleError = error{
     AccessDenied,
-    BadPathName,
     FileNotFound,
     NameTooLong,
     /// The volume does not contain a recognized file system. File system
@@ -3705,6 +3704,7 @@ pub fn GetFinalPathNameByHandle(
                 error.WouldBlock => return error.Unexpected,
                 error.NetworkNotFound => return error.Unexpected,
                 error.AntivirusInterference => return error.Unexpected,
+                error.BadPathName => return error.Unexpected,
                 else => |e| return e,
             };
             defer CloseHandle(mgmt_handle);
@@ -3750,9 +3750,7 @@ pub fn GetFinalPathNameByHandle(
                     const total_len = drive_letter.len + file_name_u16.len;
 
                     // Validate that DOS does not contain any spurious nul bytes.
-                    if (mem.findScalar(u16, out_buffer[0..total_len], 0)) |_| {
-                        return error.BadPathName;
-                    }
+                    assert(mem.findScalar(u16, out_buffer[0..total_len], 0) == null);
 
                     return out_buffer[0..total_len];
                 } else if (mountmgrIsVolumeName(symlink)) {
@@ -3802,9 +3800,7 @@ pub fn GetFinalPathNameByHandle(
                     const total_len = volume_path.len + file_name_u16.len;
 
                     // Validate that DOS does not contain any spurious nul bytes.
-                    if (mem.findScalar(u16, out_buffer[0..total_len], 0)) |_| {
-                        return error.BadPathName;
-                    }
+                    assert(mem.findScalar(u16, out_buffer[0..total_len], 0) == null);
 
                     return out_buffer[0..total_len];
                 }
