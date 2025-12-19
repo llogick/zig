@@ -215,6 +215,10 @@ pub const FILE = struct {
         AccessFlags: ACCESS_MASK,
     };
 
+    // Note: This is not separated into RENAME_INFORMATION and RENAME_INFORMATION_EX because
+    // the only difference is the `Flags` type (BOOLEAN before _EX, ULONG in the _EX),
+    // which doesn't affect the struct layout--the offset of RootDirectory is the same
+    // regardless.
     pub const RENAME_INFORMATION = extern struct {
         Flags: FLAGS,
         RootDirectory: ?HANDLE,
