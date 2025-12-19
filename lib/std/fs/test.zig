@@ -1418,12 +1418,12 @@ test "max file name component lengths" {
         // On WASI, the maxed filename depends on the host OS, so in order for this test to
         // work on any host, we need to use a length that will work for all platforms
         // (i.e. the minimum max_name_bytes of all supported platforms).
-        const maxed_wasi_filename1 = [_]u8{'1'} ** 255;
-        const maxed_wasi_filename2 = [_]u8{'2'} ** 255;
+        const maxed_wasi_filename1: [255]u8 = @splat('1');
+        const maxed_wasi_filename2: [255]u8 = @splat('2');
         try testFilenameLimits(io, tmp.dir, &maxed_wasi_filename1, &maxed_wasi_filename2);
     } else {
-        const maxed_ascii_filename1 = [_]u8{'1'} ** std.fs.max_name_bytes;
-        const maxed_ascii_filename2 = [_]u8{'2'} ** std.fs.max_name_bytes;
+        const maxed_ascii_filename1: [Dir.max_name_bytes]u8 = @splat('1');
+        const maxed_ascii_filename2: [Dir.max_name_bytes]u8 = @splat('2');
         try testFilenameLimits(io, tmp.dir, &maxed_ascii_filename1, &maxed_ascii_filename2);
     }
 }

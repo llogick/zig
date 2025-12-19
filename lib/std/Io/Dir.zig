@@ -102,7 +102,12 @@ pub const Reader = struct {
     end: usize,
 
     /// A length for `buffer` that allows all implementations to function.
-    pub const min_buffer_len = std.mem.alignForward(usize, max_name_bytes, @alignOf(usize));
+    pub const min_buffer_len = switch (native_os) {
+        .linux => @sizeOf(std.os.linux.dirent64) +
+            std.mem.alignForward(usize, max_name_bytes, @alignOf(std.os.linux.dirent64)),
+        .windows => std.mem.alignForward(usize, max_name_bytes, @alignOf(usize)),
+        else => if (builtin.link_libc) @sizeOf(std.c.dirent) else std.mem.alignForward(usize, max_name_bytes, @alignOf(usize)),
+    };
 
     pub const State = enum {
         /// Indicates the next call to `read` should rewind and start over the

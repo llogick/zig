@@ -6040,7 +6040,7 @@ pub const dirent64 = extern struct {
     off: u64,
     reclen: u16,
     type: u8,
-    name: u8, // field address is the address of first byte of name https://github.com/ziglang/zig/issues/173
+    name: [0]u8,
 };
 
 pub const dl_phdr_info = extern struct {

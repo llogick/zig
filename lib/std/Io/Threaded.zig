@@ -3399,7 +3399,10 @@ fn dirReadLinux(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Dir
                                 dr.state = .finished;
                                 return 0;
                             },
-                            .INVAL => return error.Unexpected, // Linux may in some cases return EINVAL when reading /proc/$PID/net.
+                            // This can occur when reading /proc/$PID/net, or
+                            // if the provided buffer is too small. Neither
+                            // scenario is intended to be handled by this API.
+                            .INVAL => return error.Unexpected,
                             .ACCES => return error.AccessDenied, // Lacking permission to iterate this directory.
                             else => |err| return posix.unexpectedErrno(err),
                         }
@@ -3413,11 +3416,19 @@ fn dirReadLinux(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Dir
             dr.index = 0;
             dr.end = n;
         }
-        const linux_entry: *align(1) linux.dirent64 = @ptrCast(&dr.buffer[dr.index]);
+        // Linux aligns the header by padding after the null byte of the name
+        // to align the next entry. This means we can find the end of the name
+        // by looking at only the 8 bytes before the next record. However since
+        // file names are usually short it's better to keep the machine code
+        // simpler.
+        const linux_entry: *linux.dirent64 = @ptrCast(@alignCast(&dr.buffer[dr.index]));
         const next_index = dr.index + linux_entry.reclen;
         dr.index = next_index;
+        const name_ptr: [*]u8 = &linux_entry.name;
+        const padded_name = name_ptr[0 .. linux_entry.reclen - @offsetOf(linux.dirent64, "name")];
+        const name_len = std.mem.findScalar(u8, padded_name, 0).?;
+        const name = name_ptr[0..name_len :0];
 
-        const name = std.mem.sliceTo(@as([*:0]u8, @ptrCast(&linux_entry.name)), 0);
         if (std.mem.eql(u8, name, ".") or std.mem.eql(u8, name, "..")) continue;
 
         const entry_kind: File.Kind = switch (linux_entry.type) {
