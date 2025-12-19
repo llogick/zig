@@ -6400,6 +6400,7 @@ fn fileReadStreamingPosix(userdata: ?*anyopaque, file: File, data: []const []u8)
             i += 1;
         }
     }
+    if (i == 0) return 0;
     const dest = iovecs_buffer[0..i];
     assert(dest[0].len > 0);
 
@@ -6482,6 +6483,7 @@ fn fileReadStreamingWindows(userdata: ?*anyopaque, file: File, data: []const []u
     const DWORD = windows.DWORD;
     var index: usize = 0;
     while (data[index].len == 0) index += 1;
+    if (index == 0) return 0;
     const buffer = data[index];
     const want_read_count: DWORD = @min(std.math.maxInt(DWORD), buffer.len);
 
@@ -6519,6 +6521,7 @@ fn fileReadPositionalPosix(userdata: ?*anyopaque, file: File, data: []const []u8
             i += 1;
         }
     }
+    if (i == 0) return 0;
     const dest = iovecs_buffer[0..i];
     assert(dest[0].len > 0);
 
@@ -6614,6 +6617,7 @@ fn fileReadPositionalWindows(userdata: ?*anyopaque, file: File, data: []const []
 
     var index: usize = 0;
     while (data[index].len == 0) index += 1;
+    if (index == 0) return 0;
     const buffer = data[index];
     const want_read_count: DWORD = @min(std.math.maxInt(DWORD), buffer.len);
 

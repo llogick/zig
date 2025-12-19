@@ -497,7 +497,7 @@ pub fn setTimestampsNow(file: File, io: Io) SetTimestampsError!void {
 
 pub const ReadPositionalError = Reader.Error || error{Unseekable};
 
-/// Returns 0 on end of stream.
+/// Returns 0 on stream end or if `buffer` has no space available for data.
 ///
 /// See also:
 /// * `reader`
@@ -507,8 +507,6 @@ pub fn readPositional(file: File, io: Io, buffer: []const []u8, offset: u64) Rea
 
 pub const WritePositionalError = Writer.Error || error{Unseekable};
 
-/// Returns 0 on end of stream.
-///
 /// See also:
 /// * `writer`
 pub fn writePositional(file: File, io: Io, buffer: []const []const u8, offset: u64) WritePositionalError!usize {
