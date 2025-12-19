@@ -2287,7 +2287,10 @@ pub fn exit(status: u8) noreturn {
     } else switch (native_os) {
         .windows => windows.ntdll.RtlExitUserProcess(status),
         .wasi => std.os.wasi.proc_exit(status),
-        .linux => if (!builtin.single_threaded) std.os.linux.exit_group(status),
+        .linux => {
+            if (!builtin.single_threaded) std.os.linux.exit_group(status);
+            posix.system.exit(status);
+        },
         .uefi => {
             const uefi = std.os.uefi;
             // exit() is only available if exitBootServices() has not been called yet.

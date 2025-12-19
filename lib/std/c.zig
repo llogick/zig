@@ -163,6 +163,7 @@ pub const nlink_t = switch (native_os) {
     .freebsd, .serenity => u64,
     .openbsd, .netbsd, .illumos => u32,
     .haiku => i32,
+    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => u16,
     else => u0,
 };
 

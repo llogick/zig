@@ -366,12 +366,12 @@ const Thread = struct {
 
     fn futexWake(ptr: *const u32, max_waiters: u32) void {
         @branchHint(.cold);
+        assert(max_waiters != 0);
 
         if (builtin.single_threaded) return; // nothing to wake up
 
         if (builtin.cpu.arch.isWasm()) {
             comptime assert(builtin.cpu.has(.wasm, .atomics));
-            assert(max_waiters != 0);
             const woken_count = asm volatile (
                 \\local.get %[ptr]
                 \\local.get %[waiters]
@@ -416,7 +416,6 @@ const Thread = struct {
                 }
             },
             .windows => {
-                assert(max_waiters != 0);
                 switch (max_waiters) {
                     1 => windows.ntdll.RtlWakeAddressSingle(ptr),
                     else => windows.ntdll.RtlWakeAddressAll(ptr),
@@ -953,7 +952,8 @@ const have_fchown = switch (native_os) {
 };
 
 const have_fchmod = switch (native_os) {
-    .wasi, .windows => false,
+    .windows => false,
+    .wasi => builtin.link_libc,
     else => true,
 };
 
@@ -6772,7 +6772,7 @@ fn fileSeekBy(userdata: ?*anyopaque, file: File, offset: i64) File.SeekError!voi
         var result: u64 = undefined;
         try current_thread.beginSyscall();
         while (true) {
-            switch (posix.errno(posix.system.llseek(fd, offset, &result, posix.SEEK.CUR))) {
+            switch (posix.errno(posix.system.llseek(fd, @bitCast(offset), &result, posix.SEEK.CUR))) {
                 .SUCCESS => {
                     current_thread.endSyscall();
                     return;
@@ -7000,7 +7000,7 @@ fn processExecutablePath(userdata: ?*anyopaque, out_buffer: []u8) std.process.Ex
             if (rc != 0) return error.NameTooLong;
 
             var real_path_buf: [posix.PATH_MAX]u8 = undefined;
-            const n = Io.Dir.realPathAbsolute(ioBasic(t), &symlink_path_buf, &real_path_buf) catch |err| switch (err) {
+            const n = Io.Dir.realPathFileAbsolute(ioBasic(t), &symlink_path_buf, &real_path_buf) catch |err| switch (err) {
                 error.NetworkNotFound => unreachable, // Windows-only
                 else => |e| return e,
             };
@@ -7020,11 +7020,32 @@ fn processExecutablePath(userdata: ?*anyopaque, out_buffer: []u8) std.process.Ex
         },
         .freebsd, .dragonfly => {
             const current_thread = Thread.getCurrent(t);
-            try current_thread.checkCancel();
             var mib: [4]c_int = .{ posix.CTL.KERN, posix.KERN.PROC, posix.KERN.PROC_PATHNAME, -1 };
             var out_len: usize = out_buffer.len;
-            try posix.sysctl(&mib, out_buffer.ptr, &out_len, null, 0);
-            return out_len;
+            try current_thread.beginSyscall();
+            while (true) {
+                switch (posix.errno(posix.system.sysctl(&mib, mib.len, out_buffer.ptr, &out_len, null, 0))) {
+                    .SUCCESS => {
+                        current_thread.endSyscall();
+                        return out_len;
+                    },
+                    .INTR => {
+                        try current_thread.checkCancel();
+                        continue;
+                    },
+                    .CANCELED => return current_thread.endSyscallCanceled(),
+                    else => |e| {
+                        current_thread.endSyscall();
+                        switch (e) {
+                            .FAULT => |err| return errnoBug(err),
+                            .PERM => return error.PermissionDenied,
+                            .NOMEM => return error.SystemResources,
+                            .NOENT => |err| return errnoBug(err),
+                            else => |err| return posix.unexpectedErrno(err),
+                        }
+                    },
+                }
+            }
         },
         .netbsd => {
             const current_thread = Thread.getCurrent(t);
@@ -7043,7 +7064,7 @@ fn processExecutablePath(userdata: ?*anyopaque, out_buffer: []u8) std.process.Ex
             if (std.mem.indexOf(u8, argv0, "/") != null) {
                 // argv[0] is a path (relative or absolute): use realpath(3) directly
                 var real_path_buf: [posix.PATH_MAX]u8 = undefined;
-                const real_path = Io.Dir.realPathAbsolute(ioBasic(t), std.os.argv[0], &real_path_buf) catch |err| switch (err) {
+                const real_path = Io.Dir.realPathFileAbsolute(ioBasic(t), std.os.argv[0], &real_path_buf) catch |err| switch (err) {
                     error.NetworkNotFound => unreachable, // Windows-only
                     else => |e| return e,
                 };
@@ -7063,7 +7084,7 @@ fn processExecutablePath(userdata: ?*anyopaque, out_buffer: []u8) std.process.Ex
                     }, 0) catch continue;
 
                     var real_path_buf: [posix.PATH_MAX]u8 = undefined;
-                    if (Io.Dir.realPathAbsolute(ioBasic(t), resolved_path, &real_path_buf)) |real_path| {
+                    if (Io.Dir.realPathFileAbsolute(ioBasic(t), resolved_path, &real_path_buf)) |real_path| {
                         // found a file, and hope it is the right file
                         if (real_path.len > out_buffer.len)
                             return error.NameTooLong;
@@ -7730,8 +7751,8 @@ fn fileWriteFileStreaming(
                                 .FBIG => return error.FileTooBig,
                                 .IO => return error.InputOutput,
                                 .INTEGRITY => return error.CorruptedData,
-                                .ISDIR => return error.IsDir,
                                 .NOSPC => return error.NoSpaceLeft,
+                                .ISDIR => |err| errnoBug(err),
                                 .BADF => |err| errnoBug(err),
                                 else => |err| posix.unexpectedErrno(err),
                             });
@@ -7908,11 +7929,11 @@ fn fileWriteFilePositional(
                                 .FBIG => return error.FileTooBig,
                                 .IO => return error.InputOutput,
                                 .INTEGRITY => return error.CorruptedData,
-                                .ISDIR => return error.IsDir,
                                 .NOSPC => return error.NoSpaceLeft,
                                 .OVERFLOW => return error.Unseekable,
                                 .NXIO => return error.Unseekable,
                                 .SPIPE => return error.Unseekable,
+                                .ISDIR => |err| errnoBug(err),
                                 .BADF => |err| errnoBug(err),
                                 else => |err| posix.unexpectedErrno(err),
                             });

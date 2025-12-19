@@ -49,6 +49,8 @@ pub const Error = error{
 pub const WriteFileError = Error || error{
     /// Descriptor is not valid or locked, or an mmap(2)-like operation is not available for in_fd.
     Unimplemented,
+    /// Can happen on FreeBSD when using copy_file_range.
+    CorruptedData,
     EndOfStream,
     ReadFailed,
 };
