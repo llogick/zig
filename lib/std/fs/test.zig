@@ -2561,7 +2561,7 @@ test "open smoke test" {
     }
 
     // Try opening as file which should fail.
-    try expectError(error.IsDir, tmp.dir.openFile(io, "some_dir", .{}));
+    try expectError(error.IsDir, tmp.dir.openFile(io, "some_dir", .{ .allow_directory = false }));
 }
 
 test "hard link with different directories" {
