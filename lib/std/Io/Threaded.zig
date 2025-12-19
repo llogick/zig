@@ -7112,7 +7112,7 @@ fn fileWritePositional(
                     addBuf(&iovecs, &iovlen, splat_buffer);
                     remaining_splat -= splat_buffer.len;
                 }
-                addBuf(&iovecs, &iovlen, splat_buffer[0..remaining_splat]);
+                addBuf(&iovecs, &iovlen, splat_buffer[0..@min(remaining_splat, splat_buffer.len)]);
             },
             else => for (0..@min(splat, iovecs.len - iovlen)) |_| {
                 addBuf(&iovecs, &iovlen, pattern);
@@ -7234,7 +7234,7 @@ fn fileWriteStreaming(
                     addBuf(&iovecs, &iovlen, splat_buffer);
                     remaining_splat -= splat_buffer.len;
                 }
-                addBuf(&iovecs, &iovlen, splat_buffer[0..remaining_splat]);
+                addBuf(&iovecs, &iovlen, splat_buffer[0..@min(remaining_splat, splat_buffer.len)]);
             },
             else => for (0..@min(splat, iovecs.len - iovlen)) |_| {
                 addBuf(&iovecs, &iovlen, pattern);
@@ -9860,7 +9860,7 @@ fn netWritePosix(
                     addBuf(&iovecs, &msg.iovlen, splat_buffer);
                     remaining_splat -= splat_buffer.len;
                 }
-                addBuf(&iovecs, &msg.iovlen, splat_buffer[0..remaining_splat]);
+                addBuf(&iovecs, &msg.iovlen, splat_buffer[0..@min(remaining_splat, splat_buffer.len)]);
             },
             else => for (0..@min(splat, iovecs.len - msg.iovlen)) |_| {
                 addBuf(&iovecs, &msg.iovlen, pattern);
@@ -9945,7 +9945,7 @@ fn netWriteWindows(
                     addWsaBuf(&iovecs, &len, splat_buffer);
                     remaining_splat -= splat_buffer.len;
                 }
-                addWsaBuf(&iovecs, &len, splat_buffer[0..remaining_splat]);
+                addWsaBuf(&iovecs, &len, splat_buffer[0..@min(remaining_splat, splat_buffer.len)]);
             },
             else => for (0..@min(splat, iovecs.len - len)) |_| {
                 addWsaBuf(&iovecs, &len, pattern);
