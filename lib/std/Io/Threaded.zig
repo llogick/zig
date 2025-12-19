@@ -3889,9 +3889,10 @@ fn dirRealPathFileWindows(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8,
     return realPathWindows(current_thread, h_file, out_buffer);
 }
 
-fn realPathWindows(current_thread: *Thread, h_file: windows.HANDLE, out_buffer: []u8) Dir.RealPathFileError {
+fn realPathWindows(current_thread: *Thread, h_file: windows.HANDLE, out_buffer: []u8) File.RealPathError!usize {
     _ = current_thread; // TODO move GetFinalPathNameByHandle logic into std.Io.Threaded and add cancel checks
-    const wide_slice = windows.GetFinalPathNameByHandle(h_file, .{}, out_buffer);
+    var wide_buf: [windows.PATH_MAX_WIDE]u16 = undefined;
+    const wide_slice = try windows.GetFinalPathNameByHandle(h_file, .{}, &wide_buf);
 
     const len = std.unicode.calcWtf8Len(wide_slice);
     if (len > out_buffer.len)
@@ -3981,7 +3982,19 @@ fn dirRealPathWindows(userdata: ?*anyopaque, dir: Dir, out_buffer: []u8) Dir.Rea
     return realPathWindows(current_thread, dir.handle, out_buffer);
 }
 
-fn fileRealPath(userdata: ?*anyopaque, file: File, out_buffer: []u8) File.RealPathError!usize {
+const fileRealPath = switch (native_os) {
+    .windows => fileRealPathWindows,
+    else => fileRealPathPosix,
+};
+
+fn fileRealPathWindows(userdata: ?*anyopaque, file: File, out_buffer: []u8) File.RealPathError!usize {
+    if (native_os == .wasi) return error.OperationUnsupported;
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+    return realPathWindows(current_thread, file.handle, out_buffer);
+}
+
+fn fileRealPathPosix(userdata: ?*anyopaque, file: File, out_buffer: []u8) File.RealPathError!usize {
     if (native_os == .wasi) return error.OperationUnsupported;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
@@ -4128,7 +4141,10 @@ const dirDeleteFile = switch (native_os) {
 };
 
 fn dirDeleteFileWindows(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8) Dir.DeleteFileError!void {
-    return dirDeleteWindows(userdata, dir, sub_path, false);
+    return dirDeleteWindows(userdata, dir, sub_path, false) catch |err| switch (err) {
+        error.DirNotEmpty => unreachable,
+        else => |e| return e,
+    };
 }
 
 fn dirDeleteFileWasi(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8) Dir.DeleteFileError!void {
@@ -4261,10 +4277,13 @@ const dirDeleteDir = switch (native_os) {
 };
 
 fn dirDeleteDirWindows(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8) Dir.DeleteDirError!void {
-    return dirDeleteWindows(userdata, dir, sub_path, true);
+    return dirDeleteWindows(userdata, dir, sub_path, true) catch |err| switch (err) {
+        error.IsDir => unreachable,
+        else => |e| return e,
+    };
 }
 
-fn dirDeleteWindows(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, remove_dir: bool) Dir.DeleteFileError!void {
+fn dirDeleteWindows(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, remove_dir: bool) (Dir.DeleteDirError || Dir.DeleteFileError)!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
     const w = windows;
@@ -4352,18 +4371,18 @@ fn dirDeleteWindows(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, remov
         try current_thread.checkCancel();
 
         // Deletion with posix semantics if the filesystem supports it.
-        var info: w.FILE_DISPOSITION_INFORMATION_EX = .{
-            .Flags = w.FILE_DISPOSITION_DELETE |
-                w.FILE_DISPOSITION_POSIX_SEMANTICS |
-                w.FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE,
-        };
+        const info: w.FILE.DISPOSITION.INFORMATION.EX = .{ .Flags = .{
+            .DELETE = true,
+            .POSIX_SEMANTICS = true,
+            .IGNORE_READONLY_ATTRIBUTE = true,
+        } };
 
         rc = w.ntdll.NtSetInformationFile(
             tmp_handle,
             &io_status_block,
             &info,
-            @sizeOf(w.FILE_DISPOSITION_INFORMATION_EX),
-            .FileDispositionInformationEx,
+            @sizeOf(w.FILE.DISPOSITION.INFORMATION.EX),
+            .DispositionEx,
         );
         switch (rc) {
             .SUCCESS => return,
@@ -4384,7 +4403,7 @@ fn dirDeleteWindows(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, remov
 
         // Deletion with file pending semantics, which requires waiting or moving
         // files to get them removed (from here).
-        var file_dispo: w.FILE_DISPOSITION_INFORMATION = .{
+        const file_dispo: w.FILE.DISPOSITION.INFORMATION = .{
             .DeleteFile = w.TRUE,
         };
 
@@ -4392,8 +4411,8 @@ fn dirDeleteWindows(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, remov
             tmp_handle,
             &io_status_block,
             &file_dispo,
-            @sizeOf(w.FILE_DISPOSITION_INFORMATION),
-            .FileDispositionInformation,
+            @sizeOf(w.FILE.DISPOSITION.INFORMATION),
+            .Disposition,
         );
     }
     switch (rc) {
@@ -4555,29 +4574,23 @@ fn dirRenameWindows(
     // The strategy here is just to try using FileRenameInformationEx and fall back to
     // FileRenameInformation if the return value lets us know that some aspect of it is not supported.
     const need_fallback = need_fallback: {
-        const struct_buf_len = @sizeOf(w.FILE_RENAME_INFORMATION_EX) + (w.PATH_MAX_WIDE * 2);
-        var rename_info_buf: [struct_buf_len]u8 align(@alignOf(w.FILE_RENAME_INFORMATION_EX)) = undefined;
-        const struct_len = @sizeOf(w.FILE_RENAME_INFORMATION_EX) + new_path_w.len * 2;
-        if (struct_len > struct_buf_len) return error.NameTooLong;
-
-        const rename_info: *w.FILE_RENAME_INFORMATION_EX = @ptrCast(&rename_info_buf);
-        var io_status_block: w.IO_STATUS_BLOCK = undefined;
-
-        var flags: w.ULONG = w.FILE_RENAME_POSIX_SEMANTICS | w.FILE_RENAME_IGNORE_READONLY_ATTRIBUTE;
-        if (replace_if_exists) flags |= w.FILE_RENAME_REPLACE_IF_EXISTS;
-        rename_info.* = .{
-            .Flags = flags,
+        const rename_info: w.FILE.RENAME_INFORMATION = .init(.{
+            .Flags = .{
+                .REPLACE_IF_EXISTS = replace_if_exists,
+                .POSIX_SEMANTICS = true,
+                .IGNORE_READONLY_ATTRIBUTE = true,
+            },
             .RootDirectory = if (std.fs.path.isAbsoluteWindowsWtf16(new_path_w)) null else new_dir.handle,
-            .FileNameLength = @intCast(new_path_w.len * 2), // already checked error.NameTooLong
-            .FileName = undefined,
-        };
-        @memcpy((&rename_info.FileName).ptr, new_path_w);
+            .FileName = new_path_w,
+        });
+        var io_status_block: w.IO_STATUS_BLOCK = undefined;
+        const rename_info_buf = rename_info.toBuffer();
         rc = w.ntdll.NtSetInformationFile(
             src_fd,
             &io_status_block,
-            rename_info,
-            @intCast(struct_len), // already checked for error.NameTooLong
-            .FileRenameInformationEx,
+            rename_info_buf.ptr,
+            @intCast(rename_info_buf.len),
+            .RenameEx,
         );
         switch (rc) {
             .SUCCESS => return,
@@ -4594,28 +4607,19 @@ fn dirRenameWindows(
     };
 
     if (need_fallback) {
-        const struct_buf_len = @sizeOf(w.FILE_RENAME_INFORMATION) + (w.PATH_MAX_WIDE * 2);
-        var rename_info_buf: [struct_buf_len]u8 align(@alignOf(w.FILE_RENAME_INFORMATION)) = undefined;
-        const struct_len = @sizeOf(w.FILE_RENAME_INFORMATION) + new_path_w.len * 2;
-        if (struct_len > struct_buf_len) return error.NameTooLong;
-
-        const rename_info: *w.FILE_RENAME_INFORMATION = @ptrCast(&rename_info_buf);
-        var io_status_block: w.IO_STATUS_BLOCK = undefined;
-
-        rename_info.* = .{
-            .Flags = @intFromBool(replace_if_exists),
+        const rename_info: w.FILE.RENAME_INFORMATION = .init(.{
+            .Flags = .{ .REPLACE_IF_EXISTS = replace_if_exists },
             .RootDirectory = if (std.fs.path.isAbsoluteWindowsWtf16(new_path_w)) null else new_dir.handle,
-            .FileNameLength = @intCast(new_path_w.len * 2), // already checked error.NameTooLong
-            .FileName = undefined,
-        };
-        @memcpy((&rename_info.FileName).ptr, new_path_w);
-
+            .FileName = new_path_w,
+        });
+        var io_status_block: w.IO_STATUS_BLOCK = undefined;
+        const rename_info_buf = rename_info.toBuffer();
         rc = w.ntdll.NtSetInformationFile(
             src_fd,
             &io_status_block,
-            rename_info,
-            @intCast(struct_len), // already checked for error.NameTooLong
-            .FileRenameInformation,
+            rename_info_buf.ptr,
+            @intCast(rename_info_buf.len),
+            .Rename,
         );
     }
 
@@ -4779,7 +4783,7 @@ fn dirSymLinkWindows(
     const sym_link_path_w = try w.sliceToPrefixedFileW(dir.handle, sym_link_path);
 
     const SYMLINK_DATA = extern struct {
-        ReparseTag: w.ULONG,
+        ReparseTag: w.IO_REPARSE_TAG,
         ReparseDataLength: w.USHORT,
         Reserved: w.USHORT,
         SubstituteNameOffset: w.USHORT,
@@ -4794,7 +4798,7 @@ fn dirSymLinkWindows(
             .GENERIC = .{ .READ = true, .WRITE = true },
             .STANDARD = .{ .SYNCHRONIZE = true },
         },
-        .dir = dir,
+        .dir = dir.handle,
         .creation = .CREATE,
         .filter = if (flags.is_directory) .dir_only else .non_directory_only,
     }) catch |err| switch (err) {
@@ -4818,11 +4822,11 @@ fn dirSymLinkWindows(
     // https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-createsymboliclinkw
     var is_target_absolute = false;
     const final_target_path = target_path: {
-        if (w.hasCommonNtPrefix(u16, target_path)) {
+        if (w.hasCommonNtPrefix(u16, target_path_w.span())) {
             // Already an NT path, no need to do anything to it
-            break :target_path target_path;
+            break :target_path target_path_w.span();
         } else {
-            switch (w.getWin32PathType(u16, target_path)) {
+            switch (w.getWin32PathType(u16, target_path_w.span())) {
                 // Rooted paths need to avoid getting put through wToPrefixedFileW
                 // (and they are treated as relative in this context)
                 // Note: It seems that rooted paths in symbolic links are relative to
@@ -4830,13 +4834,13 @@ fn dirSymLinkWindows(
                 //       So, if the symlink is on C:\ and the CWD is on D:\,
                 //       it will still resolve the path relative to the root of
                 //       the C:\ drive.
-                .rooted => break :target_path target_path,
+                .rooted => break :target_path target_path_w.span(),
                 // Keep relative paths relative, but anything else needs to get NT-prefixed.
-                else => if (!std.fs.path.isAbsoluteWindowsWtf16(target_path))
-                    break :target_path target_path,
+                else => if (!std.fs.path.isAbsoluteWindowsWtf16(target_path_w.span()))
+                    break :target_path target_path_w.span(),
             }
         }
-        var prefixed_target_path = try w.wToPrefixedFileW(dir, target_path);
+        var prefixed_target_path = try w.wToPrefixedFileW(dir.handle, target_path_w.span());
         // We do this after prefixing to ensure that drive-relative paths are treated as absolute
         is_target_absolute = std.fs.path.isAbsoluteWindowsWtf16(prefixed_target_path.span());
         break :target_path prefixed_target_path.span();
@@ -4848,7 +4852,7 @@ fn dirSymLinkWindows(
     const header_len = @sizeOf(w.ULONG) + @sizeOf(w.USHORT) * 2;
     const target_is_absolute = std.fs.path.isAbsoluteWindowsWtf16(final_target_path);
     const symlink_data = SYMLINK_DATA{
-        .ReparseTag = w.IO_REPARSE_TAG_SYMLINK,
+        .ReparseTag = .SYMLINK,
         .ReparseDataLength = @intCast(buf_len - header_len),
         .Reserved = 0,
         .SubstituteNameOffset = @intCast(final_target_path.len * 2),
@@ -4862,7 +4866,14 @@ fn dirSymLinkWindows(
     @memcpy(buffer[@sizeOf(SYMLINK_DATA)..][0 .. final_target_path.len * 2], @as([*]const u8, @ptrCast(final_target_path)));
     const paths_start = @sizeOf(SYMLINK_DATA) + final_target_path.len * 2;
     @memcpy(buffer[paths_start..][0 .. final_target_path.len * 2], @as([*]const u8, @ptrCast(final_target_path)));
-    _ = try w.DeviceIoControl(symlink_handle, w.FSCTL_SET_REPARSE_POINT, buffer[0..buf_len], null);
+    _ = w.DeviceIoControl(symlink_handle, w.FSCTL.SET_REPARSE_POINT, .{ .in = buffer[0..buf_len] }) catch |err| switch (err) {
+        error.PipeClosing => unreachable,
+        error.PipeAlreadyConnected => unreachable,
+        error.PipeAlreadyListening => unreachable,
+        error.Pending => unreachable,
+        error.UnrecognizedVolume => unreachable,
+        else => |e| return e,
+    };
 }
 
 fn dirSymLinkWasi(
@@ -5503,16 +5514,22 @@ fn isCygwinPty(current_thread: *Thread, file: File) Io.Cancelable!bool {
     {
         try current_thread.checkCancel();
         var io_status: windows.IO_STATUS_BLOCK = undefined;
-        var device_info: windows.FILE_FS_DEVICE_INFORMATION = undefined;
-        const rc = windows.ntdll.NtQueryVolumeInformationFile(handle, &io_status, &device_info, @sizeOf(windows.FILE_FS_DEVICE_INFORMATION), .FileFsDeviceInformation);
+        var device_info: windows.FILE.FS_DEVICE_INFORMATION = undefined;
+        const rc = windows.ntdll.NtQueryVolumeInformationFile(
+            handle,
+            &io_status,
+            &device_info,
+            @sizeOf(windows.FILE.FS_DEVICE_INFORMATION),
+            .Device,
+        );
         switch (rc) {
             .SUCCESS => {},
             else => return false,
         }
-        if (device_info.DeviceType != windows.FILE_DEVICE_NAMED_PIPE) return false;
+        if (device_info.DeviceType.FileDevice != .NAMED_PIPE) return false;
     }
 
-    const name_bytes_offset = @offsetOf(windows.FILE_NAME_INFO, "FileName");
+    const name_bytes_offset = @offsetOf(windows.FILE.NAME_INFORMATION, "FileName");
     // `NAME_MAX` UTF-16 code units (2 bytes each)
     // This buffer may not be long enough to handle *all* possible paths
     // (PATH_MAX_WIDE would be necessary for that), but because we only care
@@ -5520,11 +5537,17 @@ fn isCygwinPty(current_thread: *Thread, file: File) Io.Cancelable!bool {
     // we can use this smaller buffer and just return false on any error from
     // NtQueryInformationFile.
     const num_name_bytes = windows.MAX_PATH * 2;
-    var name_info_bytes align(@alignOf(windows.FILE_NAME_INFO)) = [_]u8{0} ** (name_bytes_offset + num_name_bytes);
+    var name_info_bytes align(@alignOf(windows.FILE.NAME_INFORMATION)) = [_]u8{0} ** (name_bytes_offset + num_name_bytes);
 
     var io_status_block: windows.IO_STATUS_BLOCK = undefined;
     try current_thread.checkCancel();
-    const rc = windows.ntdll.NtQueryInformationFile(handle, &io_status_block, &name_info_bytes, @intCast(name_info_bytes.len), .FileNameInformation);
+    const rc = windows.ntdll.NtQueryInformationFile(
+        handle,
+        &io_status_block,
+        &name_info_bytes,
+        @intCast(name_info_bytes.len),
+        .Name,
+    );
     switch (rc) {
         .SUCCESS => {},
         .INVALID_PARAMETER => unreachable,
@@ -5551,7 +5574,7 @@ fn fileSetLength(userdata: ?*anyopaque, file: File, length: u64) File.SetLengthE
         try current_thread.checkCancel();
 
         var io_status_block: windows.IO_STATUS_BLOCK = undefined;
-        var eof_info: windows.FILE_END_OF_FILE_INFORMATION = .{
+        const eof_info: windows.FILE.END_OF_FILE_INFORMATION = .{
             .EndOfFile = signed_len,
         };
 
@@ -5559,8 +5582,8 @@ fn fileSetLength(userdata: ?*anyopaque, file: File, length: u64) File.SetLengthE
             file.handle,
             &io_status_block,
             &eof_info,
-            @sizeOf(windows.FILE_END_OF_FILE_INFORMATION),
-            .FileEndOfFileInformation,
+            @sizeOf(windows.FILE.END_OF_FILE_INFORMATION),
+            .EndOfFile,
         );
         switch (status) {
             .SUCCESS => return,
@@ -5643,19 +5666,19 @@ fn fileSetPermissions(userdata: ?*anyopaque, file: File, permissions: File.Permi
         .windows => {
             try current_thread.checkCancel();
             var io_status_block: windows.IO_STATUS_BLOCK = undefined;
-            var info: windows.FILE_BASIC_INFORMATION = .{
+            const info: windows.FILE.BASIC_INFORMATION = .{
                 .CreationTime = 0,
                 .LastAccessTime = 0,
                 .LastWriteTime = 0,
                 .ChangeTime = 0,
-                .FileAttributes = permissions.inner.attributes,
+                .FileAttributes = permissions.toAttributes(),
             };
             const status = windows.ntdll.NtSetInformationFile(
                 file.handle,
                 &io_status_block,
                 &info,
-                @sizeOf(windows.FILE_BASIC_INFORMATION),
-                .FileBasicInformation,
+                @sizeOf(windows.FILE.BASIC_INFORMATION),
+                .Basic,
             );
             switch (status) {
                 .SUCCESS => return,
@@ -5813,8 +5836,8 @@ fn fileSetTimestamps(
     if (is_windows) {
         try current_thread.checkCancel();
 
-        const atime_ft = windows.nanoSecondsToFileTime(last_accessed.toNanoseconds());
-        const mtime_ft = windows.nanoSecondsToFileTime(last_modified.toNanoseconds());
+        const atime_ft = windows.nanoSecondsToFileTime(last_accessed);
+        const mtime_ft = windows.nanoSecondsToFileTime(last_modified);
 
         // https://github.com/ziglang/zig/issues/1840
         const rc = windows.kernel32.SetFileTime(file.handle, null, &atime_ft, &mtime_ft);
@@ -5958,7 +5981,24 @@ fn fileLock(userdata: ?*anyopaque, file: File, lock: File.Lock) File.LockError!v
 
     if (is_windows) {
         const exclusive = switch (lock) {
-            .none => return,
+            .none => {
+                // To match the non-Windows behavior, unlock
+                var io_status_block: windows.IO_STATUS_BLOCK = undefined;
+                const status = windows.ntdll.NtUnlockFile(
+                    file.handle,
+                    &io_status_block,
+                    &windows_lock_range_off,
+                    &windows_lock_range_len,
+                    0,
+                );
+                switch (status) {
+                    .SUCCESS => {},
+                    .RANGE_NOT_LOCKED => {},
+                    .ACCESS_VIOLATION => |err| return windows.statusBug(err), // bad io_status_block pointer
+                    else => return windows.unexpectedStatus(status),
+                }
+                return;
+            },
             .shared => false,
             .exclusive => true,
         };
@@ -6020,7 +6060,23 @@ fn fileTryLock(userdata: ?*anyopaque, file: File, lock: File.Lock) File.LockErro
 
     if (is_windows) {
         const exclusive = switch (lock) {
-            .none => return,
+            .none => {
+                // To match the non-Windows behavior, unlock
+                var io_status_block: windows.IO_STATUS_BLOCK = undefined;
+                const status = windows.ntdll.NtUnlockFile(
+                    file.handle,
+                    &io_status_block,
+                    &windows_lock_range_off,
+                    &windows_lock_range_len,
+                    0,
+                );
+                switch (status) {
+                    .SUCCESS => return true,
+                    .RANGE_NOT_LOCKED => return false,
+                    .ACCESS_VIOLATION => |err| return windows.statusBug(err), // bad io_status_block pointer
+                    else => return windows.unexpectedStatus(status),
+                }
+            },
             .shared => false,
             .exclusive => true,
         };
@@ -6093,7 +6149,7 @@ fn fileUnlock(userdata: ?*anyopaque, file: File) void {
             &io_status_block,
             &windows_lock_range_off,
             &windows_lock_range_len,
-            null,
+            0,
         );
         if (is_debug) switch (status) {
             .SUCCESS => {},

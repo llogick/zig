@@ -1028,6 +1028,8 @@ pub const SymLinkError = error{
     FileNotFound,
     SystemResources,
     NoSpaceLeft,
+    /// On Windows, `\\server` or `\\server\share` was not found.
+    NetworkNotFound,
     ReadOnlyFileSystem,
     NotDir,
 } || PathNameError || Io.Cancelable || Io.UnexpectedError;

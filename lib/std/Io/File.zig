@@ -401,8 +401,8 @@ pub const Permissions = std.options.FilePermissions orelse if (is_windows) enum(
 
     const windows = std.os.windows;
 
-    pub fn toAttributes(self: @This()) windows.DWORD {
-        return @intFromEnum(self);
+    pub fn toAttributes(self: @This()) windows.FILE.ATTRIBUTE {
+        return @bitCast(@intFromEnum(self));
     }
 
     pub fn readOnly(self: @This()) bool {

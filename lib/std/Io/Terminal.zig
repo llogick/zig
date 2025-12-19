@@ -60,7 +60,7 @@ pub const Mode = union(enum) {
             const windows = std.os.windows;
             var info: windows.CONSOLE_SCREEN_BUFFER_INFO = undefined;
             if (windows.kernel32.GetConsoleScreenBufferInfo(file.handle, &info) != 0) {
-                return .{ .terminal_winapi = .{
+                return .{ .windows_api = .{
                     .handle = file.handle,
                     .reset_attributes = info.wAttributes,
                 } };

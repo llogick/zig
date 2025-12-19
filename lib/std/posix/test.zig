@@ -326,7 +326,7 @@ test "sync" {
 
 test "fsync" {
     switch (native_os) {
-        .linux, .windows, .illumos => {},
+        .linux, .illumos => {},
         else => return error.SkipZigTest,
     }
 
