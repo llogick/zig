@@ -716,6 +716,7 @@ pub fn io(t: *Threaded) Io {
             .dirClose = dirClose,
             .dirRead = dirRead,
             .dirRealPath = dirRealPath,
+            .dirRealPathFile = dirRealPathFile,
             .dirDeleteFile = dirDeleteFile,
             .dirDeleteDir = dirDeleteDir,
             .dirRename = dirRename,
@@ -752,6 +753,7 @@ pub fn io(t: *Threaded) Io {
             .fileTryLock = fileTryLock,
             .fileUnlock = fileUnlock,
             .fileDowngradeLock = fileDowngradeLock,
+            .fileRealPath = fileRealPath,
 
             .processExecutableOpen = processExecutableOpen,
             .processExecutablePath = processExecutablePath,
@@ -848,6 +850,7 @@ pub fn ioBasic(t: *Threaded) Io {
             .dirClose = dirClose,
             .dirRead = dirRead,
             .dirRealPath = dirRealPath,
+            .dirRealPathFile = dirRealPathFile,
             .dirDeleteFile = dirDeleteFile,
             .dirDeleteDir = dirDeleteDir,
             .dirRename = dirRename,
@@ -884,6 +887,7 @@ pub fn ioBasic(t: *Threaded) Io {
             .fileTryLock = fileTryLock,
             .fileUnlock = fileUnlock,
             .fileDowngradeLock = fileDowngradeLock,
+            .fileRealPath = fileRealPath,
 
             .processExecutableOpen = processExecutableOpen,
             .processExecutablePath = processExecutablePath,
@@ -3848,22 +3852,21 @@ fn dirReadUnimplemented(userdata: ?*anyopaque, dir_reader: *Dir.Reader, buffer: 
     return error.Unimplemented;
 }
 
-const dirRealPath = switch (native_os) {
-    .windows => dirRealPathWindows,
-    else => dirRealPathPosix,
+const dirRealPathFile = switch (native_os) {
+    .windows => dirRealPathFileWindows,
+    else => dirRealPathFilePosix,
 };
 
-fn dirRealPathWindows(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, out_buffer: []u8) Dir.RealPathError!usize {
+fn dirRealPathFileWindows(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, out_buffer: []u8) Dir.RealPathFileError!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const w = windows;
     const current_thread = Thread.getCurrent(t);
 
     try current_thread.checkCancel();
 
-    var path_name_w = try w.sliceToPrefixedFileW(dir.handle, sub_path);
+    var path_name_w = try windows.sliceToPrefixedFileW(dir.handle, sub_path);
 
     const h_file = blk: {
-        const res = w.OpenFile(path_name_w.span(), .{
+        const res = windows.OpenFile(path_name_w.span(), .{
             .dir = dir.handle,
             .access_mask = .{
                 .GENERIC = .{ .READ = true },
@@ -3877,9 +3880,13 @@ fn dirRealPathWindows(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, out
         };
         break :blk res;
     };
-    defer w.CloseHandle(h_file);
+    defer windows.CloseHandle(h_file);
+    return realPathWindows(current_thread, h_file, out_buffer);
+}
 
-    const wide_slice = w.GetFinalPathNameByHandle(h_file, .{}, out_buffer);
+fn realPathWindows(current_thread: *Thread, h_file: windows.HANDLE, out_buffer: []u8) Dir.RealPathFileError {
+    _ = current_thread; // TODO move GetFinalPathNameByHandle logic into std.Io.Threaded and add cancel checks
+    const wide_slice = windows.GetFinalPathNameByHandle(h_file, .{}, out_buffer);
 
     const len = std.unicode.calcWtf8Len(wide_slice);
     if (len > out_buffer.len)
@@ -3888,9 +3895,8 @@ fn dirRealPathWindows(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, out
     return std.unicode.wtf16LeToWtf8(out_buffer, wide_slice);
 }
 
-fn dirRealPathPosix(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, out_buffer: []u8) Dir.RealPathError!usize {
-    if (native_os == .wasi) @compileError("unsupported operating system");
-    const max_path_bytes = std.fs.max_path_bytes;
+fn dirRealPathFilePosix(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, out_buffer: []u8) Dir.RealPathFileError!usize {
+    if (native_os == .wasi) return error.OperationUnsupported;
 
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
@@ -3949,7 +3955,35 @@ fn dirRealPathPosix(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, out_b
         }
     };
     errdefer posix.close(fd);
+    return realPathPosix(current_thread, fd, out_buffer);
+}
 
+const dirRealPath = switch (native_os) {
+    .windows => dirRealPathWindows,
+    else => dirRealPathPosix,
+};
+
+fn dirRealPathPosix(userdata: ?*anyopaque, dir: Dir, out_buffer: []u8) Dir.RealPathError!usize {
+    if (native_os == .wasi) return error.OperationUnsupported;
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+    return realPathPosix(current_thread, dir.handle, out_buffer);
+}
+
+fn dirRealPathWindows(userdata: ?*anyopaque, dir: Dir, out_buffer: []u8) Dir.RealPathError!usize {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+    return realPathWindows(current_thread, dir.handle, out_buffer);
+}
+
+fn fileRealPath(userdata: ?*anyopaque, file: File, out_buffer: []u8) File.RealPathError!usize {
+    if (native_os == .wasi) return error.OperationUnsupported;
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+    return realPathPosix(current_thread, file.handle, out_buffer);
+}
+
+fn realPathPosix(current_thread: *Thread, fd: posix.fd_t, out_buffer: []u8) File.RealPathError!usize {
     switch (native_os) {
         .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => {
             // On macOS, we can use F.GETPATH fcntl command to query the OS for
@@ -4049,7 +4083,7 @@ fn dirRealPathPosix(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, out_b
             return len;
         },
         .netbsd, .dragonfly => {
-            @memset(out_buffer[0..max_path_bytes], 0);
+            @memset(out_buffer[0..Dir.max_path_bytes], 0);
             try current_thread.beginSyscall();
             while (true) {
                 switch (posix.errno(std.c.fcntl(fd, posix.F.GETPATH, out_buffer))) {
@@ -4077,7 +4111,7 @@ fn dirRealPathPosix(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, out_b
             }
             return std.mem.indexOfScalar(u8, &out_buffer, 0) orelse out_buffer.len;
         },
-        else => @compileError("unsupported OS"),
+        else => return error.OperationUnsupported,
     }
     comptime unreachable;
 }
@@ -5108,7 +5142,7 @@ fn posixFchmodat(
                         .NOENT => return error.FileNotFound,
                         .NOTDIR => return error.FileNotFound,
                         .NOMEM => return error.SystemResources,
-                        .OPNOTSUPP => return error.OperationNotSupported,
+                        .OPNOTSUPP => return error.OperationUnsupported,
                         .PERM => return error.PermissionDenied,
                         .ROFS => return error.ReadOnlyFileSystem,
                         else => |err| return posix.unexpectedErrno(err),
@@ -5144,7 +5178,7 @@ fn posixFchmodat(
                     .NOENT => return error.FileNotFound,
                     .NOMEM => return error.SystemResources,
                     .NOTDIR => return error.FileNotFound,
-                    .OPNOTSUPP => return error.OperationNotSupported,
+                    .OPNOTSUPP => return error.OperationUnsupported,
                     .PERM => return error.PermissionDenied,
                     .ROFS => return error.ReadOnlyFileSystem,
                     .NOSYS => {

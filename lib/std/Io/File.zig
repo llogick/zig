@@ -627,6 +627,55 @@ pub fn downgradeLock(file: File, io: Io) LockError!void {
     return io.vtable.fileDowngradeLock(io.userdata, file);
 }
 
+pub const RealPathError = error{
+    /// This operating system, file system, or `Io` implementation does not
+    /// support realpath operations.
+    OperationUnsupported,
+    /// The full file system path could not fit into the provided buffer, or
+    /// due to its length could not be obtained via realpath functions no
+    /// matter the buffer size provided.
+    NameTooLong,
+    FileNotFound,
+    AccessDenied,
+    PermissionDenied,
+    NotDir,
+    SymLinkLoop,
+    InputOutput,
+    FileTooBig,
+    IsDir,
+    ProcessFdQuotaExceeded,
+    SystemFdQuotaExceeded,
+    NoDevice,
+    SystemResources,
+    NoSpaceLeft,
+    FileSystem,
+    DeviceBusy,
+    SharingViolation,
+    PipeBusy,
+    /// On Windows, `\\server` or `\\server\share` was not found.
+    NetworkNotFound,
+    PathAlreadyExists,
+    /// On Windows, antivirus software is enabled by default. It can be
+    /// disabled, but Windows Update sometimes ignores the user's preference
+    /// and re-enables it. When enabled, antivirus software on Windows
+    /// intercepts file system operations and makes them significantly slower
+    /// in addition to possibly failing with this error code.
+    AntivirusInterference,
+    /// On Windows, the volume does not contain a recognized file system. File
+    /// system drivers might not be loaded, or the volume may be corrupt.
+    UnrecognizedVolume,
+} || Io.Cancelable || Io.UnexpectedError;
+
+/// Obtains the canonicalized absolute path name corresponding to an open file
+/// handle.
+///
+/// This function has limited platform support, and using it can lead to
+/// unnecessary failures and race conditions. It is generally advisable to
+/// avoid this function entirely.
+pub fn realPath(file: File, io: Io, out_buffer: []u8) RealPathError!usize {
+    return io.vtable.fileRealPath(io.userdata, file, out_buffer);
+}
+
 test {
     _ = Reader;
     _ = Writer;

@@ -4,6 +4,7 @@ const native_os = builtin.os.tag;
 const std = @import("../std.zig");
 const Io = std.Io;
 const mem = std.mem;
+const Allocator = std.mem.Allocator;
 const wasi = std.os.wasi;
 const windows = std.os.windows;
 const ArenaAllocator = std.heap.ArenaAllocator;
@@ -27,38 +28,57 @@ const PathType = enum {
     fn isSupported(self: PathType, target_os: std.Target.Os) bool {
         return switch (self) {
             .relative => true,
-            .absolute => target_os.tag == .windows, // TODO: implement getPathForHandle for other targets
+            .absolute => switch (target_os.tag) {
+                .windows,
+                .driverkit,
+                .ios,
+                .maccatalyst,
+                .macos,
+                .tvos,
+                .visionos,
+                .watchos,
+                .linux,
+                .illumos,
+                .freebsd,
+                .serenity,
+                => true,
+
+                .dragonfly => target_os.version_range.semver.max.order(.{ .major = 6, .minor = 0, .patch = 0 }) != .lt,
+                .netbsd => target_os.version_range.semver.max.order(.{ .major = 10, .minor = 0, .patch = 0 }) != .lt,
+                else => false,
+            },
             .unc => target_os.tag == .windows,
         };
     }
 
     const TransformError = Dir.RealPathError || error{OutOfMemory};
-    const TransformFn = fn (allocator: mem.Allocator, dir: Dir, relative_path: [:0]const u8) TransformError![:0]const u8;
+    const TransformFn = fn (Allocator, Io, Dir, relative_path: [:0]const u8) TransformError![:0]const u8;
 
     fn getTransformFn(comptime path_type: PathType) TransformFn {
         switch (path_type) {
             .relative => return struct {
-                fn transform(allocator: mem.Allocator, dir: Dir, relative_path: [:0]const u8) TransformError![:0]const u8 {
+                fn transform(allocator: Allocator, io: Io, dir: Dir, relative_path: [:0]const u8) TransformError![:0]const u8 {
                     _ = allocator;
+                    _ = io;
                     _ = dir;
                     return relative_path;
                 }
             }.transform,
             .absolute => return struct {
-                fn transform(allocator: mem.Allocator, dir: Dir, relative_path: [:0]const u8) TransformError![:0]const u8 {
+                fn transform(allocator: Allocator, io: Io, dir: Dir, relative_path: [:0]const u8) TransformError![:0]const u8 {
                     // The final path may not actually exist which would cause realpath to fail.
                     // So instead, we get the path of the dir and join it with the relative path.
                     var fd_path_buf: [Dir.max_path_bytes]u8 = undefined;
-                    const dir_path = try getPathForHandle(dir.handle, &fd_path_buf);
+                    const dir_path = fd_path_buf[0..try dir.realPath(io, &fd_path_buf)];
                     return Dir.path.joinZ(allocator, &.{ dir_path, relative_path });
                 }
             }.transform,
             .unc => return struct {
-                fn transform(allocator: mem.Allocator, dir: Dir, relative_path: [:0]const u8) TransformError![:0]const u8 {
+                fn transform(allocator: Allocator, io: Io, dir: Dir, relative_path: [:0]const u8) TransformError![:0]const u8 {
                     // Any drive absolute path (C:\foo) can be converted into a UNC path by
                     // using '127.0.0.1' as the server name and '<drive letter>$' as the share name.
                     var fd_path_buf: [Dir.max_path_bytes]u8 = undefined;
-                    const dir_path = try getPathForHandle(dir.handle, &fd_path_buf);
+                    const dir_path = fd_path_buf[0..try dir.realPath(io, &fd_path_buf)];
                     const windows_path_type = windows.getWin32PathType(u8, dir_path);
                     switch (windows_path_type) {
                         .unc_absolute => return Dir.path.joinZ(allocator, &.{ dir_path, relative_path }),
@@ -77,19 +97,6 @@ const PathType = enum {
     }
 };
 
-fn getPathForHandle(handle: File.Handle, out_buffer: *[Dir.max_path_bytes]u8) ![]u8 {
-    switch (native_os) {
-        .windows => {
-            var wide_buf: [windows.PATH_MAX_WIDE]u16 = undefined;
-            const wide_slice = try windows.GetFinalPathNameByHandle(handle, .{}, wide_buf[0..]);
-
-            const end_index = std.unicode.wtf16LeToWtf8(out_buffer, wide_slice);
-            return out_buffer[0..end_index];
-        },
-        else => @compileError("TODO or unsupported"),
-    }
-}
-
 const TestContext = struct {
     io: Io,
     path_type: PathType,
@@ -99,7 +106,7 @@ const TestContext = struct {
     dir: Dir,
     transform_fn: *const PathType.TransformFn,
 
-    pub fn init(path_type: PathType, path_sep: u8, allocator: mem.Allocator, transform_fn: *const PathType.TransformFn) TestContext {
+    pub fn init(path_type: PathType, path_sep: u8, allocator: Allocator, transform_fn: *const PathType.TransformFn) TestContext {
         const tmp = tmpDir(.{ .iterate = true });
         return .{
             .io = testing.io,
@@ -123,7 +130,7 @@ const TestContext = struct {
     /// `TestContext.deinit`.
     pub fn transformPath(self: *TestContext, relative_path: [:0]const u8) ![:0]const u8 {
         const allocator = self.arena.allocator();
-        const transformed_path = try self.transform_fn(allocator, self.dir, relative_path);
+        const transformed_path = try self.transform_fn(allocator, self.io, self.dir, relative_path);
         if (native_os == .windows) {
             const transformed_sep_path = try allocator.dupeZ(u8, transformed_path);
             std.mem.replaceScalar(u8, transformed_sep_path, switch (self.path_sep) {
@@ -268,7 +275,7 @@ fn testReadLink(io: Io, dir: Dir, target_path: []const u8, symlink_path: []const
     try expectEqualStrings(target_path, actual);
 }
 
-fn testReadLinkW(allocator: mem.Allocator, dir: Dir, target_path: []const u8, symlink_path: []const u8) !void {
+fn testReadLinkW(allocator: Allocator, dir: Dir, target_path: []const u8, symlink_path: []const u8) !void {
     const target_path_w = try std.unicode.wtf8ToWtf16LeAlloc(allocator, target_path);
     defer allocator.free(target_path_w);
     // Calling the W functions directly requires the path to be NT-prefixed
@@ -281,7 +288,7 @@ fn testReadLinkW(allocator: mem.Allocator, dir: Dir, target_path: []const u8, sy
 
 fn testReadLinkAbsolute(io: Io, target_path: []const u8, symlink_path: []const u8) !void {
     var buffer: [Dir.max_path_bytes]u8 = undefined;
-    const given = try Dir.readLinkAbsolute(io, symlink_path, buffer[0..]);
+    const given = buffer[0..try Dir.readLinkAbsolute(io, symlink_path, &buffer)];
     try expectEqualStrings(target_path, given);
 }
 
@@ -339,7 +346,7 @@ test "accessAbsolute" {
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
-    const base_path = try tmp.dir.realPathAlloc(io, ".", gpa);
+    const base_path = try tmp.dir.realPathFileAlloc(io, ".", gpa);
     defer gpa.free(base_path);
 
     try Dir.accessAbsolute(io, base_path, .{});
@@ -358,7 +365,7 @@ test "openDirAbsolute" {
     const tmp_ino = (try tmp.dir.stat(io)).inode;
 
     try tmp.dir.makeDir(io, "subdir", .default_dir);
-    const sub_path = try tmp.dir.realPathAlloc(io, "subdir", gpa);
+    const sub_path = try tmp.dir.realPathFileAlloc(io, "subdir", gpa);
     defer gpa.free(sub_path);
 
     // Can open sub_path
@@ -434,10 +441,10 @@ test "openDir non-cwd parent '..'" {
     var dir = try subdir.openDir(io, "..", .{});
     defer dir.close(io);
 
-    const expected_path = try tmp.dir.realPathAlloc(io, ".", gpa);
+    const expected_path = try tmp.dir.realPathFileAlloc(io, ".", gpa);
     defer gpa.free(expected_path);
 
-    const actual_path = try dir.realPathAlloc(io, ".", gpa);
+    const actual_path = try dir.realPathFileAlloc(io, ".", gpa);
     defer gpa.free(actual_path);
 
     try expectEqualStrings(expected_path, actual_path);
@@ -461,7 +468,7 @@ test "readLinkAbsolute" {
     defer arena_allocator.deinit();
     const arena = arena_allocator.allocator();
 
-    const base_path = try tmp.dir.realPathAlloc(io, ".", arena);
+    const base_path = try tmp.dir.realPathFileAlloc(io, ".", arena);
 
     {
         const target_path = try Dir.path.join(arena, &.{ base_path, "file.txt" });
@@ -647,11 +654,6 @@ test "Dir.Iterator but dir is deleted during iteration" {
     // Now, when we try to iterate, the next call should return null immediately.
     const entry = try iterator.next(io);
     try testing.expect(entry == null);
-
-    // On Linux, we can opt-in to receiving a more specific error by calling `nextLinux`
-    if (native_os == .linux) {
-        try expectError(error.DirNotFound, iterator.nextLinux());
-    }
 }
 
 fn entryEql(lhs: Dir.Entry, rhs: Dir.Entry) bool {
@@ -671,47 +673,41 @@ test "Dir.realPath smoke test" {
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {
             const io = ctx.io;
-            const allocator = ctx.arena.allocator();
+            const arena = ctx.arena.allocator();
             const test_file_path = try ctx.transformPath("test_file");
             const test_dir_path = try ctx.transformPath("test_dir");
             var buf: [Dir.max_path_bytes]u8 = undefined;
 
             // FileNotFound if the path doesn't exist
-            try expectError(error.FileNotFound, ctx.dir.realPathAlloc(io, test_file_path, allocator));
-            try expectError(error.FileNotFound, ctx.dir.realPath(io, test_file_path, &buf));
-            try expectError(error.FileNotFound, ctx.dir.realPathAlloc(io, test_dir_path, allocator));
-            try expectError(error.FileNotFound, ctx.dir.realPath(io, test_dir_path, &buf));
+            try expectError(error.FileNotFound, ctx.dir.realPathFileAlloc(io, test_file_path, arena));
+            try expectError(error.FileNotFound, ctx.dir.realPathFile(io, test_file_path, &buf));
+            try expectError(error.FileNotFound, ctx.dir.realPathFileAlloc(io, test_dir_path, arena));
+            try expectError(error.FileNotFound, ctx.dir.realPathFile(io, test_dir_path, &buf));
 
             // Now create the file and dir
             try ctx.dir.writeFile(io, .{ .sub_path = test_file_path, .data = "" });
             try ctx.dir.makeDir(io, test_dir_path, .default_dir);
 
             const base_path = try ctx.transformPath(".");
-            const base_realpath = try ctx.dir.realPathAlloc(io, base_path, allocator);
-            const expected_file_path = try Dir.path.join(
-                allocator,
-                &.{ base_realpath, "test_file" },
-            );
-            const expected_dir_path = try Dir.path.join(
-                allocator,
-                &.{ base_realpath, "test_dir" },
-            );
+            const base_realpath = try ctx.dir.realPathFileAlloc(io, base_path, arena);
+            const expected_file_path = try Dir.path.join(arena, &.{ base_realpath, "test_file" });
+            const expected_dir_path = try Dir.path.join(arena, &.{ base_realpath, "test_dir" });
 
             // First, test non-alloc version
             {
-                const file_path = try ctx.dir.realPath(io, test_file_path, &buf);
+                const file_path = buf[0..try ctx.dir.realPathFile(io, test_file_path, &buf)];
                 try expectEqualStrings(expected_file_path, file_path);
 
-                const dir_path = try ctx.dir.realPath(io, test_dir_path, &buf);
+                const dir_path = buf[0..try ctx.dir.realPathFile(io, test_dir_path, &buf)];
                 try expectEqualStrings(expected_dir_path, dir_path);
             }
 
             // Next, test alloc version
             {
-                const file_path = try ctx.dir.realPathAlloc(io, test_file_path, allocator);
+                const file_path = try ctx.dir.realPathFileAlloc(io, test_file_path, arena);
                 try expectEqualStrings(expected_file_path, file_path);
 
-                const dir_path = try ctx.dir.realPathAlloc(io, test_dir_path, allocator);
+                const dir_path = try ctx.dir.realPathFileAlloc(io, test_dir_path, arena);
                 try expectEqualStrings(expected_dir_path, dir_path);
             }
         }
@@ -1114,7 +1110,7 @@ test "renameAbsolute" {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const base_path = try tmp_dir.dir.realPathAlloc(io, ".", allocator);
+    const base_path = try tmp_dir.dir.realPathFileAlloc(io, ".", allocator);
 
     try expectError(error.FileNotFound, Dir.renameAbsolute(
         try Dir.path.join(allocator, &.{ base_path, "missing_file_name" }),
@@ -2022,7 +2018,7 @@ test "'.' and '..' in absolute functions" {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const base_path = try tmp.dir.realPathAlloc(io, ".", allocator);
+    const base_path = try tmp.dir.realPathFileAlloc(io, ".", allocator);
 
     const subdir_path = try Dir.path.join(allocator, &.{ base_path, "./subdir" });
     try Dir.makeDirAbsolute(io, subdir_path, .default_dir);
@@ -2140,8 +2136,8 @@ test "invalid UTF-8/WTF-8 paths" {
             try expectError(expected_err, ctx.dir.statFile(io, invalid_path, .{}));
 
             if (native_os != .wasi) {
-                try expectError(expected_err, ctx.dir.realPath(io, invalid_path, &[_]u8{}));
-                try expectError(expected_err, ctx.dir.realPathAlloc(io, invalid_path, testing.allocator));
+                try expectError(expected_err, ctx.dir.realPathFile(io, invalid_path, &[_]u8{}));
+                try expectError(expected_err, ctx.dir.realPathFileAlloc(io, invalid_path, testing.allocator));
             }
 
             try expectError(expected_err, Dir.rename(ctx.dir, invalid_path, ctx.dir, invalid_path, io));
@@ -2402,7 +2398,7 @@ test "fchmodat smoke test" {
 
     var test_link = true;
     tmp.dir.setFilePermissions(io, "symlink", .fromMode(0o600), .{ .follow_symlinks = false }) catch |err| switch (err) {
-        error.OperationNotSupported => test_link = false,
+        error.OperationUnsupported => test_link = false,
         else => |e| return e,
     };
     if (test_link) try expectMode(io, tmp.dir, "symlink", .fromMode(0o600));

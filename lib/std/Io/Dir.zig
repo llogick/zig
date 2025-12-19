@@ -766,95 +766,80 @@ pub fn statFile(dir: Dir, io: Io, sub_path: []const u8, options: StatFileOptions
     return io.vtable.dirStatFile(io.userdata, dir, sub_path, options);
 }
 
-pub const RealPathError = error{
-    FileNotFound,
-    AccessDenied,
-    PermissionDenied,
-    NotSupported,
-    NotDir,
-    SymLinkLoop,
-    InputOutput,
-    FileTooBig,
-    IsDir,
-    ProcessFdQuotaExceeded,
-    SystemFdQuotaExceeded,
-    NoDevice,
-    SystemResources,
-    NoSpaceLeft,
-    FileSystem,
-    DeviceBusy,
-    SharingViolation,
-    PipeBusy,
-    /// On Windows, `\\server` or `\\server\share` was not found.
-    NetworkNotFound,
-    PathAlreadyExists,
-    /// On Windows, antivirus software is enabled by default. It can be
-    /// disabled, but Windows Update sometimes ignores the user's preference
-    /// and re-enables it. When enabled, antivirus software on Windows
-    /// intercepts file system operations and makes them significantly slower
-    /// in addition to possibly failing with this error code.
-    AntivirusInterference,
-    /// On Windows, the volume does not contain a recognized file system. File
-    /// system drivers might not be loaded, or the volume may be corrupt.
-    UnrecognizedVolume,
-} || PathNameError || Io.Cancelable || Io.UnexpectedError;
+pub const RealPathError = File.RealPathError;
 
-/// This function returns the canonicalized absolute path name of `sub_path`
-/// relative to this `Dir`. If `sub_path` is absolute, ignores this `Dir`
-/// handle and returns the canonicalized absolute pathname of `sub_path`
-/// argument.
+/// Obtains the canonicalized absolute path name of `sub_path` relative to this
+/// `Dir`. If `sub_path` is absolute, ignores this `Dir` handle and obtains the
+/// canonicalized absolute pathname of `sub_path` argument.
 ///
-/// This function is not universally supported by all platforms, and using this
-/// function can lead to unnecessary failures and race conditions.
-///
-/// See also:
-/// * `realPathAlloc`.
-/// * `realPathAbsolute`.
-pub fn realPath(dir: Dir, io: Io, sub_path: []const u8, out_buffer: []u8) RealPathError!usize {
-    return io.vtable.dirRealPath(io.userdata, dir, sub_path, out_buffer);
+/// This function has limited platform support, and using it can lead to
+/// unnecessary failures and race conditions. It is generally advisable to
+/// avoid this function entirely.
+pub fn realPath(dir: Dir, io: Io, out_buffer: []u8) RealPathError!usize {
+    return io.vtable.dirRealPath(io.userdata, dir, out_buffer);
 }
 
-pub const RealPathAllocError = RealPathError || Allocator.Error;
+pub const RealPathFileError = RealPathError || PathNameError;
 
-/// Same as `realPath` except allocates result.
+/// Obtains the canonicalized absolute path name of `sub_path` relative to this
+/// `Dir`. If `sub_path` is absolute, ignores this `Dir` handle and obtains the
+/// canonicalized absolute pathname of `sub_path` argument.
 ///
-/// This function is not universally supported by all platforms, and using this
-/// function can lead to unnecessary failures and race conditions.
+/// This function has limited platform support, and using it can lead to
+/// unnecessary failures and race conditions. It is generally advisable to
+/// avoid this function entirely.
 ///
 /// See also:
-/// * `realPath`.
-/// * `realPathAbsolute`.
-pub fn realPathAlloc(dir: Dir, io: Io, sub_path: []const u8, allocator: Allocator) RealPathAllocError![:0]u8 {
+/// * `realPathFileAlloc`.
+/// * `realPathFileAbsolute`.
+pub fn realPathFile(dir: Dir, io: Io, sub_path: []const u8, out_buffer: []u8) RealPathFileError!usize {
+    return io.vtable.dirRealPathFile(io.userdata, dir, sub_path, out_buffer);
+}
+
+pub const RealPathFileAllocError = RealPathFileError || Allocator.Error;
+
+/// Same as `realPathFile` except allocates result.
+///
+/// This function has limited platform support, and using it can lead to
+/// unnecessary failures and race conditions. It is generally advisable to
+/// avoid this function entirely.
+///
+/// See also:
+/// * `realPathFile`.
+/// * `realPathFileAbsolute`.
+pub fn realPathFileAlloc(dir: Dir, io: Io, sub_path: []const u8, allocator: Allocator) RealPathFileAllocError![:0]u8 {
     var buffer: [max_path_bytes]u8 = undefined;
-    const n = try realPath(dir, io, sub_path, &buffer);
+    const n = try realPathFile(dir, io, sub_path, &buffer);
     return allocator.dupeZ(u8, buffer[0..n]);
 }
 
-/// Same as `realPath` except `absolute_path` is asserted to be an absolute
+/// Same as `realPathFile` except `absolute_path` is asserted to be an absolute
 /// path.
 ///
-/// This function is not universally supported by all platforms, and using this
-/// function can lead to unnecessary failures and race conditions.
+/// This function has limited platform support, and using it can lead to
+/// unnecessary failures and race conditions. It is generally advisable to
+/// avoid this function entirely.
 ///
 /// See also:
-/// * `realPath`.
-/// * `realPathAlloc`.
-pub fn realPathAbsolute(io: Io, absolute_path: []const u8, out_buffer: []u8) RealPathError!usize {
+/// * `realPathFile`.
+/// * `realPathFileAlloc`.
+pub fn realPathFileAbsolute(io: Io, absolute_path: []const u8, out_buffer: []u8) RealPathFileError!usize {
     assert(path.isAbsolute(absolute_path));
-    return io.vtable.dirRealPath(io.userdata, .cwd(), absolute_path, out_buffer);
+    return io.vtable.dirRealPathFile(io.userdata, .cwd(), absolute_path, out_buffer);
 }
 
-/// Same as `realPathAbsolute` except allocates result.
+/// Same as `realPathFileAbsolute` except allocates result.
 ///
-/// This function is not universally supported by all platforms, and using this
-/// function can lead to unnecessary failures and race conditions.
+/// This function has limited platform support, and using it can lead to
+/// unnecessary failures and race conditions. It is generally advisable to
+/// avoid this function entirely.
 ///
 /// See also:
-/// * `realPathAbsolute`.
-/// * `realPath`.
-pub fn realPathAbsoluteAlloc(io: Io, absolute_path: []const u8, allocator: Allocator) RealPathAllocError![:0]u8 {
+/// * `realPathFileAbsolute`.
+/// * `realPathFile`.
+pub fn realPathFileAbsoluteAlloc(io: Io, absolute_path: []const u8, allocator: Allocator) RealPathFileAllocError![:0]u8 {
     var buffer: [max_path_bytes]u8 = undefined;
-    const n = try realPathAbsolute(io, absolute_path, &buffer);
+    const n = try realPathFileAbsolute(io, absolute_path, &buffer);
     return allocator.dupeZ(u8, buffer[0..n]);
 }
 
@@ -1765,7 +1750,7 @@ pub const SetFilePermissionsError = PathNameError || SetPermissionsError || erro
     SystemFdQuotaExceeded,
     /// `SetFilePermissionsOptions.follow_symlinks` was set to false, which is
     /// not allowed by the file system or operating system.
-    OperationNotSupported,
+    OperationUnsupported,
 };
 
 pub const SetFilePermissionsOptions = struct {

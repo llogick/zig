@@ -670,7 +670,8 @@ pub const VTable = struct {
     dirOpenFile: *const fn (?*anyopaque, Dir, []const u8, File.OpenFlags) File.OpenError!File,
     dirClose: *const fn (?*anyopaque, []const Dir) void,
     dirRead: *const fn (?*anyopaque, *Dir.Reader, []Dir.Entry) Dir.Reader.Error!usize,
-    dirRealPath: *const fn (?*anyopaque, Dir, path_name: []const u8, out_buffer: []u8) Dir.RealPathError!usize,
+    dirRealPath: *const fn (?*anyopaque, Dir, out_buffer: []u8) Dir.RealPathError!usize,
+    dirRealPathFile: *const fn (?*anyopaque, Dir, path_name: []const u8, out_buffer: []u8) Dir.RealPathFileError!usize,
     dirDeleteFile: *const fn (?*anyopaque, Dir, []const u8) Dir.DeleteFileError!void,
     dirDeleteDir: *const fn (?*anyopaque, Dir, []const u8) Dir.DeleteDirError!void,
     dirRename: *const fn (?*anyopaque, old_dir: Dir, old_sub_path: []const u8, new_dir: Dir, new_sub_path: []const u8) Dir.RenameError!void,
@@ -709,6 +710,7 @@ pub const VTable = struct {
     fileTryLock: *const fn (?*anyopaque, File, File.Lock) File.LockError!bool,
     fileUnlock: *const fn (?*anyopaque, File) void,
     fileDowngradeLock: *const fn (?*anyopaque, File) File.DowngradeLockError!void,
+    fileRealPath: *const fn (?*anyopaque, File, out_buffer: []u8) File.RealPathError!usize,
 
     processExecutableOpen: *const fn (?*anyopaque, File.OpenFlags) std.process.OpenExecutableError!File,
     processExecutablePath: *const fn (?*anyopaque, buffer: []u8) std.process.ExecutablePathError!usize,

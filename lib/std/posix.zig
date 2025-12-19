@@ -1527,7 +1527,7 @@ pub fn bind(sock: socket_t, addr: *const sockaddr, len: socklen_t) BindError!voi
 
 pub const ListenError = error{
     FileDescriptorNotASocket,
-    OperationNotSupported,
+    OperationUnsupported,
 } || std.Io.net.IpAddress.ListenError || std.Io.net.UnixAddress.ListenError;
 
 pub fn listen(sock: socket_t, backlog: u31) ListenError!void {
@@ -1540,7 +1540,7 @@ pub fn listen(sock: socket_t, backlog: u31) ListenError!void {
             .ADDRINUSE => return error.AddressInUse,
             .BADF => unreachable,
             .NOTSOCK => return error.FileDescriptorNotASocket,
-            .OPNOTSUPP => return error.OperationNotSupported,
+            .OPNOTSUPP => return error.OperationUnsupported,
             else => |err| return unexpectedErrno(err),
         }
     }
@@ -2202,7 +2202,7 @@ pub const FanotifyMarkError = error{
     SystemResources,
     UserMarkQuotaExceeded,
     NotDir,
-    OperationNotSupported,
+    OperationUnsupported,
     PermissionDenied,
     NotSameFileSystem,
     NameTooLong,
@@ -2242,7 +2242,7 @@ pub fn fanotify_markZ(
         .NOMEM => return error.SystemResources,
         .NOSPC => return error.UserMarkQuotaExceeded,
         .NOTDIR => return error.NotDir,
-        .OPNOTSUPP => return error.OperationNotSupported,
+        .OPNOTSUPP => return error.OperationUnsupported,
         .PERM => return error.PermissionDenied,
         .XDEV => return error.NotSameFileSystem,
         else => |err| return unexpectedErrno(err),
@@ -3466,7 +3466,7 @@ pub const SetSockOptError = error{
     /// Setting the socket option requires more elevated permissions.
     PermissionDenied,
 
-    OperationNotSupported,
+    OperationUnsupported,
     NetworkDown,
     FileDescriptorNotASocket,
     SocketNotBound,
@@ -3502,7 +3502,7 @@ pub fn setsockopt(fd: socket_t, level: i32, optname: u32, opt: []const u8) SetSo
             .NOBUFS => return error.SystemResources,
             .PERM => return error.PermissionDenied,
             .NODEV => return error.NoDevice,
-            .OPNOTSUPP => return error.OperationNotSupported,
+            .OPNOTSUPP => return error.OperationUnsupported,
             else => |err| return unexpectedErrno(err),
         }
     }
@@ -3712,7 +3712,7 @@ pub const PrctlError = error{
     /// or PR_MPX_DISABLE_MANAGEMENT
     UnsupportedFeature,
     /// Can only occur with PR_SET_FP_MODE
-    OperationNotSupported,
+    OperationUnsupported,
     PermissionDenied,
 } || UnexpectedError;
 
@@ -3736,7 +3736,7 @@ pub fn prctl(option: PR, args: anytype) PrctlError!u31 {
         .FAULT => return error.InvalidAddress,
         .INVAL => unreachable,
         .NODEV, .NXIO => return error.UnsupportedFeature,
-        .OPNOTSUPP => return error.OperationNotSupported,
+        .OPNOTSUPP => return error.OperationUnsupported,
         .PERM, .BUSY => return error.PermissionDenied,
         .RANGE => unreachable,
         else => |err| return unexpectedErrno(err),
@@ -3995,7 +3995,7 @@ pub const PtraceError = error{
     DeviceBusy,
     InputOutput,
     NameTooLong,
-    OperationNotSupported,
+    OperationUnsupported,
     OutOfMemory,
     ProcessNotFound,
     PermissionDenied,
@@ -4097,7 +4097,7 @@ pub fn ptrace(request: u32, pid: pid_t, addr: usize, data: usize) PtraceError!vo
             .INVAL => unreachable,
             .PERM => error.PermissionDenied,
             .BUSY => error.DeviceBusy,
-            .NOTSUP => error.OperationNotSupported,
+            .NOTSUP => error.OperationUnsupported,
             else => |err| return unexpectedErrno(err),
         },
 
@@ -4108,7 +4108,7 @@ pub fn ptrace(request: u32, pid: pid_t, addr: usize, data: usize) PtraceError!vo
 pub const NameToFileHandleAtError = error{
     FileNotFound,
     NotDir,
-    OperationNotSupported,
+    OperationUnsupported,
     NameTooLong,
     Unexpected,
 };
@@ -4137,7 +4137,7 @@ pub fn name_to_handle_atZ(
         .INVAL => unreachable, // bad flags, or handle_bytes too big
         .NOENT => return error.FileNotFound,
         .NOTDIR => return error.NotDir,
-        .OPNOTSUPP => return error.OperationNotSupported,
+        .OPNOTSUPP => return error.OperationUnsupported,
         .OVERFLOW => return error.NameTooLong,
         else => |err| return unexpectedErrno(err),
     }

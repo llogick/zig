@@ -3620,6 +3620,8 @@ pub const GetFinalPathNameByHandleFormat = struct {
 /// NT or DOS volume name (e.g., `\Device\HarddiskVolume0\foo.txt` versus `C:\foo.txt`).
 /// If DOS volume name format is selected, note that this function does *not* prepend
 /// `\\?\` prefix to the resultant path.
+///
+/// TODO move this function into std.Io.Threaded and add cancelation checks
 pub fn GetFinalPathNameByHandle(
     hFile: HANDLE,
     fmt: GetFinalPathNameByHandleFormat,

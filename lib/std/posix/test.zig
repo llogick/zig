@@ -503,7 +503,7 @@ test "rename smoke test" {
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
-    const base_path = try tmp.dir.realPathAlloc(io, ".", gpa);
+    const base_path = try tmp.dir.realPathFileAlloc(io, ".", gpa);
     defer gpa.free(base_path);
 
     const mode: posix.mode_t = if (native_os == .windows) 0 else 0o666;
