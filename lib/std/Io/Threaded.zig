@@ -2168,7 +2168,7 @@ fn fileStatWindows(userdata: ?*anyopaque, file: File) File.StatError!File.Stat {
         .atime = windows.fromSysTime(info.BasicInformation.LastAccessTime),
         .mtime = windows.fromSysTime(info.BasicInformation.LastWriteTime),
         .ctime = windows.fromSysTime(info.BasicInformation.ChangeTime),
-        .nlink = {},
+        .nlink = 0,
     };
 }
 
@@ -3763,7 +3763,7 @@ fn dirReadWindows(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) D
                 null,
                 &io_status_block,
                 unreserved_buffer.ptr,
-                std.math.cast(w.ULONG, unreserved_buffer.len) orelse std.math.maxInt(w.ULONG),
+                std.math.lossyCast(w.ULONG, unreserved_buffer.len),
                 .BothDirectory,
                 w.FALSE,
                 null,

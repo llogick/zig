@@ -2842,7 +2842,7 @@ test "discarding sendFile" {
     try file_writer.interface.writeByte('h');
     try file_writer.interface.flush();
 
-    var file_reader = file_writer.moveToReader(io);
+    var file_reader = file_writer.moveToReader();
     try file_reader.seekTo(0);
 
     var w_buffer: [256]u8 = undefined;
@@ -2864,7 +2864,7 @@ test "allocating sendFile" {
     try file_writer.interface.writeAll("abcd");
     try file_writer.interface.flush();
 
-    var file_reader = file_writer.moveToReader(io);
+    var file_reader = file_writer.moveToReader();
     try file_reader.seekTo(0);
     try file_reader.interface.fill(2);
 
@@ -2888,7 +2888,7 @@ test sendFileReading {
     try file_writer.interface.writeAll("abcd");
     try file_writer.interface.flush();
 
-    var file_reader = file_writer.moveToReader(io);
+    var file_reader = file_writer.moveToReader();
     try file_reader.seekTo(0);
     try file_reader.interface.fill(2);
 

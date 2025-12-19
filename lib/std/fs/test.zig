@@ -24,7 +24,7 @@ const PathType = enum {
     absolute,
     unc,
 
-    pub fn isSupported(self: PathType, target_os: std.Target.Os) bool {
+    fn isSupported(self: PathType, target_os: std.Target.Os) bool {
         return switch (self) {
             .relative => true,
             .absolute => target_os.tag == .windows, // TODO: implement getPathForHandle for other targets
@@ -32,10 +32,10 @@ const PathType = enum {
         };
     }
 
-    pub const TransformError = Dir.RealPathError || error{OutOfMemory};
-    pub const TransformFn = fn (allocator: mem.Allocator, dir: Dir, relative_path: [:0]const u8) TransformError![:0]const u8;
+    const TransformError = Dir.RealPathError || error{OutOfMemory};
+    const TransformFn = fn (allocator: mem.Allocator, dir: Dir, relative_path: [:0]const u8) TransformError![:0]const u8;
 
-    pub fn getTransformFn(comptime path_type: PathType) TransformFn {
+    fn getTransformFn(comptime path_type: PathType) TransformFn {
         switch (path_type) {
             .relative => return struct {
                 fn transform(allocator: mem.Allocator, dir: Dir, relative_path: [:0]const u8) TransformError![:0]const u8 {
@@ -1623,7 +1623,7 @@ test "copyFile" {
             try ctx.dir.copyFile(src_file, ctx.dir, dest_file, io, .{});
             defer ctx.dir.deleteFile(io, dest_file) catch {};
 
-            try ctx.dir.copyFile(src_file, ctx.dir, dest_file2, io, .{ .permissions = .default_file });
+            try ctx.dir.copyFile(src_file, ctx.dir, dest_file2, io, .{});
             defer ctx.dir.deleteFile(io, dest_file2) catch {};
 
             try expectFileContents(io, ctx.dir, dest_file, data);
@@ -1740,12 +1740,7 @@ test "open file with exclusive lock twice, make sure second lock waits" {
             var started: std.Thread.ResetEvent = .unset;
             var locked: std.Thread.ResetEvent = .unset;
 
-            const t = try std.Thread.spawn(.{}, S.checkFn, .{
-                ctx,
-                filename,
-                &started,
-                &locked,
-            });
+            const t = try std.Thread.spawn(.{}, S.checkFn, .{ ctx, filename, &started, &locked });
             defer t.join();
 
             // Wait for the spawned thread to start trying to acquire the exclusive file lock.
