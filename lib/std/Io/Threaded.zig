@@ -947,6 +947,16 @@ const have_fchmodat2 = native_os == .linux and
 const have_fchmodat_flags = native_os != .linux or
     (!builtin.abi.isAndroid() and std.c.versionCheck(.{ .major = 2, .minor = 32, .patch = 0 }));
 
+const have_fchown = switch (native_os) {
+    .wasi, .windows => false,
+    else => true,
+};
+
+const have_fchmod = switch (native_os) {
+    .wasi, .windows => false,
+    else => true,
+};
+
 const openat_sym = if (posix.lfs64_abi) posix.system.openat64 else posix.system.openat;
 const fstat_sym = if (posix.lfs64_abi) posix.system.fstat64 else posix.system.fstat;
 const fstatat_sym = if (posix.lfs64_abi) posix.system.fstatat64 else posix.system.fstatat;
@@ -1480,6 +1490,7 @@ fn futexWaitUncancelable(userdata: ?*anyopaque, ptr: *const u32, expected: u32) 
 }
 
 fn futexWake(userdata: ?*anyopaque, ptr: *const u32, max_waiters: u32) void {
+    if (builtin.single_threaded) unreachable; // Nothing to wake up.
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     _ = t;
     switch (native_os) {
@@ -4190,7 +4201,6 @@ fn dirDeleteFileWasi(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8) Dir.
                     .NOTDIR => return error.NotDir,
                     .NOMEM => return error.SystemResources,
                     .ROFS => return error.ReadOnlyFileSystem,
-                    .NOTEMPTY => return error.DirNotEmpty,
                     .NOTCAPABLE => return error.AccessDenied,
                     .ILSEQ => return error.BadPathName,
                     .INVAL => |err| return errnoBug(err), // invalid flags, or pathname has . as last component
@@ -4464,7 +4474,6 @@ fn dirDeleteDirWasi(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8) Dir.D
                     .BUSY => return error.FileBusy,
                     .FAULT => |err| return errnoBug(err),
                     .IO => return error.FileSystem,
-                    .ISDIR => return error.IsDir,
                     .LOOP => return error.SymLinkLoop,
                     .NAMETOOLONG => return error.NameTooLong,
                     .NOENT => return error.FileNotFound,
@@ -4877,14 +4886,14 @@ fn dirSymLinkWindows(
     @memcpy(buffer[@sizeOf(SYMLINK_DATA)..][0 .. final_target_path.len * 2], @as([*]const u8, @ptrCast(final_target_path)));
     const paths_start = @sizeOf(SYMLINK_DATA) + final_target_path.len * 2;
     @memcpy(buffer[paths_start..][0 .. final_target_path.len * 2], @as([*]const u8, @ptrCast(final_target_path)));
-    _ = w.DeviceIoControl(symlink_handle, w.FSCTL.SET_REPARSE_POINT, .{ .in = buffer[0..buf_len] }) catch |err| switch (err) {
-        error.PipeClosing => unreachable,
-        error.PipeAlreadyConnected => unreachable,
-        error.PipeAlreadyListening => unreachable,
-        error.Pending => unreachable,
-        error.UnrecognizedVolume => unreachable,
-        else => |e| return e,
-    };
+    const rc = w.DeviceIoControl(symlink_handle, w.FSCTL.SET_REPARSE_POINT, .{ .in = buffer[0..buf_len] });
+    switch (rc) {
+        .SUCCESS => {},
+        .PRIVILEGE_NOT_HELD => return error.PermissionDenied,
+        .ACCESS_DENIED => return error.AccessDenied,
+        .INVALID_DEVICE_REQUEST => return error.FileSystem,
+        else => return windows.unexpectedStatus(rc),
+    }
 }
 
 fn dirSymLinkWasi(
@@ -4894,7 +4903,7 @@ fn dirSymLinkWasi(
     sym_link_path: []const u8,
     flags: Dir.SymLinkFlags,
 ) Dir.SymLinkError!void {
-    if (builtin.link_libc) return dirSymLinkPosix(dir, target_path, sym_link_path, flags);
+    if (builtin.link_libc) return dirSymLinkPosix(userdata, dir, target_path, sym_link_path, flags);
 
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
@@ -5021,7 +5030,7 @@ fn dirReadLinkWasi(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, buffer
         switch (std.os.wasi.path_readlink(dir.handle, sub_path.ptr, sub_path.len, buffer.ptr, buffer.len, &n)) {
             .SUCCESS => {
                 current_thread.endSyscall();
-                return buffer[0..n];
+                return n;
             },
             .CANCELED => return current_thread.endSyscallCanceled(),
             .INTR => {
@@ -5104,6 +5113,7 @@ fn dirSetPermissionsWindows(userdata: ?*anyopaque, dir: Dir, permissions: Dir.Pe
 }
 
 fn dirSetPermissionsPosix(userdata: ?*anyopaque, dir: Dir, permissions: Dir.Permissions) Dir.SetPermissionsError!void {
+    if (@sizeOf(Dir.Permissions) == 0) return;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
     return setPermissionsPosix(current_thread, dir.handle, permissions.toMode());
@@ -5116,7 +5126,7 @@ fn dirSetFilePermissions(
     permissions: Dir.Permissions,
     options: Dir.SetFilePermissionsOptions,
 ) Dir.SetFilePermissionsError!void {
-    if (!Dir.Permissions.has_executable_bit) return error.Unexpected;
+    if (@sizeOf(Dir.Permissions) == 0) return;
     if (is_windows) @panic("TODO");
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
@@ -5250,14 +5260,16 @@ fn dirSetOwnerUnsupported(userdata: ?*anyopaque, dir: Dir, owner: ?File.Uid, gro
 }
 
 fn dirSetOwnerPosix(userdata: ?*anyopaque, dir: Dir, owner: ?File.Uid, group: ?File.Gid) Dir.SetOwnerError!void {
+    if (!have_fchown) return error.Unexpected; // Unsupported OS, don't call this function.
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
     const uid = owner orelse ~@as(posix.uid_t, 0);
     const gid = group orelse ~@as(posix.gid_t, 0);
-    return setOwnerPosix(current_thread, dir.handle, uid, gid);
+    return posixFchown(current_thread, dir.handle, uid, gid);
 }
 
-fn setOwnerPosix(current_thread: *Thread, fd: posix.fd_t, uid: posix.uid_t, gid: posix.gid_t) File.SetOwnerError!void {
+fn posixFchown(current_thread: *Thread, fd: posix.fd_t, uid: posix.uid_t, gid: posix.gid_t) File.SetOwnerError!void {
+    comptime assert(have_fchown);
     try current_thread.beginSyscall();
     while (true) {
         switch (posix.errno(posix.system.fchown(fd, uid, gid))) {
@@ -5296,12 +5308,9 @@ fn dirSetFileOwner(
     group: ?File.Gid,
     options: Dir.SetFileOwnerOptions,
 ) Dir.SetFileOwnerError!void {
+    if (!have_fchown) return error.Unexpected; // Unsupported OS, don't call this function.
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
-
-    if (is_windows) {
-        @panic("TODO");
-    }
 
     var path_buffer: [posix.PATH_MAX]u8 = undefined;
     const sub_path_posix = try pathToPosix(sub_path, &path_buffer);
@@ -5317,6 +5326,7 @@ fn dirSetFileOwner(
 
 const fileSync = switch (native_os) {
     .windows => fileSyncWindows,
+    .wasi => fileSyncWasi,
     else => fileSyncPosix,
 };
 
@@ -5344,6 +5354,34 @@ fn fileSyncPosix(userdata: ?*anyopaque, file: File) File.SyncError!void {
     try current_thread.beginSyscall();
     while (true) {
         switch (posix.errno(posix.system.fsync(file.handle))) {
+            .SUCCESS => return current_thread.endSyscall(),
+            .CANCELED => return current_thread.endSyscallCanceled(),
+            .INTR => {
+                try current_thread.checkCancel();
+                continue;
+            },
+            else => |e| {
+                current_thread.endSyscall();
+                switch (e) {
+                    .BADF => |err| return errnoBug(err),
+                    .INVAL => |err| return errnoBug(err),
+                    .ROFS => |err| return errnoBug(err),
+                    .IO => return error.InputOutput,
+                    .NOSPC => return error.NoSpaceLeft,
+                    .DQUOT => return error.DiskQuota,
+                    else => |err| return posix.unexpectedErrno(err),
+                }
+            },
+        }
+    }
+}
+
+fn fileSyncWasi(userdata: ?*anyopaque, file: File) File.SyncError!void {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+    try current_thread.beginSyscall();
+    while (true) {
+        switch (std.os.wasi.fd_sync(file.handle)) {
             .SUCCESS => return current_thread.endSyscall(),
             .CANCELED => return current_thread.endSyscallCanceled(),
             .INTR => {
@@ -5659,18 +5697,16 @@ fn fileSetLength(userdata: ?*anyopaque, file: File, length: u64) File.SetLengthE
 }
 
 fn fileSetOwner(userdata: ?*anyopaque, file: File, owner: ?File.Uid, group: ?File.Gid) File.SetOwnerError!void {
-    switch (native_os) {
-        .windows, .wasi => return error.Unexpected,
-        else => {},
-    }
+    if (!have_fchown) return error.Unexpected; // Unsupported OS, don't call this function.
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
     const uid = owner orelse ~@as(posix.uid_t, 0);
     const gid = group orelse ~@as(posix.gid_t, 0);
-    return setOwnerPosix(current_thread, file.handle, uid, gid);
+    return posixFchown(current_thread, file.handle, uid, gid);
 }
 
 fn fileSetPermissions(userdata: ?*anyopaque, file: File, permissions: File.Permissions) File.SetPermissionsError!void {
+    if (@sizeOf(File.Permissions) == 0) return;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
     switch (native_os) {
@@ -5704,6 +5740,7 @@ fn fileSetPermissions(userdata: ?*anyopaque, file: File, permissions: File.Permi
 }
 
 fn setPermissionsPosix(current_thread: *Thread, fd: posix.fd_t, mode: posix.mode_t) File.SetPermissionsError!void {
+    comptime assert(have_fchmod);
     try current_thread.beginSyscall();
     while (true) {
         switch (posix.errno(posix.system.fchmod(fd, mode))) {
@@ -5987,6 +6024,7 @@ const windows_lock_range_off: windows.LARGE_INTEGER = 0;
 const windows_lock_range_len: windows.LARGE_INTEGER = 1;
 
 fn fileLock(userdata: ?*anyopaque, file: File, lock: File.Lock) File.LockError!void {
+    if (native_os == .wasi) return error.FileLocksUnsupported;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
@@ -6066,6 +6104,7 @@ fn fileLock(userdata: ?*anyopaque, file: File, lock: File.Lock) File.LockError!v
 }
 
 fn fileTryLock(userdata: ?*anyopaque, file: File, lock: File.Lock) File.LockError!bool {
+    if (native_os == .wasi) return error.FileLocksUnsupported;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
@@ -6150,6 +6189,7 @@ fn fileTryLock(userdata: ?*anyopaque, file: File, lock: File.Lock) File.LockErro
 }
 
 fn fileUnlock(userdata: ?*anyopaque, file: File) void {
+    if (native_os == .wasi) return;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     _ = t;
 
@@ -6186,6 +6226,7 @@ fn fileUnlock(userdata: ?*anyopaque, file: File) void {
 }
 
 fn fileDowngradeLock(userdata: ?*anyopaque, file: File) File.DowngradeLockError!void {
+    if (native_os == .wasi) return;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
@@ -7072,7 +7113,7 @@ fn processExecutablePath(userdata: ?*anyopaque, out_buffer: []u8) std.process.Ex
             const end_index = std.unicode.wtf16LeToWtf8(out_buffer, wide_slice);
             return end_index;
         },
-        else => @compileError("unsupported OS"),
+        else => return error.OperationUnsupported,
     }
 }
 
@@ -10034,7 +10075,10 @@ fn netWriteUnavailable(
 
 /// This is either usize or u32. Since, either is fine, let's use the same
 /// `addBuf` function for both writing to a file and sending network messages.
-const iovlen_t = @FieldType(posix.msghdr_const, "iovlen");
+const iovlen_t = switch (native_os) {
+    .wasi => u32,
+    else => @FieldType(posix.msghdr_const, "iovlen"),
+};
 
 fn addBuf(v: []posix.iovec_const, i: *iovlen_t, bytes: []const u8) void {
     // OS checks ptr addr before length so zero length vectors must be omitted.
@@ -10775,8 +10819,9 @@ fn statFromPosix(st: *const posix.Stat) File.Stat {
 fn statFromWasi(st: *const std.os.wasi.filestat_t) File.Stat {
     return .{
         .inode = st.ino,
+        .nlink = st.nlink,
         .size = @bitCast(st.size),
-        .mode = 0,
+        .permissions = .default_file,
         .kind = switch (st.filetype) {
             .BLOCK_DEVICE => .block_device,
             .CHARACTER_DEVICE => .character_device,

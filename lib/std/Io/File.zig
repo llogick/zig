@@ -429,7 +429,7 @@ pub const Permissions = std.options.FilePermissions orelse if (is_windows) enum(
     executable_file = 0o777,
     _,
 
-    pub const has_executable_bit = true;
+    pub const has_executable_bit = native_os != .wasi;
 
     pub fn toMode(self: @This()) std.posix.mode_t {
         return @intFromEnum(self);

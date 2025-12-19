@@ -498,8 +498,8 @@ pub fn start(io: Io, options: Options) Node {
             if (stderr.enableAnsiEscapeCodes(io)) |_| {
                 global_progress.terminal_mode = .ansi_escape_codes;
             } else |_| if (is_windows) {
-                if (stderr.isTty(io)) {
-                    global_progress.terminal_mode = TerminalMode{ .windows_api = .{
+                if (stderr.isTty(io)) |is_tty| {
+                    if (is_tty) global_progress.terminal_mode = TerminalMode{ .windows_api = .{
                         .code_page = windows.kernel32.GetConsoleOutputCP(),
                     } };
                 } else |err| switch (err) {

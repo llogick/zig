@@ -2121,7 +2121,9 @@ pub fn fatal(comptime format: []const u8, format_arguments: anytype) noreturn {
 pub const ExecutablePathBaseError = error{
     FileNotFound,
     AccessDenied,
-    NotSupported,
+    /// The operating system does not support an executable learning its own
+    /// path.
+    OperationUnsupported,
     NotDir,
     SymLinkLoop,
     InputOutput,
