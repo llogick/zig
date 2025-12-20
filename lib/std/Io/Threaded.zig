@@ -216,13 +216,6 @@ const Thread = struct {
         ) orelse return;
     }
 
-    fn endSyscallCanceled(thread: *Thread) Io.Cancelable {
-        if (thread.current_closure) |closure| {
-            @atomicStore(CancelStatus, &closure.cancel_status, .acknowledged, .release);
-        }
-        return error.Canceled;
-    }
-
     fn currentSignalId() SignaleeId {
         return if (std.Thread.use_pthreads) std.c.pthread_self() else std.Thread.getCurrentId();
     }
@@ -1531,7 +1524,6 @@ fn dirCreateDirPosix(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, perm
                 try current_thread.checkCancel();
                 continue;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
@@ -1574,7 +1566,6 @@ fn dirCreateDirWasi(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, permi
                 try current_thread.checkCancel();
                 continue;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
@@ -1875,7 +1866,6 @@ fn dirStatFileLinux(
                 try current_thread.checkCancel();
                 continue;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
@@ -1925,7 +1915,6 @@ fn posixStatFile(current_thread: *Thread, dir_fd: posix.fd_t, sub_path: [:0]cons
                 try current_thread.checkCancel();
                 continue;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
@@ -1986,7 +1975,6 @@ fn dirStatFileWasi(
                 try current_thread.checkCancel();
                 continue;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
@@ -2026,7 +2014,6 @@ fn fileLength(userdata: ?*anyopaque, file: File) File.LengthError!u64 {
                     try current_thread.checkCancel();
                     continue;
                 },
-                .CANCELED => return current_thread.endSyscallCanceled(),
                 else => |e| {
                     current_thread.endSyscall();
                     switch (e) {
@@ -2077,7 +2064,6 @@ fn fileStatPosix(userdata: ?*anyopaque, file: File) File.StatError!File.Stat {
                 try current_thread.checkCancel();
                 continue;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
@@ -2130,7 +2116,6 @@ fn fileStatLinux(userdata: ?*anyopaque, file: File) File.StatError!File.Stat {
                 try current_thread.checkCancel();
                 continue;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
@@ -2215,7 +2200,6 @@ fn fileStatWasi(userdata: ?*anyopaque, file: File) File.StatError!File.Stat {
                 try current_thread.checkCancel();
                 continue;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
@@ -2267,7 +2251,6 @@ fn dirAccessPosix(
                 try current_thread.checkCancel();
                 continue;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
@@ -2317,7 +2300,6 @@ fn dirAccessWasi(
                 try current_thread.checkCancel();
                 continue;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
@@ -2464,7 +2446,6 @@ fn dirCreateFilePosix(
                 try current_thread.checkCancel();
                 continue;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
@@ -2519,7 +2500,6 @@ fn dirCreateFilePosix(
                     try current_thread.checkCancel();
                     continue;
                 },
-                .CANCELED => return current_thread.endSyscallCanceled(),
                 else => |e| {
                     current_thread.endSyscall();
                     switch (e) {
@@ -2686,7 +2666,6 @@ fn dirCreateFileWasi(
                 try current_thread.checkCancel();
                 continue;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
@@ -2783,7 +2762,6 @@ fn dirOpenFilePosix(
                 try current_thread.checkCancel();
                 continue;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
@@ -2849,7 +2827,6 @@ fn dirOpenFilePosix(
                     try current_thread.checkCancel();
                     continue;
                 },
-                .CANCELED => return current_thread.endSyscallCanceled(),
                 else => |e| {
                     current_thread.endSyscall();
                     switch (e) {
@@ -2878,7 +2855,6 @@ fn dirOpenFilePosix(
                     try current_thread.checkCancel();
                     continue;
                 },
-                .CANCELED => return current_thread.endSyscallCanceled(),
                 else => |err| {
                     current_thread.endSyscall();
                     return posix.unexpectedErrno(err);
@@ -2899,7 +2875,6 @@ fn dirOpenFilePosix(
                     try current_thread.checkCancel();
                     continue;
                 },
-                .CANCELED => return current_thread.endSyscallCanceled(),
                 else => |err| {
                     current_thread.endSyscall();
                     return posix.unexpectedErrno(err);
@@ -3104,7 +3079,6 @@ fn dirOpenFileWasi(
                 try current_thread.checkCancel();
                 continue;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
@@ -3203,7 +3177,6 @@ fn dirOpenDirPosix(
                 try current_thread.checkCancel();
                 continue;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
@@ -3256,7 +3229,6 @@ fn dirOpenDirHaiku(
                 try current_thread.checkCancel();
                 continue;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
@@ -3398,7 +3370,6 @@ fn dirReadLinux(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Dir
                         try current_thread.checkCancel();
                         continue;
                     },
-                    .CANCELED => return current_thread.endSyscallCanceled(),
                     else => |e| {
                         current_thread.endSyscall();
                         switch (e) {
@@ -3508,7 +3479,6 @@ fn dirReadDarwin(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Di
                         try current_thread.checkCancel();
                         continue;
                     },
-                    .CANCELED => return current_thread.endSyscallCanceled(),
                     else => |e| {
                         current_thread.endSyscall();
                         switch (e) {
@@ -3585,7 +3555,6 @@ fn dirReadBsd(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Dir.R
                         try current_thread.checkCancel();
                         continue;
                     },
-                    .CANCELED => return current_thread.endSyscallCanceled(),
                     else => |e| {
                         current_thread.endSyscall();
                         switch (e) {
@@ -3680,7 +3649,6 @@ fn dirReadIllumos(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) D
                         try current_thread.checkCancel();
                         continue;
                     },
-                    .CANCELED => return current_thread.endSyscallCanceled(),
                     else => |e| {
                         current_thread.endSyscall();
                         switch (e) {
@@ -3957,7 +3925,6 @@ fn dirRealPathFilePosix(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, o
                 try current_thread.checkCancel();
                 continue;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
@@ -4045,7 +4012,6 @@ fn realPathPosix(current_thread: *Thread, fd: posix.fd_t, out_buffer: []u8) File
                         try current_thread.checkCancel();
                         continue;
                     },
-                    .CANCELED => return current_thread.endSyscallCanceled(),
                     else => |e| {
                         current_thread.endSyscall();
                         switch (e) {
@@ -4082,7 +4048,6 @@ fn realPathPosix(current_thread: *Thread, fd: posix.fd_t, out_buffer: []u8) File
                         try current_thread.checkCancel();
                         continue;
                     },
-                    .CANCELED => return current_thread.endSyscallCanceled(),
                     else => |e| {
                         current_thread.endSyscall();
                         switch (e) {
@@ -4115,7 +4080,6 @@ fn realPathPosix(current_thread: *Thread, fd: posix.fd_t, out_buffer: []u8) File
                         try current_thread.checkCancel();
                         continue;
                     },
-                    .CANCELED => return current_thread.endSyscallCanceled(),
                     else => |e| {
                         current_thread.endSyscall();
                         switch (e) {
@@ -4163,7 +4127,6 @@ fn dirDeleteFileWasi(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8) Dir.
                 try current_thread.checkCancel();
                 continue;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
@@ -4208,7 +4171,6 @@ fn dirDeleteFilePosix(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8) Dir
                 try current_thread.checkCancel();
                 continue;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             // Some systems return permission errors when trying to delete a
             // directory, so we need to handle that case specifically and
             // translate the error.
@@ -4225,7 +4187,6 @@ fn dirDeleteFilePosix(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8) Dir
                                 break;
                             },
                             .INTR => continue,
-                            .CANCELED => return current_thread.endSyscallCanceled(),
                             else => {
                                 current_thread.endSyscall();
                                 return error.PermissionDenied;
@@ -4443,7 +4404,6 @@ fn dirDeleteDirWasi(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8) Dir.D
                 try current_thread.checkCancel();
                 continue;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
@@ -4488,7 +4448,6 @@ fn dirDeleteDirPosix(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8) Dir.
                 try current_thread.checkCancel();
                 continue;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
@@ -4654,7 +4613,6 @@ fn dirRenameWasi(
     while (true) {
         switch (std.os.wasi.path_rename(old_dir.handle, old_sub_path.ptr, old_sub_path.len, new_dir.handle, new_sub_path.ptr, new_sub_path.len)) {
             .SUCCESS => return current_thread.endSyscall(),
-            .CANCELED => return current_thread.endSyscallCanceled(),
             .INTR => {
                 try current_thread.checkCancel();
                 continue;
@@ -4709,7 +4667,6 @@ fn dirRenamePosix(
     while (true) {
         switch (posix.errno(posix.system.renameat(old_dir.handle, old_sub_path_posix, new_dir.handle, new_sub_path_posix))) {
             .SUCCESS => return current_thread.endSyscall(),
-            .CANCELED => return current_thread.endSyscallCanceled(),
             .INTR => {
                 try current_thread.checkCancel();
                 continue;
@@ -4890,7 +4847,6 @@ fn dirSymLinkWasi(
     while (true) {
         switch (std.os.wasi.path_symlink(target_path.ptr, target_path.len, dir.handle, sym_link_path.ptr, sym_link_path.len)) {
             .SUCCESS => return current_thread.endSyscall(),
-            .CANCELED => return current_thread.endSyscallCanceled(),
             .INTR => {
                 try current_thread.checkCancel();
                 continue;
@@ -4943,7 +4899,6 @@ fn dirSymLinkPosix(
     while (true) {
         switch (posix.errno(posix.system.symlinkat(target_path_posix, dir.handle, sym_link_path_posix))) {
             .SUCCESS => return current_thread.endSyscall(),
-            .CANCELED => return current_thread.endSyscallCanceled(),
             .INTR => {
                 try current_thread.checkCancel();
                 continue;
@@ -5010,7 +4965,6 @@ fn dirReadLinkWasi(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, buffer
                 current_thread.endSyscall();
                 return n;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             .INTR => {
                 try current_thread.checkCancel();
                 continue;
@@ -5052,7 +5006,6 @@ fn dirReadLinkPosix(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, buffe
                 const len: usize = @bitCast(rc);
                 return len;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             .INTR => {
                 try current_thread.checkCancel();
                 continue;
@@ -5137,7 +5090,6 @@ fn posixFchmodat(
                 posix.system.fchmodat(dir_fd, path, mode);
             switch (posix.errno(rc)) {
                 .SUCCESS => return current_thread.endSyscall(),
-                .CANCELED => return current_thread.endSyscallCanceled(),
                 .INTR => {
                     try current_thread.checkCancel();
                     continue;
@@ -5176,7 +5128,6 @@ fn posixFchmodat(
     while (true) {
         switch (std.os.linux.errno(std.os.linux.fchmodat2(dir_fd, path, mode, flags))) {
             .SUCCESS => return current_thread.endSyscall(),
-            .CANCELED => return current_thread.endSyscallCanceled(),
             .INTR => {
                 try current_thread.checkCancel();
                 continue;
@@ -5252,7 +5203,6 @@ fn posixFchown(current_thread: *Thread, fd: posix.fd_t, uid: posix.uid_t, gid: p
     while (true) {
         switch (posix.errno(posix.system.fchown(fd, uid, gid))) {
             .SUCCESS => return current_thread.endSyscall(),
-            .CANCELED => return current_thread.endSyscallCanceled(),
             .INTR => {
                 try current_thread.checkCancel();
                 continue;
@@ -5333,7 +5283,6 @@ fn fileSyncPosix(userdata: ?*anyopaque, file: File) File.SyncError!void {
     while (true) {
         switch (posix.errno(posix.system.fsync(file.handle))) {
             .SUCCESS => return current_thread.endSyscall(),
-            .CANCELED => return current_thread.endSyscallCanceled(),
             .INTR => {
                 try current_thread.checkCancel();
                 continue;
@@ -5361,7 +5310,6 @@ fn fileSyncWasi(userdata: ?*anyopaque, file: File) File.SyncError!void {
     while (true) {
         switch (std.os.wasi.fd_sync(file.handle)) {
             .SUCCESS => return current_thread.endSyscall(),
-            .CANCELED => return current_thread.endSyscallCanceled(),
             .INTR => {
                 try current_thread.checkCancel();
                 continue;
@@ -5405,7 +5353,6 @@ fn isTty(current_thread: *Thread, file: File) Io.Cancelable!bool {
                     current_thread.endSyscall();
                     return true;
                 },
-                .CANCELED => return current_thread.endSyscallCanceled(),
                 .INTR => {
                     try current_thread.checkCancel();
                     continue;
@@ -5445,7 +5392,6 @@ fn isTty(current_thread: *Thread, file: File) Io.Cancelable!bool {
                     current_thread.endSyscall();
                     return true;
                 },
-                .CANCELED => return current_thread.endSyscallCanceled(),
                 .INTR => {
                     try current_thread.checkCancel();
                     continue;
@@ -5627,7 +5573,6 @@ fn fileSetLength(userdata: ?*anyopaque, file: File, length: u64) File.SetLengthE
         while (true) {
             switch (std.os.wasi.fd_filestat_set_size(file.handle, length)) {
                 .SUCCESS => return current_thread.endSyscall(),
-                .CANCELED => return current_thread.endSyscallCanceled(),
                 .INTR => {
                     try current_thread.checkCancel();
                     continue;
@@ -5653,7 +5598,6 @@ fn fileSetLength(userdata: ?*anyopaque, file: File, length: u64) File.SetLengthE
     while (true) {
         switch (posix.errno(ftruncate_sym(file.handle, signed_len))) {
             .SUCCESS => return current_thread.endSyscall(),
-            .CANCELED => return current_thread.endSyscallCanceled(),
             .INTR => {
                 try current_thread.checkCancel();
                 continue;
@@ -5723,7 +5667,6 @@ fn setPermissionsPosix(current_thread: *Thread, fd: posix.fd_t, mode: posix.mode
     while (true) {
         switch (posix.errno(posix.system.fchmod(fd, mode))) {
             .SUCCESS => return current_thread.endSyscall(),
-            .CANCELED => return current_thread.endSyscallCanceled(),
             .INTR => {
                 try current_thread.checkCancel();
                 continue;
@@ -5782,7 +5725,6 @@ fn dirSetTimestamps(
     while (true) {
         switch (posix.errno(posix.system.utimensat(dir.handle, sub_path_posix, &times, flags))) {
             .SUCCESS => return current_thread.endSyscall(),
-            .CANCELED => return current_thread.endSyscallCanceled(),
             .INTR => {
                 try current_thread.checkCancel();
                 continue;
@@ -5829,7 +5771,6 @@ fn dirSetTimestampsNow(
     while (true) {
         switch (posix.errno(posix.system.utimensat(dir.handle, sub_path_posix, null, flags))) {
             .SUCCESS => return current_thread.endSyscall(),
-            .CANCELED => return current_thread.endSyscallCanceled(),
             .INTR => {
                 try current_thread.checkCancel();
                 continue;
@@ -5890,7 +5831,6 @@ fn fileSetTimestamps(
                 .MTIM = true,
             })) {
                 .SUCCESS => return current_thread.endSyscall(),
-                .CANCELED => return current_thread.endSyscallCanceled(),
                 .INTR => {
                     try current_thread.checkCancel();
                     continue;
@@ -5915,7 +5855,6 @@ fn fileSetTimestamps(
     while (true) {
         switch (posix.errno(posix.system.futimens(file.handle, &times))) {
             .SUCCESS => return current_thread.endSyscall(),
-            .CANCELED => return current_thread.endSyscallCanceled(),
             .INTR => {
                 try current_thread.checkCancel();
                 continue;
@@ -5952,7 +5891,6 @@ fn fileSetTimestampsNow(userdata: ?*anyopaque, file: File) File.SetTimestampsErr
                 .MTIM_NOW = true,
             })) {
                 .SUCCESS => return current_thread.endSyscall(),
-                .CANCELED => return current_thread.endSyscallCanceled(),
                 .INTR => {
                     try current_thread.checkCancel();
                     continue;
@@ -5977,7 +5915,6 @@ fn fileSetTimestampsNow(userdata: ?*anyopaque, file: File) File.SetTimestampsErr
     while (true) {
         switch (posix.errno(posix.system.futimens(file.handle, null))) {
             .SUCCESS => return current_thread.endSyscall(),
-            .CANCELED => return current_thread.endSyscallCanceled(),
             .INTR => {
                 try current_thread.checkCancel();
                 continue;
@@ -6061,7 +5998,6 @@ fn fileLock(userdata: ?*anyopaque, file: File, lock: File.Lock) File.LockError!v
     while (true) {
         switch (posix.errno(posix.system.flock(file.handle, operation))) {
             .SUCCESS => return current_thread.endSyscall(),
-            .CANCELED => return current_thread.endSyscallCanceled(),
             .INTR => {
                 try current_thread.checkCancel();
                 continue;
@@ -6143,7 +6079,6 @@ fn fileTryLock(userdata: ?*anyopaque, file: File, lock: File.Lock) File.LockErro
                 current_thread.endSyscall();
                 return true;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             .INTR => {
                 try current_thread.checkCancel();
                 continue;
@@ -6259,7 +6194,6 @@ fn fileDowngradeLock(userdata: ?*anyopaque, file: File) File.DowngradeLockError!
                 current_thread.endSyscall();
                 return;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             .INTR => {
                 try current_thread.checkCancel();
                 continue;
@@ -6328,7 +6262,6 @@ fn dirOpenDirWasi(
                 try current_thread.checkCancel();
                 continue;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
@@ -6387,7 +6320,6 @@ fn dirHardLink(
                     try current_thread.checkCancel();
                     continue;
                 },
-                .CANCELED => return current_thread.endSyscallCanceled(),
                 else => |e| {
                     current_thread.endSyscall();
                     switch (e) {
@@ -6437,7 +6369,6 @@ fn dirHardLink(
                 try current_thread.checkCancel();
                 continue;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
@@ -6506,7 +6437,6 @@ fn fileReadStreamingPosix(userdata: ?*anyopaque, file: File, data: []const []u8)
                     try current_thread.checkCancel();
                     continue;
                 },
-                .CANCELED => return current_thread.endSyscallCanceled(),
                 else => |e| {
                     current_thread.endSyscall();
                     switch (e) {
@@ -6540,7 +6470,6 @@ fn fileReadStreamingPosix(userdata: ?*anyopaque, file: File, data: []const []u8)
                 try current_thread.checkCancel();
                 continue;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
@@ -6627,7 +6556,6 @@ fn fileReadPositionalPosix(userdata: ?*anyopaque, file: File, data: []const []u8
                     try current_thread.checkCancel();
                     continue;
                 },
-                .CANCELED => return current_thread.endSyscallCanceled(),
                 else => |e| {
                     current_thread.endSyscall();
                     switch (e) {
@@ -6665,7 +6593,6 @@ fn fileReadPositionalPosix(userdata: ?*anyopaque, file: File, data: []const []u8
                 try current_thread.checkCancel();
                 continue;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
@@ -6759,7 +6686,6 @@ fn fileSeekBy(userdata: ?*anyopaque, file: File, offset: i64) File.SeekError!voi
                     try current_thread.checkCancel();
                     continue;
                 },
-                .CANCELED => return current_thread.endSyscallCanceled(),
                 else => |e| {
                     current_thread.endSyscall();
                     switch (e) {
@@ -6793,7 +6719,6 @@ fn fileSeekBy(userdata: ?*anyopaque, file: File, offset: i64) File.SeekError!voi
                     try current_thread.checkCancel();
                     continue;
                 },
-                .CANCELED => return current_thread.endSyscallCanceled(),
                 else => |e| {
                     current_thread.endSyscall();
                     switch (e) {
@@ -6823,7 +6748,6 @@ fn fileSeekBy(userdata: ?*anyopaque, file: File, offset: i64) File.SeekError!voi
                 try current_thread.checkCancel();
                 continue;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
@@ -6862,7 +6786,6 @@ fn fileSeekTo(userdata: ?*anyopaque, file: File, offset: u64) File.SeekError!voi
                     try current_thread.checkCancel();
                     continue;
                 },
-                .CANCELED => return current_thread.endSyscallCanceled(),
                 else => |e| {
                     current_thread.endSyscall();
                     switch (e) {
@@ -6898,7 +6821,6 @@ fn posixSeekTo(current_thread: *Thread, fd: posix.fd_t, offset: u64) File.SeekEr
                     try current_thread.checkCancel();
                     continue;
                 },
-                .CANCELED => return current_thread.endSyscallCanceled(),
                 else => |e| {
                     current_thread.endSyscall();
                     switch (e) {
@@ -6925,7 +6847,6 @@ fn posixSeekTo(current_thread: *Thread, fd: posix.fd_t, offset: u64) File.SeekEr
                 try current_thread.checkCancel();
                 continue;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
@@ -7011,7 +6932,6 @@ fn processExecutablePath(userdata: ?*anyopaque, out_buffer: []u8) std.process.Ex
                         try current_thread.checkCancel();
                         continue;
                     },
-                    .CANCELED => return current_thread.endSyscallCanceled(),
                     else => |e| {
                         current_thread.endSyscall();
                         switch (e) {
@@ -7040,7 +6960,6 @@ fn processExecutablePath(userdata: ?*anyopaque, out_buffer: []u8) std.process.Ex
                         try current_thread.checkCancel();
                         continue;
                     },
-                    .CANCELED => return current_thread.endSyscallCanceled(),
                     else => |e| {
                         current_thread.endSyscall();
                         switch (e) {
@@ -7194,7 +7113,6 @@ fn fileWritePositional(
                     try current_thread.checkCancel();
                     continue;
                 },
-                .CANCELED => return current_thread.endSyscallCanceled(),
                 else => |e| {
                     current_thread.endSyscall();
                     switch (e) {
@@ -7232,7 +7150,6 @@ fn fileWritePositional(
                 try current_thread.checkCancel();
                 continue;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
@@ -7316,7 +7233,6 @@ fn fileWriteStreaming(
                     try current_thread.checkCancel();
                     continue;
                 },
-                .CANCELED => return current_thread.endSyscallCanceled(),
                 else => |e| {
                     current_thread.endSyscall();
                     switch (e) {
@@ -7351,7 +7267,6 @@ fn fileWriteStreaming(
                 try current_thread.checkCancel();
                 continue;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
@@ -7619,7 +7534,6 @@ fn fileWriteFileStreaming(
                     try current_thread.checkCancel();
                     continue;
                 },
-                .CANCELED => return current_thread.endSyscallCanceled(),
                 else => |e| {
                     current_thread.endSyscall();
                     assert(error.Unexpected == switch (e) {
@@ -7692,7 +7606,6 @@ fn fileWriteFileStreaming(
                             try current_thread.checkCancel();
                             continue;
                         },
-                        .CANCELED => return current_thread.endSyscallCanceled(),
                         .OPNOTSUPP, .INVAL, .NOSYS => {
                             // Give calling code chance to observe before trying
                             // something else.
@@ -7869,7 +7782,6 @@ fn fileWriteFilePositional(
                             try current_thread.checkCancel();
                             continue;
                         },
-                        .CANCELED => return current_thread.endSyscallCanceled(),
                         .OPNOTSUPP, .INVAL, .NOSYS => {
                             // Give calling code chance to observe before trying
                             // something else.
@@ -8098,7 +8010,6 @@ fn sleepLinux(userdata: ?*anyopaque, timeout: Io.Timeout) Io.SleepError!void {
                 try current_thread.checkCancel();
                 continue;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
@@ -8176,7 +8087,6 @@ fn sleepPosix(userdata: ?*anyopaque, timeout: Io.Timeout) Io.SleepError!void {
                 try current_thread.checkCancel();
                 continue;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             // This prong handles success as well as unexpected errors.
             else => return current_thread.endSyscall(),
         }
@@ -8250,7 +8160,6 @@ fn netListenIpPosix(
                 try current_thread.checkCancel();
                 continue;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
@@ -8414,7 +8323,6 @@ fn netListenUnixPosix(
                 try current_thread.checkCancel();
                 continue;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
@@ -8538,7 +8446,6 @@ fn posixBindUnix(
                 try current_thread.checkCancel();
                 continue;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
@@ -8583,7 +8490,6 @@ fn posixBind(
                 try current_thread.checkCancel();
                 continue;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
@@ -8619,7 +8525,6 @@ fn posixConnect(
                 try current_thread.checkCancel();
                 continue;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
@@ -8666,7 +8571,6 @@ fn posixConnectUnix(
                 try current_thread.checkCancel();
                 continue;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
@@ -8711,7 +8615,6 @@ fn posixGetSockName(
                 try current_thread.checkCancel();
                 continue;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
@@ -8779,7 +8682,6 @@ fn setSocketOption(current_thread: *Thread, fd: posix.fd_t, level: i32, opt_name
                 try current_thread.checkCancel();
                 continue;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
@@ -9109,7 +9011,6 @@ fn openSocketPosix(
                     switch (posix.errno(posix.system.fcntl(fd, posix.F.SETFD, @as(usize, posix.FD_CLOEXEC)))) {
                         .SUCCESS => break,
                         .INTR => continue,
-                        .CANCELED => return current_thread.endSyscallCanceled(),
                         else => |err| {
                             current_thread.endSyscall();
                             return posix.unexpectedErrno(err);
@@ -9123,7 +9024,6 @@ fn openSocketPosix(
                 try current_thread.checkCancel();
                 continue;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
@@ -9225,7 +9125,6 @@ fn netAcceptPosix(userdata: ?*anyopaque, listen_fd: net.Socket.Handle) net.Serve
                 try current_thread.checkCancel();
                 continue;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
@@ -9334,7 +9233,6 @@ fn netReadPosix(userdata: ?*anyopaque, fd: net.Socket.Handle, data: [][]u8) net.
                     try current_thread.checkCancel();
                     continue;
                 },
-                .CANCELED => return current_thread.endSyscallCanceled(),
                 else => |e| {
                     current_thread.endSyscall();
                     switch (e) {
@@ -9367,7 +9265,6 @@ fn netReadPosix(userdata: ?*anyopaque, fd: net.Socket.Handle, data: [][]u8) net.
                 try current_thread.checkCancel();
                 continue;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
@@ -9603,7 +9500,6 @@ fn netSendOne(
                 try current_thread.checkCancel();
                 continue;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
@@ -9680,7 +9576,6 @@ fn netSendMany(
                 try current_thread.checkCancel();
                 continue;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
@@ -9813,7 +9708,6 @@ fn netReceivePosix(
                         continue :recv;
                     },
                     .INTR => continue,
-                    .CANCELED => return .{ current_thread.endSyscallCanceled(), message_i },
 
                     .FAULT => |err| return .{ errnoBug(err), message_i },
                     .INVAL => |err| return .{ errnoBug(err), message_i },
@@ -9822,7 +9716,6 @@ fn netReceivePosix(
                 }
             },
             .INTR => continue,
-            .CANCELED => return .{ current_thread.endSyscallCanceled(), message_i },
 
             .BADF => |err| return .{ errnoBug(err), message_i },
             .NFILE => return .{ error.SystemFdQuotaExceeded, message_i },
@@ -9942,7 +9835,6 @@ fn netWritePosix(
                 try current_thread.checkCancel();
                 continue;
             },
-            .CANCELED => return current_thread.endSyscallCanceled(),
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
@@ -10040,8 +9932,7 @@ fn netWriteWindows(
             else => |err| err,
         };
         switch (wsa_error) {
-            .EINTR => continue,
-            .ECANCELLED, .E_CANCELLED, .OPERATION_ABORTED => return current_thread.endSyscallCanceled(),
+            .EINTR, .ECANCELLED, .E_CANCELLED, .OPERATION_ABORTED => continue,
             .NOTINITIALISED => {
                 try initializeWsa(t);
                 continue;
@@ -10160,7 +10051,6 @@ fn netInterfaceNameResolve(
                     try current_thread.checkCancel();
                     continue;
                 },
-                .CANCELED => return current_thread.endSyscallCanceled(),
                 else => |e| {
                     current_thread.endSyscall();
                     switch (e) {
@@ -10464,7 +10354,6 @@ fn netLookupFallible(
                         try current_thread.checkCancel();
                         continue;
                     },
-                    .CANCELED => return current_thread.endSyscallCanceled(),
                     else => |e| {
                         current_thread.endSyscall();
                         return posix.unexpectedErrno(e);
