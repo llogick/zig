@@ -6780,8 +6780,8 @@ fn fileReadStreamingWindows(userdata: ?*anyopaque, file: File, data: []const []u
 
     const DWORD = windows.DWORD;
     var index: usize = 0;
-    while (data[index].len == 0) index += 1;
-    if (index == 0) return 0;
+    while (index < data.len and data[index].len == 0) index += 1;
+    if (index == data.len) return 0;
     const buffer = data[index];
     const want_read_count: DWORD = @min(std.math.maxInt(DWORD), buffer.len);
 
@@ -6912,8 +6912,8 @@ fn fileReadPositionalWindows(userdata: ?*anyopaque, file: File, data: []const []
     const DWORD = windows.DWORD;
 
     var index: usize = 0;
-    while (data[index].len == 0) index += 1;
-    if (index == 0) return 0;
+    while (index < data.len and data[index].len == 0) index += 1;
+    if (index == data.len) return 0;
     const buffer = data[index];
     const want_read_count: DWORD = @min(std.math.maxInt(DWORD), buffer.len);
 
