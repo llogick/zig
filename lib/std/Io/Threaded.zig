@@ -2091,7 +2091,7 @@ fn fileStatLinux(userdata: ?*anyopaque, file: File) File.StatError!File.Stat {
     try current_thread.beginSyscall();
     while (true) {
         var statx = std.mem.zeroes(linux.Statx);
-        const rc = sys.statx(
+        switch (sys.errno(sys.statx(
             file.handle,
             "",
             linux.AT.EMPTY_PATH,
@@ -2106,8 +2106,7 @@ fn fileStatLinux(userdata: ?*anyopaque, file: File) File.StatError!File.Stat {
                 .NLINK = true,
             },
             &statx,
-        );
-        switch (sys.errno(rc)) {
+        ))) {
             .SUCCESS => {
                 current_thread.endSyscall();
                 return statFromLinux(&statx);
@@ -5120,7 +5119,7 @@ fn posixFchmodat(
     }
 
     if (@atomicLoad(UseFchmodat2, &t.use_fchmodat2, .monotonic) == .disabled)
-        return fchmodatFallback(current_thread, dir_fd, path, mode, flags);
+        return fchmodatFallback(current_thread, dir_fd, path, mode);
 
     comptime assert(native_os == .linux);
 
@@ -5149,7 +5148,7 @@ fn posixFchmodat(
                     .ROFS => return error.ReadOnlyFileSystem,
                     .NOSYS => {
                         @atomicStore(UseFchmodat2, &t.use_fchmodat2, .disabled, .monotonic);
-                        return fchmodatFallback(current_thread, dir_fd, path, mode, flags);
+                        return fchmodatFallback(current_thread, dir_fd, path, mode);
                     },
                     else => |err| return posix.unexpectedErrno(err),
                 }
@@ -5163,16 +5162,114 @@ fn fchmodatFallback(
     dir_fd: posix.fd_t,
     path: [*:0]const u8,
     mode: posix.mode_t,
-    flags: u32,
 ) Dir.SetFilePermissionsError!void {
-    _ = current_thread;
-    _ = dir_fd;
-    _ = path;
-    _ = mode;
-    _ = flags;
-    // I deleted the previous fallback implementation because it looked wrong to me. Please cross-reference
-    // fhmodat.c in musl libc before blindly restoring the implementation.
-    @panic("TODO");
+    comptime assert(native_os == .linux);
+    const use_c = std.c.versionCheck(if (builtin.abi.isAndroid())
+        .{ .major = 30, .minor = 0, .patch = 0 }
+    else
+        .{ .major = 2, .minor = 28, .patch = 0 });
+    const sys = if (use_c) std.c else std.os.linux;
+
+    // Fallback to changing permissions using procfs:
+    //
+    // 1. Open `path` as a `PATH` descriptor.
+    // 2. Stat the fd and check if it isn't a symbolic link.
+    // 3. Generate the procfs reference to the fd via `/proc/self/fd/{fd}`.
+    // 4. Pass the procfs path to `chmod` with the `mode`.
+    try current_thread.beginSyscall();
+    const path_fd: posix.fd_t = while (true) {
+        const rc = posix.system.openat(dir_fd, path, .{
+            .PATH = true,
+            .NOFOLLOW = true,
+            .CLOEXEC = true,
+        }, @as(posix.mode_t, 0));
+        switch (posix.errno(rc)) {
+            .SUCCESS => {
+                current_thread.endSyscall();
+                break @intCast(rc);
+            },
+            .INTR => {
+                try current_thread.checkCancel();
+                continue;
+            },
+            else => |e| {
+                current_thread.endSyscall();
+                switch (e) {
+                    .FAULT => |err| return errnoBug(err),
+                    .INVAL => |err| return errnoBug(err),
+                    .ACCES => return error.AccessDenied,
+                    .PERM => return error.PermissionDenied,
+                    .LOOP => return error.SymLinkLoop,
+                    .MFILE => return error.ProcessFdQuotaExceeded,
+                    .NAMETOOLONG => return error.NameTooLong,
+                    .NFILE => return error.SystemFdQuotaExceeded,
+                    .NOENT => return error.FileNotFound,
+                    .NOMEM => return error.SystemResources,
+                    else => |err| return posix.unexpectedErrno(err),
+                }
+            },
+        }
+    };
+    defer posix.close(path_fd);
+
+    try current_thread.beginSyscall();
+    const path_mode = while (true) {
+        var statx = std.mem.zeroes(std.os.linux.Statx);
+        switch (sys.errno(sys.statx(path_fd, "", posix.AT.EMPTY_PATH, .{ .TYPE = true }, &statx))) {
+            .SUCCESS => {
+                current_thread.endSyscall();
+                assert(statx.mask.TYPE);
+                break statx.mode;
+            },
+            .INTR => {
+                try current_thread.checkCancel();
+                continue;
+            },
+            else => |e| {
+                current_thread.endSyscall();
+                switch (e) {
+                    .ACCES => return error.AccessDenied,
+                    .LOOP => return error.SymLinkLoop,
+                    .NOMEM => return error.SystemResources,
+                    else => |err| return posix.unexpectedErrno(err),
+                }
+            },
+        }
+    };
+
+    // Even though we only wanted TYPE, the kernel can still fill in the additional bits.
+    if ((path_mode & posix.S.IFMT) == posix.S.IFLNK)
+        return error.OperationUnsupported;
+
+    var procfs_buf: ["/proc/self/fd/-2147483648\x00".len]u8 = undefined;
+    const proc_path = std.fmt.bufPrintSentinel(&procfs_buf, "/proc/self/fd/{d}", .{path_fd}, 0) catch unreachable;
+    try current_thread.beginSyscall();
+    while (true) {
+        switch (posix.errno(posix.system.chmod(proc_path, mode))) {
+            .SUCCESS => return current_thread.endSyscall(),
+            .INTR => {
+                try current_thread.checkCancel();
+                continue;
+            },
+            else => |e| {
+                current_thread.endSyscall();
+                switch (e) {
+                    .NOENT => return error.OperationUnsupported, // procfs not mounted.
+                    .BADF => |err| return errnoBug(err),
+                    .FAULT => |err| return errnoBug(err),
+                    .INVAL => |err| return errnoBug(err),
+                    .ACCES => return error.AccessDenied,
+                    .IO => return error.InputOutput,
+                    .LOOP => return error.SymLinkLoop,
+                    .NOMEM => return error.SystemResources,
+                    .NOTDIR => return error.FileNotFound,
+                    .PERM => return error.PermissionDenied,
+                    .ROFS => return error.ReadOnlyFileSystem,
+                    else => |err| return posix.unexpectedErrno(err),
+                }
+            },
+        }
+    }
 }
 
 const dirSetOwner = switch (native_os) {
