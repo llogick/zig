@@ -106,6 +106,8 @@ pub const Reader = struct {
         .linux => std.mem.alignForward(usize, @sizeOf(std.os.linux.dirent64), 8) +
             std.mem.alignForward(usize, max_name_bytes, 8),
         .windows => std.mem.alignForward(usize, max_name_bytes, @alignOf(usize)),
+        .wasi => @sizeOf(std.os.wasi.dirent_t) +
+            std.mem.alignForward(usize, max_name_bytes, @alignOf(std.os.wasi.dirent_t)),
         else => if (builtin.link_libc) @sizeOf(std.c.dirent) else std.mem.alignForward(usize, max_name_bytes, @alignOf(usize)),
     };
 

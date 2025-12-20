@@ -3378,7 +3378,7 @@ fn dirReadLinux(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Dir
                             // To be consistent across platforms, iteration
                             // ends if the directory being iterated is deleted
                             // during iteration. This matches the behavior of
-                            // non-Linux UNIX platforms.
+                            // non-Linux, non-WASI UNIX platforms.
                             .NOENT => {
                                 dr.state = .finished;
                                 return 0;
@@ -3481,7 +3481,7 @@ fn dirReadDarwin(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Di
                     else => |e| {
                         current_thread.endSyscall();
                         switch (e) {
-                            .BADF => |err| return errnoBug(err), // Dir is invalid or was opened without iteration ability
+                            .BADF => |err| return errnoBug(err), // Dir is invalid or was opened without iteration ability.
                             .FAULT => |err| return errnoBug(err),
                             .NOTDIR => |err| return errnoBug(err),
                             .INVAL => |err| return errnoBug(err),
@@ -3839,10 +3839,109 @@ fn dirReadWindows(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) D
 }
 
 fn dirReadWasi(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Dir.Reader.Error!usize {
-    _ = userdata;
-    _ = dr;
-    _ = buffer;
-    @panic("TODO");
+    // We intentinally use fd_readdir even when linked with libc, since its
+    // implementation is exactly the same as below, and we avoid the code
+    // complexity here.
+    const wasi = std.os.wasi;
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+    const Header = extern struct {
+        cookie: u64,
+    };
+    const header: *align(@alignOf(usize)) Header = @ptrCast(dr.buffer.ptr);
+    const header_end: usize = @sizeOf(Header);
+    if (dr.index < header_end) {
+        // Initialize header.
+        dr.index = header_end;
+        dr.end = header_end;
+        header.* = .{ .cookie = wasi.DIRCOOKIE_START };
+    }
+    var buffer_index: usize = 0;
+    while (buffer.len - buffer_index != 0) {
+        // According to the WASI spec, the last entry might be truncated, so we
+        // need to check if the remaining buffer contains the whole dirent.
+        if (dr.end - dr.index < @sizeOf(wasi.dirent_t)) {
+            // Refill the buffer, unless we've already created references to
+            // buffered data.
+            if (buffer_index != 0) break;
+            if (dr.state == .reset) {
+                header.* = .{ .cookie = wasi.DIRCOOKIE_START };
+                dr.state = .reading;
+            }
+            const dents_buffer = dr.buffer[header_end..];
+            var n: usize = undefined;
+            try current_thread.beginSyscall();
+            while (true) {
+                switch (wasi.fd_readdir(dr.dir.handle, dents_buffer.ptr, dents_buffer.len, header.cookie, &n)) {
+                    .SUCCESS => {
+                        current_thread.endSyscall();
+                        break;
+                    },
+                    .INTR => {
+                        try current_thread.checkCancel();
+                        continue;
+                    },
+                    else => |e| {
+                        current_thread.endSyscall();
+                        switch (e) {
+                            .BADF => |err| return errnoBug(err), // Dir is invalid or was opened without iteration ability.
+                            .FAULT => |err| return errnoBug(err),
+                            .NOTDIR => |err| return errnoBug(err),
+                            .INVAL => |err| return errnoBug(err),
+                            // To be consistent across platforms, iteration
+                            // ends if the directory being iterated is deleted
+                            // during iteration. This matches the behavior of
+                            // non-Linux, non-WASI UNIX platforms.
+                            .NOENT => {
+                                dr.state = .finished;
+                                return 0;
+                            },
+                            .NOTCAPABLE => return error.AccessDenied,
+                            else => |err| return posix.unexpectedErrno(err),
+                        }
+                    },
+                }
+            }
+            if (n == 0) {
+                dr.state = .finished;
+                return 0;
+            }
+            dr.index = header_end;
+            dr.end = header_end + n;
+        }
+        const entry: *align(1) wasi.dirent_t = @ptrCast(&dr.buffer[dr.index]);
+        const entry_size = @sizeOf(wasi.dirent_t);
+        const name_index = dr.index + entry_size;
+        if (name_index + entry.namlen > dr.end) {
+            // This case, the name is truncated, so we need to call readdir to store the entire name.
+            dr.end = dr.index; // Force fd_readdir in the next loop.
+            continue;
+        }
+        const name = dr.buffer[name_index..][0..entry.namlen];
+        const next_index = name_index + entry.namlen;
+        dr.index = next_index;
+        header.cookie = entry.next;
+
+        if (std.mem.eql(u8, name, ".") or std.mem.eql(u8, name, ".."))
+            continue;
+
+        const entry_kind: File.Kind = switch (entry.type) {
+            .BLOCK_DEVICE => .block_device,
+            .CHARACTER_DEVICE => .character_device,
+            .DIRECTORY => .directory,
+            .SYMBOLIC_LINK => .sym_link,
+            .REGULAR_FILE => .file,
+            .SOCKET_STREAM, .SOCKET_DGRAM => .unix_domain_socket,
+            else => .unknown,
+        };
+        buffer[buffer_index] = .{
+            .name = name,
+            .kind = entry_kind,
+            .inode = entry.ino,
+        };
+        buffer_index += 1;
+    }
+    return buffer_index;
 }
 
 fn dirReadUnimplemented(userdata: ?*anyopaque, dir_reader: *Dir.Reader, buffer: []Dir.Entry) Dir.Reader.Error!usize {
