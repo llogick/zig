@@ -10,8 +10,7 @@ pub fn main() anyerror!void {
 
     if (args.len < 2) return error.MissingArgs;
 
-    var threaded: Io.Threaded = .init_single_threaded;
-    const io = threaded.io();
+    const io = std.Io.Threaded.global_single_threaded.ioBasic();
 
     const exe_path = args[1];
 

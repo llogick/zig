@@ -29,8 +29,7 @@ fn run(allocator: std.mem.Allocator) !void {
     const dir_path = std.Io.Dir.path.dirname(path) orelse unreachable;
     const basename = std.Io.Dir.path.basename(path);
 
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    const io = threaded.io();
+    const io = std.Io.Threaded.global_single_threaded.ioBasic();
 
     var dir = try std.Io.Dir.cwd().openDir(io, dir_path, .{});
     defer dir.close(io);

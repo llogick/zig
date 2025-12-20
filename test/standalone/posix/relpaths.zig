@@ -14,8 +14,7 @@ pub fn main() !void {
     const gpa = debug_allocator.allocator();
     defer std.debug.assert(debug_allocator.deinit() == .ok);
 
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    const io = threaded.io();
+    const io = std.Io.Threaded.global_single_threaded.ioBasic();
 
     // TODO this API isn't supposed to be used outside of unit testing. make it compilation error if used
     // outside of unit testing.

@@ -142,8 +142,6 @@ const ElfDynLibError = error{
     Streaming,
 } || posix.OpenError || posix.MMapError;
 
-var static_single_threaded_io: Io.Threaded = .init_single_threaded;
-
 pub const ElfDynLib = struct {
     strings: [*:0]u8,
     syms: [*]elf.Sym,
@@ -224,7 +222,7 @@ pub const ElfDynLib = struct {
 
     /// Trusts the file. Malicious file will be able to execute arbitrary code.
     pub fn open(path: []const u8) Error!ElfDynLib {
-        const io = static_single_threaded_io.ioBasic();
+        const io = Io.Threaded.global_single_threaded.ioBasic();
 
         const fd = try resolveFromName(io, path);
         defer posix.close(fd);

@@ -1,8 +1,7 @@
 const std = @import("std");
 
 pub fn main() !void {
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    const io = threaded.io();
+    const io = std.Io.Threaded.global_single_threaded.ioBasic();
     var args = try std.process.argsWithAllocator(std.heap.page_allocator);
     _ = args.skip();
     const dir_name = args.next().?;

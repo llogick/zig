@@ -11,8 +11,7 @@ pub fn main() !void {
     var arg_it = try std.process.argsWithAllocator(arena);
     _ = arg_it.next();
 
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    const io = threaded.io();
+    const io = std.Io.Threaded.global_single_threaded.ioBasic();
 
     const cwd = std.Io.Dir.cwd();
     const cwd_realpath = try cwd.realPathAlloc(io, arena, ".");

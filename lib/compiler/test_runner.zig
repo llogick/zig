@@ -17,7 +17,7 @@ var fba: std.heap.FixedBufferAllocator = .init(&fba_buffer);
 var fba_buffer: [8192]u8 = undefined;
 var stdin_buffer: [4096]u8 = undefined;
 var stdout_buffer: [4096]u8 = undefined;
-var runner_threaded_io: Io.Threaded = .init_single_threaded;
+const runner_threaded_io: Io = Io.Threaded.global_single_threaded.ioBasic();
 
 /// Keep in sync with logic in `std.Build.addRunArtifact` which decides whether
 /// the test runner will communicate with the build runner via `std.zig.Server`.
@@ -74,8 +74,8 @@ pub fn main() void {
 
 fn mainServer() !void {
     @disableInstrumentation();
-    var stdin_reader = Io.File.stdin().readerStreaming(runner_threaded_io.io(), &stdin_buffer);
-    var stdout_writer = Io.File.stdout().writerStreaming(runner_threaded_io.io(), &stdout_buffer);
+    var stdin_reader = Io.File.stdin().readerStreaming(runner_threaded_io, &stdin_buffer);
+    var stdout_writer = Io.File.stdout().writerStreaming(runner_threaded_io, &stdout_buffer);
     var server = try std.zig.Server.init(.{
         .in = &stdin_reader.interface,
         .out = &stdout_writer.interface,
@@ -224,11 +224,11 @@ fn mainTerminal() void {
     var skip_count: usize = 0;
     var fail_count: usize = 0;
     var fuzz_count: usize = 0;
-    const root_node = if (builtin.fuzz) std.Progress.Node.none else std.Progress.start(runner_threaded_io.io(), .{
+    const root_node = if (builtin.fuzz) std.Progress.Node.none else std.Progress.start(runner_threaded_io, .{
         .root_name = "Test",
         .estimated_total_items = test_fn_list.len,
     });
-    const have_tty = Io.File.stderr().isTty(runner_threaded_io.io()) catch unreachable;
+    const have_tty = Io.File.stderr().isTty(runner_threaded_io) catch unreachable;
 
     var leaks: usize = 0;
     for (test_fn_list, 0..) |test_fn, i| {

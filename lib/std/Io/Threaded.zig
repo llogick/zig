@@ -626,6 +626,19 @@ pub const init_single_threaded: Threaded = .{
     },
 };
 
+var global_single_threaded_instance: Threaded = .init_single_threaded;
+
+/// In general, the application is responsible for choosing the `Io`
+/// implementation and library code should accept an `Io` parameter rather than
+/// accessing this declaration. Most code should avoid referencing this
+/// declaration entirely.
+///
+/// However, in some cases such as debugging, it is desirable to hardcode a
+/// reference to this `Io` implementation.
+///
+/// This instance does not support concurrency or cancelation.
+pub const global_single_threaded: *Threaded = &global_single_threaded_instance;
+
 pub fn setAsyncLimit(t: *Threaded, new_limit: Io.Limit) void {
     t.mutex.lock();
     defer t.mutex.unlock();

@@ -266,7 +266,7 @@ pub fn spawn(self: *Child, io: Io) SpawnError!void {
     }
 
     if (native_os == .windows) {
-        return self.spawnWindows();
+        return self.spawnWindows(io);
     } else {
         return self.spawnPosix(io);
     }
@@ -750,7 +750,7 @@ fn spawnPosix(self: *Child, io: Io) SpawnError!void {
     self.progress_node.setIpcFd(prog_pipe[0]);
 }
 
-fn spawnWindows(self: *Child) SpawnError!void {
+fn spawnWindows(self: *Child, io: Io) SpawnError!void {
     var saAttr = windows.SECURITY_ATTRIBUTES{
         .nLength = @sizeOf(windows.SECURITY_ATTRIBUTES),
         .bInheritHandle = windows.TRUE,
@@ -953,7 +953,7 @@ fn spawnWindows(self: *Child) SpawnError!void {
             try dir_buf.appendSlice(self.allocator, app_dir);
         }
 
-        windowsCreateProcessPathExt(self.allocator, &dir_buf, &app_buf, PATHEXT, &cmd_line_cache, envp_ptr, cwd_w_ptr, flags, &siStartInfo, &piProcInfo) catch |no_path_err| {
+        windowsCreateProcessPathExt(self.allocator, io, &dir_buf, &app_buf, PATHEXT, &cmd_line_cache, envp_ptr, cwd_w_ptr, flags, &siStartInfo, &piProcInfo) catch |no_path_err| {
             const original_err = switch (no_path_err) {
                 // argv[0] contains unsupported characters that will never resolve to a valid exe.
                 error.InvalidArg0 => return error.FileNotFound,
@@ -977,7 +977,7 @@ fn spawnWindows(self: *Child) SpawnError!void {
                 dir_buf.clearRetainingCapacity();
                 try dir_buf.appendSlice(self.allocator, search_path);
 
-                if (windowsCreateProcessPathExt(self.allocator, &dir_buf, &app_buf, PATHEXT, &cmd_line_cache, envp_ptr, cwd_w_ptr, flags, &siStartInfo, &piProcInfo)) {
+                if (windowsCreateProcessPathExt(self.allocator, io, &dir_buf, &app_buf, PATHEXT, &cmd_line_cache, envp_ptr, cwd_w_ptr, flags, &siStartInfo, &piProcInfo)) {
                     break :run;
                 } else |err| switch (err) {
                     // argv[0] contains unsupported characters that will never resolve to a valid exe.
@@ -1079,6 +1079,7 @@ const ErrInt = std.meta.Int(.unsigned, @sizeOf(anyerror) * 8);
 /// Note: If the dir is the cwd, dir_buf should be empty (len = 0).
 fn windowsCreateProcessPathExt(
     allocator: Allocator,
+    io: Io,
     dir_buf: *ArrayList(u16),
     app_buf: *ArrayList(u16),
     pathext: [:0]const u16,
@@ -1122,16 +1123,14 @@ fn windowsCreateProcessPathExt(
     // Under those conditions, here we will have access to lower level directory
     // opening function knowing which implementation we are in. Here, we imitate
     // that scenario.
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    const io = threaded.ioBasic();
-
     var dir = dir: {
         // needs to be null-terminated
         try dir_buf.append(allocator, 0);
         defer dir_buf.shrinkRetainingCapacity(dir_path_len);
         const dir_path_z = dir_buf.items[0 .. dir_buf.items.len - 1 :0];
         const prefixed_path = try windows.wToPrefixedFileW(null, dir_path_z);
-        break :dir threaded.dirOpenDirWindows(.cwd(), prefixed_path.span(), .{
+        // TODO eliminate this reference
+        break :dir Io.Threaded.global_single_threaded.dirOpenDirWindows(.cwd(), prefixed_path.span(), .{
             .iterate = true,
         }) catch return error.FileNotFound;
     };

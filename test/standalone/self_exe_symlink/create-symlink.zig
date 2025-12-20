@@ -15,8 +15,7 @@ pub fn main() anyerror!void {
     const exe_rel_path = try std.fs.path.relative(allocator, std.fs.path.dirname(symlink_path) orelse ".", exe_path);
     defer allocator.free(exe_rel_path);
 
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    const io = threaded.io();
+    const io = std.Io.Threaded.global_single_threaded.ioBasic();
 
     try std.Io.Dir.cwd().symLink(io, exe_rel_path, symlink_path, .{});
 }

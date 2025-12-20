@@ -8,8 +8,7 @@ pub fn main() !void {
     if (args.len != 2) return error.BadUsage;
     const path = args[1];
 
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    const io = threaded.io();
+    const io = std.Io.Threaded.global_single_threaded.ioBasic();
 
     std.Io.Dir.cwd().access(io, path, .{}) catch return error.AccessFailed;
 }

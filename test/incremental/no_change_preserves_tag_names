@@ -8,7 +8,7 @@
 const std = @import("std");
 var some_enum: enum { first, second } = .first;
 pub fn main() !void {
-    try std.Io.File.stdout().writeAll(@tagName(some_enum));
+    try std.Io.File.stdout().writeStreamingAll(std.Io.Threaded.global_single_threaded.ioBasic(), @tagName(some_enum));
 }
 #expect_stdout="first"
 #update=no change
@@ -16,6 +16,6 @@ pub fn main() !void {
 const std = @import("std");
 var some_enum: enum { first, second } = .first;
 pub fn main() !void {
-    try std.Io.File.stdout().writeAll(@tagName(some_enum));
+    try std.Io.File.stdout().writeStreamingAll(std.Io.Threaded.global_single_threaded.ioBasic(), @tagName(some_enum));
 }
 #expect_stdout="first"

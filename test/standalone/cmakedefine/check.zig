@@ -9,8 +9,7 @@ pub fn main() !void {
     const actual_path = args[1];
     const expected_path = args[2];
 
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    const io = threaded.io();
+    const io = std.Io.Threaded.global_single_threaded.ioBasic();
 
     const actual = try std.Io.Dir.cwd().readFileAlloc(io, actual_path, arena, .limited(1024 * 1024));
     const expected = try std.Io.Dir.cwd().readFileAlloc(io, expected_path, arena, .limited(1024 * 1024));
