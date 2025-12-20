@@ -654,6 +654,10 @@ pub const VTable = struct {
     /// that awaiting it will not block. Returns that index.
     select: *const fn (?*anyopaque, futures: []const *AnyFuture) Cancelable!usize,
 
+    futexWait: *const fn (?*anyopaque, ptr: *const u32, expected: u32, Timeout) Cancelable!void,
+    futexWaitUncancelable: *const fn (?*anyopaque, ptr: *const u32, expected: u32) void,
+    futexWake: *const fn (?*anyopaque, ptr: *const u32, max_waiters: u32) void,
+
     mutexLock: *const fn (?*anyopaque, prev_state: Mutex.State, mutex: *Mutex) Cancelable!void,
     mutexLockUncancelable: *const fn (?*anyopaque, prev_state: Mutex.State, mutex: *Mutex) void,
     mutexUnlock: *const fn (?*anyopaque, prev_state: Mutex.State, mutex: *Mutex) void,
@@ -1172,6 +1176,42 @@ pub fn Select(comptime U: type) type {
             s.group.cancel(s.io);
         }
     };
+}
+
+/// Atomically checks if the value at `ptr` equals `expected`, and if so, blocks until either:
+///
+/// * a matching (same `ptr` argument) `futexWake` call occurs, or
+/// * a spurious ("random") wakeup occurs.
+///
+/// Typically, `futexWake` should be called immediately after updating the value at `ptr.*`, to
+/// unblock tasks using `futexWait` to wait for the value to change from what it previously was.
+///
+/// The caller is responsible for identifying spurious wakeups if necessary, typically by checking
+/// the value at `ptr.*`.
+///
+/// Asserts that `T` is 4 bytes in length and has a well-defined layout with no padding bits.
+pub fn futexWait(io: Io, comptime T: type, ptr: *align(@alignOf(u32)) const T, expected: T) Cancelable!void {
+    return futexWaitTimeout(io, T, ptr, expected, .none);
+}
+/// Same as `futexWait`, except also unblocks if `timeout` expires. As with `futexWait`, spurious
+/// wakeups are possible. It remains the caller's responsibility to differentiate between these
+/// three possible wake-up reasons if necessary.
+pub fn futexWaitTimeout(io: Io, comptime T: type, ptr: *align(@alignOf(u32)) const T, expected: T, timeout: Timeout) Cancelable!void {
+    comptime assert(@sizeOf(T) == 4);
+    const expected_raw: *align(1) const u32 = @ptrCast(&expected);
+    return io.vtable.futexWait(io.userdata, @ptrCast(ptr), expected_raw.*, timeout);
+}
+/// Same as `futexWait`, except is not affected by task cancelation.
+pub fn futexWaitUncancelable(io: Io, comptime T: type, ptr: *align(@alignOf(u32)) const T, expected: T) void {
+    comptime assert(@sizeOf(T) == @sizeOf(u32));
+    const expected_raw: *align(1) const u32 = @ptrCast(&expected);
+    io.vtable.futexWaitUncancelable(io.userdata, @ptrCast(ptr), expected_raw.*);
+}
+/// Unblocks pending futex waits on `ptr`, up to a limit of `max_waiters` calls.
+pub fn futexWake(io: Io, comptime T: type, ptr: *align(@alignOf(u32)) const T, max_waiters: u32) void {
+    comptime assert(@sizeOf(T) == @sizeOf(u32));
+    if (max_waiters == 0) return;
+    return io.vtable.futexWake(io.userdata, @ptrCast(ptr), max_waiters);
 }
 
 pub const Mutex = struct {
