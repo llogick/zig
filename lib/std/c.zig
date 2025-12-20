@@ -161,7 +161,7 @@ pub const nlink_t = switch (native_os) {
     .wasi => c_ulonglong,
     // https://github.com/SerenityOS/serenity/blob/b98f537f117b341788023ab82e0c11ca9ae29a57/Kernel/API/POSIX/sys/types.h#L45
     .freebsd, .serenity => u64,
-    .openbsd, .netbsd, .illumos => u32,
+    .openbsd, .netbsd, .dragonfly, .illumos => u32,
     .haiku => i32,
     .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => u16,
     else => u0,
