@@ -1458,7 +1458,7 @@ pub fn renameTmpIntoCache(io: Io, cache_dir: Io.Dir, tmp_dir_sub_path: []const u
         cache_dir.rename(tmp_dir_sub_path, cache_dir, dest_dir_sub_path, io) catch |err| switch (err) {
             error.FileNotFound => {
                 if (handled_missing_dir) return err;
-                cache_dir.makeDir(io, dest_dir_sub_path[0..1], .default_dir) catch |mkd_err| switch (mkd_err) {
+                cache_dir.createDir(io, dest_dir_sub_path[0..1], .default_dir) catch |mkd_err| switch (mkd_err) {
                     error.PathAlreadyExists => handled_missing_dir = true,
                     else => |e| return e,
                 };

@@ -84,7 +84,7 @@ pub fn main() anyerror!void {
     // without extension should succeed (case insensitive)
     try testExec(gpa, "heLLo", "hello from exe\n");
 
-    try tmp.dir.makeDir(io, "something", .default_dir);
+    try tmp.dir.createDir(io, "something", .default_dir);
     try renameExe(tmp.dir, "hello", "something/hello.exe");
 
     const relative_path_no_ext = try std.fs.path.join(gpa, &.{ tmp_relative_path, "something/hello" });

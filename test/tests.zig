@@ -2137,7 +2137,7 @@ pub fn addCliTests(b: *std.Build) *Step {
         defer dir.close(io);
         dir.writeFile(io, .{ .sub_path = "fmt1.zig", .data = unformatted_code }) catch @panic("unhandled");
         dir.writeFile(io, .{ .sub_path = "fmt2.zig", .data = unformatted_code }) catch @panic("unhandled");
-        dir.makeDir(io, "subdir", .default_dir) catch @panic("unhandled");
+        dir.createDir(io, "subdir", .default_dir) catch @panic("unhandled");
         var subdir = dir.openDir(io, "subdir", .{}) catch @panic("unhandled");
         defer subdir.close(io);
         subdir.writeFile(io, .{ .sub_path = "fmt3.zig", .data = unformatted_code }) catch @panic("unhandled");

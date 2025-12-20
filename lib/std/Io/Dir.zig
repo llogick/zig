@@ -664,25 +664,25 @@ pub const MakeError = error{
 ///
 /// Related:
 /// * `makePath`
-/// * `makeDirAbsolute`
-pub fn makeDir(dir: Dir, io: Io, sub_path: []const u8, permissions: Permissions) MakeError!void {
+/// * `createDirAbsolute`
+pub fn createDir(dir: Dir, io: Io, sub_path: []const u8, permissions: Permissions) MakeError!void {
     return io.vtable.dirMake(io.userdata, dir, sub_path, permissions);
 }
 
 /// Create a new directory, based on an absolute path.
 ///
-/// Asserts that the path is absolute. See `makeDir` for a function that
+/// Asserts that the path is absolute. See `createDir` for a function that
 /// operates on both absolute and relative paths.
 ///
 /// On Windows, `absolute_path` should be encoded as [WTF-8](https://wtf-8.codeberg.page/).
 /// On WASI, `absolute_path` should be encoded as valid UTF-8.
 /// On other platforms, `absolute_path` is an opaque sequence of bytes with no particular encoding.
-pub fn makeDirAbsolute(io: Io, absolute_path: []const u8, permissions: Permissions) MakeError!void {
+pub fn createDirAbsolute(io: Io, absolute_path: []const u8, permissions: Permissions) MakeError!void {
     assert(path.isAbsolute(absolute_path));
-    return makeDir(.cwd(), io, absolute_path, permissions);
+    return createDir(.cwd(), io, absolute_path, permissions);
 }
 
-test makeDirAbsolute {}
+test createDirAbsolute {}
 
 pub const MakePathError = MakeError || StatFileError;
 
