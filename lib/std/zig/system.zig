@@ -323,7 +323,7 @@ pub fn resolveTargetQuery(io: Io, query: Target.Query) DetectError!Target {
                     error.Unexpected => return error.OSVersionDetectionFail,
                 };
 
-                if (Target.Query.parseVersion(buf[0..len :0])) |ver| {
+                if (Target.Query.parseVersion(buf[0 .. len - 1 :0])) |ver| {
                     assert(ver.build == null);
                     assert(ver.pre == null);
                     os.version_range.semver.min = ver;
