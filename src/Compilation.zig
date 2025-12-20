@@ -832,7 +832,7 @@ pub const Directories = struct {
         const nonempty_path = if (path.len == 0) "." else path;
         const handle_or_err = switch (thing) {
             .@"zig lib" => Io.Dir.cwd().openDir(io, nonempty_path, .{}),
-            .@"global cache", .@"local cache" => Io.Dir.cwd().makeOpenPath(io, nonempty_path, .{}),
+            .@"global cache", .@"local cache" => Io.Dir.cwd().createDirPathOpen(io, nonempty_path, .{}),
         };
         return .{
             .path = if (path.len == 0) null else path,
@@ -1879,7 +1879,7 @@ pub const CreateDiagnostic = union(enum) {
     pub const CreateCachePath = struct {
         which: enum { local, global },
         sub: []const u8,
-        err: (Io.Dir.MakeError || Io.Dir.OpenError || Io.Dir.StatFileError),
+        err: (Io.Dir.CreateDirError || Io.Dir.OpenError || Io.Dir.StatFileError),
     };
     pub fn format(diag: CreateDiagnostic, w: *Writer) Writer.Error!void {
         switch (diag) {
@@ -2120,7 +2120,7 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
         cache.* = .{
             .gpa = gpa,
             .io = io,
-            .manifest_dir = options.dirs.local_cache.handle.makeOpenPath(io, "h", .{}) catch |err| {
+            .manifest_dir = options.dirs.local_cache.handle.createDirPathOpen(io, "h", .{}) catch |err| {
                 return diag.fail(.{ .create_cache_path = .{ .which = .local, .sub = "h", .err = err } });
             },
         };
@@ -2170,7 +2170,7 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
             // to redundantly happen for each AstGen operation.
             const zir_sub_dir = "z";
 
-            var local_zir_dir = options.dirs.local_cache.handle.makeOpenPath(io, zir_sub_dir, .{}) catch |err| {
+            var local_zir_dir = options.dirs.local_cache.handle.createDirPathOpen(io, zir_sub_dir, .{}) catch |err| {
                 return diag.fail(.{ .create_cache_path = .{ .which = .local, .sub = zir_sub_dir, .err = err } });
             };
             errdefer local_zir_dir.close(io);
@@ -2178,7 +2178,7 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
                 .handle = local_zir_dir,
                 .path = try options.dirs.local_cache.join(arena, &.{zir_sub_dir}),
             };
-            var global_zir_dir = options.dirs.global_cache.handle.makeOpenPath(io, zir_sub_dir, .{}) catch |err| {
+            var global_zir_dir = options.dirs.global_cache.handle.createDirPathOpen(io, zir_sub_dir, .{}) catch |err| {
                 return diag.fail(.{ .create_cache_path = .{ .which = .global, .sub = zir_sub_dir, .err = err } });
             };
             errdefer global_zir_dir.close(io);
@@ -2449,7 +2449,7 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
                 const digest = hash.final();
 
                 const artifact_sub_dir = "o" ++ fs.path.sep_str ++ digest;
-                var artifact_dir = options.dirs.local_cache.handle.makeOpenPath(io, artifact_sub_dir, .{}) catch |err| {
+                var artifact_dir = options.dirs.local_cache.handle.createDirPathOpen(io, artifact_sub_dir, .{}) catch |err| {
                     return diag.fail(.{ .create_cache_path = .{ .which = .local, .sub = artifact_sub_dir, .err = err } });
                 };
                 errdefer artifact_dir.close(io);
@@ -2917,7 +2917,7 @@ pub fn update(comp: *Compilation, main_progress_node: std.Progress.Node) UpdateE
                 tmp_dir_rand_int = std.crypto.random.int(u64);
                 const tmp_dir_sub_path = "tmp" ++ fs.path.sep_str ++ std.fmt.hex(tmp_dir_rand_int);
                 const path = try comp.dirs.local_cache.join(arena, &.{tmp_dir_sub_path});
-                const handle = comp.dirs.local_cache.handle.makeOpenPath(io, tmp_dir_sub_path, .{}) catch |err| {
+                const handle = comp.dirs.local_cache.handle.createDirPathOpen(io, tmp_dir_sub_path, .{}) catch |err| {
                     return comp.setMiscFailure(.open_output, "failed to create output directory '{s}': {t}", .{ path, err });
                 };
                 break :d .{ .path = path, .handle = handle };
@@ -2998,7 +2998,7 @@ pub fn update(comp: *Compilation, main_progress_node: std.Progress.Node) UpdateE
                 tmp_dir_rand_int = std.crypto.random.int(u64);
                 const tmp_dir_sub_path = "tmp" ++ fs.path.sep_str ++ std.fmt.hex(tmp_dir_rand_int);
                 const path = try comp.dirs.local_cache.join(arena, &.{tmp_dir_sub_path});
-                const handle = comp.dirs.local_cache.handle.makeOpenPath(io, tmp_dir_sub_path, .{}) catch |err| {
+                const handle = comp.dirs.local_cache.handle.createDirPathOpen(io, tmp_dir_sub_path, .{}) catch |err| {
                     return comp.setMiscFailure(.open_output, "failed to create output directory '{s}': {t}", .{ path, err });
                 };
                 break :d .{ .path = path, .handle = handle };
@@ -3437,7 +3437,7 @@ fn renameTmpIntoCache(
                 continue;
             },
             error.FileNotFound => {
-                try cache_directory.handle.makePath(io, "o");
+                try cache_directory.handle.createDirPath(io, "o");
                 continue;
             },
             else => |e| return e,
@@ -5276,7 +5276,7 @@ fn docsCopyFallible(comp: *Compilation) anyerror!void {
     const io = comp.io;
 
     const docs_path = comp.resolveEmitPath(comp.emit_docs.?);
-    var out_dir = docs_path.root_dir.handle.makeOpenPath(io, docs_path.sub_path, .{}) catch |err| {
+    var out_dir = docs_path.root_dir.handle.createDirPathOpen(io, docs_path.sub_path, .{}) catch |err| {
         return comp.lockAndSetMiscFailure(
             .docs_copy,
             "unable to create output directory '{f}': {s}",
@@ -5513,7 +5513,7 @@ fn workerDocsWasmFallible(comp: *Compilation, prog_node: std.Progress.Node) SubU
     assert(docs_bin_file.sub_path.len > 0); // emitted binary is not a directory
 
     const docs_path = comp.resolveEmitPath(comp.emit_docs.?);
-    var out_dir = docs_path.root_dir.handle.makeOpenPath(io, docs_path.sub_path, .{}) catch |err| {
+    var out_dir = docs_path.root_dir.handle.createDirPathOpen(io, docs_path.sub_path, .{}) catch |err| {
         comp.lockAndSetMiscFailure(
             .docs_copy,
             "unable to create output directory '{f}': {t}",
@@ -5705,7 +5705,7 @@ pub fn translateC(
     const tmp_basename = std.fmt.hex(std.crypto.random.int(u64));
     const tmp_sub_path = "tmp" ++ fs.path.sep_str ++ tmp_basename;
     const cache_dir = comp.dirs.local_cache.handle;
-    var cache_tmp_dir = try cache_dir.makeOpenPath(io, tmp_sub_path, .{});
+    var cache_tmp_dir = try cache_dir.createDirPathOpen(io, tmp_sub_path, .{});
     defer cache_tmp_dir.close(io);
 
     const translated_path = try comp.dirs.local_cache.join(arena, &.{ tmp_sub_path, translated_basename });
@@ -6280,7 +6280,7 @@ fn updateCObject(comp: *Compilation, c_object: *CObject, c_obj_prog_node: std.Pr
         // We can't know the digest until we do the C compiler invocation,
         // so we need a temporary filename.
         const out_obj_path = try comp.tmpFilePath(arena, o_basename);
-        var zig_cache_tmp_dir = try comp.dirs.local_cache.handle.makeOpenPath(io, "tmp", .{});
+        var zig_cache_tmp_dir = try comp.dirs.local_cache.handle.createDirPathOpen(io, "tmp", .{});
         defer zig_cache_tmp_dir.close(io);
 
         const out_diag_path = if (comp.clang_passthrough_mode or !ext.clangSupportsDiagnostics())
@@ -6445,7 +6445,7 @@ fn updateCObject(comp: *Compilation, c_object: *CObject, c_obj_prog_node: std.Pr
         // Rename into place.
         const digest = man.final();
         const o_sub_path = try fs.path.join(arena, &[_][]const u8{ "o", &digest });
-        var o_dir = try comp.dirs.local_cache.handle.makeOpenPath(io, o_sub_path, .{});
+        var o_dir = try comp.dirs.local_cache.handle.createDirPathOpen(io, o_sub_path, .{});
         defer o_dir.close(io);
         const tmp_basename = fs.path.basename(out_obj_path);
         try Io.Dir.rename(zig_cache_tmp_dir, tmp_basename, o_dir, o_basename, io);
@@ -6534,7 +6534,7 @@ fn updateWin32Resource(comp: *Compilation, win32_resource: *Win32Resource, win32
             const digest = man.final();
 
             const o_sub_path = try fs.path.join(arena, &.{ "o", &digest });
-            var o_dir = try comp.dirs.local_cache.handle.makeOpenPath(io, o_sub_path, .{});
+            var o_dir = try comp.dirs.local_cache.handle.createDirPathOpen(io, o_sub_path, .{});
             defer o_dir.close(io);
 
             const in_rc_path = try comp.dirs.local_cache.join(comp.gpa, &.{
@@ -6622,7 +6622,7 @@ fn updateWin32Resource(comp: *Compilation, win32_resource: *Win32Resource, win32
     const rc_basename_noext = src_basename[0 .. src_basename.len - fs.path.extension(src_basename).len];
 
     const digest = if (try man.hit()) man.final() else blk: {
-        var zig_cache_tmp_dir = try comp.dirs.local_cache.handle.makeOpenPath(io, "tmp", .{});
+        var zig_cache_tmp_dir = try comp.dirs.local_cache.handle.createDirPathOpen(io, "tmp", .{});
         defer zig_cache_tmp_dir.close(io);
 
         const res_filename = try std.fmt.allocPrint(arena, "{s}.res", .{rc_basename_noext});
@@ -6693,7 +6693,7 @@ fn updateWin32Resource(comp: *Compilation, win32_resource: *Win32Resource, win32
         // Rename into place.
         const digest = man.final();
         const o_sub_path = try fs.path.join(arena, &[_][]const u8{ "o", &digest });
-        var o_dir = try comp.dirs.local_cache.handle.makeOpenPath(io, o_sub_path, .{});
+        var o_dir = try comp.dirs.local_cache.handle.createDirPathOpen(io, o_sub_path, .{});
         defer o_dir.close(io);
         const tmp_basename = fs.path.basename(out_res_path);
         try Io.Dir.rename(zig_cache_tmp_dir, tmp_basename, o_dir, res_filename, io);

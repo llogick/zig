@@ -258,7 +258,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
     const sub_path = b.pathJoin(&.{ "o", &digest, config_header.include_path });
     const sub_path_dirname = std.fs.path.dirname(sub_path).?;
 
-    b.cache_root.handle.makePath(io, sub_path_dirname) catch |err| {
+    b.cache_root.handle.createDirPath(io, sub_path_dirname) catch |err| {
         return step.fail("unable to make path '{f}{s}': {s}", .{
             b.cache_root, sub_path_dirname, @errorName(err),
         });

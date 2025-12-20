@@ -500,7 +500,7 @@ fn runResource(
         var tmp_directory: Cache.Directory = .{
             .path = tmp_directory_path,
             .handle = handle: {
-                const dir = cache_root.handle.makeOpenPath(io, tmp_dir_sub_path, .{
+                const dir = cache_root.handle.createDirPathOpen(io, tmp_dir_sub_path, .{
                     .open_options = .{ .iterate = true },
                 }) catch |err| {
                     try eb.addRootErrorMessage(.{
@@ -524,7 +524,7 @@ fn runResource(
         if (native_os == .linux and f.job_queue.work_around_btrfs_bug) {
             // https://github.com/ziglang/zig/issues/17095
             pkg_path.root_dir.handle.close(io);
-            pkg_path.root_dir.handle = cache_root.handle.makeOpenPath(io, tmp_dir_sub_path, .{
+            pkg_path.root_dir.handle = cache_root.handle.createDirPathOpen(io, tmp_dir_sub_path, .{
                 .open_options = .{ .iterate = true },
             }) catch @panic("btrfs workaround failed");
         }
@@ -1366,7 +1366,7 @@ fn unpackGitPack(f: *Fetch, out_dir: Io.Dir, resource: *Resource.Git) anyerror!U
     // we do not attempt to replicate the exact structure of a real .git
     // directory, since that isn't relevant for fetching a package.
     {
-        var pack_dir = try out_dir.makeOpenPath(io, ".git", .{});
+        var pack_dir = try out_dir.createDirPathOpen(io, ".git", .{});
         defer pack_dir.close(io);
         var pack_file = try pack_dir.createFile(io, "pkg.pack", .{ .read = true });
         defer pack_file.close(io);
@@ -1427,7 +1427,7 @@ fn recursiveDirectoryCopy(f: *Fetch, dir: Io.Dir, tmp_dir: Io.Dir) anyerror!void
             .file => {
                 dir.copyFile(entry.path, tmp_dir, entry.path, io, .{}) catch |err| switch (err) {
                     error.FileNotFound => {
-                        if (fs.path.dirname(entry.path)) |dirname| try tmp_dir.makePath(io, dirname);
+                        if (fs.path.dirname(entry.path)) |dirname| try tmp_dir.createDirPath(io, dirname);
                         try dir.copyFile(entry.path, tmp_dir, entry.path, io, .{});
                     },
                     else => |e| return e,
@@ -1440,7 +1440,7 @@ fn recursiveDirectoryCopy(f: *Fetch, dir: Io.Dir, tmp_dir: Io.Dir) anyerror!void
                 // the destination directory, fail with an error instead.
                 tmp_dir.symLink(io, link_name, entry.path, .{}) catch |err| switch (err) {
                     error.FileNotFound => {
-                        if (fs.path.dirname(entry.path)) |dirname| try tmp_dir.makePath(io, dirname);
+                        if (fs.path.dirname(entry.path)) |dirname| try tmp_dir.createDirPath(io, dirname);
                         try tmp_dir.symLink(io, link_name, entry.path, .{});
                     },
                     else => |e| return e,
@@ -2250,7 +2250,7 @@ const TestFetchBuilder = struct {
         cache_parent_dir: std.Io.Dir,
         path_or_url: []const u8,
     ) !*Fetch {
-        const cache_dir = try cache_parent_dir.makeOpenPath(io, "zig-global-cache", .{});
+        const cache_dir = try cache_parent_dir.createDirPathOpen(io, "zig-global-cache", .{});
 
         self.http_client = .{ .allocator = allocator, .io = io };
         self.global_cache_directory = .{ .handle = cache_dir, .path = null };

@@ -3381,7 +3381,7 @@ fn buildOutputType(
         const dump_path = try std.fmt.allocPrint(arena, "tmp" ++ sep ++ "{x}-dump-stdin{s}", .{
             std.crypto.random.int(u64), ext.canonicalName(target),
         });
-        try dirs.local_cache.handle.makePath(io, "tmp");
+        try dirs.local_cache.handle.createDirPath(io, "tmp");
 
         // Note that in one of the happy paths, execve() is used to switch to
         // clang in which case any cleanup logic that exists for this temporary
@@ -6955,7 +6955,7 @@ fn cmdFetch(
     var global_cache_directory: Directory = l: {
         const p = override_global_cache_dir orelse try introspect.resolveGlobalCacheDir(arena);
         break :l .{
-            .handle = try Io.Dir.cwd().makeOpenPath(io, p, .{}),
+            .handle = try Io.Dir.cwd().createDirPathOpen(io, p, .{}),
             .path = p,
         };
     };
@@ -7201,7 +7201,7 @@ fn createDependenciesModule(
     const rand_int = std.crypto.random.int(u64);
     const tmp_dir_sub_path = "tmp" ++ fs.path.sep_str ++ std.fmt.hex(rand_int);
     {
-        var tmp_dir = try dirs.local_cache.handle.makeOpenPath(io, tmp_dir_sub_path, .{});
+        var tmp_dir = try dirs.local_cache.handle.createDirPathOpen(io, tmp_dir_sub_path, .{});
         defer tmp_dir.close(io);
         try tmp_dir.writeFile(io, .{ .sub_path = basename, .data = source });
     }
@@ -7396,7 +7396,7 @@ const Templates = struct {
         fingerprint: Package.Fingerprint,
     ) !void {
         if (fs.path.dirname(template_path)) |dirname| {
-            out_dir.makePath(io, dirname) catch |err| {
+            out_dir.createDirPath(io, dirname) catch |err| {
                 fatal("unable to make path '{s}': {t}", .{ dirname, err });
             };
         }

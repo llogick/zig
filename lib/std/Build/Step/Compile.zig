@@ -1669,7 +1669,7 @@ fn getZigArgs(compile: *Compile, fuzz: bool) ![][]const u8 {
         args_length += arg.len + 1; // +1 to account for null terminator
     }
     if (args_length >= 30 * 1024) {
-        try b.cache_root.handle.makePath(io, "args");
+        try b.cache_root.handle.createDirPath(io, "args");
 
         const args_to_escape = zig_args.items[2..];
         var escaped_args = try std.array_list.Managed([]const u8).initCapacity(arena, args_to_escape.len);
@@ -1706,7 +1706,7 @@ fn getZigArgs(compile: *Compile, fuzz: bool) ![][]const u8 {
             // The args file is already present from a previous run.
         } else |err| switch (err) {
             error.FileNotFound => {
-                try b.cache_root.handle.makePath(io, "tmp");
+                try b.cache_root.handle.createDirPath(io, "tmp");
                 const rand_int = std.crypto.random.int(u64);
                 const tmp_path = "tmp" ++ fs.path.sep_str ++ std.fmt.hex(rand_int);
                 try b.cache_root.handle.writeFile(io, .{ .sub_path = tmp_path, .data = args });

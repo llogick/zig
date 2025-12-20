@@ -253,7 +253,7 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8, zig_integration
     if (d.output_name) |path| blk: {
         if (std.mem.eql(u8, path, "-")) break :blk;
         if (std.fs.path.dirname(path)) |dirname| {
-            Io.Dir.cwd().makePath(io, dirname) catch |err|
+            Io.Dir.cwd().createDirPath(io, dirname) catch |err|
                 return d.fatal("failed to create path to '{s}': {s}", .{ path, aro.Driver.errorDescription(err) });
         }
         out_file = Io.Dir.cwd().createFile(io, path, .{}) catch |err| {

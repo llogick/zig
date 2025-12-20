@@ -226,7 +226,7 @@ test "Dir.readLink" {
             // test 3: relative path symlink
             const parent_file = ".." ++ Dir.path.sep_str ++ "target.txt";
             const canonical_parent_file = try ctx.toCanonicalPathSep(parent_file);
-            var subdir = try ctx.dir.makeOpenPath(io, "subdir", .{});
+            var subdir = try ctx.dir.createDirPathOpen(io, "subdir", .{});
             defer subdir.close(io);
             try setupSymlink(io, subdir, canonical_parent_file, "relative-link.txt", .{});
             try testReadLink(io, subdir, canonical_parent_file, "relative-link.txt");
@@ -411,7 +411,7 @@ test "openDir non-cwd parent '..'" {
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
-    var subdir = try tmp.dir.makeOpenPath(io, "subdir", .{});
+    var subdir = try tmp.dir.createDirPathOpen(io, "subdir", .{});
     defer subdir.close(io);
 
     var dir = try subdir.openDir(io, "..", .{});
@@ -613,13 +613,13 @@ test "Dir.Iterator but dir is deleted during iteration" {
     defer tmp.cleanup();
 
     // Create directory and setup an iterator for it
-    var subdir = try tmp.dir.makeOpenPath(io, "subdir", .{ .open_options = .{ .iterate = true } });
+    var subdir = try tmp.dir.createDirPathOpen(io, "subdir", .{ .open_options = .{ .iterate = true } });
     defer subdir.close(io);
 
     var iterator = subdir.iterate();
 
     // Create something to iterate over within the subdir
-    try tmp.dir.makePath(io, "subdir" ++ Dir.path.sep_str ++ "b");
+    try tmp.dir.createDirPath(io, "subdir" ++ Dir.path.sep_str ++ "b");
 
     // Then, before iterating, delete the directory that we're iterating.
     // This is a contrived reproduction, but this could happen outside of the program, in another thread, etc.
@@ -862,13 +862,13 @@ test "file operations on directories" {
     }.impl);
 }
 
-test "makeOpenPath parent dirs do not exist" {
+test "createDirPathOpen parent dirs do not exist" {
     const io = testing.io;
 
     var tmp_dir = tmpDir(.{});
     defer tmp_dir.cleanup();
 
-    var dir = try tmp_dir.dir.makeOpenPath(io, "root_dir/parent_dir/some_dir", .{});
+    var dir = try tmp_dir.dir.createDirPathOpen(io, "root_dir/parent_dir/some_dir", .{});
     dir.close(io);
 
     // double check that the full directory structure was created
@@ -1016,7 +1016,7 @@ test "Dir.rename directory onto non-empty dir" {
 
             try ctx.dir.createDir(io, test_dir_path, .default_dir);
 
-            var target_dir = try ctx.dir.makeOpenPath(io, target_dir_path, .{});
+            var target_dir = try ctx.dir.createDirPathOpen(io, target_dir_path, .{});
             var file = try target_dir.createFile(io, "test_file", .{ .read = true });
             file.close(io);
             target_dir.close(io);
@@ -1155,9 +1155,9 @@ test "deleteTree does not follow symlinks" {
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath(io, "b");
+    try tmp.dir.createDirPath(io, "b");
     {
-        var a = try tmp.dir.makeOpenPath(io, "a", .{});
+        var a = try tmp.dir.createDirPathOpen(io, "a", .{});
         defer a.close(io);
 
         try setupSymlink(io, a, "../b", "b", .{ .is_directory = true });
@@ -1184,7 +1184,7 @@ test "deleteTree on a symlink" {
     try tmp.dir.access(io, "file", .{});
 
     // Symlink to a directory
-    try tmp.dir.makePath(io, "dir");
+    try tmp.dir.createDirPath(io, "dir");
     try setupSymlink(io, tmp.dir, "dir", "dirlink", .{ .is_directory = true });
 
     try tmp.dir.deleteTree(io, "dirlink");
@@ -1192,14 +1192,14 @@ test "deleteTree on a symlink" {
     try tmp.dir.access(io, "dir", .{});
 }
 
-test "makePath, put some files in it, deleteTree" {
+test "createDirPath, put some files in it, deleteTree" {
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {
             const io = ctx.io;
             const allocator = ctx.arena.allocator();
             const dir_path = try ctx.transformPath("os_test_tmp");
 
-            try ctx.dir.makePath(io, try Dir.path.join(allocator, &.{ "os_test_tmp", "b", "c" }));
+            try ctx.dir.createDirPath(io, try Dir.path.join(allocator, &.{ "os_test_tmp", "b", "c" }));
             try ctx.dir.writeFile(io, .{
                 .sub_path = try Dir.path.join(allocator, &.{ "os_test_tmp", "b", "c", "file.txt" }),
                 .data = "nonsense",
@@ -1215,14 +1215,14 @@ test "makePath, put some files in it, deleteTree" {
     }.impl);
 }
 
-test "makePath, put some files in it, deleteTreeMinStackSize" {
+test "createDirPath, put some files in it, deleteTreeMinStackSize" {
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {
             const io = ctx.io;
             const allocator = ctx.arena.allocator();
             const dir_path = try ctx.transformPath("os_test_tmp");
 
-            try ctx.dir.makePath(io, try Dir.path.join(allocator, &.{ "os_test_tmp", "b", "c" }));
+            try ctx.dir.createDirPath(io, try Dir.path.join(allocator, &.{ "os_test_tmp", "b", "c" }));
             try ctx.dir.writeFile(io, .{
                 .sub_path = try Dir.path.join(allocator, &.{ "os_test_tmp", "b", "c", "file.txt" }),
                 .data = "nonsense",
@@ -1238,7 +1238,7 @@ test "makePath, put some files in it, deleteTreeMinStackSize" {
     }.impl);
 }
 
-test "makePath in a directory that no longer exists" {
+test "createDirPath in a directory that no longer exists" {
     if (native_os == .windows) return error.SkipZigTest; // Windows returns FileBusy if attempting to remove an open dir
 
     const io = testing.io;
@@ -1247,10 +1247,10 @@ test "makePath in a directory that no longer exists" {
     defer tmp.cleanup();
     try tmp.parent_dir.deleteTree(io, &tmp.sub_path);
 
-    try expectError(error.FileNotFound, tmp.dir.makePath(io, "sub-path"));
+    try expectError(error.FileNotFound, tmp.dir.createDirPath(io, "sub-path"));
 }
 
-test "makePath but sub_path contains pre-existing file" {
+test "createDirPath but sub_path contains pre-existing file" {
     const io = testing.io;
 
     var tmp = tmpDir(.{});
@@ -1259,7 +1259,7 @@ test "makePath but sub_path contains pre-existing file" {
     try tmp.dir.createDir(io, "foo", .default_dir);
     try tmp.dir.writeFile(io, .{ .sub_path = "foo/bar", .data = "" });
 
-    try expectError(error.NotDir, tmp.dir.makePath(io, "foo/bar/baz"));
+    try expectError(error.NotDir, tmp.dir.createDirPath(io, "foo/bar/baz"));
 }
 
 fn expectDir(io: Io, dir: Dir, path: []const u8) !void {
@@ -1279,7 +1279,7 @@ test "makepath existing directories" {
     try tmpA.createDir(io, "B", .default_dir);
 
     const testPath = "A" ++ Dir.path.sep_str ++ "B" ++ Dir.path.sep_str ++ "C";
-    try tmp.dir.makePath(io, testPath);
+    try tmp.dir.createDirPath(io, testPath);
 
     try expectDir(io, tmp.dir, testPath);
 }
@@ -1293,7 +1293,7 @@ test "makepath through existing valid symlink" {
     try tmp.dir.createDir(io, "realfolder", .default_dir);
     try setupSymlink(io, tmp.dir, "." ++ Dir.path.sep_str ++ "realfolder", "working-symlink", .{});
 
-    try tmp.dir.makePath(io, "working-symlink" ++ Dir.path.sep_str ++ "in-realfolder");
+    try tmp.dir.createDirPath(io, "working-symlink" ++ Dir.path.sep_str ++ "in-realfolder");
 
     try expectDir(io, tmp.dir, "realfolder" ++ Dir.path.sep_str ++ "in-realfolder");
 }
@@ -1309,7 +1309,7 @@ test "makepath relative walks" {
     });
     defer testing.allocator.free(relPath);
 
-    try tmp.dir.makePath(io, relPath);
+    try tmp.dir.createDirPath(io, relPath);
 
     // How .. is handled is different on Windows than non-Windows
     switch (native_os) {
@@ -1348,7 +1348,7 @@ test "makepath ignores '.'" {
     });
     defer testing.allocator.free(expectedPath);
 
-    try tmp.dir.makePath(io, dotPath);
+    try tmp.dir.createDirPath(io, dotPath);
 
     try expectDir(io, tmp.dir, expectedPath);
 }
@@ -1358,7 +1358,7 @@ fn testFilenameLimits(io: Io, iterable_dir: Dir, maxed_filename: []const u8, max
     {
         try iterable_dir.writeFile(io, .{ .sub_path = maxed_filename, .data = "" });
 
-        var maxed_dir = try iterable_dir.makeOpenPath(io, maxed_dirname, .{});
+        var maxed_dir = try iterable_dir.createDirPathOpen(io, maxed_dirname, .{});
         defer maxed_dir.close(io);
 
         try maxed_dir.writeFile(io, .{ .sub_path = maxed_filename, .data = "" });
@@ -1511,7 +1511,7 @@ test "access file" {
             const dir_path = try ctx.transformPath("os_test_tmp");
             const file_path = try ctx.transformPath("os_test_tmp" ++ Dir.path.sep_str ++ "file.txt");
 
-            try ctx.dir.makePath(io, dir_path);
+            try ctx.dir.createDirPath(io, dir_path);
             try expectError(error.FileNotFound, ctx.dir.access(io, file_path, .{}));
 
             try ctx.dir.writeFile(io, .{ .sub_path = file_path, .data = "" });
@@ -1527,7 +1527,7 @@ test "sendfile" {
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath(io, "os_test_tmp");
+    try tmp.dir.createDirPath(io, "os_test_tmp");
 
     var dir = try tmp.dir.openDir(io, "os_test_tmp", .{});
     defer dir.close(io);
@@ -1574,7 +1574,7 @@ test "sendfile with buffered data" {
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath(io, "os_test_tmp");
+    try tmp.dir.createDirPath(io, "os_test_tmp");
 
     var dir = try tmp.dir.openDir(io, "os_test_tmp", .{});
     defer dir.close(io);
@@ -1851,7 +1851,7 @@ test "walker" {
     });
 
     for (expected_paths.keys()) |key| {
-        try tmp.dir.makePath(io, key);
+        try tmp.dir.createDirPath(io, key);
     }
 
     var walker = try tmp.dir.walk(testing.allocator);
@@ -1913,7 +1913,7 @@ test "selective walker, skip entries that start with ." {
     });
 
     for (paths_to_create) |path| {
-        try tmp.dir.makePath(io, path);
+        try tmp.dir.createDirPath(io, path);
     }
 
     var walker = try tmp.dir.walkSelectively(testing.allocator);
@@ -1959,8 +1959,8 @@ test "walker without fully iterating" {
     // Create 2 directories inside the tmp directory, but then only iterate once before breaking.
     // This ensures that walker doesn't try to close the initial directory when not fully iterating.
 
-    try tmp.dir.makePath(io, "a");
-    try tmp.dir.makePath(io, "b");
+    try tmp.dir.createDirPath(io, "a");
+    try tmp.dir.createDirPath(io, "b");
 
     var num_walked: usize = 0;
     while (try walker.next(io)) |_| {
@@ -2109,8 +2109,8 @@ test "invalid UTF-8/WTF-8 paths" {
 
             try expectError(expected_err, ctx.dir.createDir(io, invalid_path, .default_dir));
 
-            try expectError(expected_err, ctx.dir.makePath(io, invalid_path));
-            try expectError(expected_err, ctx.dir.makeOpenPath(io, invalid_path, .{}));
+            try expectError(expected_err, ctx.dir.createDirPath(io, invalid_path));
+            try expectError(expected_err, ctx.dir.createDirPathOpen(io, invalid_path, .{}));
 
             try expectError(expected_err, ctx.dir.openDir(io, invalid_path, .{}));
 
@@ -2574,7 +2574,7 @@ test "hard link with different directories" {
     const target_name = "link-target";
     const link_name = "newlink";
 
-    const subdir = try tmp.dir.makeOpenPath(io, "subdir", .{});
+    const subdir = try tmp.dir.createDirPathOpen(io, "subdir", .{});
 
     defer tmp.dir.deleteFile(io, target_name) catch {};
     try tmp.dir.writeFile(io, .{ .sub_path = target_name, .data = "example" });

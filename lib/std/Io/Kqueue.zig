@@ -869,9 +869,9 @@ pub fn io(k: *Kqueue) Io {
             .conditionWaitUncancelable = conditionWaitUncancelable,
             .conditionWake = conditionWake,
 
-            .dirMake = dirMake,
-            .dirMakePath = dirMakePath,
-            .dirMakeOpenPath = dirMakeOpenPath,
+            .dirCreateDir = dirCreateDir,
+            .dirCreateDirPath = dirCreateDirPath,
+            .dirCreateDirPathOpen = dirCreateDirPathOpen,
             .dirStat = dirStat,
             .dirStatFile = dirStatFile,
 
@@ -1114,7 +1114,7 @@ fn conditionWake(userdata: ?*anyopaque, cond: *Io.Condition, wake: Io.Condition.
     k.yield(waiting_fiber, .reschedule);
 }
 
-fn dirMake(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, mode: Dir.Mode) Dir.MakeError!void {
+fn dirCreateDir(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, mode: Dir.Mode) Dir.CreateDirError!void {
     const k: *Kqueue = @ptrCast(@alignCast(userdata));
     _ = k;
     _ = dir;
@@ -1122,7 +1122,7 @@ fn dirMake(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, mode: Dir.Mode
     _ = mode;
     @panic("TODO");
 }
-fn dirMakePath(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, mode: Dir.Mode) Dir.MakeError!void {
+fn dirCreateDirPath(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, mode: Dir.Mode) Dir.CreateDirError!void {
     const k: *Kqueue = @ptrCast(@alignCast(userdata));
     _ = k;
     _ = dir;
@@ -1130,7 +1130,7 @@ fn dirMakePath(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, mode: Dir.
     _ = mode;
     @panic("TODO");
 }
-fn dirMakeOpenPath(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, options: Dir.OpenOptions) Dir.MakeOpenPathError!Dir {
+fn dirCreateDirPathOpen(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, options: Dir.OpenOptions) Dir.CreateDirPathOpenError!Dir {
     const k: *Kqueue = @ptrCast(@alignCast(userdata));
     _ = k;
     _ = dir;

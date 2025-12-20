@@ -3319,7 +3319,7 @@ pub fn reopenDebugInfo(self: *MachO) !void {
     );
     defer gpa.free(d_sym_path);
 
-    var d_sym_bundle = try self.base.emit.root_dir.handle.makeOpenPath(io, d_sym_path, .{});
+    var d_sym_bundle = try self.base.emit.root_dir.handle.createDirPathOpen(io, d_sym_path, .{});
     defer d_sym_bundle.close(io);
 
     self.d_sym.?.file = try d_sym_bundle.createFile(io, fs.path.basename(self.base.emit.sub_path), .{

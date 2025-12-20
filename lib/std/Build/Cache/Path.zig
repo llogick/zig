@@ -84,14 +84,14 @@ pub fn openDir(
     return p.root_dir.handle.openDir(io, joined_path, args);
 }
 
-pub fn makeOpenPath(p: Path, io: Io, sub_path: []const u8, opts: Io.Dir.OpenOptions) !Io.Dir {
+pub fn createDirPathOpen(p: Path, io: Io, sub_path: []const u8, opts: Io.Dir.OpenOptions) !Io.Dir {
     var buf: [fs.max_path_bytes]u8 = undefined;
     const joined_path = if (p.sub_path.len == 0) sub_path else p: {
         break :p std.fmt.bufPrint(&buf, "{s}" ++ fs.path.sep_str ++ "{s}", .{
             p.sub_path, sub_path,
         }) catch return error.NameTooLong;
     };
-    return p.root_dir.handle.makeOpenPath(io, joined_path, opts);
+    return p.root_dir.handle.createDirPathOpen(io, joined_path, opts);
 }
 
 pub fn statFile(p: Path, io: Io, sub_path: []const u8) !Io.Dir.Stat {
@@ -129,14 +129,14 @@ pub fn access(p: Path, io: Io, sub_path: []const u8, flags: Io.Dir.AccessOptions
     return p.root_dir.handle.access(io, joined_path, flags);
 }
 
-pub fn makePath(p: Path, io: Io, sub_path: []const u8) !void {
+pub fn createDirPath(p: Path, io: Io, sub_path: []const u8) !void {
     var buf: [fs.max_path_bytes]u8 = undefined;
     const joined_path = if (p.sub_path.len == 0) sub_path else p: {
         break :p std.fmt.bufPrint(&buf, "{s}" ++ fs.path.sep_str ++ "{s}", .{
             p.sub_path, sub_path,
         }) catch return error.NameTooLong;
     };
-    return p.root_dir.handle.makePath(io, joined_path);
+    return p.root_dir.handle.createDirPath(io, joined_path);
 }
 
 pub fn toString(p: Path, allocator: Allocator) Allocator.Error![]u8 {

@@ -1701,14 +1701,14 @@ pub fn addCheckFile(
     return Step.CheckFile.create(b, file_source, options);
 }
 
-pub fn truncateFile(b: *Build, dest_path: []const u8) (Io.Dir.MakeError || Io.Dir.StatFileError)!void {
+pub fn truncateFile(b: *Build, dest_path: []const u8) (Io.Dir.CreateDirError || Io.Dir.StatFileError)!void {
     const io = b.graph.io;
     if (b.verbose) log.info("truncate {s}", .{dest_path});
     const cwd = Io.Dir.cwd();
     var src_file = cwd.createFile(io, dest_path, .{}) catch |err| switch (err) {
         error.FileNotFound => blk: {
             if (fs.path.dirname(dest_path)) |dirname| {
-                try cwd.makePath(io, dirname);
+                try cwd.createDirPath(io, dirname);
             }
             break :blk try cwd.createFile(io, dest_path, .{});
         },
@@ -2654,7 +2654,7 @@ pub fn makeTempPath(b: *Build) []const u8 {
     const rand_int = std.crypto.random.int(u64);
     const tmp_dir_sub_path = "tmp" ++ fs.path.sep_str ++ std.fmt.hex(rand_int);
     const result_path = b.cache_root.join(b.allocator, &.{tmp_dir_sub_path}) catch @panic("OOM");
-    b.cache_root.handle.makePath(io, tmp_dir_sub_path) catch |err| {
+    b.cache_root.handle.createDirPath(io, tmp_dir_sub_path) catch |err| {
         std.debug.print("unable to make tmp path '{s}': {t}\n", .{ result_path, err });
     };
     return result_path;

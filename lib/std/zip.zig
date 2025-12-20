@@ -554,13 +554,13 @@ pub const Iterator = struct {
             if (filename[filename.len - 1] == '/') {
                 if (self.uncompressed_size != 0)
                     return error.ZipBadDirectorySize;
-                try dest.makePath(io, filename[0 .. filename.len - 1]);
+                try dest.createDirPath(io, filename[0 .. filename.len - 1]);
                 return;
             }
 
             const out_file = blk: {
                 if (std.fs.path.dirname(filename)) |dirname| {
-                    var parent_dir = try dest.makeOpenPath(io, dirname, .{});
+                    var parent_dir = try dest.createDirPathOpen(io, dirname, .{});
                     defer parent_dir.close(io);
 
                     const basename = std.fs.path.basename(filename);

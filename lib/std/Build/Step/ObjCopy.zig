@@ -177,7 +177,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
     const cache_path = "o" ++ fs.path.sep_str ++ digest;
     const full_dest_path = try b.cache_root.join(b.allocator, &.{ cache_path, objcopy.basename });
     const full_dest_path_debug = try b.cache_root.join(b.allocator, &.{ cache_path, b.fmt("{s}.debug", .{objcopy.basename}) });
-    b.cache_root.handle.makePath(io, cache_path) catch |err| {
+    b.cache_root.handle.createDirPath(io, cache_path) catch |err| {
         return step.fail("unable to make path {s}: {s}", .{ cache_path, @errorName(err) });
     };
 

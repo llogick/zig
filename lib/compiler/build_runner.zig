@@ -66,12 +66,12 @@ pub fn main() !void {
 
     const local_cache_directory: std.Build.Cache.Directory = .{
         .path = cache_root,
-        .handle = try cwd.makeOpenPath(io, cache_root, .{}),
+        .handle = try cwd.createDirPathOpen(io, cache_root, .{}),
     };
 
     const global_cache_directory: std.Build.Cache.Directory = .{
         .path = global_cache_root,
-        .handle = try cwd.makeOpenPath(io, global_cache_root, .{}),
+        .handle = try cwd.createDirPathOpen(io, global_cache_root, .{}),
     };
 
     var graph: std.Build.Graph = .{
@@ -80,7 +80,7 @@ pub fn main() !void {
         .cache = .{
             .io = io,
             .gpa = arena,
-            .manifest_dir = try local_cache_directory.handle.makeOpenPath(io, "h", .{}),
+            .manifest_dir = try local_cache_directory.handle.createDirPathOpen(io, "h", .{}),
         },
         .zig_exe = zig_exe,
         .env_map = try process.getEnvMap(arena),

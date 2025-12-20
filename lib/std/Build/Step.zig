@@ -516,12 +516,12 @@ pub fn installFile(s: *Step, src_lazy_path: Build.LazyPath, dest_path: []const u
         return s.fail("unable to update file from '{f}' to '{s}': {t}", .{ src_path, dest_path, err });
 }
 
-/// Wrapper around `Io.Dir.makePathStatus` that handles verbose and error output.
-pub fn installDir(s: *Step, dest_path: []const u8) !Io.Dir.MakePathStatus {
+/// Wrapper around `Io.Dir.createDirPathStatus` that handles verbose and error output.
+pub fn installDir(s: *Step, dest_path: []const u8) !Io.Dir.CreatePathStatus {
     const b = s.owner;
     const io = b.graph.io;
     try handleVerbose(b, null, &.{ "install", "-d", dest_path });
-    return Io.Dir.cwd().makePathStatus(io, dest_path, .default_dir) catch |err|
+    return Io.Dir.cwd().createDirPathStatus(io, dest_path, .default_dir) catch |err|
         return s.fail("unable to create dir '{s}': {t}", .{ dest_path, err });
 }
 

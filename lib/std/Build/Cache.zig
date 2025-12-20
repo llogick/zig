@@ -1330,7 +1330,7 @@ test "cache file and then recall it" {
         var cache: Cache = .{
             .io = io,
             .gpa = testing.allocator,
-            .manifest_dir = try tmp.dir.makeOpenPath(io, temp_manifest_dir, .{}),
+            .manifest_dir = try tmp.dir.createDirPathOpen(io, temp_manifest_dir, .{}),
         };
         cache.addPrefix(.{ .path = null, .handle = tmp.dir });
         defer cache.manifest_dir.close(io);
@@ -1396,7 +1396,7 @@ test "check that changing a file makes cache fail" {
         var cache: Cache = .{
             .io = io,
             .gpa = testing.allocator,
-            .manifest_dir = try tmp.dir.makeOpenPath(io, temp_manifest_dir, .{}),
+            .manifest_dir = try tmp.dir.createDirPathOpen(io, temp_manifest_dir, .{}),
         };
         cache.addPrefix(.{ .path = null, .handle = tmp.dir });
         defer cache.manifest_dir.close(io);
@@ -1456,7 +1456,7 @@ test "no file inputs" {
     var cache: Cache = .{
         .io = io,
         .gpa = testing.allocator,
-        .manifest_dir = try tmp.dir.makeOpenPath(io, temp_manifest_dir, .{}),
+        .manifest_dir = try tmp.dir.createDirPathOpen(io, temp_manifest_dir, .{}),
     };
     cache.addPrefix(.{ .path = null, .handle = tmp.dir });
     defer cache.manifest_dir.close(io);
@@ -1515,7 +1515,7 @@ test "Manifest with files added after initial hash work" {
         var cache: Cache = .{
             .io = io,
             .gpa = testing.allocator,
-            .manifest_dir = try tmp.dir.makeOpenPath(io, temp_manifest_dir, .{}),
+            .manifest_dir = try tmp.dir.createDirPathOpen(io, temp_manifest_dir, .{}),
         };
         cache.addPrefix(.{ .path = null, .handle = tmp.dir });
         defer cache.manifest_dir.close(io);

@@ -258,7 +258,7 @@ pub fn buildImportLib(comp: *Compilation, lib_name: []const u8) !void {
     var cache: Cache = .{
         .gpa = gpa,
         .io = io,
-        .manifest_dir = try comp.dirs.global_cache.handle.makeOpenPath(io, "h", .{}),
+        .manifest_dir = try comp.dirs.global_cache.handle.createDirPathOpen(io, "h", .{}),
     };
     cache.addPrefix(.{ .path = null, .handle = Io.Dir.cwd() });
     cache.addPrefix(comp.dirs.zig_lib);
@@ -297,7 +297,7 @@ pub fn buildImportLib(comp: *Compilation, lib_name: []const u8) !void {
 
     const digest = man.final();
     const o_sub_path = try std.fs.path.join(arena, &[_][]const u8{ "o", &digest });
-    var o_dir = try comp.dirs.global_cache.handle.makeOpenPath(io, o_sub_path, .{});
+    var o_dir = try comp.dirs.global_cache.handle.createDirPathOpen(io, o_sub_path, .{});
     defer o_dir.close(io);
 
     const aro = @import("aro");

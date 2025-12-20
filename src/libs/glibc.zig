@@ -679,7 +679,7 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
     var cache: Cache = .{
         .gpa = gpa,
         .io = io,
-        .manifest_dir = try comp.dirs.global_cache.handle.makeOpenPath(io, "h", .{}),
+        .manifest_dir = try comp.dirs.global_cache.handle.createDirPathOpen(io, "h", .{}),
     };
     cache.addPrefix(.{ .path = null, .handle = Io.Dir.cwd() });
     cache.addPrefix(comp.dirs.zig_lib);
@@ -712,7 +712,7 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
     const o_sub_path = try path.join(arena, &[_][]const u8{ "o", &digest });
 
     var o_directory: Cache.Directory = .{
-        .handle = try comp.dirs.global_cache.handle.makeOpenPath(io, o_sub_path, .{}),
+        .handle = try comp.dirs.global_cache.handle.createDirPathOpen(io, o_sub_path, .{}),
         .path = try comp.dirs.global_cache.join(arena, &.{o_sub_path}),
     };
     defer o_directory.handle.close(io);

@@ -711,9 +711,9 @@ pub fn io(t: *Threaded) Io {
             .futexWaitUncancelable = futexWaitUncancelable,
             .futexWake = futexWake,
 
-            .dirMake = dirMake,
-            .dirMakePath = dirMakePath,
-            .dirMakeOpenPath = dirMakeOpenPath,
+            .dirCreateDir = dirCreateDir,
+            .dirCreateDirPath = dirCreateDirPath,
+            .dirCreateDirPathOpen = dirCreateDirPathOpen,
             .dirStat = dirStat,
             .dirStatFile = dirStatFile,
             .dirAccess = dirAccess,
@@ -846,9 +846,9 @@ pub fn ioBasic(t: *Threaded) Io {
             .futexWaitUncancelable = futexWaitUncancelable,
             .futexWake = futexWake,
 
-            .dirMake = dirMake,
-            .dirMakePath = dirMakePath,
-            .dirMakeOpenPath = dirMakeOpenPath,
+            .dirCreateDir = dirCreateDir,
+            .dirCreateDirPath = dirCreateDirPath,
+            .dirCreateDirPathOpen = dirCreateDirPathOpen,
             .dirStat = dirStat,
             .dirStatFile = dirStatFile,
             .dirAccess = dirAccess,
@@ -1507,13 +1507,13 @@ fn futexWake(userdata: ?*anyopaque, ptr: *const u32, max_waiters: u32) void {
     }
 }
 
-const dirMake = switch (native_os) {
-    .windows => dirMakeWindows,
-    .wasi => dirMakeWasi,
-    else => dirMakePosix,
+const dirCreateDir = switch (native_os) {
+    .windows => dirCreateDirWindows,
+    .wasi => dirCreateDirWasi,
+    else => dirCreateDirPosix,
 };
 
-fn dirMakePosix(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, permissions: Dir.Permissions) Dir.MakeError!void {
+fn dirCreateDirPosix(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, permissions: Dir.Permissions) Dir.CreateDirError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
@@ -1559,8 +1559,8 @@ fn dirMakePosix(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, permissio
     }
 }
 
-fn dirMakeWasi(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, permissions: Dir.Permissions) Dir.MakeError!void {
-    if (builtin.link_libc) return dirMakePosix(userdata, dir, sub_path, permissions);
+fn dirCreateDirWasi(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, permissions: Dir.Permissions) Dir.CreateDirError!void {
+    if (builtin.link_libc) return dirCreateDirPosix(userdata, dir, sub_path, permissions);
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
     try current_thread.beginSyscall();
@@ -1601,7 +1601,7 @@ fn dirMakeWasi(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, permission
     }
 }
 
-fn dirMakeWindows(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, permissions: Dir.Permissions) Dir.MakeError!void {
+fn dirCreateDirWindows(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, permissions: Dir.Permissions) Dir.CreateDirError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
     try current_thread.checkCancel();
@@ -1627,19 +1627,19 @@ fn dirMakeWindows(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, permiss
     windows.CloseHandle(sub_dir_handle);
 }
 
-fn dirMakePath(
+fn dirCreateDirPath(
     userdata: ?*anyopaque,
     dir: Dir,
     sub_path: []const u8,
     permissions: Dir.Permissions,
-) Dir.MakePathError!Dir.MakePathStatus {
+) Dir.CreateDirPathError!Dir.CreatePathStatus {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
 
     var it = std.fs.path.componentIterator(sub_path);
-    var status: Dir.MakePathStatus = .existed;
+    var status: Dir.CreatePathStatus = .existed;
     var component = it.last() orelse return error.BadPathName;
     while (true) {
-        if (dirMake(t, dir, component.path, permissions)) |_| {
+        if (dirCreateDir(t, dir, component.path, permissions)) |_| {
             status = .created;
         } else |err| switch (err) {
             error.PathAlreadyExists => {
@@ -1659,37 +1659,37 @@ fn dirMakePath(
     }
 }
 
-const dirMakeOpenPath = switch (native_os) {
-    .windows => dirMakeOpenPathWindows,
-    .wasi => dirMakeOpenPathWasi,
-    else => dirMakeOpenPathPosix,
+const dirCreateDirPathOpen = switch (native_os) {
+    .windows => dirCreateDirPathOpenWindows,
+    .wasi => dirCreateDirPathOpenWasi,
+    else => dirCreateDirPathOpenPosix,
 };
 
-fn dirMakeOpenPathPosix(
+fn dirCreateDirPathOpenPosix(
     userdata: ?*anyopaque,
     dir: Dir,
     sub_path: []const u8,
     permissions: Dir.Permissions,
     options: Dir.OpenOptions,
-) Dir.MakeOpenPathError!Dir {
+) Dir.CreateDirPathOpenError!Dir {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const t_io = ioBasic(t);
     return dirOpenDirPosix(t, dir, sub_path, options) catch |err| switch (err) {
         error.FileNotFound => {
-            _ = try dir.makePathStatus(t_io, sub_path, permissions);
+            _ = try dir.createDirPathStatus(t_io, sub_path, permissions);
             return dirOpenDirPosix(t, dir, sub_path, options);
         },
         else => |e| return e,
     };
 }
 
-fn dirMakeOpenPathWindows(
+fn dirCreateDirPathOpenWindows(
     userdata: ?*anyopaque,
     dir: Dir,
     sub_path: []const u8,
     permissions: Dir.Permissions,
     options: Dir.OpenOptions,
-) Dir.MakeOpenPathError!Dir {
+) Dir.CreateDirPathOpenError!Dir {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
     const w = windows;
@@ -1795,18 +1795,18 @@ fn dirMakeOpenPathWindows(
     }
 }
 
-fn dirMakeOpenPathWasi(
+fn dirCreateDirPathOpenWasi(
     userdata: ?*anyopaque,
     dir: Dir,
     sub_path: []const u8,
     permissions: Dir.Permissions,
     options: Dir.OpenOptions,
-) Dir.MakeOpenPathError!Dir {
+) Dir.CreateDirPathOpenError!Dir {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const t_io = ioBasic(t);
     return dirOpenDirWasi(t, dir, sub_path, options) catch |err| switch (err) {
         error.FileNotFound => {
-            _ = try dir.makePathStatus(t_io, sub_path, permissions);
+            _ = try dir.createDirPathStatus(t_io, sub_path, permissions);
             return dirOpenDirWasi(t, dir, sub_path, options);
         },
         else => |e| return e,
@@ -3351,11 +3351,6 @@ pub fn dirOpenDirWindows(
         else => return w.unexpectedStatus(rc),
     }
 }
-
-const MakeOpenDirAccessMaskWOptions = struct {
-    no_follow: bool,
-    create_disposition: u32,
-};
 
 fn dirClose(userdata: ?*anyopaque, dirs: []const Dir) void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));

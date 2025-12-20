@@ -78,7 +78,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
     var any_miss = false;
     for (usf.output_source_files.items) |output_source_file| {
         if (fs.path.dirname(output_source_file.sub_path)) |dirname| {
-            b.build_root.handle.makePath(io, dirname) catch |err| {
+            b.build_root.handle.createDirPath(io, dirname) catch |err| {
                 return step.fail("unable to make path '{f}{s}': {t}", .{ b.build_root, dirname, err });
             };
         }

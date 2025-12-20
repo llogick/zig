@@ -1079,7 +1079,7 @@ pub fn mkdiratZ(dir_fd: fd_t, sub_dir_path: [*:0]const u8, mode: mode_t) MakeDir
     }
 }
 
-pub const MakeDirError = std.Io.Dir.MakeError;
+pub const MakeDirError = std.Io.Dir.CreateDirError;
 
 /// Create a directory.
 /// `mode` is ignored on Windows and WASI.

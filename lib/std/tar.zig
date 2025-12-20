@@ -606,7 +606,7 @@ pub fn pipeToFileSystem(io: Io, dir: Io.Dir, reader: *Io.Reader, options: PipeOp
         switch (file.kind) {
             .directory => {
                 if (file_name.len > 0 and !options.exclude_empty_directories) {
-                    try dir.makePath(io, file_name);
+                    try dir.createDirPath(io, file_name);
                 }
             },
             .file => {
@@ -642,7 +642,7 @@ fn createDirAndFile(io: Io, dir: Io.Dir, file_name: []const u8, permissions: Io.
     const fs_file = dir.createFile(io, file_name, .{ .exclusive = true, .permissions = permissions }) catch |err| {
         if (err == error.FileNotFound) {
             if (std.fs.path.dirname(file_name)) |dir_name| {
-                try dir.makePath(io, dir_name);
+                try dir.createDirPath(io, dir_name);
                 return try dir.createFile(io, file_name, .{ .exclusive = true, .permissions = permissions });
             }
         }
@@ -656,7 +656,7 @@ fn createDirAndSymlink(io: Io, dir: Io.Dir, link_name: []const u8, file_name: []
     dir.symLink(io, link_name, file_name, .{}) catch |err| {
         if (err == error.FileNotFound) {
             if (std.fs.path.dirname(file_name)) |dir_name| {
-                try dir.makePath(io, dir_name);
+                try dir.createDirPath(io, dir_name);
                 return try dir.symLink(io, link_name, file_name, .{});
             }
         }

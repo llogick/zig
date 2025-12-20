@@ -477,7 +477,7 @@ fn make(step: *Step, make_options: Step.MakeOptions) !void {
     } else |outer_err| switch (outer_err) {
         error.FileNotFound => {
             const sub_dirname = fs.path.dirname(sub_path).?;
-            b.cache_root.handle.makePath(io, sub_dirname) catch |e|
+            b.cache_root.handle.createDirPath(io, sub_dirname) catch |e|
                 return step.fail("unable to make path '{f}{s}': {t}", .{ b.cache_root, sub_dirname, e });
 
             const rand_int = std.crypto.random.int(u64);
@@ -486,7 +486,7 @@ fn make(step: *Step, make_options: Step.MakeOptions) !void {
                 basename;
             const tmp_sub_path_dirname = fs.path.dirname(tmp_sub_path).?;
 
-            b.cache_root.handle.makePath(io, tmp_sub_path_dirname) catch |err| {
+            b.cache_root.handle.createDirPath(io, tmp_sub_path_dirname) catch |err| {
                 return step.fail("unable to make temporary directory '{f}{s}': {t}", .{
                     b.cache_root, tmp_sub_path_dirname, err,
                 });

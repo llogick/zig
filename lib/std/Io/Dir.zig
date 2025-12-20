@@ -590,7 +590,7 @@ pub fn updateFile(
     }
 
     if (path.dirname(dest_path)) |dirname| {
-        try dest_dir.makePath(io, dirname);
+        try dest_dir.createDirPath(io, dirname);
     }
 
     var buffer: [1000]u8 = undefined; // Used only when direct fd-to-fd is not available.
@@ -637,7 +637,7 @@ pub fn readFile(dir: Dir, io: Io, file_path: []const u8, buffer: []u8) ReadFileE
     return buffer[0..n];
 }
 
-pub const MakeError = error{
+pub const CreateDirError = error{
     /// In WASI, this error may occur when the file descriptor does
     /// not hold the required rights to create a new directory relative to it.
     AccessDenied,
@@ -663,10 +663,10 @@ pub const MakeError = error{
 /// * On other platforms, `sub_path` is an opaque sequence of bytes with no particular encoding.
 ///
 /// Related:
-/// * `makePath`
+/// * `createDirPath`
 /// * `createDirAbsolute`
-pub fn createDir(dir: Dir, io: Io, sub_path: []const u8, permissions: Permissions) MakeError!void {
-    return io.vtable.dirMake(io.userdata, dir, sub_path, permissions);
+pub fn createDir(dir: Dir, io: Io, sub_path: []const u8, permissions: Permissions) CreateDirError!void {
+    return io.vtable.dirCreateDir(io.userdata, dir, sub_path, permissions);
 }
 
 /// Create a new directory, based on an absolute path.
@@ -677,14 +677,14 @@ pub fn createDir(dir: Dir, io: Io, sub_path: []const u8, permissions: Permission
 /// On Windows, `absolute_path` should be encoded as [WTF-8](https://wtf-8.codeberg.page/).
 /// On WASI, `absolute_path` should be encoded as valid UTF-8.
 /// On other platforms, `absolute_path` is an opaque sequence of bytes with no particular encoding.
-pub fn createDirAbsolute(io: Io, absolute_path: []const u8, permissions: Permissions) MakeError!void {
+pub fn createDirAbsolute(io: Io, absolute_path: []const u8, permissions: Permissions) CreateDirError!void {
     assert(path.isAbsolute(absolute_path));
     return createDir(.cwd(), io, absolute_path, permissions);
 }
 
 test createDirAbsolute {}
 
-pub const MakePathError = MakeError || StatFileError;
+pub const CreateDirPathError = CreateDirError || StatFileError;
 
 /// Creates parent directories with default permissions as necessary to ensure
 /// `sub_path` exists as a directory.
@@ -710,27 +710,27 @@ pub const MakePathError = MakeError || StatFileError;
 ///   and a `./second` directory.
 ///
 /// See also:
-/// * `makePathStatus`
-pub fn makePath(dir: Dir, io: Io, sub_path: []const u8) MakePathError!void {
-    _ = try io.vtable.dirMakePath(io.userdata, dir, sub_path, .default_dir);
+/// * `createDirPathStatus`
+pub fn createDirPath(dir: Dir, io: Io, sub_path: []const u8) CreateDirPathError!void {
+    _ = try io.vtable.dirCreateDirPath(io.userdata, dir, sub_path, .default_dir);
 }
 
-pub const MakePathStatus = enum { existed, created };
+pub const CreatePathStatus = enum { existed, created };
 
-/// Same as `makePath` except returns whether the path already existed or was
+/// Same as `createDirPath` except returns whether the path already existed or was
 /// successfully created.
-pub fn makePathStatus(dir: Dir, io: Io, sub_path: []const u8, permissions: Permissions) MakePathError!MakePathStatus {
-    return io.vtable.dirMakePath(io.userdata, dir, sub_path, permissions);
+pub fn createDirPathStatus(dir: Dir, io: Io, sub_path: []const u8, permissions: Permissions) CreateDirPathError!CreatePathStatus {
+    return io.vtable.dirCreateDirPath(io.userdata, dir, sub_path, permissions);
 }
 
-pub const MakeOpenPathError = MakeError || OpenError || StatFileError;
+pub const CreateDirPathOpenError = CreateDirError || OpenError || StatFileError;
 
-pub const MakeOpenPathOptions = struct {
+pub const CreateDirPathOpenOptions = struct {
     open_options: OpenOptions = .{},
     permissions: Permissions = .default_dir,
 };
 
-/// Performs the equivalent of `makePath` followed by `openDir`, atomically if possible.
+/// Performs the equivalent of `createDirPath` followed by `openDir`, atomically if possible.
 ///
 /// When this operation is canceled, it may leave the file system in a
 /// partially modified state.
@@ -738,8 +738,8 @@ pub const MakeOpenPathOptions = struct {
 /// On Windows, `sub_path` should be encoded as [WTF-8](https://wtf-8.codeberg.page/).
 /// On WASI, `sub_path` should be encoded as valid UTF-8.
 /// On other platforms, `sub_path` is an opaque sequence of bytes with no particular encoding.
-pub fn makeOpenPath(dir: Dir, io: Io, sub_path: []const u8, options: MakeOpenPathOptions) MakeOpenPathError!Dir {
-    return io.vtable.dirMakeOpenPath(io.userdata, dir, sub_path, options.permissions, options.open_options);
+pub fn createDirPathOpen(dir: Dir, io: Io, sub_path: []const u8, options: CreateDirPathOpenOptions) CreateDirPathOpenError!Dir {
+    return io.vtable.dirCreateDirPathOpen(io.userdata, dir, sub_path, options.permissions, options.open_options);
 }
 
 pub const Stat = File.Stat;
@@ -1729,7 +1729,7 @@ pub const AtomicFileOptions = struct {
 pub fn atomicFile(parent: Dir, io: Io, dest_path: []const u8, options: AtomicFileOptions) !File.Atomic {
     if (path.dirname(dest_path)) |dirname| {
         const dir = if (options.make_path)
-            try parent.makeOpenPath(io, dirname, .{})
+            try parent.createDirPathOpen(io, dirname, .{})
         else
             try parent.openDir(io, dirname, .{});
 
