@@ -246,17 +246,9 @@ test "Dir.readLink on non-symlinks" {
             // file
             var buffer: [Dir.max_path_bytes]u8 = undefined;
             try std.testing.expectError(error.NotLink, ctx.dir.readLink(io, file_path, &buffer));
-            if (builtin.os.tag == .windows) {
-                var file_path_w = try std.os.windows.sliceToPrefixedFileW(ctx.dir.handle, file_path);
-                try std.testing.expectError(error.NotLink, ctx.dir.readLinkW(file_path_w.span(), &file_path_w.data));
-            }
 
             // dir
             try std.testing.expectError(error.NotLink, ctx.dir.readLink(io, dir_path, &buffer));
-            if (builtin.os.tag == .windows) {
-                var dir_path_w = try std.os.windows.sliceToPrefixedFileW(ctx.dir.handle, dir_path);
-                try std.testing.expectError(error.NotLink, ctx.dir.readLinkW(dir_path_w.span(), &dir_path_w.data));
-            }
         }
     }.impl);
 }
