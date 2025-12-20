@@ -1221,7 +1221,7 @@ fn parseDependentDylibs(self: *MachO) !void {
                         try checked_paths.append(rel_path);
                         var buffer: [fs.max_path_bytes]u8 = undefined;
                         // TODO don't use realpath
-                        const full_path = buffer[0 .. Io.Dir.realPathAbsolute(io, rel_path, &buffer) catch continue];
+                        const full_path = buffer[0 .. Io.Dir.realPathFileAbsolute(io, rel_path, &buffer) catch continue];
                         break :full_path try arena.dupe(u8, full_path);
                     }
                 } else if (eatPrefix(id.name, "@loader_path/")) |_| {
@@ -1235,7 +1235,7 @@ fn parseDependentDylibs(self: *MachO) !void {
                 try checked_paths.append(try arena.dupe(u8, id.name));
                 var buffer: [fs.max_path_bytes]u8 = undefined;
                 // TODO don't use realpath
-                if (Io.Dir.realPathAbsolute(io, id.name, &buffer)) |full_path_n| {
+                if (Io.Dir.realPathFileAbsolute(io, id.name, &buffer)) |full_path_n| {
                     break :full_path try arena.dupe(u8, buffer[0..full_path_n]);
                 } else |_| {
                     try self.reportMissingDependencyError(
