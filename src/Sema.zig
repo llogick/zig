@@ -29023,33 +29023,6 @@ fn coerceExtra(
             else => {},
         },
         .error_union => switch (inst_ty.zigTypeTag(zcu)) {
-            .error_union => eu: {
-                if (maybe_inst_val) |inst_val| {
-                    switch (inst_val.toIntern()) {
-                        .undef => return pt.undefRef(dest_ty),
-                        else => switch (zcu.intern_pool.indexToKey(inst_val.toIntern())) {
-                            .error_union => |error_union| switch (error_union.val) {
-                                .err_name => |err_name| {
-                                    const error_set_ty = inst_ty.errorUnionSet(zcu);
-                                    const error_set_val = Air.internedToRef((try pt.intern(.{ .err = .{
-                                        .ty = error_set_ty.toIntern(),
-                                        .name = err_name,
-                                    } })));
-                                    return sema.wrapErrorUnionSet(block, dest_ty, error_set_val, inst_src);
-                                },
-                                .payload => |payload| {
-                                    const payload_val = Air.internedToRef(payload);
-                                    return sema.wrapErrorUnionPayload(block, dest_ty, payload_val, inst_src) catch |err| switch (err) {
-                                        error.NotCoercible => break :eu,
-                                        else => |e| return e,
-                                    };
-                                },
-                            },
-                            else => unreachable,
-                        },
-                    }
-                }
-            },
             .error_set => {
                 // E to E!T
                 return sema.wrapErrorUnionSet(block, dest_ty, inst, inst_src);
