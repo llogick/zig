@@ -175,6 +175,10 @@ pub fn main() !void {
     defer arena.deinit();
     const gpa = arena.allocator();
 
+    var threaded: Io.Threaded = .init(gpa);
+    defer threaded.deinit();
+    const io = threaded.io();
+
     const args = try std.process.argsAlloc(gpa);
     if (args.len < 2 or mem.eql(u8, args[1], "--help")) {
         const w, _ = std.debug.lockStderrWriter(&.{});
@@ -188,8 +192,8 @@ pub fn main() !void {
     var stdout_writer = std.fs.File.stdout().writerStreaming(&stdout_buffer);
     const stdout = &stdout_writer.interface;
 
-    var linux_dir = try std.fs.cwd().openDir(linux_path, .{});
-    defer linux_dir.close();
+    var linux_dir = try std.fs.cwd().openDir(io, linux_path, .{});
+    defer linux_dir.close(io);
 
     // As of 6.11, the largest table is 24195 bytes.
     // 32k should be enough for now.
@@ -198,7 +202,7 @@ pub fn main() !void {
 
     // Fetch the kernel version from the Makefile variables.
     const version = blk: {
-        const head = try linux_dir.readFile("Makefile", buf[0..128]);
+        const head = try linux_dir.readFile(io, "Makefile", buf[0..128]);
         var lines = mem.tokenizeScalar(u8, head, '\n');
         _ = lines.next(); // Skip SPDX identifier
 

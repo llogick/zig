@@ -1,8 +1,9 @@
 const std = @import("std");
+const Io = std.Io;
+const Dir = std.Io.Dir;
 const assert = std.debug.assert;
 const info = std.log.info;
 const fatal = std.process.fatal;
-
 const Allocator = std.mem.Allocator;
 
 var general_purpose_allocator = std.heap.GeneralPurposeAllocator(.{}){};
@@ -20,6 +21,10 @@ pub fn main() anyerror!void {
     defer arena_allocator.deinit();
     const arena = arena_allocator.allocator();
 
+    var threaded: Io.Threaded = .init(gpa);
+    defer threaded.deinit();
+    const io = threaded.io();
+
     const args = try std.process.argsAlloc(arena);
     if (args.len == 1) fatal("no command or option specified", .{});
 
@@ -33,10 +38,10 @@ pub fn main() anyerror!void {
 
     if (positionals.items.len != 1) fatal("expected one positional argument: [dir]", .{});
 
-    var dir = try std.fs.cwd().openDir(positionals.items[0], .{ .follow_symlinks = false });
-    defer dir.close();
+    var dir = try std.fs.cwd().openDir(io, positionals.items[0], .{ .follow_symlinks = false });
+    defer dir.close(io);
     var paths = std.array_list.Managed([]const u8).init(arena);
-    try findHeaders(arena, dir, "", &paths);
+    try findHeaders(arena, io, dir, "", &paths);
 
     const SortFn = struct {
         pub fn lessThan(ctx: void, lhs: []const u8, rhs: []const u8) bool {
@@ -64,7 +69,8 @@ pub fn main() anyerror!void {
 
 fn findHeaders(
     arena: Allocator,
-    dir: std.fs.Dir,
+    io: Io,
+    dir: Dir,
     prefix: []const u8,
     paths: *std.array_list.Managed([]const u8),
 ) anyerror!void {
@@ -73,9 +79,9 @@ fn findHeaders(
         switch (entry.kind) {
             .directory => {
                 const path = try std.fs.path.join(arena, &.{ prefix, entry.name });
-                var subdir = try dir.openDir(entry.name, .{ .follow_symlinks = false });
-                defer subdir.close();
-                try findHeaders(arena, subdir, path, paths);
+                var subdir = try dir.openDir(io, entry.name, .{ .follow_symlinks = false });
+                defer subdir.close(io);
+                try findHeaders(arena, io, subdir, path, paths);
             },
             .file, .sym_link => {
                 const ext = std.fs.path.extension(entry.name);

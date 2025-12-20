@@ -1,5 +1,6 @@
 const std = @import("std");
-const fs = std.fs;
+const Io = std.Io;
+const Dir = std.Io.Dir;
 const mem = std.mem;
 const ascii = std.ascii;
 
@@ -10,25 +11,29 @@ pub fn main() anyerror!void {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
+    var threaded: Io.Threaded = .init(arena);
+    defer threaded.deinit();
+    const io = threaded.io();
+
     const args = try std.process.argsAlloc(arena);
     if (args.len <= 1) printUsageAndExit(args[0]);
 
     const zig_src_root = args[1];
     if (mem.startsWith(u8, zig_src_root, "-")) printUsageAndExit(args[0]);
 
-    var zig_src_dir = try fs.cwd().openDir(zig_src_root, .{});
-    defer zig_src_dir.close();
+    var zig_src_dir = try Dir.cwd().openDir(io, zig_src_root, .{});
+    defer zig_src_dir.close(io);
 
-    const hash_sub_path = try fs.path.join(arena, &.{ "lib", "std", "hash" });
-    var hash_target_dir = try zig_src_dir.makeOpenPath(hash_sub_path, .{});
-    defer hash_target_dir.close();
+    const hash_sub_path = try Dir.path.join(arena, &.{ "lib", "std", "hash" });
+    var hash_target_dir = try zig_src_dir.createDirPathOpen(io, hash_sub_path, .{});
+    defer hash_target_dir.close(io);
 
-    const crc_sub_path = try fs.path.join(arena, &.{ "lib", "std", "hash", "crc" });
-    var crc_target_dir = try zig_src_dir.makeOpenPath(crc_sub_path, .{});
-    defer crc_target_dir.close();
+    const crc_sub_path = try Dir.path.join(arena, &.{ "lib", "std", "hash", "crc" });
+    var crc_target_dir = try zig_src_dir.createDirPathOpen(io, crc_sub_path, .{});
+    defer crc_target_dir.close(io);
 
-    var zig_code_file = try hash_target_dir.createFile("crc.zig", .{});
-    defer zig_code_file.close();
+    var zig_code_file = try hash_target_dir.createFile(io, "crc.zig", .{});
+    defer zig_code_file.close(io);
     var zig_code_file_buffer: [4096]u8 = undefined;
     var zig_code_file_writer = zig_code_file.writer(&zig_code_file_buffer);
     const code_writer = &zig_code_file_writer.interface;
@@ -51,8 +56,8 @@ pub fn main() anyerror!void {
         \\
     );
 
-    var zig_test_file = try crc_target_dir.createFile("test.zig", .{});
-    defer zig_test_file.close();
+    var zig_test_file = try crc_target_dir.createFile(io, "test.zig", .{});
+    defer zig_test_file.close(io);
     var zig_test_file_buffer: [4096]u8 = undefined;
     var zig_test_file_writer = zig_test_file.writer(&zig_test_file_buffer);
     const test_writer = &zig_test_file_writer.interface;

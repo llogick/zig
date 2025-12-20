@@ -73,15 +73,15 @@ pub fn main() !void {
     const code_dir_path = opt_code_dir orelse fatal("missing --code-dir argument", .{});
 
     var in_file = try fs.cwd().openFile(input_path, .{});
-    defer in_file.close();
+    defer in_file.close(io);
 
     var out_file = try fs.cwd().createFile(output_path, .{});
-    defer out_file.close();
+    defer out_file.close(io);
     var out_file_buffer: [4096]u8 = undefined;
     var out_file_writer = out_file.writer(&out_file_buffer);
 
     var code_dir = try fs.cwd().openDir(code_dir_path, .{});
-    defer code_dir.close();
+    defer code_dir.close(io);
 
     var in_file_reader = in_file.reader(io, &.{});
     const input_file_bytes = try in_file_reader.interface.allocRemaining(arena, .limited(max_doc_file_size));

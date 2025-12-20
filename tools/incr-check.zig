@@ -1,5 +1,6 @@
 const std = @import("std");
 const Io = std.Io;
+const Dir = std.Io.Dir;
 const Allocator = std.mem.Allocator;
 const Cache = std.Build.Cache;
 
@@ -59,7 +60,7 @@ pub fn main() !void {
     const zig_exe = opt_zig_exe orelse fatal("missing path to zig\n{s}", .{usage});
     const input_file_name = opt_input_file_name orelse fatal("missing input file\n{s}", .{usage});
 
-    const input_file_bytes = try std.fs.cwd().readFileAlloc(input_file_name, arena, .limited(std.math.maxInt(u32)));
+    const input_file_bytes = try Dir.cwd().readFileAlloc(io, input_file_name, arena, .limited(std.math.maxInt(u32)));
     const case = try Case.parse(arena, io, input_file_bytes);
 
     // Check now: if there are any targets using the `cbe` backend, we need the lib dir.
@@ -71,25 +72,25 @@ pub fn main() !void {
         }
     }
 
-    const prog_node = std.Progress.start(.{});
+    const prog_node = std.Progress.start(io, .{});
     defer prog_node.end();
 
     const rand_int = std.crypto.random.int(u64);
     const tmp_dir_path = "tmp_" ++ std.fmt.hex(rand_int);
-    var tmp_dir = try std.fs.cwd().makeOpenPath(tmp_dir_path, .{});
+    var tmp_dir = try Dir.cwd().createDirPathOpen(io, tmp_dir_path, .{});
     defer {
-        tmp_dir.close();
+        tmp_dir.close(io);
         if (!preserve_tmp) {
-            std.fs.cwd().deleteTree(tmp_dir_path) catch |err| {
-                std.log.warn("failed to delete tree '{s}': {s}", .{ tmp_dir_path, @errorName(err) });
+            Dir.cwd().deleteTree(io, tmp_dir_path) catch |err| {
+                std.log.warn("failed to delete tree '{s}': {t}", .{ tmp_dir_path, err });
             };
         }
     }
 
     // Convert paths to be relative to the cwd of the subprocess.
-    const resolved_zig_exe = try std.fs.path.relative(arena, tmp_dir_path, zig_exe);
+    const resolved_zig_exe = try Dir.path.relative(arena, tmp_dir_path, zig_exe);
     const opt_resolved_lib_dir = if (opt_lib_dir) |lib_dir|
-        try std.fs.path.relative(arena, tmp_dir_path, lib_dir)
+        try Dir.path.relative(arena, tmp_dir_path, lib_dir)
     else
         null;
 
@@ -164,7 +165,7 @@ pub fn main() !void {
         var cc_child_args: std.ArrayList([]const u8) = .empty;
         if (target.backend == .cbe) {
             const resolved_cc_zig_exe = if (opt_cc_zig) |cc_zig_exe|
-                try std.fs.path.relative(arena, tmp_dir_path, cc_zig_exe)
+                try Dir.path.relative(arena, tmp_dir_path, cc_zig_exe)
             else
                 resolved_zig_exe;
 
@@ -185,6 +186,7 @@ pub fn main() !void {
 
         var eval: Eval = .{
             .arena = arena,
+            .io = io,
             .case = case,
             .host = host,
             .target = target,
@@ -196,9 +198,9 @@ pub fn main() !void {
             .cc_child_args = &cc_child_args,
         };
 
-        try child.spawn();
+        try child.spawn(io);
         errdefer {
-            _ = child.kill() catch {};
+            _ = child.kill(io) catch {};
         }
 
         var poller = Io.poll(arena, Eval.StreamEnum, .{
@@ -228,10 +230,11 @@ pub fn main() !void {
 
 const Eval = struct {
     arena: Allocator,
+    io: Io,
     host: std.Target,
     case: Case,
     target: Case.Target,
-    tmp_dir: std.fs.Dir,
+    tmp_dir: Dir,
     tmp_dir_path: []const u8,
     child: *std.process.Child,
     allow_stderr: bool,
@@ -245,17 +248,18 @@ const Eval = struct {
 
     /// Currently this function assumes the previous updates have already been written.
     fn write(eval: *Eval, update: Case.Update) void {
+        const io = eval.io;
         for (update.changes) |full_contents| {
-            eval.tmp_dir.writeFile(.{
+            eval.tmp_dir.writeFile(io, .{
                 .sub_path = full_contents.name,
                 .data = full_contents.bytes,
             }) catch |err| {
-                eval.fatal("failed to update '{s}': {s}", .{ full_contents.name, @errorName(err) });
+                eval.fatal("failed to update '{s}': {t}", .{ full_contents.name, err });
             };
         }
         for (update.deletes) |doomed_name| {
-            eval.tmp_dir.deleteFile(doomed_name) catch |err| {
-                eval.fatal("failed to delete '{s}': {s}", .{ doomed_name, @errorName(err) });
+            eval.tmp_dir.deleteFile(io, doomed_name) catch |err| {
+                eval.fatal("failed to delete '{s}': {t}", .{ doomed_name, err });
             };
         }
     }
@@ -307,14 +311,14 @@ const Eval = struct {
                     }
 
                     const digest = r.takeArray(Cache.bin_digest_len) catch unreachable;
-                    const result_dir = ".local-cache" ++ std.fs.path.sep_str ++ "o" ++ std.fs.path.sep_str ++ Cache.binToHex(digest.*);
+                    const result_dir = ".local-cache" ++ Dir.path.sep_str ++ "o" ++ Dir.path.sep_str ++ Cache.binToHex(digest.*);
 
                     const bin_name = try std.zig.EmitArtifact.bin.cacheName(arena, .{
                         .root_name = "root", // corresponds to the module name "root"
                         .target = &eval.target.resolved,
                         .output_mode = .Exe,
                     });
-                    const bin_path = try std.fs.path.join(arena, &.{ result_dir, bin_name });
+                    const bin_path = try Dir.path.join(arena, &.{ result_dir, bin_name });
 
                     try eval.checkSuccessOutcome(update, bin_path, prog_node);
                     // This message indicates the end of the update.
@@ -338,11 +342,12 @@ const Eval = struct {
     }
 
     fn checkErrorOutcome(eval: *Eval, update: Case.Update, error_bundle: std.zig.ErrorBundle) !void {
+        const io = eval.io;
         const expected = switch (update.outcome) {
             .unknown => return,
             .compile_errors => |ce| ce,
             .stdout, .exit_code => {
-                error_bundle.renderToStdErr(.{}, .auto);
+                try error_bundle.renderToStderr(io, .{}, .auto);
                 eval.fatal("update '{s}': unexpected compile errors", .{update.name});
             },
         };
@@ -351,7 +356,7 @@ const Eval = struct {
 
         for (error_bundle.getMessages()) |err_idx| {
             if (expected_idx == expected.errors.len) {
-                error_bundle.renderToStdErr(.{}, .auto);
+                try error_bundle.renderToStderr(io, .{}, .auto);
                 eval.fatal("update '{s}': more errors than expected", .{update.name});
             }
             try eval.checkOneError(update, error_bundle, expected.errors[expected_idx], false, err_idx);
@@ -359,7 +364,7 @@ const Eval = struct {
 
             for (error_bundle.getNotes(err_idx)) |note_idx| {
                 if (expected_idx == expected.errors.len) {
-                    error_bundle.renderToStdErr(.{}, .auto);
+                    try error_bundle.renderToStderr(io, .{}, .auto);
                     eval.fatal("update '{s}': more error notes than expected", .{update.name});
                 }
                 try eval.checkOneError(update, error_bundle, expected.errors[expected_idx], true, note_idx);
@@ -368,7 +373,7 @@ const Eval = struct {
         }
 
         if (!std.mem.eql(u8, error_bundle.getCompileLogOutput(), expected.compile_log_output)) {
-            error_bundle.renderToStdErr(.{}, .auto);
+            try error_bundle.renderToStderr(io, .{}, .auto);
             eval.fatal("update '{s}': unexpected compile log output", .{update.name});
         }
     }
@@ -388,6 +393,8 @@ const Eval = struct {
         const src = eb.getSourceLocation(err.src_loc);
         const raw_filename = eb.nullTerminatedString(src.src_path);
 
+        const io = eval.io;
+
         // We need to replace backslashes for consistency between platforms.
         const filename = name: {
             if (std.mem.indexOfScalar(u8, raw_filename, '\\') == null) break :name raw_filename;
@@ -402,7 +409,7 @@ const Eval = struct {
             expected.column != src.column + 1 or
             !std.mem.eql(u8, expected.msg, msg))
         {
-            eb.renderToStdErr(.{}, .auto);
+            eb.renderToStderr(io, .{}, .auto) catch {};
             eval.fatal("update '{s}': compile error did not match expected error", .{update.name});
         }
     }
@@ -429,8 +436,11 @@ const Eval = struct {
             },
         };
 
+        const io = eval.io;
+
         var argv_buf: [2][]const u8 = undefined;
         const argv: []const []const u8, const is_foreign: bool = switch (std.zig.system.getExternalExecutor(
+            io,
             &eval.host,
             &eval.target.resolved,
             .{ .link_libc = eval.target.backend == .cbe },
@@ -459,8 +469,7 @@ const Eval = struct {
         const run_prog_node = prog_node.start("run generated executable", 0);
         defer run_prog_node.end();
 
-        const result = std.process.Child.run(.{
-            .allocator = eval.arena,
+        const result = std.process.Child.run(eval.arena, io, .{
             .argv = argv,
             .cwd_dir = eval.tmp_dir,
             .cwd = eval.tmp_dir_path,
@@ -468,17 +477,17 @@ const Eval = struct {
             if (is_foreign) {
                 // Chances are the foreign executor isn't available. Skip this evaluation.
                 if (eval.allow_stderr) {
-                    std.log.warn("update '{s}': skipping execution of '{s}' via executor for foreign target '{s}': {s}", .{
+                    std.log.warn("update '{s}': skipping execution of '{s}' via executor for foreign target '{s}': {t}", .{
                         update.name,
                         binary_path,
                         try eval.target.resolved.zigTriple(eval.arena),
-                        @errorName(err),
+                        err,
                     });
                 }
                 return;
             }
-            eval.fatal("update '{s}': failed to run the generated executable '{s}': {s}", .{
-                update.name, binary_path, @errorName(err),
+            eval.fatal("update '{s}': failed to run the generated executable '{s}': {t}", .{
+                update.name, binary_path, err,
             });
         };
 
@@ -514,11 +523,12 @@ const Eval = struct {
     }
 
     fn requestUpdate(eval: *Eval) !void {
+        const io = eval.io;
         const header: std.zig.Client.Message.Header = .{
             .tag = .update,
             .bytes_len = 0,
         };
-        var w = eval.child.stdin.?.writer(&.{});
+        var w = eval.child.stdin.?.writer(io, &.{});
         w.interface.writeStruct(header, .little) catch |err| switch (err) {
             error.WriteFailed => return w.err.?,
         };
@@ -552,16 +562,13 @@ const Eval = struct {
         try eval.cc_child_args.appendSlice(eval.arena, &.{ out_path, c_path });
         defer eval.cc_child_args.items.len -= 2;
 
-        const result = std.process.Child.run(.{
-            .allocator = eval.arena,
+        const result = std.process.Child.run(eval.arena, eval.io, .{
             .argv = eval.cc_child_args.items,
             .cwd_dir = eval.tmp_dir,
             .cwd = eval.tmp_dir_path,
             .progress_node = child_prog_node,
         }) catch |err| {
-            eval.fatal("update '{s}': failed to spawn zig cc for '{s}': {s}", .{
-                update.name, c_path, @errorName(err),
-            });
+            eval.fatal("update '{s}': failed to spawn zig cc for '{s}': {t}", .{ update.name, c_path, err });
         };
         switch (result.term) {
             .Exited => |code| if (code != 0) {
@@ -588,12 +595,13 @@ const Eval = struct {
     }
 
     fn fatal(eval: *Eval, comptime fmt: []const u8, args: anytype) noreturn {
-        eval.tmp_dir.close();
+        const io = eval.io;
+        eval.tmp_dir.close(io);
         if (!eval.preserve_tmp_on_fatal) {
             // Kill the child since it holds an open handle to its CWD which is the tmp dir path
-            _ = eval.child.kill() catch {};
-            std.fs.cwd().deleteTree(eval.tmp_dir_path) catch |err| {
-                std.log.warn("failed to delete tree '{s}': {s}", .{ eval.tmp_dir_path, @errorName(err) });
+            _ = eval.child.kill(io) catch {};
+            Dir.cwd().deleteTree(io, eval.tmp_dir_path) catch |err| {
+                std.log.warn("failed to delete tree '{s}': {t}", .{ eval.tmp_dir_path, err });
             };
         }
         std.process.fatal(fmt, args);
@@ -759,7 +767,7 @@ const Case = struct {
                     if (last_update.outcome != .unknown) fatal("line {d}: conflicting expect directive", .{line_n});
                     last_update.outcome = .{
                         .stdout = std.zig.string_literal.parseAlloc(arena, val) catch |err| {
-                            fatal("line {d}: bad string literal: {s}", .{ line_n, @errorName(err) });
+                            fatal("line {d}: bad string literal: {t}", .{ line_n, err });
                         },
                     };
                 } else if (std.mem.eql(u8, key, "expect_error")) {
@@ -833,27 +841,29 @@ const Case = struct {
 
 fn requestExit(child: *std.process.Child, eval: *Eval) void {
     if (child.stdin == null) return;
+    const io = eval.io;
 
     const header: std.zig.Client.Message.Header = .{
         .tag = .exit,
         .bytes_len = 0,
     };
-    var w = eval.child.stdin.?.writer(&.{});
+    var w = eval.child.stdin.?.writer(io, &.{});
     w.interface.writeStruct(header, .little) catch |err| switch (err) {
         error.WriteFailed => switch (w.err.?) {
             error.BrokenPipe => {},
-            else => |e| eval.fatal("failed to send exit: {s}", .{@errorName(e)}),
+            else => |e| eval.fatal("failed to send exit: {t}", .{e}),
         },
     };
 
     // Send EOF to stdin.
-    child.stdin.?.close();
+    child.stdin.?.close(io);
     child.stdin = null;
 }
 
 fn waitChild(child: *std.process.Child, eval: *Eval) void {
+    const io = eval.io;
     requestExit(child, eval);
-    const term = child.wait() catch |err| eval.fatal("child process failed: {s}", .{@errorName(err)});
+    const term = child.wait(io) catch |err| eval.fatal("child process failed: {t}", .{err});
     switch (term) {
         .Exited => |code| if (code != 0) eval.fatal("compiler failed with code {d}", .{code}),
         .Signal, .Stopped, .Unknown => eval.fatal("compiler terminated unexpectedly", .{}),

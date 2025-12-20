@@ -85,16 +85,16 @@ pub fn main() !void {
     const tmp_dir_path = try std.fmt.allocPrint(arena, "{s}/tmp/{x}", .{
         cache_root, std.crypto.random.int(u64),
     });
-    fs.cwd().makePath(tmp_dir_path) catch |err|
-        fatal("unable to create tmp dir '{s}': {s}", .{ tmp_dir_path, @errorName(err) });
-    defer fs.cwd().deleteTree(tmp_dir_path) catch |err| std.log.err("unable to delete '{s}': {s}", .{
-        tmp_dir_path, @errorName(err),
+    fs.cwd().createDirPath(io, tmp_dir_path) catch |err|
+        fatal("unable to create tmp dir '{s}': {t}", .{ tmp_dir_path, err });
+    defer fs.cwd().deleteTree(io, tmp_dir_path) catch |err| std.log.err("unable to delete '{s}': {t}", .{
+        tmp_dir_path, err,
     });
 
-    var out_file = try fs.cwd().createFile(output_path, .{});
-    defer out_file.close();
+    var out_file = try fs.cwd().createFile(io, output_path, .{});
+    defer out_file.close(io);
     var out_file_buffer: [4096]u8 = undefined;
-    var out_file_writer = out_file.writer(&out_file_buffer);
+    var out_file_writer = out_file.writer(io, &out_file_buffer);
 
     const out = &out_file_writer.interface;
 

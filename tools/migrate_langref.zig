@@ -1,12 +1,15 @@
-const std = @import("std");
 const builtin = @import("builtin");
-const fs = std.fs;
+
+const std = @import("std");
+const Io = std.Io;
+const Dir = std.Io.Dir;
 const print = std.debug.print;
 const mem = std.mem;
 const testing = std.testing;
 const Allocator = std.mem.Allocator;
-const max_doc_file_size = 10 * 1024 * 1024;
 const fatal = std.process.fatal;
+
+const max_doc_file_size = 10 * 1024 * 1024;
 
 pub fn main() !void {
     var arena_instance = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -23,16 +26,16 @@ pub fn main() !void {
     defer threaded.deinit();
     const io = threaded.io();
 
-    var in_file = try fs.cwd().openFile(input_file, .{ .mode = .read_only });
-    defer in_file.close();
+    var in_file = try Dir.cwd().openFile(input_file, .{ .mode = .read_only });
+    defer in_file.close(io);
 
-    var out_file = try fs.cwd().createFile(output_file, .{});
-    defer out_file.close();
+    var out_file = try Dir.cwd().createFile(output_file, .{});
+    defer out_file.close(io);
     var out_file_buffer: [4096]u8 = undefined;
     var out_file_writer = out_file.writer(&out_file_buffer);
 
-    var out_dir = try fs.cwd().openDir(fs.path.dirname(output_file).?, .{});
-    defer out_dir.close();
+    var out_dir = try Dir.cwd().openDir(Dir.path.dirname(output_file).?, .{});
+    defer out_dir.close(io);
 
     var in_file_reader = in_file.reader(io, &.{});
     const input_file_bytes = try in_file_reader.interface.allocRemaining(arena, .unlimited);
@@ -266,7 +269,7 @@ const Code = struct {
     };
 };
 
-fn walk(arena: Allocator, tokenizer: *Tokenizer, out_dir: std.fs.Dir, w: anytype) !void {
+fn walk(arena: Allocator, io: Io, tokenizer: *Tokenizer, out_dir: Dir, w: anytype) !void {
     while (true) {
         const token = tokenizer.next();
         switch (token.id) {
@@ -387,7 +390,7 @@ fn walk(arena: Allocator, tokenizer: *Tokenizer, out_dir: std.fs.Dir, w: anytype
                     var file = out_dir.createFile(basename, .{ .exclusive = true }) catch |err| {
                         fatal("unable to create file '{s}': {s}", .{ name, @errorName(err) });
                     };
-                    defer file.close();
+                    defer file.close(io);
                     var file_buffer: [1024]u8 = undefined;
                     var file_writer = file.writer(&file_buffer);
                     const code = &file_writer.interface;

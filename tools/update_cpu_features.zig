@@ -1,6 +1,8 @@
-const std = @import("std");
 const builtin = @import("builtin");
-const fs = std.fs;
+
+const std = @import("std");
+const Io = std.Io;
+const Dir = std.Io.Dir;
 const mem = std.mem;
 const json = std.json;
 const assert = std.debug.assert;
@@ -1927,26 +1929,26 @@ pub fn main() anyerror!void {
     // there shouldn't be any more argument after the optional filter
     if (args.skip()) usageAndExit(args0, 1);
 
-    var zig_src_dir = try fs.cwd().openDir(zig_src_root, .{});
-    defer zig_src_dir.close();
+    var zig_src_dir = try Dir.cwd().openDir(io, zig_src_root, .{});
+    defer zig_src_dir.close(io);
 
-    const root_progress = std.Progress.start(.{ .estimated_total_items = targets.len });
+    const root_progress = std.Progress.start(io, .{ .estimated_total_items = targets.len });
     defer root_progress.end();
 
-    var group: std.Io.Group = .init;
+    var group: Io.Group = .init;
     defer group.cancel(io);
 
     for (targets) |target| {
         if (filter) |zig_name| {
             if (!std.mem.eql(u8, target.zig_name, zig_name)) continue;
         }
-        group.async(io, processOneTarget, .{.{
+        group.async(io, processOneTarget, .{ io, .{
             .llvm_tblgen_exe = llvm_tblgen_exe,
             .llvm_src_root = llvm_src_root,
             .zig_src_dir = zig_src_dir,
             .root_progress = root_progress,
             .target = target,
-        }});
+        } });
     }
 
     group.wait(io);
@@ -1955,12 +1957,12 @@ pub fn main() anyerror!void {
 const Job = struct {
     llvm_tblgen_exe: []const u8,
     llvm_src_root: []const u8,
-    zig_src_dir: std.fs.Dir,
+    zig_src_dir: Dir,
     root_progress: std.Progress.Node,
     target: ArchTarget,
 };
 
-fn processOneTarget(job: Job) void {
+fn processOneTarget(io: Io, job: Job) void {
     errdefer |err| std.debug.panic("panic: {s}", .{@errorName(err)});
     const target = job.target;
 
@@ -2240,12 +2242,12 @@ fn processOneTarget(job: Job) void {
 
     const render_progress = progress_node.start("rendering Zig code", 0);
 
-    var target_dir = try job.zig_src_dir.openDir("lib/std/Target", .{});
-    defer target_dir.close();
+    var target_dir = try job.zig_src_dir.openDir(io, "lib/std/Target", .{});
+    defer target_dir.close(io);
 
     const zig_code_basename = try std.fmt.allocPrint(arena, "{s}.zig", .{target.zig_name});
-    var zig_code_file = try target_dir.createFile(zig_code_basename, .{});
-    defer zig_code_file.close();
+    var zig_code_file = try target_dir.createFile(io, zig_code_basename, .{});
+    defer zig_code_file.close(io);
 
     var zig_code_file_buffer: [4096]u8 = undefined;
     var zig_code_file_writer = zig_code_file.writer(&zig_code_file_buffer);

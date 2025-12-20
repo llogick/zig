@@ -1,35 +1,41 @@
 const std = @import("std");
+const Io = std.Io;
+const Dir = std.Io.Dir;
 
 pub fn main() !void {
     var arena_instance = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena_instance.deinit();
     const arena = arena_instance.allocator();
 
+    var threaded: Io.Threaded = .init(arena);
+    defer threaded.deinit();
+    const io = threaded.io();
+
     const args = try std.process.argsAlloc(arena);
     const zig_src_lib_path = args[1];
     const mingw_src_path = args[2];
 
-    const dest_mingw_crt_path = try std.fs.path.join(arena, &.{
+    const dest_mingw_crt_path = try Dir.path.join(arena, &.{
         zig_src_lib_path, "libc", "mingw",
     });
-    const src_mingw_crt_path = try std.fs.path.join(arena, &.{
+    const src_mingw_crt_path = try Dir.path.join(arena, &.{
         mingw_src_path, "mingw-w64-crt",
     });
 
     // Update only the set of existing files we have already chosen to include
     // in zig's installation.
 
-    var dest_crt_dir = std.fs.cwd().openDir(dest_mingw_crt_path, .{ .iterate = true }) catch |err| {
+    var dest_crt_dir = Dir.cwd().openDir(io, dest_mingw_crt_path, .{ .iterate = true }) catch |err| {
         std.log.err("unable to open directory '{s}': {s}", .{ dest_mingw_crt_path, @errorName(err) });
         std.process.exit(1);
     };
-    defer dest_crt_dir.close();
+    defer dest_crt_dir.close(io);
 
-    var src_crt_dir = std.fs.cwd().openDir(src_mingw_crt_path, .{ .iterate = true }) catch |err| {
+    var src_crt_dir = Dir.cwd().openDir(io, src_mingw_crt_path, .{ .iterate = true }) catch |err| {
         std.log.err("unable to open directory '{s}': {s}", .{ src_mingw_crt_path, @errorName(err) });
         std.process.exit(1);
     };
-    defer src_crt_dir.close();
+    defer src_crt_dir.close(io);
 
     {
         var walker = try dest_crt_dir.walk(arena);
@@ -49,11 +55,11 @@ pub fn main() !void {
 
                     if (!keep) {
                         std.log.warn("deleting {s}", .{entry.path});
-                        try dest_crt_dir.deleteFile(entry.path);
+                        try dest_crt_dir.deleteFile(io, entry.path);
                     }
                 },
                 else => {
-                    std.log.err("unable to copy {s}: {s}", .{ entry.path, @errorName(err) });
+                    std.log.err("unable to copy {s}: {t}", .{ entry.path, err });
                     fail = true;
                 },
             };
@@ -63,24 +69,24 @@ pub fn main() !void {
     }
 
     {
-        const dest_mingw_winpthreads_path = try std.fs.path.join(arena, &.{
+        const dest_mingw_winpthreads_path = try Dir.path.join(arena, &.{
             zig_src_lib_path, "libc", "mingw", "winpthreads",
         });
-        const src_mingw_libraries_winpthreads_src_path = try std.fs.path.join(arena, &.{
+        const src_mingw_libraries_winpthreads_src_path = try Dir.path.join(arena, &.{
             mingw_src_path, "mingw-w64-libraries", "winpthreads", "src",
         });
 
-        var dest_winpthreads_dir = std.fs.cwd().openDir(dest_mingw_winpthreads_path, .{ .iterate = true }) catch |err| {
+        var dest_winpthreads_dir = Dir.cwd().openDir(io, dest_mingw_winpthreads_path, .{ .iterate = true }) catch |err| {
             std.log.err("unable to open directory '{s}': {s}", .{ dest_mingw_winpthreads_path, @errorName(err) });
             std.process.exit(1);
         };
-        defer dest_winpthreads_dir.close();
+        defer dest_winpthreads_dir.close(io);
 
-        var src_winpthreads_dir = std.fs.cwd().openDir(src_mingw_libraries_winpthreads_src_path, .{ .iterate = true }) catch |err| {
+        var src_winpthreads_dir = Dir.cwd().openDir(io, src_mingw_libraries_winpthreads_src_path, .{ .iterate = true }) catch |err| {
             std.log.err("unable to open directory '{s}': {s}", .{ src_mingw_libraries_winpthreads_src_path, @errorName(err) });
             std.process.exit(1);
         };
-        defer src_winpthreads_dir.close();
+        defer src_winpthreads_dir.close(io);
 
         {
             var walker = try dest_winpthreads_dir.walk(arena);
@@ -94,10 +100,10 @@ pub fn main() !void {
                 src_winpthreads_dir.copyFile(entry.path, dest_winpthreads_dir, entry.path, .{}) catch |err| switch (err) {
                     error.FileNotFound => {
                         std.log.warn("deleting {s}", .{entry.path});
-                        try dest_winpthreads_dir.deleteFile(entry.path);
+                        try dest_winpthreads_dir.deleteFile(io, entry.path);
                     },
                     else => {
-                        std.log.err("unable to copy {s}: {s}", .{ entry.path, @errorName(err) });
+                        std.log.err("unable to copy {s}: {t}", .{ entry.path, err });
                         fail = true;
                     },
                 };
@@ -164,7 +170,7 @@ pub fn main() !void {
 
 const kept_crt_files = [_][]const u8{
     "COPYING",
-    "include" ++ std.fs.path.sep_str ++ "config.h",
+    "include" ++ Dir.path.sep_str ++ "config.h",
 };
 
 const def_exts = [_][]const u8{
