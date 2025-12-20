@@ -7191,35 +7191,57 @@ fn processExecutablePath(userdata: ?*anyopaque, out_buffer: []u8) std.process.Ex
                 return error.FileNotFound;
 
             const argv0 = std.mem.span(std.os.argv[0]);
-            if (std.mem.indexOf(u8, argv0, "/") != null) {
+            if (std.mem.findScalar(u8, argv0, std.fs.path.sep_posix) != null) {
                 // argv[0] is a path (relative or absolute): use realpath(3) directly
-                var real_path_buf: [posix.PATH_MAX]u8 = undefined;
-                const real_path_len = Io.Dir.realPathFileAbsolute(ioBasic(t), argv0, &real_path_buf) catch |err| switch (err) {
-                    error.NetworkNotFound => unreachable, // Windows-only
-                    else => |e| return e,
-                };
-                if (real_path_len > out_buffer.len)
+                const current_thread = Thread.getCurrent(t);
+                var resolved_buf: [std.c.PATH_MAX]u8 = undefined;
+                {
+                    try current_thread.beginSyscall();
+                    defer current_thread.endSyscall();
+                    _ = std.c.realpath(std.os.argv[0], &resolved_buf) orelse switch (@as(std.c.E, @enumFromInt(std.c._errno().*))) {
+                        .SUCCESS => unreachable,
+                        .ACCES => return error.AccessDenied,
+                        .INVAL => unreachable, // the pathname argument is a null pointer
+                        .IO => return error.InputOutput,
+                        .LOOP => return error.SymLinkLoop,
+                        .NAMETOOLONG => return error.NameTooLong,
+                        .NOENT => return error.FileNotFound,
+                        .NOTDIR => return error.NotDir,
+                        .NOMEM => unreachable, // sufficient storage space is unavailable for allocation
+                        else => |err| return posix.unexpectedErrno(err),
+                    };
+                }
+                const resolved = std.mem.sliceTo(&resolved_buf, 0);
+                if (resolved.len > out_buffer.len)
                     return error.NameTooLong;
-                @memcpy(out_buffer[0..real_path_len], real_path_buf[0..real_path_len]);
-                return real_path_len;
+                @memcpy(out_buffer[0..resolved.len], resolved);
+                return resolved.len;
             } else if (argv0.len != 0) {
-                // argv[0] is not empty (and not a path): search it inside PATH
+                // argv[0] is not empty (and not a path): search PATH
+                const current_thread = Thread.getCurrent(t);
                 const PATH = posix.getenvZ("PATH") orelse return error.FileNotFound;
-                var path_it = std.mem.tokenizeScalar(u8, PATH, std.fs.path.delimiter);
-                while (path_it.next()) |a_path| {
-                    var resolved_path_buf: [posix.PATH_MAX - 1:0]u8 = undefined;
-                    const resolved_path = std.fmt.bufPrintSentinel(&resolved_path_buf, "{s}/{s}", .{
-                        a_path, std.os.argv[0],
-                    }, 0) catch continue;
+                var it = std.mem.tokenizeScalar(u8, PATH, std.fs.path.delimiter);
+                while (it.next()) |dir| {
+                    var prospect_buf: [std.c.PATH_MAX]u8 = undefined;
+                    _ = std.fmt.bufPrintSentinel(
+                        &prospect_buf,
+                        "{s}" ++ std.fs.path.sep_str_posix ++ "{s}",
+                        .{ dir, std.os.argv[0] },
+                        0,
+                    ) catch continue;
 
-                    var real_path_buf: [posix.PATH_MAX]u8 = undefined;
-                    if (Io.Dir.realPathFileAbsolute(ioBasic(t), resolved_path, &real_path_buf)) |real_path_len| {
-                        // found a file, and hope it is the right file
-                        if (real_path_len > out_buffer.len)
-                            return error.NameTooLong;
-                        @memcpy(out_buffer[0..real_path_len], real_path_buf[0..real_path_len]);
-                        return real_path_len;
-                    } else |_| continue;
+                    var resolved_buf: [std.c.PATH_MAX]u8 = undefined;
+                    try current_thread.beginSyscall();
+                    _ = std.c.realpath(@ptrCast(&prospect_buf), &resolved_buf) orelse {
+                        current_thread.endSyscall();
+                        continue;
+                    };
+                    current_thread.endSyscall();
+                    const resolved = std.mem.sliceTo(&resolved_buf, 0);
+                    if (resolved.len > out_buffer.len)
+                        return error.NameTooLong;
+                    @memcpy(out_buffer[0..resolved.len], resolved);
+                    return resolved.len;
                 }
             }
             return error.FileNotFound;
