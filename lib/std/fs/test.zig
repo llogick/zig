@@ -2364,11 +2364,6 @@ test "readlinkat" {
 test "fchmodat smoke test" {
     if (!Io.File.Permissions.has_executable_bit) return error.SkipZigTest;
 
-    if (builtin.cpu.arch.isMIPS64() and (builtin.abi == .gnuabin32 or builtin.abi == .muslabin32)) {
-        // https://github.com/ziglang/zig/issues/23808
-        return error.SkipZigTest;
-    }
-
     const io = testing.io;
 
     var tmp = tmpDir(.{});
