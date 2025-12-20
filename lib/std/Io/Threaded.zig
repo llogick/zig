@@ -86,7 +86,9 @@ const Thread = struct {
     /// The value that needs to be passed to pthread_kill or tgkill in order to
     /// send a signal.
     signal_id: SignaleeId,
-    current_closure: ?*Closure = null,
+    current_closure: ?*Closure,
+    /// Only populated if `current_closure != null`. Indicates the current cancel protection mode.
+    cancel_protection: Io.CancelProtection,
 
     const SignaleeId = if (std.Thread.use_pthreads) std.c.pthread_t else std.Thread.Id;
 
@@ -98,6 +100,12 @@ const Thread = struct {
 
     fn checkCancel(thread: *Thread) error{Canceled}!void {
         const closure = thread.current_closure orelse return;
+
+        switch (thread.cancel_protection) {
+            .unblocked => {},
+            .blocked => return,
+        }
+
         switch (@cmpxchgStrong(
             CancelStatus,
             &closure.cancel_status,
@@ -114,6 +122,11 @@ const Thread = struct {
 
     fn beginSyscall(thread: *Thread) error{Canceled}!void {
         const closure = thread.current_closure orelse return;
+
+        switch (thread.cancel_protection) {
+            .unblocked => {},
+            .blocked => return,
+        }
 
         switch (@cmpxchgStrong(
             CancelStatus,
@@ -135,6 +148,12 @@ const Thread = struct {
 
     fn endSyscall(thread: *Thread) void {
         const closure = thread.current_closure orelse return;
+
+        switch (thread.cancel_protection) {
+            .unblocked => {},
+            .blocked => return,
+        }
+
         _ = @cmpxchgStrong(
             CancelStatus,
             &closure.cancel_status,
@@ -512,6 +531,8 @@ pub fn init(
         .have_signal_handler = false,
         .main_thread = .{
             .signal_id = Thread.currentSignalId(),
+            .current_closure = null,
+            .cancel_protection = undefined,
         },
     };
 
@@ -546,7 +567,11 @@ pub const init_single_threaded: Threaded = .{
     .old_sig_io = undefined,
     .old_sig_pipe = undefined,
     .have_signal_handler = false,
-    .main_thread = .{ .signal_id = undefined },
+    .main_thread = .{
+        .signal_id = undefined,
+        .current_closure = null,
+        .cancel_protection = undefined,
+    },
 };
 
 pub fn setAsyncLimit(t: *Threaded, new_limit: Io.Limit) void {
@@ -581,6 +606,8 @@ fn join(t: *Threaded) void {
 fn worker(t: *Threaded) void {
     var thread: Thread = .{
         .signal_id = Thread.currentSignalId(),
+        .current_closure = null,
+        .cancel_protection = undefined,
     };
     Thread.current = &thread;
 
@@ -616,6 +643,10 @@ pub fn io(t: *Threaded) Io {
             .groupConcurrent = groupConcurrent,
             .groupWait = groupWait,
             .groupCancel = groupCancel,
+
+            .recancel = recancel,
+            .swapCancelProtection = swapCancelProtection,
+            .checkCancel = checkCancel,
 
             .futexWait = futexWait,
             .futexWaitUncancelable = futexWaitUncancelable,
@@ -709,6 +740,10 @@ pub fn ioBasic(t: *Threaded) Io {
             .groupWait = groupWait,
             .groupCancel = groupCancel,
 
+            .recancel = recancel,
+            .swapCancelProtection = swapCancelProtection,
+            .checkCancel = checkCancel,
+
             .futexWait = futexWait,
             .futexWaitUncancelable = futexWaitUncancelable,
             .futexWake = futexWake,
@@ -794,9 +829,14 @@ const AsyncClosure = struct {
     fn start(closure: *Closure, t: *Threaded) void {
         const ac: *AsyncClosure = @alignCast(@fieldParentPtr("closure", closure));
         const current_thread = Thread.getCurrent(t);
+
         current_thread.current_closure = closure;
+        current_thread.cancel_protection = .unblocked;
+
         ac.func(ac.contextPointer(), ac.resultPointer());
+
         current_thread.current_closure = null;
+        current_thread.cancel_protection = undefined;
 
         if (@atomicRmw(?*Io.Event, &ac.select_condition, .Xchg, done_event, .release)) |select_event| {
             assert(select_event != done_event);
@@ -978,9 +1018,14 @@ const GroupClosure = struct {
         const group = gc.group;
         const group_state: *std.atomic.Value(usize) = @ptrCast(&group.state);
         const event: *Io.Event = @ptrCast(&group.context);
+
         current_thread.current_closure = closure;
+        current_thread.cancel_protection = .unblocked;
+
         gc.func(group, gc.contextPointer());
+
         current_thread.current_closure = null;
+        current_thread.cancel_protection = undefined;
 
         const prev_state = group_state.fetchSub(sync_one_pending, .acq_rel);
         assert((prev_state / sync_one_pending) > 0);
@@ -1199,6 +1244,32 @@ fn groupCancel(userdata: ?*anyopaque, group: *Io.Group, token: *anyopaque) void 
             node = node_next orelse break;
         }
     }
+}
+
+fn recancel(userdata: ?*anyopaque) void {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread: *Thread = .getCurrent(t);
+    const cancel_status = &current_thread.current_closure.?.cancel_status;
+    switch (@atomicLoad(CancelStatus, cancel_status, .monotonic)) {
+        .none => unreachable, // called `recancel` when not canceled
+        .requested => unreachable, // called `recancel` when cancelation was already outstanding
+        .acknowledged => {},
+        _ => unreachable, // invalid state: not in a syscall
+    }
+    @atomicStore(CancelStatus, cancel_status, .requested, .monotonic);
+}
+
+fn swapCancelProtection(userdata: ?*anyopaque, new: Io.CancelProtection) Io.CancelProtection {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread: *Thread = .getCurrent(t);
+    const old = current_thread.cancel_protection;
+    current_thread.cancel_protection = new;
+    return old;
+}
+
+fn checkCancel(userdata: ?*anyopaque) Io.Cancelable!void {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    return Thread.getCurrent(t).checkCancel();
 }
 
 fn await(

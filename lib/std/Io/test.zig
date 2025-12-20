@@ -291,3 +291,78 @@ test "Event" {
         try std.testing.expectError(error.Canceled, future.cancel(io));
     }
 }
+
+test "recancel" {
+    const global = struct {
+        fn worker(io: Io) Io.Cancelable!void {
+            var dummy_event: Io.Event = .unset;
+
+            if (dummy_event.wait(io)) {
+                return;
+            } else |err| switch (err) {
+                error.Canceled => io.recancel(),
+            }
+
+            // Now we expect to see `error.Canceled` again.
+            return dummy_event.wait(io);
+        }
+    };
+
+    const io = std.testing.io;
+    var future = io.concurrent(global.worker, .{io}) catch |err| switch (err) {
+        error.ConcurrencyUnavailable => return error.SkipZigTest,
+    };
+    if (future.cancel(io)) {
+        return error.UnexpectedSuccess; // both `wait` calls should have returned `error.Canceled`
+    } else |err| switch (err) {
+        error.Canceled => {},
+    }
+}
+
+test "swapCancelProtection" {
+    const global = struct {
+        fn waitTwice(
+            io: Io,
+            event: *Io.Event,
+        ) error{ Canceled, CanceledWhileProtected }!void {
+            // Wait for `event` while protected from cancelation.
+            {
+                const old_prot = io.swapCancelProtection(.blocked);
+                defer _ = io.swapCancelProtection(old_prot);
+                event.wait(io) catch |err| switch (err) {
+                    error.Canceled => return error.CanceledWhileProtected,
+                };
+            }
+            // Reset the event (it will never be set again), and this time wait for it without protection.
+            event.reset();
+            _ = try event.wait(io);
+        }
+        fn sleepThenSet(io: Io, event: *Io.Event) !void {
+            // Give `waitTwice` a chance to get canceled.
+            try io.sleep(.fromMilliseconds(200), .awake);
+            event.set(io);
+        }
+    };
+
+    const io = std.testing.io;
+
+    var event: Io.Event = .unset;
+
+    var wait_future = io.concurrent(global.waitTwice, .{ io, &event }) catch |err| switch (err) {
+        error.ConcurrencyUnavailable => return error.SkipZigTest,
+    };
+    defer wait_future.cancel(io) catch {};
+
+    var set_future = try io.concurrent(global.sleepThenSet, .{ io, &event });
+    defer set_future.cancel(io) catch {};
+
+    if (wait_future.cancel(io)) {
+        return error.UnexpectedSuccess; // there was no `set` call to unblock the second `wait`
+    } else |err| switch (err) {
+        error.Canceled => {},
+        error.CanceledWhileProtected => |e| return e,
+    }
+
+    // Because it reached the `set`, it should be too late for `sleepThenSet` to see `error.Canceled`.
+    try set_future.cancel(io);
+}
