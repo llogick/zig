@@ -1586,7 +1586,7 @@ fn runRepositoryTest(io: Io, comptime format: Oid.Format, head_commit: []const u
     defer git_dir.cleanup();
     var pack_file = try git_dir.dir.createFile(io, "testrepo.pack", .{ .read = true });
     defer pack_file.close(io);
-    try pack_file.writeAll(testrepo_pack);
+    try pack_file.writeStreamingAll(io, testrepo_pack);
 
     var pack_file_buffer: [2000]u8 = undefined;
     var pack_file_reader = pack_file.reader(io, &pack_file_buffer);
@@ -1648,7 +1648,7 @@ fn runRepositoryTest(io: Io, comptime format: Oid.Format, head_commit: []const u
     defer for (actual_files.items) |file| testing.allocator.free(file);
     var walker = try worktree.dir.walk(testing.allocator);
     defer walker.deinit();
-    while (try walker.next()) |entry| {
+    while (try walker.next(io)) |entry| {
         if (entry.kind != .file) continue;
         const path = try testing.allocator.dupe(u8, entry.path);
         errdefer testing.allocator.free(path);

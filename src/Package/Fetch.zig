@@ -2040,7 +2040,7 @@ const UnpackResult = struct {
         defer errors.deinit(gpa);
         var aw: Io.Writer.Allocating = .init(gpa);
         defer aw.deinit();
-        try errors.renderToWriter(.{}, &aw.writer, .no_color);
+        try errors.renderToWriter(.{}, &aw.writer);
         try std.testing.expectEqualStrings(
             \\error: unable to unpack
             \\    note: unable to create symlink from 'dir2/file2' to 'filename': SymlinkError
@@ -2210,13 +2210,13 @@ test "set executable bit based on file content" {
     defer out.close(io);
     const S = std.posix.S;
     // expect executable bit not set
-    try std.testing.expect((try out.statFile(io, "file1", .{})).mode & S.IXUSR == 0);
-    try std.testing.expect((try out.statFile(io, "script_without_shebang", .{})).mode & S.IXUSR == 0);
+    try std.testing.expect((try out.statFile(io, "file1", .{})).permissions.toMode() & S.IXUSR == 0);
+    try std.testing.expect((try out.statFile(io, "script_without_shebang", .{})).permissions.toMode() & S.IXUSR == 0);
     // expect executable bit set
-    try std.testing.expect((try out.statFile(io, "hello", .{})).mode & S.IXUSR != 0);
-    try std.testing.expect((try out.statFile(io, "script", .{})).mode & S.IXUSR != 0);
-    try std.testing.expect((try out.statFile(io, "script_with_shebang_without_exec_bit", .{})).mode & S.IXUSR != 0);
-    try std.testing.expect((try out.statFile(io, "hello_ln", .{})).mode & S.IXUSR != 0);
+    try std.testing.expect((try out.statFile(io, "hello", .{})).permissions.toMode() & S.IXUSR != 0);
+    try std.testing.expect((try out.statFile(io, "script", .{})).permissions.toMode() & S.IXUSR != 0);
+    try std.testing.expect((try out.statFile(io, "script_with_shebang_without_exec_bit", .{})).permissions.toMode() & S.IXUSR != 0);
+    try std.testing.expect((try out.statFile(io, "hello_ln", .{})).permissions.toMode() & S.IXUSR != 0);
 
     //
     // $ ls -al zig-cache/tmp/OCz9ovUcstDjTC_U/zig-global-cache/p/1220fecb4c06a9da8673c87fe8810e15785f1699212f01728eadce094d21effeeef3
@@ -2233,7 +2233,7 @@ fn saveEmbedFile(io: Io, comptime tarball_name: []const u8, dir: Io.Dir) !void {
     const tarball_content = @embedFile("Fetch/testdata/" ++ tarball_name);
     var tmp_file = try dir.createFile(io, tarball_name, .{});
     defer tmp_file.close(io);
-    try tmp_file.writeAll(tarball_content);
+    try tmp_file.writeStreamingAll(io, tarball_content);
 }
 
 // Builds Fetch with required dependencies, clears dependencies on deinit().
@@ -2316,21 +2316,22 @@ const TestFetchBuilder = struct {
     // expected_files must be sorted.
     fn expectPackageFiles(self: *TestFetchBuilder, expected_files: []const []const u8) !void {
         const io = self.job_queue.io;
+        const gpa = std.testing.allocator;
 
         var package_dir = try self.packageDir();
         defer package_dir.close(io);
 
         var actual_files: std.ArrayList([]u8) = .empty;
-        defer actual_files.deinit(std.testing.allocator);
-        defer for (actual_files.items) |file| std.testing.allocator.free(file);
-        var walker = try package_dir.walk(std.testing.allocator);
+        defer actual_files.deinit(gpa);
+        defer for (actual_files.items) |file| gpa.free(file);
+        var walker = try package_dir.walk(gpa);
         defer walker.deinit();
-        while (try walker.next()) |entry| {
+        while (try walker.next(io)) |entry| {
             if (entry.kind != .file) continue;
-            const path = try std.testing.allocator.dupe(u8, entry.path);
-            errdefer std.testing.allocator.free(path);
+            const path = try gpa.dupe(u8, entry.path);
+            errdefer gpa.free(path);
             std.mem.replaceScalar(u8, path, std.fs.path.sep, '/');
-            try actual_files.append(std.testing.allocator, path);
+            try actual_files.append(gpa, path);
         }
         std.mem.sortUnstable([]u8, actual_files.items, {}, struct {
             fn lessThan(_: void, a: []u8, b: []u8) bool {
@@ -2347,17 +2348,19 @@ const TestFetchBuilder = struct {
 
     // Test helper, asserts that fetch has failed with `msg` error message.
     fn expectFetchErrors(self: *TestFetchBuilder, notes_len: usize, msg: []const u8) !void {
+        const gpa = std.testing.allocator;
+
         var errors = try self.fetch.error_bundle.toOwnedBundle("");
-        defer errors.deinit(std.testing.allocator);
+        defer errors.deinit(gpa);
 
         const em = errors.getErrorMessage(errors.getMessages()[0]);
         try std.testing.expectEqual(1, em.count);
         if (notes_len > 0) {
             try std.testing.expectEqual(notes_len, em.notes_len);
         }
-        var aw: Io.Writer.Allocating = .init(std.testing.allocator);
+        var aw: Io.Writer.Allocating = .init(gpa);
         defer aw.deinit();
-        try errors.renderToWriter(.{}, &aw.writer, .no_color);
+        try errors.renderToWriter(.{}, &aw.writer);
         try std.testing.expectEqualStrings(msg, aw.written());
     }
 };
