@@ -3440,7 +3440,10 @@ fn dirReadLinux(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Dir
         // by looking at only the 8 bytes before the next record. However since
         // file names are usually short it's better to keep the machine code
         // simpler.
-        const linux_entry: *linux.dirent64 = @ptrCast(@alignCast(&dr.buffer[dr.index]));
+        //
+        // Furthermore, I observed qemu user mode to not align this struct, so
+        // this code makes the conservative choice to not assume alignment.
+        const linux_entry: *align(1) linux.dirent64 = @ptrCast(&dr.buffer[dr.index]);
         const next_index = dr.index + linux_entry.reclen;
         dr.index = next_index;
         const name_ptr: [*]u8 = &linux_entry.name;
