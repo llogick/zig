@@ -2917,8 +2917,9 @@ pub fn dirOpenFileWtf16(
     sub_path_w: [:0]const u16,
     flags: File.OpenFlags,
 ) File.OpenError!File {
-    if (std.mem.eql(u16, sub_path_w, &.{'.'})) return error.IsDir;
-    if (std.mem.eql(u16, sub_path_w, &.{ '.', '.' })) return error.IsDir;
+    const allow_directory = flags.allow_directory and !flags.isWrite();
+    if (!allow_directory and std.mem.eql(u16, sub_path_w, &.{'.'})) return error.IsDir;
+    if (!allow_directory and std.mem.eql(u16, sub_path_w, &.{ '.', '.' })) return error.IsDir;
     const path_len_bytes = std.math.cast(u16, sub_path_w.len * 2) orelse return error.NameTooLong;
     const current_thread = Thread.getCurrent(t);
     const w = windows;
@@ -2963,7 +2964,7 @@ pub fn dirOpenFileWtf16(
             .OPEN,
             .{
                 .IO = if (flags.follow_symlinks) .SYNCHRONOUS_NONALERT else .ASYNCHRONOUS,
-                .NON_DIRECTORY_FILE = !flags.allow_directory,
+                .NON_DIRECTORY_FILE = !allow_directory,
                 .OPEN_REPARSE_POINT = !flags.follow_symlinks,
             },
             null,
