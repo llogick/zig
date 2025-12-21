@@ -86,7 +86,9 @@ const Thread = struct {
     /// The value that needs to be passed to pthread_kill or tgkill in order to
     /// send a signal.
     signal_id: SignaleeId,
-    current_closure: ?*Closure = null,
+    current_closure: ?*Closure,
+    /// Only populated if `current_closure != null`. Indicates the current cancel protection mode.
+    cancel_protection: Io.CancelProtection,
 
     const SignaleeId = if (std.Thread.use_pthreads) std.c.pthread_t else std.Thread.Id;
 
@@ -98,6 +100,12 @@ const Thread = struct {
 
     fn checkCancel(thread: *Thread) error{Canceled}!void {
         const closure = thread.current_closure orelse return;
+
+        switch (thread.cancel_protection) {
+            .unblocked => {},
+            .blocked => return,
+        }
+
         switch (@cmpxchgStrong(
             CancelStatus,
             &closure.cancel_status,
@@ -114,6 +122,11 @@ const Thread = struct {
 
     fn beginSyscall(thread: *Thread) error{Canceled}!void {
         const closure = thread.current_closure orelse return;
+
+        switch (thread.cancel_protection) {
+            .unblocked => {},
+            .blocked => return,
+        }
 
         switch (@cmpxchgStrong(
             CancelStatus,
@@ -135,6 +148,12 @@ const Thread = struct {
 
     fn endSyscall(thread: *Thread) void {
         const closure = thread.current_closure orelse return;
+
+        switch (thread.cancel_protection) {
+            .unblocked => {},
+            .blocked => return,
+        }
+
         _ = @cmpxchgStrong(
             CancelStatus,
             &closure.cancel_status,
@@ -154,6 +173,220 @@ const Thread = struct {
 
     fn currentSignalId() SignaleeId {
         return if (std.Thread.use_pthreads) std.c.pthread_self() else std.Thread.getCurrentId();
+    }
+
+    fn futexWaitUncancelable(ptr: *const u32, expect: u32) void {
+        return Thread.futexWaitTimed(null, ptr, expect, null) catch unreachable;
+    }
+
+    fn futexWait(thread: *Thread, ptr: *const u32, expect: u32) Io.Cancelable!void {
+        return Thread.futexWaitTimed(thread, ptr, expect, null) catch |err| switch (err) {
+            error.Canceled => return error.Canceled,
+            error.Timeout => unreachable,
+        };
+    }
+
+    fn futexWaitTimed(thread: ?*Thread, ptr: *const u32, expect: u32, timeout_ns: ?u64) Io.Cancelable!void {
+        @branchHint(.cold);
+
+        if (builtin.single_threaded) unreachable; // nobody would ever wake us
+
+        if (builtin.cpu.arch.isWasm()) {
+            comptime assert(builtin.cpu.has(.wasm, .atomics));
+            if (thread) |t| try t.checkCancel();
+            const to: i64 = if (timeout_ns) |ns| ns else -1;
+            const signed_expect: i32 = @bitCast(expect);
+            const result = asm volatile (
+                \\local.get %[ptr]
+                \\local.get %[expected]
+                \\local.get %[timeout]
+                \\memory.atomic.wait32 0
+                \\local.set %[ret]
+                : [ret] "=r" (-> u32),
+                : [ptr] "r" (ptr),
+                  [expected] "r" (signed_expect),
+                  [timeout] "r" (to),
+            );
+            switch (result) {
+                0 => {}, // ok
+                1 => {}, // expected != loaded
+                2 => {}, // timeout
+                else => assert(!is_debug),
+            }
+        } else switch (native_os) {
+            .linux => {
+                const linux = std.os.linux;
+                var ts_buffer: linux.timespec = undefined;
+                const ts: ?*linux.timespec = if (timeout_ns) |ns| ts: {
+                    ts_buffer = timestampToPosix(ns);
+                    break :ts &ts_buffer;
+                } else null;
+                if (thread) |t| try t.beginSyscall();
+                const rc = linux.futex_4arg(ptr, .{ .cmd = .WAIT, .private = true }, expect, ts);
+                if (thread) |t| t.endSyscall();
+                switch (linux.errno(rc)) {
+                    .SUCCESS => {}, // notified by `wake()`
+                    .INTR => {}, // caller's responsibility to retry
+                    .AGAIN => {}, // ptr.* != expect
+                    .INVAL => {}, // possibly timeout overflow
+                    .TIMEDOUT => {}, // timeout
+                    .FAULT => recoverableOsBugDetected(), // ptr was invalid
+                    else => recoverableOsBugDetected(),
+                }
+            },
+            .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => {
+                const c = std.c;
+                const flags: c.UL = .{
+                    .op = .COMPARE_AND_WAIT,
+                    .NO_ERRNO = true,
+                };
+                if (thread) |t| try t.beginSyscall();
+                const status = switch (darwin_supports_ulock_wait2) {
+                    true => c.__ulock_wait2(flags, ptr, expect, ns: {
+                        const ns = timeout_ns orelse break :ns 0;
+                        if (ns == 0) break :ns 1;
+                        break :ns ns;
+                    }, 0),
+                    false => c.__ulock_wait(flags, ptr, expect, us: {
+                        const ns = timeout_ns orelse break :us 0;
+                        const us = std.math.lossyCast(u32, ns / std.time.ns_per_us);
+                        if (us == 0) break :us 1;
+                        break :us us;
+                    }),
+                };
+                if (thread) |t| t.endSyscall();
+                if (status >= 0) return;
+                switch (@as(c.E, @enumFromInt(-status))) {
+                    .INTR => {}, // spurious wake
+                    // Address of the futex was paged out. This is unlikely, but possible in theory, and
+                    // pthread/libdispatch on darwin bother to handle it. In this case we'll return
+                    // without waiting, but the caller should retry anyway.
+                    .FAULT => {},
+                    .TIMEDOUT => {}, // timeout
+                    else => recoverableOsBugDetected(),
+                }
+            },
+            .windows => {
+                var timeout_value: windows.LARGE_INTEGER = undefined;
+                var timeout_ptr: ?*const windows.LARGE_INTEGER = null;
+                // NTDLL functions work with time in units of 100 nanoseconds.
+                // Positive values are absolute deadlines while negative values are relative durations.
+                if (timeout_ns) |delay| {
+                    timeout_value = @as(windows.LARGE_INTEGER, @intCast(delay / 100));
+                    timeout_value = -timeout_value;
+                    timeout_ptr = &timeout_value;
+                }
+                if (thread) |t| try t.checkCancel();
+                switch (windows.ntdll.RtlWaitOnAddress(ptr, &expect, @sizeOf(@TypeOf(expect)), timeout_ptr)) {
+                    .SUCCESS => {},
+                    .CANCELLED => {},
+                    .TIMEOUT => {}, // timeout
+                    else => recoverableOsBugDetected(),
+                }
+            },
+            .freebsd => {
+                const flags = @intFromEnum(std.c.UMTX_OP.WAIT_UINT_PRIVATE);
+                var tm_size: usize = 0;
+                var tm: std.c._umtx_time = undefined;
+                var tm_ptr: ?*const std.c._umtx_time = null;
+                if (timeout_ns) |ns| {
+                    tm_ptr = &tm;
+                    tm_size = @sizeOf(@TypeOf(tm));
+                    tm.flags = 0; // use relative time not UMTX_ABSTIME
+                    tm.clockid = .MONOTONIC;
+                    tm.timeout = timestampToPosix(ns);
+                }
+                if (thread) |t| try t.beginSyscall();
+                const rc = std.c._umtx_op(@intFromPtr(ptr), flags, @as(c_ulong, expect), tm_size, @intFromPtr(tm_ptr));
+                if (thread) |t| t.endSyscall();
+                if (is_debug) switch (posix.errno(rc)) {
+                    .SUCCESS => {},
+                    .FAULT => unreachable, // one of the args points to invalid memory
+                    .INVAL => unreachable, // arguments should be correct
+                    .TIMEDOUT => {}, // timeout
+                    .INTR => {}, // spurious wake
+                    else => unreachable,
+                };
+            },
+            else => @compileError("unimplemented: futexWait"),
+        }
+    }
+
+    fn futexWake(ptr: *const u32, max_waiters: u32) void {
+        @branchHint(.cold);
+
+        if (builtin.single_threaded) return; // nothing to wake up
+
+        if (builtin.cpu.arch.isWasm()) {
+            comptime assert(builtin.cpu.has(.wasm, .atomics));
+            assert(max_waiters != 0);
+            const woken_count = asm volatile (
+                \\local.get %[ptr]
+                \\local.get %[waiters]
+                \\memory.atomic.notify 0
+                \\local.set %[ret]
+                : [ret] "=r" (-> u32),
+                : [ptr] "r" (ptr),
+                  [waiters] "r" (max_waiters),
+            );
+            _ = woken_count; // can be 0 when linker flag 'shared-memory' is not enabled
+        } else switch (native_os) {
+            .linux => {
+                const linux = std.os.linux;
+                switch (linux.errno(linux.futex_3arg(
+                    ptr,
+                    .{ .cmd = .WAKE, .private = true },
+                    @min(max_waiters, std.math.maxInt(i32)),
+                ))) {
+                    .SUCCESS => return, // successful wake up
+                    .INVAL => return, // invalid futex_wait() on ptr done elsewhere
+                    .FAULT => return, // pointer became invalid while doing the wake
+                    else => return recoverableOsBugDetected(), // deadlock due to operating system bug
+                }
+            },
+            .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => {
+                const c = std.c;
+                const flags: c.UL = .{
+                    .op = .COMPARE_AND_WAIT,
+                    .NO_ERRNO = true,
+                    .WAKE_ALL = max_waiters > 1,
+                };
+                while (true) {
+                    const status = c.__ulock_wake(flags, ptr, 0);
+                    if (status >= 0) return;
+                    switch (@as(c.E, @enumFromInt(-status))) {
+                        .INTR, .CANCELED => continue, // spurious wake()
+                        .FAULT => unreachable, // __ulock_wake doesn't generate EFAULT according to darwin pthread_cond_t
+                        .NOENT => return, // nothing was woken up
+                        .ALREADY => unreachable, // only for UL.Op.WAKE_THREAD
+                        else => unreachable, // deadlock due to operating system bug
+                    }
+                }
+            },
+            .windows => {
+                assert(max_waiters != 0);
+                switch (max_waiters) {
+                    1 => windows.ntdll.RtlWakeAddressSingle(ptr),
+                    else => windows.ntdll.RtlWakeAddressAll(ptr),
+                }
+            },
+            .freebsd => {
+                const rc = std.c._umtx_op(
+                    @intFromPtr(ptr),
+                    @intFromEnum(std.c.UMTX_OP.WAKE_PRIVATE),
+                    @as(c_ulong, max_waiters),
+                    0, // there is no timeout struct
+                    0, // there is no timeout struct pointer
+                );
+                switch (posix.errno(rc)) {
+                    .SUCCESS => {},
+                    .FAULT => {}, // it's ok if the ptr doesn't point to valid memory
+                    .INVAL => unreachable, // arguments should be correct
+                    else => unreachable, // deadlock due to operating system bug
+                }
+            },
+            else => @compileError("unimplemented: futexWake"),
+        }
     }
 };
 
@@ -298,6 +531,8 @@ pub fn init(
         .have_signal_handler = false,
         .main_thread = .{
             .signal_id = Thread.currentSignalId(),
+            .current_closure = null,
+            .cancel_protection = undefined,
         },
     };
 
@@ -332,7 +567,11 @@ pub const init_single_threaded: Threaded = .{
     .old_sig_io = undefined,
     .old_sig_pipe = undefined,
     .have_signal_handler = false,
-    .main_thread = .{ .signal_id = undefined },
+    .main_thread = .{
+        .signal_id = undefined,
+        .current_closure = null,
+        .cancel_protection = undefined,
+    },
 };
 
 pub fn setAsyncLimit(t: *Threaded, new_limit: Io.Limit) void {
@@ -367,6 +606,8 @@ fn join(t: *Threaded) void {
 fn worker(t: *Threaded) void {
     var thread: Thread = .{
         .signal_id = Thread.currentSignalId(),
+        .current_closure = null,
+        .cancel_protection = undefined,
     };
     Thread.current = &thread;
 
@@ -403,13 +644,13 @@ pub fn io(t: *Threaded) Io {
             .groupWait = groupWait,
             .groupCancel = groupCancel,
 
-            .mutexLock = mutexLock,
-            .mutexLockUncancelable = mutexLockUncancelable,
-            .mutexUnlock = mutexUnlock,
+            .recancel = recancel,
+            .swapCancelProtection = swapCancelProtection,
+            .checkCancel = checkCancel,
 
-            .conditionWait = conditionWait,
-            .conditionWaitUncancelable = conditionWaitUncancelable,
-            .conditionWake = conditionWake,
+            .futexWait = futexWait,
+            .futexWaitUncancelable = futexWaitUncancelable,
+            .futexWake = futexWake,
 
             .dirMake = dirMake,
             .dirMakePath = dirMakePath,
@@ -499,13 +740,13 @@ pub fn ioBasic(t: *Threaded) Io {
             .groupWait = groupWait,
             .groupCancel = groupCancel,
 
-            .mutexLock = mutexLock,
-            .mutexLockUncancelable = mutexLockUncancelable,
-            .mutexUnlock = mutexUnlock,
+            .recancel = recancel,
+            .swapCancelProtection = swapCancelProtection,
+            .checkCancel = checkCancel,
 
-            .conditionWait = conditionWait,
-            .conditionWaitUncancelable = conditionWaitUncancelable,
-            .conditionWake = conditionWake,
+            .futexWait = futexWait,
+            .futexWaitUncancelable = futexWaitUncancelable,
+            .futexWake = futexWake,
 
             .dirMake = dirMake,
             .dirMakePath = dirMakePath,
@@ -577,26 +818,31 @@ const preadv_sym = if (posix.lfs64_abi) posix.system.preadv64 else posix.system.
 const AsyncClosure = struct {
     closure: Closure,
     func: *const fn (context: *anyopaque, result: *anyopaque) void,
-    reset_event: ResetEvent,
-    select_condition: ?*ResetEvent,
+    event: Io.Event,
+    select_condition: ?*Io.Event,
     context_alignment: Alignment,
     result_offset: usize,
     alloc_len: usize,
 
-    const done_reset_event: *ResetEvent = @ptrFromInt(@alignOf(ResetEvent));
+    const done_event: *Io.Event = @ptrFromInt(@alignOf(Io.Event));
 
     fn start(closure: *Closure, t: *Threaded) void {
         const ac: *AsyncClosure = @alignCast(@fieldParentPtr("closure", closure));
         const current_thread = Thread.getCurrent(t);
-        current_thread.current_closure = closure;
-        ac.func(ac.contextPointer(), ac.resultPointer());
-        current_thread.current_closure = null;
 
-        if (@atomicRmw(?*ResetEvent, &ac.select_condition, .Xchg, done_reset_event, .release)) |select_reset| {
-            assert(select_reset != done_reset_event);
-            select_reset.set();
+        current_thread.current_closure = closure;
+        current_thread.cancel_protection = .unblocked;
+
+        ac.func(ac.contextPointer(), ac.resultPointer());
+
+        current_thread.current_closure = null;
+        current_thread.cancel_protection = undefined;
+
+        if (@atomicRmw(?*Io.Event, &ac.select_condition, .Xchg, done_event, .release)) |select_event| {
+            assert(select_event != done_event);
+            select_event.set(ioBasic(t));
         }
-        ac.reset_event.set();
+        ac.event.set(ioBasic(t));
     }
 
     fn resultPointer(ac: *AsyncClosure) [*]u8 {
@@ -638,7 +884,7 @@ const AsyncClosure = struct {
             .context_alignment = context_alignment,
             .result_offset = actual_result_offset,
             .alloc_len = alloc_len,
-            .reset_event = .unset,
+            .event = .unset,
             .select_condition = null,
         };
         @memcpy(ac.contextPointer()[0..context.len], context);
@@ -646,10 +892,10 @@ const AsyncClosure = struct {
     }
 
     fn waitAndDeinit(ac: *AsyncClosure, t: *Threaded, result: []u8) void {
-        ac.reset_event.wait(t) catch |err| switch (err) {
+        ac.event.wait(ioBasic(t)) catch |err| switch (err) {
             error.Canceled => {
                 ac.closure.requestCancel(t);
-                ac.reset_event.waitUncancelable();
+                ac.event.waitUncancelable(ioBasic(t));
             },
         };
         @memcpy(result, ac.resultPointer()[0..result.len]);
@@ -771,14 +1017,19 @@ const GroupClosure = struct {
         const current_thread = Thread.getCurrent(t);
         const group = gc.group;
         const group_state: *std.atomic.Value(usize) = @ptrCast(&group.state);
-        const reset_event: *ResetEvent = @ptrCast(&group.context);
+        const event: *Io.Event = @ptrCast(&group.context);
+
         current_thread.current_closure = closure;
+        current_thread.cancel_protection = .unblocked;
+
         gc.func(group, gc.contextPointer());
+
         current_thread.current_closure = null;
+        current_thread.cancel_protection = undefined;
 
         const prev_state = group_state.fetchSub(sync_one_pending, .acq_rel);
         assert((prev_state / sync_one_pending) > 0);
-        if (prev_state == (sync_one_pending | sync_is_waiting)) reset_event.set();
+        if (prev_state == (sync_one_pending | sync_is_waiting)) event.set(ioBasic(t));
     }
 
     fn contextPointer(gc: *GroupClosure) [*]u8 {
@@ -939,10 +1190,10 @@ fn groupWait(userdata: ?*anyopaque, group: *Io.Group, token: *anyopaque) void {
     if (builtin.single_threaded) return;
 
     const group_state: *std.atomic.Value(usize) = @ptrCast(&group.state);
-    const reset_event: *ResetEvent = @ptrCast(&group.context);
+    const event: *Io.Event = @ptrCast(&group.context);
     const prev_state = group_state.fetchAdd(GroupClosure.sync_is_waiting, .acquire);
     assert(prev_state & GroupClosure.sync_is_waiting == 0);
-    if ((prev_state / GroupClosure.sync_one_pending) > 0) reset_event.wait(t) catch |err| switch (err) {
+    if ((prev_state / GroupClosure.sync_one_pending) > 0) event.wait(ioBasic(t)) catch |err| switch (err) {
         error.Canceled => {
             var node: *std.SinglyLinkedList.Node = @ptrCast(@alignCast(token));
             while (true) {
@@ -950,7 +1201,7 @@ fn groupWait(userdata: ?*anyopaque, group: *Io.Group, token: *anyopaque) void {
                 gc.closure.requestCancel(t);
                 node = node.next orelse break;
             }
-            reset_event.waitUncancelable();
+            event.waitUncancelable(ioBasic(t));
         },
     };
 
@@ -979,10 +1230,10 @@ fn groupCancel(userdata: ?*anyopaque, group: *Io.Group, token: *anyopaque) void 
     }
 
     const group_state: *std.atomic.Value(usize) = @ptrCast(&group.state);
-    const reset_event: *ResetEvent = @ptrCast(&group.context);
+    const event: *Io.Event = @ptrCast(&group.context);
     const prev_state = group_state.fetchAdd(GroupClosure.sync_is_waiting, .acquire);
     assert(prev_state & GroupClosure.sync_is_waiting == 0);
-    if ((prev_state / GroupClosure.sync_one_pending) > 0) reset_event.waitUncancelable();
+    if ((prev_state / GroupClosure.sync_one_pending) > 0) event.waitUncancelable(ioBasic(t));
 
     {
         var node: *std.SinglyLinkedList.Node = @ptrCast(@alignCast(token));
@@ -993,6 +1244,32 @@ fn groupCancel(userdata: ?*anyopaque, group: *Io.Group, token: *anyopaque) void 
             node = node_next orelse break;
         }
     }
+}
+
+fn recancel(userdata: ?*anyopaque) void {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread: *Thread = .getCurrent(t);
+    const cancel_status = &current_thread.current_closure.?.cancel_status;
+    switch (@atomicLoad(CancelStatus, cancel_status, .monotonic)) {
+        .none => unreachable, // called `recancel` when not canceled
+        .requested => unreachable, // called `recancel` when cancelation was already outstanding
+        .acknowledged => {},
+        _ => unreachable, // invalid state: not in a syscall
+    }
+    @atomicStore(CancelStatus, cancel_status, .requested, .monotonic);
+}
+
+fn swapCancelProtection(userdata: ?*anyopaque, new: Io.CancelProtection) Io.CancelProtection {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread: *Thread = .getCurrent(t);
+    const old = current_thread.cancel_protection;
+    current_thread.cancel_protection = new;
+    return old;
+}
+
+fn checkCancel(userdata: ?*anyopaque) Io.Cancelable!void {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    return Thread.getCurrent(t).checkCancel();
 }
 
 fn await(
@@ -1020,187 +1297,35 @@ fn cancel(
     ac.waitAndDeinit(t, result);
 }
 
-fn mutexLock(userdata: ?*anyopaque, prev_state: Io.Mutex.State, mutex: *Io.Mutex) Io.Cancelable!void {
-    if (builtin.single_threaded) unreachable; // Interface should have prevented this.
-    if (native_os == .netbsd) @panic("TODO");
-    if (native_os == .openbsd) @panic("TODO");
-    const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
-    if (prev_state == .contended) {
-        try futexWait(current_thread, @ptrCast(&mutex.state), @intFromEnum(Io.Mutex.State.contended));
-    }
-    while (@atomicRmw(Io.Mutex.State, &mutex.state, .Xchg, .contended, .acquire) != .unlocked) {
-        try futexWait(current_thread, @ptrCast(&mutex.state), @intFromEnum(Io.Mutex.State.contended));
-    }
-}
-
-fn mutexLockUncancelable(userdata: ?*anyopaque, prev_state: Io.Mutex.State, mutex: *Io.Mutex) void {
-    if (builtin.single_threaded) unreachable; // Interface should have prevented this.
-    if (native_os == .netbsd) @panic("TODO");
-    if (native_os == .openbsd) @panic("TODO");
-    _ = userdata;
-    if (prev_state == .contended) {
-        futexWaitUncancelable(@ptrCast(&mutex.state), @intFromEnum(Io.Mutex.State.contended));
-    }
-    while (@atomicRmw(Io.Mutex.State, &mutex.state, .Xchg, .contended, .acquire) != .unlocked) {
-        futexWaitUncancelable(@ptrCast(&mutex.state), @intFromEnum(Io.Mutex.State.contended));
-    }
-}
-
-fn mutexUnlock(userdata: ?*anyopaque, prev_state: Io.Mutex.State, mutex: *Io.Mutex) void {
-    if (builtin.single_threaded) unreachable; // Interface should have prevented this.
-    if (native_os == .netbsd) @panic("TODO");
-    if (native_os == .openbsd) @panic("TODO");
-    _ = userdata;
-    _ = prev_state;
-    if (@atomicRmw(Io.Mutex.State, &mutex.state, .Xchg, .unlocked, .release) == .contended) {
-        futexWake(@ptrCast(&mutex.state), 1);
-    }
-}
-
-fn conditionWaitUncancelable(userdata: ?*anyopaque, cond: *Io.Condition, mutex: *Io.Mutex) void {
-    if (builtin.single_threaded) unreachable; // Deadlock.
-    if (native_os == .netbsd) @panic("TODO");
-    if (native_os == .openbsd) @panic("TODO");
-    const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const t_io = ioBasic(t);
-    comptime assert(@TypeOf(cond.state) == u64);
-    const ints: *[2]std.atomic.Value(u32) = @ptrCast(&cond.state);
-    const cond_state = &ints[0];
-    const cond_epoch = &ints[1];
-    const one_waiter = 1;
-    const waiter_mask = 0xffff;
-    const one_signal = 1 << 16;
-    const signal_mask = 0xffff << 16;
-    var epoch = cond_epoch.load(.acquire);
-    var state = cond_state.fetchAdd(one_waiter, .monotonic);
-    assert(state & waiter_mask != waiter_mask);
-    state += one_waiter;
-
-    mutex.unlock(t_io);
-    defer mutex.lockUncancelable(t_io);
-
-    while (true) {
-        futexWaitUncancelable(cond_epoch, epoch);
-        epoch = cond_epoch.load(.acquire);
-        state = cond_state.load(.monotonic);
-        while (state & signal_mask != 0) {
-            const new_state = state - one_waiter - one_signal;
-            state = cond_state.cmpxchgWeak(state, new_state, .acquire, .monotonic) orelse return;
-        }
-    }
-}
-
-fn conditionWait(userdata: ?*anyopaque, cond: *Io.Condition, mutex: *Io.Mutex) Io.Cancelable!void {
-    if (builtin.single_threaded) unreachable; // Deadlock.
-    if (native_os == .netbsd) @panic("TODO");
-    if (native_os == .openbsd) @panic("TODO");
+fn futexWait(userdata: ?*anyopaque, ptr: *const u32, expected: u32, timeout: Io.Timeout) Io.Cancelable!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
     const t_io = ioBasic(t);
-    comptime assert(@TypeOf(cond.state) == u64);
-    const ints: *[2]std.atomic.Value(u32) = @ptrCast(&cond.state);
-    const cond_state = &ints[0];
-    const cond_epoch = &ints[1];
-    const one_waiter = 1;
-    const waiter_mask = 0xffff;
-    const one_signal = 1 << 16;
-    const signal_mask = 0xffff << 16;
-    // Observe the epoch, then check the state again to see if we should wake up.
-    // The epoch must be observed before we check the state or we could potentially miss a wake() and deadlock:
-    //
-    // - T1: s = LOAD(&state)
-    // - T2: UPDATE(&s, signal)
-    // - T2: UPDATE(&epoch, 1) + FUTEX_WAKE(&epoch)
-    // - T1: e = LOAD(&epoch) (was reordered after the state load)
-    // - T1: s & signals == 0 -> FUTEX_WAIT(&epoch, e) (missed the state update + the epoch change)
-    //
-    // Acquire barrier to ensure the epoch load happens before the state load.
-    var epoch = cond_epoch.load(.acquire);
-    var state = cond_state.fetchAdd(one_waiter, .monotonic);
-    assert(state & waiter_mask != waiter_mask);
-    state += one_waiter;
-
-    mutex.unlock(t_io);
-    defer mutex.lockUncancelable(t_io);
-
-    while (true) {
-        try futexWait(current_thread, cond_epoch, epoch);
-
-        epoch = cond_epoch.load(.acquire);
-        state = cond_state.load(.monotonic);
-
-        // Try to wake up by consuming a signal and decremented the waiter we
-        // added previously. Acquire barrier ensures code before the wake()
-        // which added the signal happens before we decrement it and return.
-        while (state & signal_mask != 0) {
-            const new_state = state - one_waiter - one_signal;
-            state = cond_state.cmpxchgWeak(state, new_state, .acquire, .monotonic) orelse return;
-        }
+    const timeout_ns: ?u64 = ns: {
+        const d = (timeout.toDurationFromNow(t_io) catch break :ns 10) orelse break :ns null;
+        break :ns std.math.lossyCast(u64, d.raw.toNanoseconds());
+    };
+    switch (native_os) {
+        .illumos, .netbsd, .openbsd => @panic("TODO"),
+        else => try current_thread.futexWaitTimed(ptr, expected, timeout_ns),
     }
 }
 
-fn conditionWake(userdata: ?*anyopaque, cond: *Io.Condition, wake: Io.Condition.Wake) void {
-    if (builtin.single_threaded) unreachable; // Nothing to wake up.
+fn futexWaitUncancelable(userdata: ?*anyopaque, ptr: *const u32, expected: u32) void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     _ = t;
-    comptime assert(@TypeOf(cond.state) == u64);
-    const ints: *[2]std.atomic.Value(u32) = @ptrCast(&cond.state);
-    const cond_state = &ints[0];
-    const cond_epoch = &ints[1];
-    const one_waiter = 1;
-    const waiter_mask = 0xffff;
-    const one_signal = 1 << 16;
-    const signal_mask = 0xffff << 16;
-    var state = cond_state.load(.monotonic);
-    while (true) {
-        const waiters = (state & waiter_mask) / one_waiter;
-        const signals = (state & signal_mask) / one_signal;
+    switch (native_os) {
+        .illumos, .netbsd, .openbsd => @panic("TODO"),
+        else => Thread.futexWaitUncancelable(ptr, expected),
+    }
+}
 
-        // Reserves which waiters to wake up by incrementing the signals count.
-        // Therefore, the signals count is always less than or equal to the
-        // waiters count. We don't need to Futex.wake if there's nothing to
-        // wake up or if other wake() threads have reserved to wake up the
-        // current waiters.
-        const wakeable = waiters - signals;
-        if (wakeable == 0) {
-            return;
-        }
-
-        const to_wake = switch (wake) {
-            .one => 1,
-            .all => wakeable,
-        };
-
-        // Reserve the amount of waiters to wake by incrementing the signals
-        // count. Release barrier ensures code before the wake() happens before
-        // the signal it posted and consumed by the wait() threads.
-        const new_state = state + (one_signal * to_wake);
-        state = cond_state.cmpxchgWeak(state, new_state, .release, .monotonic) orelse {
-            // Wake up the waiting threads we reserved above by changing the epoch value.
-            //
-            // A waiting thread could miss a wake up if *exactly* ((1<<32)-1)
-            // wake()s happen between it observing the epoch and sleeping on
-            // it. This is very unlikely due to how many precise amount of
-            // Futex.wake() calls that would be between the waiting thread's
-            // potential preemption.
-            //
-            // Release barrier ensures the signal being added to the state
-            // happens before the epoch is changed. If not, the waiting thread
-            // could potentially deadlock from missing both the state and epoch
-            // change:
-            //
-            // - T2: UPDATE(&epoch, 1) (reordered before the state change)
-            // - T1: e = LOAD(&epoch)
-            // - T1: s = LOAD(&state)
-            // - T2: UPDATE(&state, signal) + FUTEX_WAKE(&epoch)
-            // - T1: s & signals == 0 -> FUTEX_WAIT(&epoch, e) (missed both epoch change and state change)
-            _ = cond_epoch.fetchAdd(1, .release);
-            if (native_os == .netbsd) @panic("TODO");
-            if (native_os == .openbsd) @panic("TODO");
-            futexWake(cond_epoch, to_wake);
-            return;
-        };
+fn futexWake(userdata: ?*anyopaque, ptr: *const u32, max_waiters: u32) void {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    _ = t;
+    switch (native_os) {
+        .illumos, .netbsd, .openbsd => @panic("TODO"),
+        else => Thread.futexWake(ptr, max_waiters),
     }
 }
 
@@ -3630,28 +3755,28 @@ fn sleepPosix(userdata: ?*anyopaque, timeout: Io.Timeout) Io.SleepError!void {
 fn select(userdata: ?*anyopaque, futures: []const *Io.AnyFuture) Io.Cancelable!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
 
-    var reset_event: ResetEvent = .unset;
+    var event: Io.Event = .unset;
 
     for (futures, 0..) |future, i| {
         const closure: *AsyncClosure = @ptrCast(@alignCast(future));
-        if (@atomicRmw(?*ResetEvent, &closure.select_condition, .Xchg, &reset_event, .seq_cst) == AsyncClosure.done_reset_event) {
+        if (@atomicRmw(?*Io.Event, &closure.select_condition, .Xchg, &event, .seq_cst) == AsyncClosure.done_event) {
             for (futures[0..i]) |cleanup_future| {
                 const cleanup_closure: *AsyncClosure = @ptrCast(@alignCast(cleanup_future));
-                if (@atomicRmw(?*ResetEvent, &cleanup_closure.select_condition, .Xchg, null, .seq_cst) == AsyncClosure.done_reset_event) {
-                    cleanup_closure.reset_event.waitUncancelable(); // Ensure no reference to our stack-allocated reset_event.
+                if (@atomicRmw(?*Io.Event, &cleanup_closure.select_condition, .Xchg, null, .seq_cst) == AsyncClosure.done_event) {
+                    cleanup_closure.event.waitUncancelable(ioBasic(t)); // Ensure no reference to our stack-allocated event.
                 }
             }
             return i;
         }
     }
 
-    try reset_event.wait(t);
+    try event.wait(ioBasic(t));
 
     var result: ?usize = null;
     for (futures, 0..) |future, i| {
         const closure: *AsyncClosure = @ptrCast(@alignCast(future));
-        if (@atomicRmw(?*ResetEvent, &closure.select_condition, .Xchg, null, .seq_cst) == AsyncClosure.done_reset_event) {
-            closure.reset_event.waitUncancelable(); // Ensure no reference to our stack-allocated reset_event.
+        if (@atomicRmw(?*Io.Event, &closure.select_condition, .Xchg, null, .seq_cst) == AsyncClosure.done_event) {
+            closure.event.waitUncancelable(ioBasic(t)); // Ensure no reference to our stack-allocated event.
             if (result == null) result = i; // In case multiple are ready, return first.
         }
     }
@@ -5670,11 +5795,13 @@ fn netLookup(
     host_name: HostName,
     resolved: *Io.Queue(HostName.LookupResult),
     options: HostName.LookupOptions,
-) void {
+) net.HostName.LookupError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
-    const t_io = io(t);
-    resolved.putOneUncancelable(t_io, .{ .end = netLookupFallible(t, current_thread, host_name, resolved, options) });
+    defer resolved.close(io(t));
+    netLookupFallible(t, host_name, resolved, options) catch |err| switch (err) {
+        error.Closed => unreachable, // `resolved` must not be closed until `netLookup` returns
+        else => |e| return e,
+    };
 }
 
 fn netLookupUnavailable(
@@ -5682,22 +5809,23 @@ fn netLookupUnavailable(
     host_name: HostName,
     resolved: *Io.Queue(HostName.LookupResult),
     options: HostName.LookupOptions,
-) void {
+) net.HostName.LookupError!void {
     _ = host_name;
     _ = options;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const t_io = ioBasic(t);
-    resolved.putOneUncancelable(t_io, .{ .end = error.NetworkDown });
+    resolved.close(ioBasic(t));
+    return error.NetworkDown;
 }
 
 fn netLookupFallible(
     t: *Threaded,
-    current_thread: *Thread,
     host_name: HostName,
     resolved: *Io.Queue(HostName.LookupResult),
     options: HostName.LookupOptions,
-) !void {
+) (net.HostName.LookupError || Io.QueueClosedError)!void {
     if (!have_networking) return error.NetworkDown;
+
+    const current_thread: *Thread = .getCurrent(t);
     const t_io = io(t);
     const name = host_name.bytes;
     assert(name.len <= HostName.max_len);
@@ -6238,7 +6366,7 @@ fn lookupDnsSearch(
     host_name: HostName,
     resolved: *Io.Queue(HostName.LookupResult),
     options: HostName.LookupOptions,
-) HostName.LookupError!void {
+) (HostName.LookupError || Io.QueueClosedError)!void {
     const t_io = io(t);
     const rc = HostName.ResolvConf.init(t_io) catch return error.ResolvConfParseFailed;
 
@@ -6282,7 +6410,7 @@ fn lookupDns(
     rc: *const HostName.ResolvConf,
     resolved: *Io.Queue(HostName.LookupResult),
     options: HostName.LookupOptions,
-) HostName.LookupError!void {
+) (HostName.LookupError || Io.QueueClosedError)!void {
     const t_io = io(t);
     const family_records: [2]struct { af: IpAddress.Family, rr: HostName.DnsRecord } = .{
         .{ .af = .ip6, .rr = .A },
@@ -6496,8 +6624,10 @@ fn lookupHosts(
                 return error.DetectingNetworkConfigurationFailed;
             },
         },
-        error.Canceled => |e| return e,
-        error.UnknownHostName => |e| return e,
+        error.Canceled,
+        error.Closed,
+        error.UnknownHostName,
+        => |e| return e,
     };
 }
 
@@ -6507,7 +6637,7 @@ fn lookupHostsReader(
     resolved: *Io.Queue(HostName.LookupResult),
     options: HostName.LookupOptions,
     reader: *Io.Reader,
-) error{ ReadFailed, Canceled, UnknownHostName }!void {
+) error{ ReadFailed, Canceled, UnknownHostName, Closed }!void {
     const t_io = io(t);
     var addresses_len: usize = 0;
     var canonical_name: ?HostName = null;
@@ -6611,460 +6741,6 @@ fn copyCanon(canonical_name_buffer: *[HostName.max_len]u8, name: []const u8) Hos
 /// ulock_wait() uses 32-bit micro-second timeouts where 0 = INFINITE or no-timeout
 /// ulock_wait2() uses 64-bit nano-second timeouts (with the same convention)
 const darwin_supports_ulock_wait2 = builtin.os.version_range.semver.min.major >= 11;
-
-fn futexWait(current_thread: *Thread, ptr: *const std.atomic.Value(u32), expect: u32) Io.Cancelable!void {
-    @branchHint(.cold);
-
-    if (builtin.cpu.arch.isWasm()) {
-        comptime assert(builtin.cpu.has(.wasm, .atomics));
-        try current_thread.checkCancel();
-        const timeout: i64 = -1;
-        const signed_expect: i32 = @bitCast(expect);
-        const result = asm volatile (
-            \\local.get %[ptr]
-            \\local.get %[expected]
-            \\local.get %[timeout]
-            \\memory.atomic.wait32 0
-            \\local.set %[ret]
-            : [ret] "=r" (-> u32),
-            : [ptr] "r" (&ptr.raw),
-              [expected] "r" (signed_expect),
-              [timeout] "r" (timeout),
-        );
-        switch (result) {
-            0 => {}, // ok
-            1 => {}, // expected != loaded
-            2 => assert(!is_debug), // timeout
-            else => assert(!is_debug),
-        }
-    } else switch (native_os) {
-        .linux => {
-            const linux = std.os.linux;
-            try current_thread.beginSyscall();
-            const rc = linux.futex_4arg(ptr, .{ .cmd = .WAIT, .private = true }, expect, null);
-            current_thread.endSyscall();
-            switch (linux.errno(rc)) {
-                .SUCCESS => {}, // notified by `wake()`
-                .INTR => {}, // caller's responsibility to retry
-                .AGAIN => {}, // ptr.* != expect
-                .INVAL => {}, // possibly timeout overflow
-                .TIMEDOUT => recoverableOsBugDetected(),
-                .FAULT => recoverableOsBugDetected(), // ptr was invalid
-                else => recoverableOsBugDetected(),
-            }
-        },
-        .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => {
-            const c = std.c;
-            const flags: c.UL = .{
-                .op = .COMPARE_AND_WAIT,
-                .NO_ERRNO = true,
-            };
-            try current_thread.beginSyscall();
-            const status = if (darwin_supports_ulock_wait2)
-                c.__ulock_wait2(flags, ptr, expect, 0, 0)
-            else
-                c.__ulock_wait(flags, ptr, expect, 0);
-            current_thread.endSyscall();
-
-            if (status >= 0) return;
-
-            if (is_debug) switch (@as(c.E, @enumFromInt(-status))) {
-                .INTR => {}, // spurious wake
-                // Address of the futex was paged out. This is unlikely, but possible in theory, and
-                // pthread/libdispatch on darwin bother to handle it. In this case we'll return
-                // without waiting, but the caller should retry anyway.
-                .FAULT => {},
-                .TIMEDOUT => unreachable,
-                else => unreachable,
-            };
-        },
-        .windows => {
-            try current_thread.checkCancel();
-            switch (windows.ntdll.RtlWaitOnAddress(ptr, &expect, @sizeOf(@TypeOf(expect)), null)) {
-                .SUCCESS => {},
-                .CANCELLED => return error.Canceled,
-                else => recoverableOsBugDetected(),
-            }
-        },
-        .freebsd => {
-            const flags = @intFromEnum(std.c.UMTX_OP.WAIT_UINT_PRIVATE);
-            try current_thread.beginSyscall();
-            const rc = std.c._umtx_op(@intFromPtr(&ptr.raw), flags, @as(c_ulong, expect), 0, 0);
-            current_thread.endSyscall();
-            if (is_debug) switch (posix.errno(rc)) {
-                .SUCCESS => {},
-                .FAULT => unreachable, // one of the args points to invalid memory
-                .INVAL => unreachable, // arguments should be correct
-                .TIMEDOUT => unreachable, // no timeout provided
-                .INTR => {}, // spurious wake
-                else => unreachable,
-            };
-        },
-        else => @compileError("unimplemented: futexWait"),
-    }
-}
-
-pub fn futexWaitUncancelable(ptr: *const std.atomic.Value(u32), expect: u32) void {
-    @branchHint(.cold);
-
-    if (builtin.cpu.arch.isWasm()) {
-        comptime assert(builtin.cpu.has(.wasm, .atomics));
-        const timeout: i64 = -1;
-        const signed_expect: i32 = @bitCast(expect);
-        const result = asm volatile (
-            \\local.get %[ptr]
-            \\local.get %[expected]
-            \\local.get %[timeout]
-            \\memory.atomic.wait32 0
-            \\local.set %[ret]
-            : [ret] "=r" (-> u32),
-            : [ptr] "r" (&ptr.raw),
-              [expected] "r" (signed_expect),
-              [timeout] "r" (timeout),
-        );
-        switch (result) {
-            0 => {}, // ok
-            1 => {}, // expected != loaded
-            2 => recoverableOsBugDetected(), // timeout
-            else => recoverableOsBugDetected(),
-        }
-    } else switch (native_os) {
-        .linux => {
-            const linux = std.os.linux;
-            const rc = linux.futex_4arg(ptr, .{ .cmd = .WAIT, .private = true }, expect, null);
-            switch (linux.errno(rc)) {
-                .SUCCESS => {}, // notified by `wake()`
-                .INTR => {}, // caller's responsibility to repeat
-                .AGAIN => {}, // ptr.* != expect
-                .INVAL => {}, // possibly timeout overflow
-                .TIMEDOUT => recoverableOsBugDetected(),
-                .FAULT => recoverableOsBugDetected(), // ptr was invalid
-                else => recoverableOsBugDetected(),
-            }
-        },
-        .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => {
-            const c = std.c;
-            const flags: c.UL = .{
-                .op = .COMPARE_AND_WAIT,
-                .NO_ERRNO = true,
-            };
-            const status = if (darwin_supports_ulock_wait2)
-                c.__ulock_wait2(flags, ptr, expect, 0, 0)
-            else
-                c.__ulock_wait(flags, ptr, expect, 0);
-
-            if (status >= 0) return;
-
-            switch (@as(c.E, @enumFromInt(-status))) {
-                // Wait was interrupted by the OS or other spurious signalling.
-                .INTR => {},
-                // Address of the futex was paged out. This is unlikely, but possible in theory, and
-                // pthread/libdispatch on darwin bother to handle it. In this case we'll return
-                // without waiting, but the caller should retry anyway.
-                .FAULT => {},
-                .TIMEDOUT => recoverableOsBugDetected(),
-                else => recoverableOsBugDetected(),
-            }
-        },
-        .windows => {
-            switch (windows.ntdll.RtlWaitOnAddress(ptr, &expect, @sizeOf(@TypeOf(expect)), null)) {
-                .SUCCESS, .CANCELLED => {},
-                else => recoverableOsBugDetected(),
-            }
-        },
-        .freebsd => {
-            const flags = @intFromEnum(std.c.UMTX_OP.WAIT_UINT_PRIVATE);
-            const rc = std.c._umtx_op(@intFromPtr(&ptr.raw), flags, @as(c_ulong, expect), 0, 0);
-            switch (posix.errno(rc)) {
-                .SUCCESS => {},
-                .INTR => {}, // spurious wake
-                .FAULT => recoverableOsBugDetected(), // one of the args points to invalid memory
-                .INVAL => recoverableOsBugDetected(), // arguments should be correct
-                .TIMEDOUT => recoverableOsBugDetected(), // no timeout provided
-                else => recoverableOsBugDetected(),
-            }
-        },
-        else => @compileError("unimplemented: futexWaitUncancelable"),
-    }
-}
-
-pub fn futexWake(ptr: *const std.atomic.Value(u32), max_waiters: u32) void {
-    @branchHint(.cold);
-
-    if (builtin.cpu.arch.isWasm()) {
-        comptime assert(builtin.cpu.has(.wasm, .atomics));
-        assert(max_waiters != 0);
-        const woken_count = asm volatile (
-            \\local.get %[ptr]
-            \\local.get %[waiters]
-            \\memory.atomic.notify 0
-            \\local.set %[ret]
-            : [ret] "=r" (-> u32),
-            : [ptr] "r" (&ptr.raw),
-              [waiters] "r" (max_waiters),
-        );
-        _ = woken_count; // can be 0 when linker flag 'shared-memory' is not enabled
-    } else switch (native_os) {
-        .linux => {
-            const linux = std.os.linux;
-            switch (linux.errno(linux.futex_3arg(
-                &ptr.raw,
-                .{ .cmd = .WAKE, .private = true },
-                @min(max_waiters, std.math.maxInt(i32)),
-            ))) {
-                .SUCCESS => return, // successful wake up
-                .INVAL => return, // invalid futex_wait() on ptr done elsewhere
-                .FAULT => return, // pointer became invalid while doing the wake
-                else => return recoverableOsBugDetected(), // deadlock due to operating system bug
-            }
-        },
-        .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => {
-            const c = std.c;
-            const flags: c.UL = .{
-                .op = .COMPARE_AND_WAIT,
-                .NO_ERRNO = true,
-                .WAKE_ALL = max_waiters > 1,
-            };
-            while (true) {
-                const status = c.__ulock_wake(flags, ptr, 0);
-                if (status >= 0) return;
-                switch (@as(c.E, @enumFromInt(-status))) {
-                    .INTR, .CANCELED => continue, // spurious wake()
-                    .FAULT => unreachable, // __ulock_wake doesn't generate EFAULT according to darwin pthread_cond_t
-                    .NOENT => return, // nothing was woken up
-                    .ALREADY => unreachable, // only for UL.Op.WAKE_THREAD
-                    else => unreachable, // deadlock due to operating system bug
-                }
-            }
-        },
-        .windows => {
-            assert(max_waiters != 0);
-            switch (max_waiters) {
-                1 => windows.ntdll.RtlWakeAddressSingle(ptr),
-                else => windows.ntdll.RtlWakeAddressAll(ptr),
-            }
-        },
-        .freebsd => {
-            const rc = std.c._umtx_op(
-                @intFromPtr(&ptr.raw),
-                @intFromEnum(std.c.UMTX_OP.WAKE_PRIVATE),
-                @as(c_ulong, max_waiters),
-                0, // there is no timeout struct
-                0, // there is no timeout struct pointer
-            );
-            switch (posix.errno(rc)) {
-                .SUCCESS => {},
-                .FAULT => {}, // it's ok if the ptr doesn't point to valid memory
-                .INVAL => unreachable, // arguments should be correct
-                else => unreachable, // deadlock due to operating system bug
-            }
-        },
-        else => @compileError("unimplemented: futexWake"),
-    }
-}
-
-/// A thread-safe logical boolean value which can be `set` and `unset`.
-///
-/// It can also block threads until the value is set with cancelation via timed
-/// waits. Statically initializable; four bytes on all targets.
-pub const ResetEvent = switch (native_os) {
-    .illumos, .netbsd, .openbsd => ResetEventPosix,
-    else => ResetEventFutex,
-};
-
-/// A `ResetEvent` implementation based on futexes.
-const ResetEventFutex = enum(u32) {
-    unset = 0,
-    waiting = 1,
-    is_set = 2,
-
-    /// Returns whether the logical boolean is `set`.
-    ///
-    /// Once `reset` is called, this returns false until the next `set`.
-    ///
-    /// The memory accesses before the `set` can be said to happen before
-    /// `isSet` returns true.
-    pub fn isSet(ref: *const ResetEventFutex) bool {
-        if (builtin.single_threaded) return switch (ref.*) {
-            .unset => false,
-            .waiting => unreachable,
-            .is_set => true,
-        };
-        // Acquire barrier ensures memory accesses before `set` happen before
-        // returning true.
-        return @atomicLoad(ResetEventFutex, ref, .acquire) == .is_set;
-    }
-
-    /// Blocks the calling thread until `set` is called.
-    ///
-    /// This is effectively a more efficient version of `while (!isSet()) {}`.
-    ///
-    /// The memory accesses before the `set` can be said to happen before `wait` returns.
-    pub fn wait(ref: *ResetEventFutex, t: *Threaded) Io.Cancelable!void {
-        if (builtin.single_threaded) switch (ref.*) {
-            .unset => unreachable, // Deadlock, no other threads to wake us up.
-            .waiting => unreachable, // Invalid state.
-            .is_set => return,
-        };
-        // Try to set the state from `unset` to `waiting` to indicate to the
-        // `set` thread that others are blocked on the ResetEventFutex. Avoid using
-        // any strict barriers until we know the ResetEventFutex is set.
-        var state = @atomicLoad(ResetEventFutex, ref, .acquire);
-        if (state == .is_set) {
-            @branchHint(.likely);
-            return;
-        }
-        if (state == .unset) {
-            state = @cmpxchgStrong(ResetEventFutex, ref, state, .waiting, .acquire, .acquire) orelse .waiting;
-        }
-        const current_thread = Thread.getCurrent(t);
-        while (state == .waiting) {
-            try futexWait(current_thread, @ptrCast(ref), @intFromEnum(ResetEventFutex.waiting));
-            state = @atomicLoad(ResetEventFutex, ref, .acquire);
-        }
-        assert(state == .is_set);
-    }
-
-    /// Same as `wait` except uninterruptible.
-    pub fn waitUncancelable(ref: *ResetEventFutex) void {
-        if (builtin.single_threaded) switch (ref.*) {
-            .unset => unreachable, // Deadlock, no other threads to wake us up.
-            .waiting => unreachable, // Invalid state.
-            .is_set => return,
-        };
-        // Try to set the state from `unset` to `waiting` to indicate to the
-        // `set` thread that others are blocked on the ResetEventFutex. Avoid using
-        // any strict barriers until we know the ResetEventFutex is set.
-        var state = @atomicLoad(ResetEventFutex, ref, .acquire);
-        if (state == .is_set) {
-            @branchHint(.likely);
-            return;
-        }
-        if (state == .unset) {
-            state = @cmpxchgStrong(ResetEventFutex, ref, state, .waiting, .acquire, .acquire) orelse .waiting;
-        }
-        while (state == .waiting) {
-            futexWaitUncancelable(@ptrCast(ref), @intFromEnum(ResetEventFutex.waiting));
-            state = @atomicLoad(ResetEventFutex, ref, .acquire);
-        }
-        assert(state == .is_set);
-    }
-
-    /// Marks the logical boolean as `set` and unblocks any threads in `wait`
-    /// or `timedWait` to observe the new state.
-    ///
-    /// The logical boolean stays `set` until `reset` is called, making future
-    /// `set` calls do nothing semantically.
-    ///
-    /// The memory accesses before `set` can be said to happen before `isSet`
-    /// returns true or `wait`/`timedWait` return successfully.
-    pub fn set(ref: *ResetEventFutex) void {
-        if (builtin.single_threaded) {
-            ref.* = .is_set;
-            return;
-        }
-        if (@atomicRmw(ResetEventFutex, ref, .Xchg, .is_set, .release) == .waiting) {
-            futexWake(@ptrCast(ref), std.math.maxInt(u32));
-        }
-    }
-
-    /// Unmarks the ResetEventFutex as if `set` was never called.
-    ///
-    /// Assumes no threads are blocked in `wait` or `timedWait`. Concurrent
-    /// calls to `set`, `isSet` and `reset` are allowed.
-    pub fn reset(ref: *ResetEventFutex) void {
-        if (builtin.single_threaded) {
-            ref.* = .unset;
-            return;
-        }
-        @atomicStore(ResetEventFutex, ref, .unset, .monotonic);
-    }
-};
-
-/// A `ResetEvent` implementation based on pthreads API.
-const ResetEventPosix = struct {
-    cond: std.c.pthread_cond_t,
-    mutex: std.c.pthread_mutex_t,
-    state: ResetEventFutex,
-
-    pub const unset: ResetEventPosix = .{
-        .cond = std.c.PTHREAD_COND_INITIALIZER,
-        .mutex = std.c.PTHREAD_MUTEX_INITIALIZER,
-        .state = .unset,
-    };
-
-    pub fn isSet(rep: *const ResetEventPosix) bool {
-        if (builtin.single_threaded) return switch (rep.state) {
-            .unset => false,
-            .waiting => unreachable,
-            .is_set => true,
-        };
-        return @atomicLoad(ResetEventFutex, &rep.state, .acquire) == .is_set;
-    }
-
-    pub fn wait(rep: *ResetEventPosix, t: *Threaded) Io.Cancelable!void {
-        if (builtin.single_threaded) switch (rep.*) {
-            .unset => unreachable, // Deadlock, no other threads to wake us up.
-            .waiting => unreachable, // Invalid state.
-            .is_set => return,
-        };
-        const current_thread = Thread.getCurrent(t);
-        assert(std.c.pthread_mutex_lock(&rep.mutex) == .SUCCESS);
-        defer assert(std.c.pthread_mutex_unlock(&rep.mutex) == .SUCCESS);
-        sw: switch (rep.state) {
-            .unset => {
-                rep.state = .waiting;
-                continue :sw .waiting;
-            },
-            .waiting => {
-                try current_thread.beginSyscall();
-                assert(std.c.pthread_cond_wait(&rep.cond, &rep.mutex) == .SUCCESS);
-                current_thread.endSyscall();
-                continue :sw rep.state;
-            },
-            .is_set => return,
-        }
-    }
-
-    pub fn waitUncancelable(rep: *ResetEventPosix) void {
-        if (builtin.single_threaded) switch (rep.*) {
-            .unset => unreachable, // Deadlock, no other threads to wake us up.
-            .waiting => unreachable, // Invalid state.
-            .is_set => return,
-        };
-        assert(std.c.pthread_mutex_lock(&rep.mutex) == .SUCCESS);
-        defer assert(std.c.pthread_mutex_unlock(&rep.mutex) == .SUCCESS);
-        sw: switch (rep.state) {
-            .unset => {
-                rep.state = .waiting;
-                continue :sw .waiting;
-            },
-            .waiting => {
-                assert(std.c.pthread_cond_wait(&rep.cond, &rep.mutex) == .SUCCESS);
-                continue :sw rep.state;
-            },
-            .is_set => return,
-        }
-    }
-
-    pub fn set(rep: *ResetEventPosix) void {
-        if (builtin.single_threaded) {
-            rep.* = .is_set;
-            return;
-        }
-        if (@atomicRmw(ResetEventFutex, &rep.state, .Xchg, .is_set, .release) == .waiting) {
-            assert(std.c.pthread_cond_broadcast(&rep.cond) == .SUCCESS);
-        }
-    }
-
-    pub fn reset(rep: *ResetEventPosix) void {
-        if (builtin.single_threaded) {
-            rep.* = .unset;
-            return;
-        }
-        @atomicStore(ResetEventFutex, &rep.state, .unset, .monotonic);
-    }
-};
 
 fn closeSocketWindows(s: ws2_32.SOCKET) void {
     const rc = ws2_32.closesocket(s);

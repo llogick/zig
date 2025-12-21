@@ -124,7 +124,7 @@ pub fn init(
         .coverage_files = .empty,
         .coverage_mutex = .init,
         .queue_mutex = .init,
-        .queue_cond = .{},
+        .queue_cond = .init,
         .msg_queue = .empty,
     };
 }
