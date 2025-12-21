@@ -633,7 +633,11 @@ pub const ReadFileError = File.OpenError || File.Reader.Error;
 /// * On WASI, `file_path` should be encoded as valid UTF-8.
 /// * On other platforms, `file_path` is an opaque sequence of bytes with no particular encoding.
 pub fn readFile(dir: Dir, io: Io, file_path: []const u8, buffer: []u8) ReadFileError![]u8 {
-    var file = try dir.openFile(io, file_path, .{});
+    var file = try dir.openFile(io, file_path, .{
+        // We can take advantage of this on Windows since it doesn't involve any extra syscalls,
+        // so we can get error.IsDir during open rather than during the read.
+        .allow_directory = if (native_os == .windows) false else true,
+    });
     defer file.close(io);
 
     var reader = file.reader(io, &.{});
@@ -1217,7 +1221,11 @@ pub fn readFileAllocOptions(
     comptime alignment: std.mem.Alignment,
     comptime sentinel: ?u8,
 ) ReadFileAllocError!(if (sentinel) |s| [:s]align(alignment.toByteUnits()) u8 else []align(alignment.toByteUnits()) u8) {
-    var file = try dir.openFile(io, sub_path, .{});
+    var file = try dir.openFile(io, sub_path, .{
+        // We can take advantage of this on Windows since it doesn't involve any extra syscalls,
+        // so we can get error.IsDir during open rather than during the read.
+        .allow_directory = if (native_os == .windows) false else true,
+    });
     defer file.close(io);
     var file_reader = file.reader(io, &.{});
     return file_reader.interface.allocRemainingAlignedSentinel(gpa, limit, alignment, sentinel) catch |err| switch (err) {
