@@ -7138,7 +7138,7 @@ fn processExecutablePath(userdata: ?*anyopaque, out_buffer: []u8) std.process.Ex
                 switch (posix.errno(posix.system.sysctl(&mib, mib.len, out_buffer.ptr, &out_len, null, 0))) {
                     .SUCCESS => {
                         current_thread.endSyscall();
-                        return out_len;
+                        return out_len - 1; // discard terminating NUL
                     },
                     .INTR => {
                         try current_thread.checkCancel();
@@ -7166,7 +7166,7 @@ fn processExecutablePath(userdata: ?*anyopaque, out_buffer: []u8) std.process.Ex
                 switch (posix.errno(posix.system.sysctl(&mib, mib.len, out_buffer.ptr, &out_len, null, 0))) {
                     .SUCCESS => {
                         current_thread.endSyscall();
-                        return out_len;
+                        return out_len - 1; // discard terminating NUL
                     },
                     .INTR => {
                         try current_thread.checkCancel();
