@@ -1882,9 +1882,17 @@ const targets = [_]ArchTarget{
 };
 
 pub fn main() anyerror!void {
-    var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
+    defer _ = debug_allocator.deinit();
+    const gpa = debug_allocator.allocator();
+
+    var arena_state: std.heap.ArenaAllocator = .init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
+
+    var threaded: std.Io.Threaded = .init(gpa);
+    defer threaded.deinit();
+    const io = threaded.io();
 
     var args = try std.process.argsWithAllocator(arena);
     const args0 = args.next().?;
@@ -1925,34 +1933,23 @@ pub fn main() anyerror!void {
     const root_progress = std.Progress.start(.{ .estimated_total_items = targets.len });
     defer root_progress.end();
 
-    if (builtin.single_threaded) {
-        for (targets) |target| {
-            if (filter) |zig_name| if (!std.mem.eql(u8, target.zig_name, zig_name)) continue;
-            try processOneTarget(.{
-                .llvm_tblgen_exe = llvm_tblgen_exe,
-                .llvm_src_root = llvm_src_root,
-                .zig_src_dir = zig_src_dir,
-                .root_progress = root_progress,
-                .target = target,
-            });
-        }
-    } else {
-        var pool: std.Thread.Pool = undefined;
-        try pool.init(.{ .allocator = arena, .n_jobs = targets.len });
-        defer pool.deinit();
+    var group: std.Io.Group = .init;
+    defer group.cancel(io);
 
-        for (targets) |target| {
-            if (filter) |zig_name| if (!std.mem.eql(u8, target.zig_name, zig_name)) continue;
-            const job = Job{
-                .llvm_tblgen_exe = llvm_tblgen_exe,
-                .llvm_src_root = llvm_src_root,
-                .zig_src_dir = zig_src_dir,
-                .root_progress = root_progress,
-                .target = target,
-            };
-            try pool.spawn(processOneTarget, .{job});
+    for (targets) |target| {
+        if (filter) |zig_name| {
+            if (!std.mem.eql(u8, target.zig_name, zig_name)) continue;
         }
+        group.async(io, processOneTarget, .{.{
+            .llvm_tblgen_exe = llvm_tblgen_exe,
+            .llvm_src_root = llvm_src_root,
+            .zig_src_dir = zig_src_dir,
+            .root_progress = root_progress,
+            .target = target,
+        }});
     }
+
+    group.wait(io);
 }
 
 const Job = struct {
