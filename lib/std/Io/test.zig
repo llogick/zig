@@ -74,7 +74,7 @@ test "File.Writer.seekTo" {
     @memset(&data, 0x55);
 
     const tmp_file_name = "temp_test_file.txt";
-    var file = try tmp.dir.createFile(io, tmp_file_name, .{});
+    var file = try tmp.dir.createFile(io, tmp_file_name, .{ .read = true });
     defer file.close(io);
 
     var fw = file.writerStreaming(io, &.{});
@@ -92,7 +92,7 @@ test "File.setLength" {
     defer tmp.cleanup();
 
     const tmp_file_name = "temp_test_file.txt";
-    var file = try tmp.dir.createFile(io, tmp_file_name, .{});
+    var file = try tmp.dir.createFile(io, tmp_file_name, .{ .read = true });
     defer file.close(io);
 
     var fw = file.writerStreaming(io, &.{});
