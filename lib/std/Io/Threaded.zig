@@ -1117,8 +1117,8 @@ fn groupAsync(
     }
 
     // Append to the group linked list inside the mutex to make `Io.Group.async` thread-safe.
-    gc.node = .{ .next = @ptrCast(@alignCast(group.token)) };
-    group.token = &gc.node;
+    gc.node = .{ .next = @ptrCast(@alignCast(group.token.load(.monotonic))) };
+    group.token.store(&gc.node, .monotonic);
 
     t.run_queue.prepend(&gc.closure.node);
 
@@ -1169,8 +1169,8 @@ fn groupConcurrent(
     }
 
     // Append to the group linked list inside the mutex to make `Io.Group.concurrent` thread-safe.
-    gc.node = .{ .next = @ptrCast(@alignCast(group.token)) };
-    group.token = &gc.node;
+    gc.node = .{ .next = @ptrCast(@alignCast(group.token.load(.monotonic))) };
+    group.token.store(&gc.node, .monotonic);
 
     t.run_queue.prepend(&gc.closure.node);
 
@@ -1187,7 +1187,7 @@ fn groupWait(userdata: ?*anyopaque, group: *Io.Group, token: *anyopaque) void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const gpa = t.allocator;
 
-    if (builtin.single_threaded) return;
+    if (builtin.single_threaded) unreachable; // we never set `group.token` to non-`null`
 
     const group_state: *std.atomic.Value(usize) = @ptrCast(&group.state);
     const event: *Io.Event = @ptrCast(&group.context);
@@ -1212,13 +1212,18 @@ fn groupWait(userdata: ?*anyopaque, group: *Io.Group, token: *anyopaque) void {
         gc.deinit(gpa);
         node = node_next orelse break;
     }
+
+    // Since the group has now finished, it's illegal to add more tasks to it until we return. It's
+    // also illegal for us to race with another `await` or `cancel`. Therefore, we must be the only
+    // thread who can access `group` right now.
+    group.token.raw = null;
 }
 
 fn groupCancel(userdata: ?*anyopaque, group: *Io.Group, token: *anyopaque) void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const gpa = t.allocator;
 
-    if (builtin.single_threaded) return;
+    if (builtin.single_threaded) unreachable; // we never set `group.token` to non-`null`
 
     {
         var node: *std.SinglyLinkedList.Node = @ptrCast(@alignCast(token));
@@ -1244,6 +1249,11 @@ fn groupCancel(userdata: ?*anyopaque, group: *Io.Group, token: *anyopaque) void 
             node = node_next orelse break;
         }
     }
+
+    // Since the group has now finished, it's illegal to add more tasks to it until we return. It's
+    // also illegal for us to race with another `await` or `cancel`. Therefore, we must be the only
+    // thread who can access `group` right now.
+    group.token.raw = null;
 }
 
 fn recancel(userdata: ?*anyopaque) void {

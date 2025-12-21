@@ -1016,9 +1016,14 @@ pub fn Future(Result: type) type {
 pub const Group = struct {
     state: usize,
     context: ?*anyopaque,
-    token: ?*anyopaque,
+    /// This value indicates whether or not a group has pending tasks. `null`
+    /// means there are no pending tasks, and no resources associated with the
+    /// group, so `await` and `cancel` return immediately without calling the
+    /// implementation. This means that `token` must be accessed atomically to
+    /// avoid racing with the check in `await` and `cancel`.
+    token: std.atomic.Value(?*anyopaque),
 
-    pub const init: Group = .{ .state = 0, .context = null, .token = null };
+    pub const init: Group = .{ .state = 0, .context = null, .token = .init(null) };
 
     /// Calls `function` with `args` asynchronously. The resource spawned is
     /// owned by the group.
@@ -1081,10 +1086,14 @@ pub const Group = struct {
     /// cancellation requests propagate to all members of the group.
     ///
     /// Idempotent. Not threadsafe.
+    ///
+    /// It is safe to call this function concurrently with `Group.async` or
+    /// `Group.concurrent`, provided that the group does not complete until
+    /// the call to `Group.async` or `Group.concurrent` returns.
     pub fn wait(g: *Group, io: Io) void {
-        const token = g.token orelse return;
-        g.token = null;
+        const token = g.token.load(.acquire) orelse return;
         io.vtable.groupWait(io.userdata, g, token);
+        assert(g.token.raw == null);
     }
 
     /// Equivalent to `wait` but immediately requests cancellation on all
@@ -1093,10 +1102,14 @@ pub const Group = struct {
     /// For a description of cancelation and cancelation points, see `Future.cancel`.
     ///
     /// Idempotent. Not threadsafe.
+    ///
+    /// It is safe to call this function concurrently with `Group.async` or
+    /// `Group.concurrent`, provided that the group does not complete until
+    /// the call to `Group.async` or `Group.concurrent` returns.
     pub fn cancel(g: *Group, io: Io) void {
-        const token = g.token orelse return;
-        g.token = null;
+        const token = g.token.load(.acquire) orelse return;
         io.vtable.groupCancel(io.userdata, g, token);
+        assert(g.token.raw == null);
     }
 };
 
