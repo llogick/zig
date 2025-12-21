@@ -3757,11 +3757,13 @@ fn dirReadWindows(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) D
     // reserve enough to get us to up to having `3 * NAME_MAX` bytes available when taking into account
     // that we have the ability to write over top of the reserved memory + the full footprint of that
     // particular `FILE_BOTH_DIR_INFORMATION`.
-    const reserve_needed = w.NAME_MAX - @sizeOf(w.FILE_BOTH_DIR_INFORMATION);
-    const unreserved_start = std.mem.alignForward(usize, reserve_needed, @alignOf(usize));
+    const max_info_len = @sizeOf(w.FILE_BOTH_DIR_INFORMATION) + w.NAME_MAX * 2;
+    const info_align = @alignOf(w.FILE_BOTH_DIR_INFORMATION);
+    const reserve_needed = std.mem.alignForward(usize, Dir.max_name_bytes, info_align) - max_info_len;
+    const unreserved_start = std.mem.alignForward(usize, reserve_needed, info_align);
     const unreserved_buffer = dr.buffer[unreserved_start..];
     // This is enforced by `Dir.Reader`
-    assert(unreserved_buffer.len >= @sizeOf(w.FILE_BOTH_DIR_INFORMATION) + w.NAME_MAX * 2);
+    assert(unreserved_buffer.len >= max_info_len);
 
     var name_index: usize = 0;
     var buffer_index: usize = 0;

@@ -105,7 +105,12 @@ pub const Reader = struct {
     pub const min_buffer_len = switch (native_os) {
         .linux => std.mem.alignForward(usize, @sizeOf(std.os.linux.dirent64), 8) +
             std.mem.alignForward(usize, max_name_bytes, 8),
-        .windows => std.mem.alignForward(usize, max_name_bytes, @alignOf(usize)),
+        .windows => len: {
+            const max_info_len = @sizeOf(std.os.windows.FILE_BOTH_DIR_INFORMATION) + std.os.windows.NAME_MAX * 2;
+            const info_align = @alignOf(std.os.windows.FILE_BOTH_DIR_INFORMATION);
+            const reserved_len = std.mem.alignForward(usize, max_name_bytes, info_align) - max_info_len;
+            break :len std.mem.alignForward(usize, reserved_len, info_align) + max_info_len;
+        },
         .wasi => @sizeOf(std.os.wasi.dirent_t) +
             std.mem.alignForward(usize, max_name_bytes, @alignOf(std.os.wasi.dirent_t)),
         else => if (builtin.link_libc) @sizeOf(std.c.dirent) else std.mem.alignForward(usize, max_name_bytes, @alignOf(usize)),
