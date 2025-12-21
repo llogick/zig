@@ -1776,7 +1776,7 @@ fn tryFindProgram(b: *Build, full_path: []const u8) ?[]const u8 {
             while (it.next()) |ext| {
                 if (!supportedWindowsProgramExtension(ext)) continue;
 
-                return fs.realpathAlloc(b.allocator, b.fmt("{s}{s}", .{ full_path, ext })) catch |err| switch (err) {
+                return fs.realPathFileAlloc(b.graph.io, b.fmt("{s}{s}", .{ full_path, ext }), b.allocator) catch |err| switch (err) {
                     error.OutOfMemory => @panic("OOM"),
                     else => continue,
                 };

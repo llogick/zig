@@ -298,7 +298,7 @@ pub const Lock = struct {
         if (builtin.os.tag == .windows) {
             // Windows does not guarantee that locks are immediately unlocked when
             // the file handle is closed. See LockFileEx documentation.
-            lock.manifest_file.unlock();
+            lock.manifest_file.unlock(io);
         }
 
         lock.manifest_file.close(io);

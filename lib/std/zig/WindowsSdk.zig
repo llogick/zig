@@ -24,7 +24,7 @@ const product_version_max_length = version_major_minor_max_length + ".65535".len
 /// Find path and version of Windows 10 SDK and Windows 8.1 SDK, and find path to MSVC's `lib/` directory.
 /// Caller owns the result's fields.
 /// Returns memory allocated by `gpa`
-pub fn find(gpa: Allocator, arch: std.Target.Cpu.Arch) error{ OutOfMemory, NotFound, PathTooLong }!WindowsSdk {
+pub fn find(gpa: Allocator, io: Io, arch: std.Target.Cpu.Arch) error{ OutOfMemory, NotFound, PathTooLong }!WindowsSdk {
     if (builtin.os.tag != .windows) return error.NotFound;
 
     //note(dimenus): If this key doesn't exist, neither the Win 8 SDK nor the Win 10 SDK is installed
@@ -33,7 +33,7 @@ pub fn find(gpa: Allocator, arch: std.Target.Cpu.Arch) error{ OutOfMemory, NotFo
     };
     defer roots_key.closeKey();
 
-    const windows10sdk = Installation.find(gpa, roots_key, "KitsRoot10", "", "v10.0") catch |err| switch (err) {
+    const windows10sdk = Installation.find(gpa, io, roots_key, "KitsRoot10", "", "v10.0") catch |err| switch (err) {
         error.InstallationNotFound => null,
         error.PathTooLong => null,
         error.VersionTooLong => null,
@@ -41,7 +41,7 @@ pub fn find(gpa: Allocator, arch: std.Target.Cpu.Arch) error{ OutOfMemory, NotFo
     };
     errdefer if (windows10sdk) |*w| w.free(gpa);
 
-    const windows81sdk = Installation.find(gpa, roots_key, "KitsRoot81", "winver", "v8.1") catch |err| switch (err) {
+    const windows81sdk = Installation.find(gpa, io, roots_key, "KitsRoot81", "winver", "v8.1") catch |err| switch (err) {
         error.InstallationNotFound => null,
         error.PathTooLong => null,
         error.VersionTooLong => null,
@@ -49,7 +49,7 @@ pub fn find(gpa: Allocator, arch: std.Target.Cpu.Arch) error{ OutOfMemory, NotFo
     };
     errdefer if (windows81sdk) |*w| w.free(gpa);
 
-    const msvc_lib_dir: ?[]const u8 = MsvcLibDir.find(gpa, arch) catch |err| switch (err) {
+    const msvc_lib_dir: ?[]const u8 = MsvcLibDir.find(gpa, io, arch) catch |err| switch (err) {
         error.MsvcLibDirNotFound => null,
         error.OutOfMemory => return error.OutOfMemory,
     };
@@ -80,6 +80,7 @@ pub fn free(sdk: WindowsSdk, gpa: Allocator) void {
 fn iterateAndFilterByVersion(
     iterator: *Dir.Iterator,
     gpa: Allocator,
+    io: Io,
     prefix: []const u8,
 ) error{OutOfMemory}![][]const u8 {
     const Version = struct {
@@ -104,7 +105,7 @@ fn iterateAndFilterByVersion(
         dirs.deinit();
     }
 
-    iterate: while (iterator.next() catch null) |entry| {
+    iterate: while (iterator.next(io) catch null) |entry| {
         if (entry.kind != .directory) continue;
         if (!std.mem.startsWith(u8, entry.name, prefix)) continue;
 
@@ -420,13 +421,14 @@ pub const Installation = struct {
     /// Caller owns the result's fields.
     fn find(
         gpa: Allocator,
+        io: Io,
         roots_key: RegistryWtf8,
         roots_subkey: []const u8,
         prefix: []const u8,
         version_key_name: []const u8,
     ) error{ OutOfMemory, InstallationNotFound, PathTooLong, VersionTooLong }!Installation {
         roots: {
-            const installation = findFromRoot(gpa, roots_key, roots_subkey, prefix) catch
+            const installation = findFromRoot(gpa, io, roots_key, roots_subkey, prefix) catch
                 break :roots;
             if (installation.isValidVersion()) return installation;
             installation.free(gpa);
@@ -485,7 +487,7 @@ pub const Installation = struct {
             defer sdk_lib_dir.close(io);
 
             var iterator = sdk_lib_dir.iterate();
-            const versions = try iterateAndFilterByVersion(&iterator, gpa, prefix);
+            const versions = try iterateAndFilterByVersion(&iterator, gpa, io, prefix);
             if (versions.len == 0) return error.InstallationNotFound;
             defer {
                 for (versions[1..]) |version| gpa.free(version);
@@ -673,7 +675,7 @@ const MsvcLibDir = struct {
         // First, try getting the packages cache path from the registry.
         // This only seems to exist when the path is different from the default.
         method1: {
-            return findInstancesDirViaSetup(gpa) catch |err| switch (err) {
+            return findInstancesDirViaSetup(gpa, io) catch |err| switch (err) {
                 error.OutOfMemory => |e| return e,
                 error.PathNotFound => break :method1,
             };
@@ -766,7 +768,7 @@ const MsvcLibDir = struct {
 
         var latest_version: u64 = 0;
         var instances_dir_it = instances_dir.iterateAssumeFirstIteration();
-        while (instances_dir_it.next() catch return error.PathNotFound) |entry| {
+        while (instances_dir_it.next(io) catch return error.PathNotFound) |entry| {
             if (entry.kind != .directory) continue;
 
             var writer: Writer = .fixed(&state_subpath_buf);
@@ -828,7 +830,7 @@ const MsvcLibDir = struct {
 
         try lib_dir_buf.appendSlice("VC\\Auxiliary\\Build\\Microsoft.VCToolsVersion.default.txt");
         var default_tools_version_buf: [512]u8 = undefined;
-        const default_tools_version_contents = Dir.cwd().readFile(lib_dir_buf.items, &default_tools_version_buf) catch {
+        const default_tools_version_contents = Dir.cwd().readFile(io, lib_dir_buf.items, &default_tools_version_buf) catch {
             return error.PathNotFound;
         };
         var tokenizer = std.mem.tokenizeAny(u8, default_tools_version_contents, " \r\n");
@@ -871,7 +873,7 @@ const MsvcLibDir = struct {
             defer visualstudio_folder.close(io);
 
             var iterator = visualstudio_folder.iterate();
-            break :vs_versions try iterateAndFilterByVersion(&iterator, gpa, "");
+            break :vs_versions try iterateAndFilterByVersion(&iterator, gpa, io, "");
         };
         defer {
             for (vs_versions) |vs_version| gpa.free(vs_version);

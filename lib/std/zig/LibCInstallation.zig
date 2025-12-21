@@ -201,7 +201,7 @@ pub fn findNative(gpa: Allocator, io: Io, args: FindNativeOptions) FindError!Lib
         try self.findNativeMsvcIncludeDir(gpa, io, sdk);
         try self.findNativeMsvcLibDir(gpa, sdk);
         try self.findNativeKernel32LibDir(gpa, io, args, sdk);
-        try self.findNativeIncludeDirWindows(gpa, io, args, sdk);
+        try self.findNativeIncludeDirWindows(gpa, io, sdk);
         try self.findNativeCrtDirWindows(gpa, io, args.target, sdk);
     } else if (is_haiku) {
         try self.findNativeIncludeDirPosix(gpa, io, args);

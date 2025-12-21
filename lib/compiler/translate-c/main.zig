@@ -35,7 +35,7 @@ pub fn main() u8 {
     }
 
     var stderr_buf: [1024]u8 = undefined;
-    var stderr = Io.File.stderr().writer(&stderr_buf);
+    var stderr = Io.File.stderr().writer(io, &stderr_buf);
     var diagnostics: aro.Diagnostics = switch (zig_integration) {
         false => .{ .output = .{ .to_writer = .{
             .color = .detect(stderr.file),

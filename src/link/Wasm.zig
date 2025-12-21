@@ -3008,7 +3008,7 @@ pub fn createEmpty(
             else
                 .default_file
         else
-            0,
+            .default_file,
     });
     wasm.name = emit.sub_path;
 
