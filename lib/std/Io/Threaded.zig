@@ -60,30 +60,34 @@ stderr_writer: File.Writer = .{
 stderr_mode: Io.Terminal.Mode = .no_color,
 stderr_writer_initialized: bool = false,
 
+argv0: Argv0,
 environ: Environ,
-args: Args,
 
-pub const Environ = switch (native_os) {
+pub const Argv0 = switch (native_os) {
     .openbsd, .haiku => struct {
-        PATH: ?[]const u8,
-
-        pub const empty: @This() = .{
-            .PATH = null,
-        };
+        value: ?[*:0]const u8 = null,
     },
-    else => struct {
-        pub const empty: @This() = .{};
-    },
+    else => struct {},
 };
 
-pub const Args = switch (native_os) {
-    .openbsd, .haiku => struct {
-        list: []const []const u8,
-        pub const empty: @This() = .{ .list = &.{} };
-    },
-    else => struct {
-        pub const empty: @This() = .{};
-    },
+pub const Environ = struct {
+    /// Unmodified data directly from the OS.
+    block: Block = &.{},
+    /// Protected by `mutex`. Determines whether the other fields have been
+    /// memoized based on `block`.
+    initialized: bool = false,
+    /// Protected by `mutex`. Memoized based on `block`. Tracks whether the
+    /// environment variables are present and non-empty.
+    exist: struct {
+        NO_COLOR: bool = false,
+        CLICOLOR_FORCE: bool = false,
+    } = .{},
+    /// Protected by `mutex`. Memoized based on `block`.
+    string: struct {
+        PATH: ?[:0]const u8 = null,
+    } = .{},
+
+    pub const Block = []const [*:0]const u8;
 };
 
 pub const RobustCancel = if (std.Thread.use_pthreads or native_os == .linux) enum {
@@ -591,18 +595,11 @@ pub const InitOptions = struct {
     robust_cancel: RobustCancel = .disabled,
     /// Affects the following operations:
     /// * `processExecutablePath` on OpenBSD and Haiku.
-    ///
-    /// The default value causes this to be a compile error on systems that need to
-    /// initialize this field. `Environ.empty` can be used to omit this field on
-    /// all targets.
-    environ: Environ = .{},
+    argv0: Argv0 = .{},
     /// Affects the following operations:
-    /// * `processExecutablePath` on OpenBSD and Haiku.
-    ///
-    /// The default value causes this to be a compile error on systems that need to
-    /// initialize this field. `Args.empty` can be used to omit this field on all
-    /// targets.
-    args: Args = .{},
+    /// * `fileIsTty`
+    /// * `processExecutablePath` on OpenBSD and Haiku (observes "PATH").
+    environ: Environ = .{},
 };
 
 /// Related:
@@ -636,8 +633,8 @@ pub fn init(
             .current_closure = null,
             .cancel_protection = undefined,
         },
+        .argv0 = options.argv0,
         .environ = options.environ,
-        .args = options.args,
         .robust_cancel = options.robust_cancel,
     };
 
@@ -678,8 +675,8 @@ pub const init_single_threaded: Threaded = .{
         .cancel_protection = undefined,
     },
     .robust_cancel = .disabled,
-    .environ = .empty,
-    .args = .empty,
+    .argv0 = .{},
+    .environ = .{},
 };
 
 var global_single_threaded_instance: Threaded = .init_single_threaded;
@@ -7242,17 +7239,16 @@ fn processExecutablePath(userdata: ?*anyopaque, out_buffer: []u8) std.process.Ex
             }
         },
         .openbsd, .haiku => {
-            // The best we can do on these operating systems is check based on CLI args.
-            const argv = t.args.list;
-            if (argv.len == 0) return error.OperationUnsupported;
-            const argv0 = argv[0];
+            // The best we can do on these operating systems is check based on
+            // the first process argument.
+            const argv0 = t.argv0.value orelse return error.OperationUnsupported;
             if (std.mem.findScalar(u8, argv0, '/') != null) {
                 // argv[0] is a path (relative or absolute): use realpath(3) directly
                 const current_thread = Thread.getCurrent(t);
                 var resolved_buf: [std.c.PATH_MAX]u8 = undefined;
                 try current_thread.beginSyscall();
                 while (true) {
-                    if (std.c.realpath(argv[0], &resolved_buf)) |p| {
+                    if (std.c.realpath(argv0, &resolved_buf)) |p| {
                         assert(p == &resolved_buf);
                         break current_thread.endSyscall();
                     } else switch (@as(std.c.E, @enumFromInt(std.c._errno().*))) {
@@ -7283,13 +7279,14 @@ fn processExecutablePath(userdata: ?*anyopaque, out_buffer: []u8) std.process.Ex
                 return resolved.len;
             } else if (argv0.len != 0) {
                 // argv[0] is not empty (and not a path): search PATH
+                t.scanEnviron();
+                const PATH = t.environ.string.PATH orelse return error.FileNotFound;
                 const current_thread = Thread.getCurrent(t);
-                const PATH = t.environ.PATH orelse return error.FileNotFound;
                 var it = std.mem.tokenizeScalar(u8, PATH, ':');
                 it: while (it.next()) |dir| {
                     var resolved_path_buf: [std.c.PATH_MAX]u8 = undefined;
                     const resolved_path = std.fmt.bufPrintSentinel(&resolved_path_buf, "{s}/{s}", .{
-                        dir, argv[0],
+                        dir, argv0,
                     }, 0) catch continue;
 
                     var resolved_buf: [std.c.PATH_MAX]u8 = undefined;
@@ -10752,7 +10749,10 @@ fn initLockedStderr(
         if (is_windows) t.stderr_writer.file = .stderr();
         t.stderr_writer.io = io_t;
         t.stderr_writer_initialized = true;
-        t.stderr_mode = terminal_mode orelse try .detect(io_t, t.stderr_writer.file);
+        t.scanEnviron();
+        const NO_COLOR = t.environ.exist.NO_COLOR;
+        const CLICOLOR_FORCE = t.environ.exist.CLICOLOR_FORCE;
+        t.stderr_mode = terminal_mode orelse try .detect(io_t, t.stderr_writer.file, NO_COLOR, CLICOLOR_FORCE);
     }
     std.Progress.clearWrittenWithEscapeCodes(&t.stderr_writer) catch |err| switch (err) {
         error.WriteFailed => switch (t.stderr_writer.err.?) {
@@ -10777,7 +10777,7 @@ fn unlockStderr(userdata: ?*anyopaque) void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     t.stderr_writer.interface.flush() catch |err| switch (err) {
         error.WriteFailed => switch (t.stderr_writer.err.?) {
-            error.Canceled => @panic("TODO make this uncancelable"),
+            error.Canceled => recancel(t),
             else => {},
         },
     };
@@ -11909,6 +11909,23 @@ const pthreads_futex = struct {
         }
     }
 };
+
+fn scanEnviron(t: *Threaded) void {
+    t.mutex.lock();
+    defer t.mutex.unlock();
+
+    if (t.environ.initialized) return;
+    t.environ.initialized = true;
+
+    if (native_os == .wasi) {
+        @panic("TODO");
+    }
+
+    for (t.environ.block) |kv| {
+        _ = kv;
+        @panic("TODO");
+    }
+}
 
 test {
     _ = @import("Threaded/test.zig");

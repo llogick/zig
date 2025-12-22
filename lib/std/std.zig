@@ -108,8 +108,11 @@ pub const start = @import("start.zig");
 
 const root = @import("root");
 
-/// Stdlib-wide options that can be overridden by the root file.
+/// Compile-time known settings overridable by the root source file.
 pub const options: Options = if (@hasDecl(root, "std_options")) root.std_options else .{};
+/// Minimal set of `options` moved here to avoid dependency loop compilation
+/// errors.
+pub const io_options: IoOptions = if (@hasDecl(root, "std_io_options")) root.std_io_options else .{};
 
 pub const Options = struct {
     enable_segfault_handler: bool = debug.default_enable_segfault_handler,
@@ -174,8 +177,22 @@ pub const Options = struct {
     /// stack traces will just print an error to the relevant `Io.Writer` and return.
     allow_stack_tracing: bool = !@import("builtin").strip_debug_info,
 
+    /// The `Io` instance that `std.debug` uses for `std.debug.print`,
+    /// capturing stack traces, loading debug info, finding the executable's
+    /// own path, and environment variables that affect terminal mode
+    /// detection. The default is to use statically initialized singleton that
+    /// is independent from the application's `Io` instance in order to make
+    /// debugging more straightforward. For example, while debugging an `Io`
+    /// implementation based on coroutines, one likely wants `std.debug.print`
+    /// to directly write to stderr without trying to interact with the code
+    /// being debugged.
+    debug_io: Io = io_options.debug_threaded_io.?.ioBasic(),
+};
+
+pub const IoOptions = struct {
     /// Overrides `std.Io.File.Permissions`.
     FilePermissions: ?type = null,
+    debug_threaded_io: ?*Io.Threaded = Io.Threaded.global_single_threaded,
 };
 
 // This forces the start.zig file to be imported, and the comptime logic inside that

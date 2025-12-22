@@ -261,10 +261,6 @@ pub const sys_can_stack_trace = switch (builtin.cpu.arch) {
     else => true,
 };
 
-/// This is used for debug information and debug printing. It is intentionally
-/// separate from the application's `Io` instance.
-const static_single_threaded_io = Io.Threaded.global_single_threaded.ioBasic();
-
 /// Allows the caller to freely write to stderr until `unlockStderr` is called.
 ///
 /// During the lock, any `std.Progress` information is cleared from the terminal.
@@ -284,15 +280,15 @@ const static_single_threaded_io = Io.Threaded.global_single_threaded.ioBasic();
 /// Alternatively, use the higher-level `Io.lockStderr` to integrate with the
 /// application's chosen `Io` implementation.
 pub fn lockStderr(buffer: []u8) Io.LockedStderr {
-    return static_single_threaded_io.lockStderr(buffer, null) catch |err| switch (err) {
-        // Impossible to cancel because no calls to cancel using
-        // `static_single_threaded_io` exist.
-        error.Canceled => unreachable,
+    const io = std.options.debug_io;
+    return io.lockStderr(buffer, null) catch |err| switch (err) {
+        error.Canceled => io.recancel(),
     };
 }
 
 pub fn unlockStderr() void {
-    static_single_threaded_io.unlockStderr();
+    const io = std.options.debug_io;
+    io.unlockStderr();
 }
 
 /// Writes to stderr, ignoring errors.
@@ -627,7 +623,7 @@ pub noinline fn captureCurrentStackTrace(options: StackUnwindOptions, addr_buf: 
     defer it.deinit();
     if (!it.stratOk(options.allow_unsafe_unwind)) return empty_trace;
 
-    const io = static_single_threaded_io;
+    const io = std.options.debug_io;
 
     var total_frames: usize = 0;
     var index: usize = 0;
@@ -689,7 +685,7 @@ pub noinline fn writeCurrentStackTrace(options: StackUnwindOptions, t: Io.Termin
     var total_frames: usize = 0;
     var wait_for = options.first_address;
     var printed_any_frame = false;
-    const io = static_single_threaded_io;
+    const io = std.options.debug_io;
     while (true) switch (it.next(io)) {
         .switch_to_fp => |unwind_error| {
             switch (StackIterator.fp_usability) {
@@ -797,7 +793,7 @@ pub fn writeStackTrace(st: *const StackTrace, t: Io.Terminal) Writer.Error!void 
             return;
         },
     };
-    const io = static_single_threaded_io;
+    const io = std.options.debug_io;
     const captured_frames = @min(n_frames, st.instruction_addresses.len);
     for (st.instruction_addresses[0..captured_frames]) |ret_addr| {
         // `ret_addr` is the return address, which is *after* the function call.

@@ -48,7 +48,15 @@ pub const Mode = union(enum) {
     /// stdout/stderr).
     ///
     /// Will attempt to enable ANSI escape code support if necessary/possible.
-    pub fn detect(io: Io, file: File) Io.Cancelable!Mode {
+    ///
+    /// * `NO_COLOR` indicates whether "NO_COLOR" environment variable is
+    ///   present and non-empty.
+    /// * `CLICOLOR_FORCE` indicates whether "CLICOLOR_FORCE" environment
+    ///   variable is present and non-empty.
+    pub fn detect(io: Io, file: File, NO_COLOR: bool, CLICOLOR_FORCE: bool) Io.Cancelable!Mode {
+        const force_color: ?bool = if (NO_COLOR) false else if (CLICOLOR_FORCE) true else null;
+        if (force_color == false) return .no_color;
+
         if (file.enableAnsiEscapeCodes(io)) |_| {
             return .escape_codes;
         } else |err| switch (err) {
@@ -65,10 +73,8 @@ pub const Mode = union(enum) {
                     .reset_attributes = info.wAttributes,
                 } };
             }
-            return .escape_codes;
         }
-
-        return .no_color;
+        return if (force_color == true) .escape_codes else .no_color;
     }
 };
 

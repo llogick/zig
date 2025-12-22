@@ -429,8 +429,11 @@ pub fn main() !void {
         }
     }
 
+    const NO_COLOR = std.zig.EnvVar.NO_COLOR.isSet();
+    const CLICOLOR_FORCE = std.zig.EnvVar.CLICOLOR_FORCE.isSet();
+
     graph.stderr_mode = switch (color) {
-        .auto => try .detect(io, .stderr()),
+        .auto => try .detect(io, .stderr(), NO_COLOR, CLICOLOR_FORCE),
         .on => .escape_codes,
         .off => .no_color,
     };
