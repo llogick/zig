@@ -305,12 +305,10 @@ pub fn unlockStderr() void {
 /// Alternatively, use the higher-level `std.log` or `Io.lockStderr` to
 /// integrate with the application's chosen `Io` implementation.
 pub fn print(comptime fmt: []const u8, args: anytype) void {
-    nosuspend {
-        var buffer: [64]u8 = undefined;
-        const stderr = lockStderr(&buffer);
-        defer unlockStderr();
-        stderr.file_writer.interface.print(fmt, args) catch return;
-    }
+    var buffer: [64]u8 = undefined;
+    const stderr = lockStderr(&buffer);
+    defer unlockStderr();
+    stderr.file_writer.interface.print(fmt, args) catch return;
 }
 
 /// Marked `inline` to propagate a comptime-known error to callers.
@@ -1150,40 +1148,38 @@ fn printLineInfo(
     symbol_name: []const u8,
     compile_unit_name: []const u8,
 ) Writer.Error!void {
-    nosuspend {
-        const writer = t.writer;
-        t.setColor(.bold) catch {};
+    const writer = t.writer;
+    t.setColor(.bold) catch {};
 
-        if (source_location) |*sl| {
-            try writer.print("{s}:{d}:{d}", .{ sl.file_name, sl.line, sl.column });
-        } else {
-            try writer.writeAll("???:?:?");
-        }
+    if (source_location) |*sl| {
+        try writer.print("{s}:{d}:{d}", .{ sl.file_name, sl.line, sl.column });
+    } else {
+        try writer.writeAll("???:?:?");
+    }
 
-        t.setColor(.reset) catch {};
-        try writer.writeAll(": ");
-        t.setColor(.dim) catch {};
-        try writer.print("0x{x} in {s} ({s})", .{ address, symbol_name, compile_unit_name });
-        t.setColor(.reset) catch {};
-        try writer.writeAll("\n");
+    t.setColor(.reset) catch {};
+    try writer.writeAll(": ");
+    t.setColor(.dim) catch {};
+    try writer.print("0x{x} in {s} ({s})", .{ address, symbol_name, compile_unit_name });
+    t.setColor(.reset) catch {};
+    try writer.writeAll("\n");
 
-        // Show the matching source code line if possible
-        if (source_location) |sl| {
-            if (printLineFromFile(io, writer, sl)) {
-                if (sl.column > 0) {
-                    // The caret already takes one char
-                    const space_needed = @as(usize, @intCast(sl.column - 1));
+    // Show the matching source code line if possible
+    if (source_location) |sl| {
+        if (printLineFromFile(io, writer, sl)) {
+            if (sl.column > 0) {
+                // The caret already takes one char
+                const space_needed = @as(usize, @intCast(sl.column - 1));
 
-                    try writer.splatByteAll(' ', space_needed);
-                    t.setColor(.green) catch {};
-                    try writer.writeAll("^");
-                    t.setColor(.reset) catch {};
-                }
-                try writer.writeAll("\n");
-            } else |_| {
-                // Ignore all errors; it's a better UX to just print the source location without the
-                // corresponding line number. The user can always open the source file themselves.
+                try writer.splatByteAll(' ', space_needed);
+                t.setColor(.green) catch {};
+                try writer.writeAll("^");
+                t.setColor(.reset) catch {};
             }
+            try writer.writeAll("\n");
+        } else |_| {
+            // Ignore all errors; it's a better UX to just print the source location without the
+            // corresponding line number. The user can always open the source file themselves.
         }
     }
 }
