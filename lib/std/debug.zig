@@ -489,10 +489,7 @@ const use_trap_panic = switch (builtin.zig_backend) {
 };
 
 /// Dumps a stack trace to standard error, then aborts.
-pub fn defaultPanic(
-    msg: []const u8,
-    first_trace_addr: ?usize,
-) noreturn {
+pub fn defaultPanic(msg: []const u8, first_trace_addr: ?usize) noreturn {
     @branchHint(.cold);
 
     if (use_trap_panic) @trap();
