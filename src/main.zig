@@ -241,7 +241,7 @@ fn mainArgs(gpa: Allocator, arena: Allocator, args: []const []const u8) !void {
         }
     }
 
-    var threaded: Io.Threaded = .init(gpa);
+    var threaded: Io.Threaded = .init(gpa, .{});
     defer threaded.deinit();
     threaded_impl_ptr = &threaded;
     threaded.stack_size = thread_stack_size;

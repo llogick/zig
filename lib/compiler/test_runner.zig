@@ -131,7 +131,7 @@ fn mainServer() !void {
 
             .run_test => {
                 testing.allocator_instance = .{};
-                testing.io_instance = .init(testing.allocator);
+                testing.io_instance = .init(testing.allocator, .{});
                 log_err_count = 0;
                 const index = try server.receiveBody_u32();
                 const test_fn = builtin.test_functions[index];
@@ -233,7 +233,7 @@ fn mainTerminal() void {
     var leaks: usize = 0;
     for (test_fn_list, 0..) |test_fn, i| {
         testing.allocator_instance = .{};
-        testing.io_instance = .init(testing.allocator);
+        testing.io_instance = .init(testing.allocator, .{});
         defer {
             testing.io_instance.deinit();
             if (testing.allocator_instance.deinit() == .leak) leaks += 1;

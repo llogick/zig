@@ -29,23 +29,7 @@ join_requested: bool = false,
 stack_size: usize,
 /// All threads are spawned detached; this is how we wait until they all exit.
 wait_group: std.Thread.WaitGroup = .{},
-/// Maximum thread pool size (excluding main thread) when dispatching async
-/// tasks. Until this limit, calls to `Io.async` when all threads are busy will
-/// cause a new thread to be spawned and permanently added to the pool. After
-/// this limit, calls to `Io.async` when all threads are busy run the task
-/// immediately.
-///
-/// Defaults to a number equal to logical CPU cores.
-///
-/// Protected by `mutex` once the I/O instance is already in use. See
-/// `setAsyncLimit`.
 async_limit: Io.Limit,
-/// Maximum thread pool size (excluding main thread) for dispatching concurrent
-/// tasks. Until this limit, calls to `Io.concurrent` will increase the thread
-/// pool size.
-///
-/// concurrent tasks. After this number, calls to `Io.concurrent` return
-/// `error.ConcurrencyUnavailable`.
 concurrent_limit: Io.Limit = .unlimited,
 /// Error from calling `std.Thread.getCpuCount` in `init`.
 cpu_count_error: ?std.Thread.CpuCountError,
@@ -55,17 +39,7 @@ cpu_count_error: ?std.Thread.CpuCountError,
 busy_count: usize = 0,
 main_thread: Thread,
 pid: Pid = .unknown,
-/// When a cancel request is made, blocking syscalls can be unblocked by
-/// issuing a signal. However, if the signal arrives after the check and before
-/// the syscall instruction, it is missed.
-///
-/// This option solves the race condition by retrying the signal delivery
-/// until it is acknowledged, with an exponential backoff.
-///
-/// Unfortunately, trying again until the cancellation request is acknowledged
-/// has been observed to be relatively slow, and usually strong cancellation
-/// guarantees are not needed, so this defaults to off.
-robust_cancel: RobustCancel = .disabled,
+robust_cancel: RobustCancel,
 
 wsa: if (is_windows) Wsa else struct {} = .{},
 
@@ -85,6 +59,32 @@ stderr_writer: File.Writer = .{
 },
 stderr_mode: Io.Terminal.Mode = .no_color,
 stderr_writer_initialized: bool = false,
+
+environ: Environ,
+args: Args,
+
+pub const Environ = switch (native_os) {
+    .openbsd, .haiku => struct {
+        PATH: ?[]const u8,
+
+        pub const empty: @This() = .{
+            .PATH = null,
+        };
+    },
+    else => struct {
+        pub const empty: @This() = .{};
+    },
+};
+
+pub const Args = switch (native_os) {
+    .openbsd, .haiku => struct {
+        list: []const []const u8,
+        pub const empty: @This() = .{ .list = &.{} };
+    },
+    else => struct {
+        pub const empty: @This() = .{};
+    },
+};
 
 pub const RobustCancel = if (std.Thread.use_pthreads or native_os == .linux) enum {
     enabled,
@@ -557,6 +557,54 @@ const Closure = struct {
     }
 };
 
+pub const InitOptions = struct {
+    /// Affects how many bytes are memory-mapped for threads.
+    stack_size: usize = std.Thread.SpawnConfig.default_stack_size,
+    /// Maximum thread pool size (excluding main thread) when dispatching async
+    /// tasks. Until this limit, calls to `Io.async` when all threads are busy will
+    /// cause a new thread to be spawned and permanently added to the pool. After
+    /// this limit, calls to `Io.async` when all threads are busy run the task
+    /// immediately.
+    ///
+    /// Defaults to a number equal to logical CPU cores.
+    ///
+    /// Protected by `Threaded.mutex` once the I/O instance is already in use. See
+    /// `setAsyncLimit`.
+    async_limit: ?Io.Limit = null,
+    /// Maximum thread pool size (excluding main thread) for dispatching concurrent
+    /// tasks. Until this limit, calls to `Io.concurrent` will increase the thread
+    /// pool size.
+    ///
+    /// concurrent tasks. After this number, calls to `Io.concurrent` return
+    /// `error.ConcurrencyUnavailable`.
+    concurrent_limit: Io.Limit = .unlimited,
+    /// When a cancel request is made, blocking syscalls can be unblocked by
+    /// issuing a signal. However, if the signal arrives after the check and before
+    /// the syscall instruction, it is missed.
+    ///
+    /// This option solves the race condition by retrying the signal delivery
+    /// until it is acknowledged, with an exponential backoff.
+    ///
+    /// Unfortunately, trying again until the cancellation request is acknowledged
+    /// has been observed to be relatively slow, and usually strong cancellation
+    /// guarantees are not needed, so this defaults to off.
+    robust_cancel: RobustCancel = .disabled,
+    /// Affects the following operations:
+    /// * `processExecutablePath` on OpenBSD and Haiku.
+    ///
+    /// The default value causes this to be a compile error on systems that need to
+    /// initialize this field. `Environ.empty` can be used to omit this field on
+    /// all targets.
+    environ: Environ = .{},
+    /// Affects the following operations:
+    /// * `processExecutablePath` on OpenBSD and Haiku.
+    ///
+    /// The default value causes this to be a compile error on systems that need to
+    /// initialize this field. `Args.empty` can be used to omit this field on all
+    /// targets.
+    args: Args = .{},
+};
+
 /// Related:
 /// * `init_single_threaded`
 pub fn init(
@@ -568,6 +616,7 @@ pub fn init(
     /// If these functions are avoided, then `Allocator.failing` may be passed
     /// here.
     gpa: Allocator,
+    options: InitOptions,
 ) Threaded {
     if (builtin.single_threaded) return .init_single_threaded;
 
@@ -575,8 +624,9 @@ pub fn init(
 
     var t: Threaded = .{
         .allocator = gpa,
-        .stack_size = std.Thread.SpawnConfig.default_stack_size,
-        .async_limit = if (cpu_count) |n| .limited(n - 1) else |_| .nothing,
+        .stack_size = options.stack_size,
+        .async_limit = options.async_limit orelse if (cpu_count) |n| .limited(n - 1) else |_| .nothing,
+        .concurrent_limit = options.concurrent_limit,
         .cpu_count_error = if (cpu_count) |_| null else |e| e,
         .old_sig_io = undefined,
         .old_sig_pipe = undefined,
@@ -586,6 +636,9 @@ pub fn init(
             .current_closure = null,
             .cancel_protection = undefined,
         },
+        .environ = options.environ,
+        .args = options.args,
+        .robust_cancel = options.robust_cancel,
     };
 
     if (posix.Sigaction != void) {
@@ -624,6 +677,9 @@ pub const init_single_threaded: Threaded = .{
         .current_closure = null,
         .cancel_protection = undefined,
     },
+    .robust_cancel = .disabled,
+    .environ = .empty,
+    .args = .empty,
 };
 
 var global_single_threaded_instance: Threaded = .init_single_threaded;
@@ -7186,18 +7242,17 @@ fn processExecutablePath(userdata: ?*anyopaque, out_buffer: []u8) std.process.Ex
             }
         },
         .openbsd, .haiku => {
-            // OpenBSD doesn't support getting the path of a running process, so try to guess it
-            if (std.os.argv.len == 0)
-                return error.FileNotFound;
-
-            const argv0 = std.mem.span(std.os.argv[0]);
+            // The best we can do on these operating systems is check based on CLI args.
+            const argv = t.args.list;
+            if (argv.len == 0) return error.OperationUnsupported;
+            const argv0 = argv[0];
             if (std.mem.findScalar(u8, argv0, '/') != null) {
                 // argv[0] is a path (relative or absolute): use realpath(3) directly
                 const current_thread = Thread.getCurrent(t);
                 var resolved_buf: [std.c.PATH_MAX]u8 = undefined;
                 try current_thread.beginSyscall();
                 while (true) {
-                    if (std.c.realpath(std.os.argv[0], &resolved_buf)) |p| {
+                    if (std.c.realpath(argv[0], &resolved_buf)) |p| {
                         assert(p == &resolved_buf);
                         break current_thread.endSyscall();
                     } else switch (@as(std.c.E, @enumFromInt(std.c._errno().*))) {
@@ -7229,12 +7284,12 @@ fn processExecutablePath(userdata: ?*anyopaque, out_buffer: []u8) std.process.Ex
             } else if (argv0.len != 0) {
                 // argv[0] is not empty (and not a path): search PATH
                 const current_thread = Thread.getCurrent(t);
-                const PATH = posix.getenvZ("PATH") orelse return error.FileNotFound;
+                const PATH = t.environ.PATH orelse return error.FileNotFound;
                 var it = std.mem.tokenizeScalar(u8, PATH, ':');
                 it: while (it.next()) |dir| {
                     var resolved_path_buf: [std.c.PATH_MAX]u8 = undefined;
                     const resolved_path = std.fmt.bufPrintSentinel(&resolved_path_buf, "{s}/{s}", .{
-                        dir, std.os.argv[0],
+                        dir, argv[0],
                     }, 0) catch continue;
 
                     var resolved_buf: [std.c.PATH_MAX]u8 = undefined;
