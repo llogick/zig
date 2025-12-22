@@ -469,7 +469,7 @@ pub fn selfExePath(out_buffer: []u8) SelfExePathError![]u8 {
                 return error.FileNotFound;
 
             const argv0 = mem.span(std.os.argv[0]);
-            if (mem.indexOf(u8, argv0, "/") != null) {
+            if (mem.find(u8, argv0, "/") != null) {
                 // argv[0] is a path (relative or absolute): use realpath(3) directly
                 var real_path_buf: [max_path_bytes]u8 = undefined;
                 const real_path = posix.realpathZ(std.os.argv[0], &real_path_buf) catch |err| switch (err) {

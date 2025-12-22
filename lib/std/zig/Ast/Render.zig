@@ -1417,7 +1417,7 @@ fn renderFor(r: *Render, for_node: Ast.full.For, space: Space) Error!void {
     try renderParamList(r, lparen, for_node.ast.inputs, .space);
 
     var cur = for_node.payload_token;
-    const pipe = std.mem.indexOfScalarPos(std.zig.Token.Tag, token_tags, cur, .pipe).?;
+    const pipe = std.mem.findScalarPos(std.zig.Token.Tag, token_tags, cur, .pipe).?;
     if (tree.tokenTag(@intCast(pipe - 1)) == .comma) {
         try ais.pushIndent(.normal);
         try renderToken(r, cur - 1, .newline); // |
@@ -2194,7 +2194,7 @@ fn renderArrayInit(
                 try renderExpression(&sub_render, expr, .none);
                 const written = sub_expr_buffer.written();
                 const width = written.len - start;
-                const this_contains_newline = mem.indexOfScalar(u8, written[start..], '\n') != null;
+                const this_contains_newline = mem.findScalar(u8, written[start..], '\n') != null;
                 contains_newline = contains_newline or this_contains_newline;
                 expr_widths[i] = width;
                 expr_newlines[i] = this_contains_newline;
@@ -2218,7 +2218,7 @@ fn renderArrayInit(
 
                 const written = sub_expr_buffer.written();
                 const width = written.len - start - 2;
-                const this_contains_newline = mem.indexOfScalar(u8, written[start .. written.len - 1], '\n') != null;
+                const this_contains_newline = mem.findScalar(u8, written[start .. written.len - 1], '\n') != null;
                 contains_newline = contains_newline or this_contains_newline;
                 expr_widths[i] = width;
                 expr_newlines[i] = contains_newline;
@@ -2910,7 +2910,7 @@ fn hasComment(tree: Ast, start_token: Ast.TokenIndex, end_token: Ast.TokenIndex)
         const token: Ast.TokenIndex = @intCast(i);
         const start = tree.tokenStart(token) + tree.tokenSlice(token).len;
         const end = tree.tokenStart(token + 1);
-        if (mem.indexOf(u8, tree.source[start..end], "//") != null) return true;
+        if (mem.find(u8, tree.source[start..end], "//") != null) return true;
     }
 
     return false;
@@ -2919,7 +2919,7 @@ fn hasComment(tree: Ast, start_token: Ast.TokenIndex, end_token: Ast.TokenIndex)
 /// Returns true if there exists a multiline string literal between the start
 /// of token `start_token` and the start of token `end_token`.
 fn hasMultilineString(tree: Ast, start_token: Ast.TokenIndex, end_token: Ast.TokenIndex) bool {
-    return std.mem.indexOfScalar(
+    return std.mem.findScalar(
         Token.Tag,
         tree.tokens.items(.tag)[start_token..end_token],
         .multiline_string_literal_line,
@@ -2933,11 +2933,11 @@ fn renderComments(r: *Render, start: usize, end: usize) Error!bool {
     const ais = r.ais;
 
     var index: usize = start;
-    while (mem.indexOf(u8, tree.source[index..end], "//")) |offset| {
+    while (mem.find(u8, tree.source[index..end], "//")) |offset| {
         const comment_start = index + offset;
 
         // If there is no newline, the comment ends with EOF
-        const newline_index = mem.indexOfScalar(u8, tree.source[comment_start..end], '\n');
+        const newline_index = mem.findScalar(u8, tree.source[comment_start..end], '\n');
         const newline = if (newline_index) |i| comment_start + i else null;
 
         const untrimmed_comment = tree.source[comment_start .. newline orelse tree.source.len];
@@ -2949,7 +2949,7 @@ fn renderComments(r: *Render, start: usize, end: usize) Error!bool {
                 // Leave up to one empty line before the first comment
                 try ais.insertNewline();
                 try ais.insertNewline();
-            } else if (mem.indexOfScalar(u8, tree.source[index..comment_start], '\n') != null) {
+            } else if (mem.findScalar(u8, tree.source[index..comment_start], '\n') != null) {
                 // Respect the newline directly before the comment.
                 // Note: This allows an empty line between comments
                 try ais.insertNewline();
@@ -3008,7 +3008,7 @@ fn renderExtraNewlineToken(r: *Render, token_index: Ast.TokenIndex) Error!void {
 
     // If there is a immediately preceding comment or doc_comment,
     // skip it because required extra newline has already been rendered.
-    if (mem.indexOf(u8, tree.source[prev_token_end..token_start], "//") != null) return;
+    if (mem.find(u8, tree.source[prev_token_end..token_start], "//") != null) return;
     if (tree.isTokenPrecededByTags(token_index, &.{.doc_comment})) return;
 
     // Iterate backwards to the end of the previous token, stopping if a

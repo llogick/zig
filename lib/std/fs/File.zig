@@ -179,7 +179,7 @@ pub fn isCygwinPty(file: File) bool {
     // The name we get from NtQueryInformationFile will be prefixed with a '\', e.g. \msys-1888ae32e00d56aa-pty0-to-master
     return (std.mem.startsWith(u16, name_wide, &[_]u16{ '\\', 'm', 's', 'y', 's', '-' }) or
         std.mem.startsWith(u16, name_wide, &[_]u16{ '\\', 'c', 'y', 'g', 'w', 'i', 'n', '-' })) and
-        std.mem.indexOf(u16, name_wide, &[_]u16{ '-', 'p', 't', 'y' }) != null;
+        std.mem.find(u16, name_wide, &[_]u16{ '-', 'p', 't', 'y' }) != null;
 }
 
 /// Returns whether or not ANSI escape codes will be treated as such,

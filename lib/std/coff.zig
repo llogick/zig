@@ -466,13 +466,13 @@ pub const SectionHeader = extern struct {
 
     pub fn getName(self: *align(1) const SectionHeader) ?[]const u8 {
         if (self.name[0] == '/') return null;
-        const len = std.mem.indexOfScalar(u8, &self.name, @as(u8, 0)) orelse self.name.len;
+        const len = std.mem.findScalar(u8, &self.name, @as(u8, 0)) orelse self.name.len;
         return self.name[0..len];
     }
 
     pub fn getNameOffset(self: SectionHeader) ?u32 {
         if (self.name[0] != '/') return null;
-        const len = std.mem.indexOfScalar(u8, &self.name, @as(u8, 0)) orelse self.name.len;
+        const len = std.mem.findScalar(u8, &self.name, @as(u8, 0)) orelse self.name.len;
         const offset = std.fmt.parseInt(u32, self.name[1..len], 10) catch unreachable;
         return offset;
     }
@@ -628,7 +628,7 @@ pub const Symbol = struct {
 
     pub fn getName(self: *const Symbol) ?[]const u8 {
         if (std.mem.eql(u8, self.name[0..4], "\x00\x00\x00\x00")) return null;
-        const len = std.mem.indexOfScalar(u8, &self.name, @as(u8, 0)) orelse self.name.len;
+        const len = std.mem.findScalar(u8, &self.name, @as(u8, 0)) orelse self.name.len;
         return self.name[0..len];
     }
 
@@ -869,7 +869,7 @@ pub const FileDefinition = struct {
     file_name: [18]u8,
 
     pub fn getFileName(self: *const FileDefinition) []const u8 {
-        const len = std.mem.indexOfScalar(u8, &self.file_name, @as(u8, 0)) orelse self.file_name.len;
+        const len = std.mem.findScalar(u8, &self.file_name, @as(u8, 0)) orelse self.file_name.len;
         return self.file_name[0..len];
     }
 };
@@ -1044,7 +1044,7 @@ pub const Coff = struct {
 
         // Finally read the null-terminated string.
         const start = reader.seek;
-        const len = std.mem.indexOfScalar(u8, self.data[start..], 0) orelse return null;
+        const len = std.mem.findScalar(u8, self.data[start..], 0) orelse return null;
         return self.data[start .. start + len];
     }
 

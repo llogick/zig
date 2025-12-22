@@ -4124,7 +4124,7 @@ fn fnDecl(
     const lib_name = if (fn_proto.lib_name) |lib_name_token| blk: {
         const lib_name_str = try astgen.strLitAsString(lib_name_token);
         const lib_name_slice = astgen.string_bytes.items[@intFromEnum(lib_name_str.index)..][0..lib_name_str.len];
-        if (mem.indexOfScalar(u8, lib_name_slice, 0) != null) {
+        if (mem.findScalar(u8, lib_name_slice, 0) != null) {
             return astgen.failTok(lib_name_token, "library name cannot contain null bytes", .{});
         } else if (lib_name_str.len == 0) {
             return astgen.failTok(lib_name_token, "library name cannot be empty", .{});
@@ -4540,7 +4540,7 @@ fn globalVarDecl(
     const lib_name = if (var_decl.lib_name) |lib_name_token| blk: {
         const lib_name_str = try astgen.strLitAsString(lib_name_token);
         const lib_name_slice = astgen.string_bytes.items[@intFromEnum(lib_name_str.index)..][0..lib_name_str.len];
-        if (mem.indexOfScalar(u8, lib_name_slice, 0) != null) {
+        if (mem.findScalar(u8, lib_name_slice, 0) != null) {
             return astgen.failTok(lib_name_token, "library name cannot contain null bytes", .{});
         } else if (lib_name_str.len == 0) {
             return astgen.failTok(lib_name_token, "library name cannot be empty", .{});
@@ -4762,7 +4762,7 @@ fn testDecl(
         .string_literal => name: {
             const name = try astgen.strLitAsString(test_name_token);
             const slice = astgen.string_bytes.items[@intFromEnum(name.index)..][0..name.len];
-            if (mem.indexOfScalar(u8, slice, 0) != null) {
+            if (mem.findScalar(u8, slice, 0) != null) {
                 return astgen.failTok(test_name_token, "test name cannot contain null bytes", .{});
             } else if (slice.len == 0) {
                 return astgen.failTok(test_name_token, "empty test name must be omitted", .{});
@@ -8772,7 +8772,7 @@ fn numberLiteral(gz: *GenZir, ri: ResultInfo, node: Ast.Node.Index, source_node:
 }
 
 fn failWithNumberError(astgen: *AstGen, err: std.zig.number_literal.Error, token: Ast.TokenIndex, bytes: []const u8) InnerError {
-    const is_float = std.mem.indexOfScalar(u8, bytes, '.') != null;
+    const is_float = std.mem.findScalar(u8, bytes, '.') != null;
     switch (err) {
         .leading_zero => if (is_float) {
             return astgen.failTok(token, "number '{s}' has leading zero", .{bytes});
@@ -9265,7 +9265,7 @@ fn builtinCall(
             const str_lit_token = tree.nodeMainToken(operand_node);
             const str = try astgen.strLitAsString(str_lit_token);
             const str_slice = astgen.string_bytes.items[@intFromEnum(str.index)..][0..str.len];
-            if (mem.indexOfScalar(u8, str_slice, 0) != null) {
+            if (mem.findScalar(u8, str_slice, 0) != null) {
                 return astgen.failTok(str_lit_token, "import path cannot contain null bytes", .{});
             } else if (str.len == 0) {
                 return astgen.failTok(str_lit_token, "import path cannot be empty", .{});
@@ -11408,7 +11408,7 @@ fn identifierTokenString(astgen: *AstGen, token: Ast.TokenIndex) InnerError![]co
     var buf: ArrayList(u8) = .empty;
     defer buf.deinit(astgen.gpa);
     try astgen.parseStrLit(token, &buf, ident_name, 1);
-    if (mem.indexOfScalar(u8, buf.items, 0) != null) {
+    if (mem.findScalar(u8, buf.items, 0) != null) {
         return astgen.failTok(token, "identifier cannot contain null bytes", .{});
     } else if (buf.items.len == 0) {
         return astgen.failTok(token, "identifier cannot be empty", .{});
@@ -11434,7 +11434,7 @@ fn appendIdentStr(
         const start = buf.items.len;
         try astgen.parseStrLit(token, buf, ident_name, 1);
         const slice = buf.items[start..];
-        if (mem.indexOfScalar(u8, slice, 0) != null) {
+        if (mem.findScalar(u8, slice, 0) != null) {
             return astgen.failTok(token, "identifier cannot contain null bytes", .{});
         } else if (slice.len == 0) {
             return astgen.failTok(token, "identifier cannot be empty", .{});
@@ -11691,7 +11691,7 @@ fn strLitAsString(astgen: *AstGen, str_lit_token: Ast.TokenIndex) !IndexSlice {
     const token_bytes = astgen.tree.tokenSlice(str_lit_token);
     try astgen.parseStrLit(str_lit_token, string_bytes, token_bytes, 0);
     const key: []const u8 = string_bytes.items[str_index..];
-    if (std.mem.indexOfScalar(u8, key, 0)) |_| return .{
+    if (std.mem.findScalar(u8, key, 0)) |_| return .{
         .index = @enumFromInt(str_index),
         .len = @intCast(key.len),
     };

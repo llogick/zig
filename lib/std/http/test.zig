@@ -447,7 +447,7 @@ test "general client/server API coverage" {
 
             if (mem.startsWith(u8, target, "/get")) {
                 var response = try request.respondStreaming(&.{}, .{
-                    .content_length = if (mem.indexOf(u8, target, "?chunked") == null)
+                    .content_length = if (mem.find(u8, target, "?chunked") == null)
                         14
                     else
                         null,

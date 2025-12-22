@@ -547,7 +547,7 @@ pub fn main() !void {
     }
 
     inline for (hashes) |H| {
-        if (filter == null or std.mem.indexOf(u8, H.name, filter.?) != null) {
+        if (filter == null or std.mem.find(u8, H.name, filter.?) != null) {
             const throughput = try benchmarkHash(H.ty, mode(128 * MiB));
             try stdout.print("{s:>17}: {:10} MiB/s\n", .{ H.name, throughput / (1 * MiB) });
             try stdout.flush();
@@ -559,7 +559,7 @@ pub fn main() !void {
     const io = io_threaded.io();
 
     inline for (parallel_hashes) |H| {
-        if (filter == null or std.mem.indexOf(u8, H.name, filter.?) != null) {
+        if (filter == null or std.mem.find(u8, H.name, filter.?) != null) {
             const throughput = try benchmarkHashParallel(H.ty, mode(128 * MiB), arena_allocator, io);
             try stdout.print("{s:>17}: {:10} MiB/s\n", .{ H.name, throughput / (1 * MiB) });
             try stdout.flush();
@@ -567,7 +567,7 @@ pub fn main() !void {
     }
 
     inline for (macs) |M| {
-        if (filter == null or std.mem.indexOf(u8, M.name, filter.?) != null) {
+        if (filter == null or std.mem.find(u8, M.name, filter.?) != null) {
             const throughput = try benchmarkMac(M.ty, mode(128 * MiB));
             try stdout.print("{s:>17}: {:10} MiB/s\n", .{ M.name, throughput / (1 * MiB) });
             try stdout.flush();
@@ -575,7 +575,7 @@ pub fn main() !void {
     }
 
     inline for (exchanges) |E| {
-        if (filter == null or std.mem.indexOf(u8, E.name, filter.?) != null) {
+        if (filter == null or std.mem.find(u8, E.name, filter.?) != null) {
             const throughput = try benchmarkKeyExchange(E.ty, mode(1000));
             try stdout.print("{s:>17}: {:10} exchanges/s\n", .{ E.name, throughput });
             try stdout.flush();
@@ -583,7 +583,7 @@ pub fn main() !void {
     }
 
     inline for (signatures) |E| {
-        if (filter == null or std.mem.indexOf(u8, E.name, filter.?) != null) {
+        if (filter == null or std.mem.find(u8, E.name, filter.?) != null) {
             const throughput = try benchmarkSignature(E.ty, mode(1000));
             try stdout.print("{s:>17}: {:10} signatures/s\n", .{ E.name, throughput });
             try stdout.flush();
@@ -591,7 +591,7 @@ pub fn main() !void {
     }
 
     inline for (signature_verifications) |E| {
-        if (filter == null or std.mem.indexOf(u8, E.name, filter.?) != null) {
+        if (filter == null or std.mem.find(u8, E.name, filter.?) != null) {
             const throughput = try benchmarkSignatureVerification(E.ty, mode(1000));
             try stdout.print("{s:>17}: {:10} verifications/s\n", .{ E.name, throughput });
             try stdout.flush();
@@ -599,7 +599,7 @@ pub fn main() !void {
     }
 
     inline for (batch_signature_verifications) |E| {
-        if (filter == null or std.mem.indexOf(u8, E.name, filter.?) != null) {
+        if (filter == null or std.mem.find(u8, E.name, filter.?) != null) {
             const throughput = try benchmarkBatchSignatureVerification(E.ty, mode(1000));
             try stdout.print("{s:>17}: {:10} verifications/s (batch)\n", .{ E.name, throughput });
             try stdout.flush();
@@ -607,7 +607,7 @@ pub fn main() !void {
     }
 
     inline for (aeads) |E| {
-        if (filter == null or std.mem.indexOf(u8, E.name, filter.?) != null) {
+        if (filter == null or std.mem.find(u8, E.name, filter.?) != null) {
             const throughput = try benchmarkAead(E.ty, mode(128 * MiB));
             try stdout.print("{s:>17}: {:10} MiB/s\n", .{ E.name, throughput / (1 * MiB) });
             try stdout.flush();
@@ -615,7 +615,7 @@ pub fn main() !void {
     }
 
     inline for (aes) |E| {
-        if (filter == null or std.mem.indexOf(u8, E.name, filter.?) != null) {
+        if (filter == null or std.mem.find(u8, E.name, filter.?) != null) {
             const throughput = try benchmarkAes(E.ty, mode(100000000));
             try stdout.print("{s:>17}: {:10} ops/s\n", .{ E.name, throughput });
             try stdout.flush();
@@ -623,7 +623,7 @@ pub fn main() !void {
     }
 
     inline for (aes8) |E| {
-        if (filter == null or std.mem.indexOf(u8, E.name, filter.?) != null) {
+        if (filter == null or std.mem.find(u8, E.name, filter.?) != null) {
             const throughput = try benchmarkAes8(E.ty, mode(10000000));
             try stdout.print("{s:>17}: {:10} ops/s\n", .{ E.name, throughput });
             try stdout.flush();
@@ -631,7 +631,7 @@ pub fn main() !void {
     }
 
     inline for (pwhashes) |H| {
-        if (filter == null or std.mem.indexOf(u8, H.name, filter.?) != null) {
+        if (filter == null or std.mem.find(u8, H.name, filter.?) != null) {
             const throughput = try benchmarkPwhash(arena_allocator, H.ty, H.params, mode(64), io);
             try stdout.print("{s:>17}: {d:10.3} s/ops\n", .{ H.name, throughput });
             try stdout.flush();
@@ -639,7 +639,7 @@ pub fn main() !void {
     }
 
     inline for (kems) |E| {
-        if (filter == null or std.mem.indexOf(u8, E.name, filter.?) != null) {
+        if (filter == null or std.mem.find(u8, E.name, filter.?) != null) {
             const throughput = try benchmarkKem(E.ty, mode(1000));
             try stdout.print("{s:>17}: {:10} encaps/s\n", .{ E.name, throughput });
             try stdout.flush();
@@ -647,7 +647,7 @@ pub fn main() !void {
     }
 
     inline for (kems) |E| {
-        if (filter == null or std.mem.indexOf(u8, E.name, filter.?) != null) {
+        if (filter == null or std.mem.find(u8, E.name, filter.?) != null) {
             const throughput = try benchmarkKemDecaps(E.ty, mode(25000));
             try stdout.print("{s:>17}: {:10} decaps/s\n", .{ E.name, throughput });
             try stdout.flush();
@@ -655,7 +655,7 @@ pub fn main() !void {
     }
 
     inline for (kems) |E| {
-        if (filter == null or std.mem.indexOf(u8, E.name, filter.?) != null) {
+        if (filter == null or std.mem.find(u8, E.name, filter.?) != null) {
             const throughput = try benchmarkKemKeyGen(E.ty, mode(25000));
             try stdout.print("{s:>17}: {:10} keygen/s\n", .{ E.name, throughput });
             try stdout.flush();

@@ -197,7 +197,7 @@ pub const ElfDynLib = struct {
     // - /etc/ld.so.cache is not read
     fn resolveFromName(path_or_name: []const u8) !posix.fd_t {
         // If filename contains a slash ("/"), then it is interpreted as a (relative or absolute) pathname
-        if (std.mem.indexOfScalarPos(u8, path_or_name, 0, '/')) |_| {
+        if (std.mem.findScalarPos(u8, path_or_name, 0, '/')) |_| {
             return posix.open(path_or_name, .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, 0);
         }
 

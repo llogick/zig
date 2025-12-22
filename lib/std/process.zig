@@ -546,7 +546,7 @@ pub fn getenvW(key: [*:0]const u16) ?[:0]const u16 {
     }
     const key_slice = mem.sliceTo(key, 0);
     // '=' anywhere but the start makes this an invalid environment variable name
-    if (key_slice.len > 0 and std.mem.indexOfScalar(u16, key_slice[1..], '=') != null) {
+    if (key_slice.len > 0 and std.mem.findScalar(u16, key_slice[1..], '=') != null) {
         return null;
     }
     const ptr = windows.peb().ProcessParameters.Environment;
@@ -559,7 +559,7 @@ pub fn getenvW(key: [*:0]const u16) ?[:0]const u16 {
         // if it's the first character.
         // https://devblogs.microsoft.com/oldnewthing/20100506-00/?p=14133
         const equal_search_start: usize = if (key_value[0] == '=') 1 else 0;
-        const equal_index = std.mem.indexOfScalarPos(u16, key_value, equal_search_start, '=') orelse {
+        const equal_index = std.mem.findScalarPos(u16, key_value, equal_search_start, '=') orelse {
             // This is enforced by CreateProcess.
             // If violated, CreateProcess will fail with INVALID_PARAMETER.
             unreachable; // must contain a =

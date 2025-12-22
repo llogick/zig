@@ -643,7 +643,7 @@ pub fn tmpDir(opts: std.fs.Dir.OpenOptions) TmpDir {
 }
 
 pub fn expectEqualStrings(expected: []const u8, actual: []const u8) !void {
-    if (std.mem.indexOfDiff(u8, actual, expected)) |diff_index| {
+    if (std.mem.findDiff(u8, actual, expected)) |diff_index| {
         if (@inComptime()) {
             @compileError(std.fmt.comptimePrint("\nexpected:\n{s}\nfound:\n{s}\ndifference starts at index {d}", .{
                 expected, actual, diff_index,
@@ -992,7 +992,7 @@ fn printIndicatorLine(source: []const u8, indicator_index: usize) void {
         line_begin + 1
     else
         0;
-    const line_end_index = if (std.mem.indexOfScalar(u8, source[indicator_index..], '\n')) |line_end|
+    const line_end_index = if (std.mem.findScalar(u8, source[indicator_index..], '\n')) |line_end|
         (indicator_index + line_end)
     else
         source.len;
@@ -1008,7 +1008,7 @@ fn printIndicatorLine(source: []const u8, indicator_index: usize) void {
 
 fn printWithVisibleNewlines(source: []const u8) void {
     var i: usize = 0;
-    while (std.mem.indexOfScalar(u8, source[i..], '\n')) |nl| : (i += nl + 1) {
+    while (std.mem.findScalar(u8, source[i..], '\n')) |nl| : (i += nl + 1) {
         printLine(source[i..][0..nl]);
     }
     print("{s}␃\n", .{source[i..]}); // End of Text symbol (ETX)

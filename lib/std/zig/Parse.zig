@@ -3660,7 +3660,7 @@ fn eatDocComments(p: *Parse) Allocator.Error!?TokenIndex {
 }
 
 fn tokensOnSameLine(p: *Parse, token1: TokenIndex, token2: TokenIndex) bool {
-    return std.mem.indexOfScalar(u8, p.source[p.tokenStart(token1)..p.tokenStart(token2)], '\n') == null;
+    return std.mem.findScalar(u8, p.source[p.tokenStart(token1)..p.tokenStart(token2)], '\n') == null;
 }
 
 fn eatToken(p: *Parse, tag: Token.Tag) ?TokenIndex {

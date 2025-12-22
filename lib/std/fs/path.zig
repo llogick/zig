@@ -402,9 +402,9 @@ pub fn windowsParsePath(path: []const u8) WindowsPath {
 
     if (path.len >= 2 and PathType.windows.isSep(u8, path[0]) and PathType.windows.isSep(u8, path[1])) {
         const root_end = root_end: {
-            var server_end = mem.indexOfAnyPos(u8, path, 2, "/\\") orelse break :root_end path.len;
+            var server_end = mem.findAnyPos(u8, path, 2, "/\\") orelse break :root_end path.len;
             while (server_end < path.len and PathType.windows.isSep(u8, path[server_end])) server_end += 1;
-            break :root_end mem.indexOfAnyPos(u8, path, server_end, "/\\") orelse path.len;
+            break :root_end mem.findAnyPos(u8, path, server_end, "/\\") orelse path.len;
         };
         return WindowsPath{
             .is_abs = true,
@@ -722,7 +722,7 @@ fn parseUNC(comptime T: type, path: []const T) WindowsUNC(T) {
     // For the server, the first path separator after the initial two is always
     // the terminator of the server name, even if that means the server name is
     // zero-length.
-    const server_end = mem.indexOfAnyPos(T, path, 2, any_sep) orelse return .{
+    const server_end = mem.findAnyPos(T, path, 2, any_sep) orelse return .{
         .server = path[2..path.len],
         .sep_after_server = false,
         .share = path[path.len..path.len],

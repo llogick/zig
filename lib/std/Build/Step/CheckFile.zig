@@ -60,7 +60,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
     };
 
     for (check_file.expected_matches) |expected_match| {
-        if (mem.indexOf(u8, contents, expected_match) == null) {
+        if (mem.find(u8, contents, expected_match) == null) {
             return step.fail(
                 \\
                 \\========= expected to find: ===================

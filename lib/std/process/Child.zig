@@ -1812,7 +1812,7 @@ fn argvToScriptCommandLineWindows(
     //
     // If the script path does not have a path separator, then we know its relative to CWD and
     // we can just put `.\` in the front.
-    if (mem.indexOfAny(u16, script_path, &[_]u16{ mem.nativeToLittle(u16, '\\'), mem.nativeToLittle(u16, '/') }) == null) {
+    if (mem.findAny(u16, script_path, &[_]u16{ mem.nativeToLittle(u16, '\\'), mem.nativeToLittle(u16, '/') }) == null) {
         try buf.appendSlice(".\\");
     }
     // Note that we don't do any escaping/mitigations for this argument, since the relevant
@@ -1827,7 +1827,7 @@ fn argvToScriptCommandLineWindows(
         // always a mistake to include these characters in argv, so it's
         // an error condition in order to ensure that the return of this
         // function can always roundtrip through cmd.exe.
-        if (std.mem.indexOfAny(u8, arg, "\x00\r\n") != null) {
+        if (std.mem.findAny(u8, arg, "\x00\r\n") != null) {
             return error.InvalidBatchScriptArg;
         }
 

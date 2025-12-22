@@ -1674,14 +1674,14 @@ pub fn request(
     if (std.debug.runtime_safety) {
         for (options.extra_headers) |header| {
             assert(header.name.len != 0);
-            assert(std.mem.indexOfScalar(u8, header.name, ':') == null);
-            assert(std.mem.indexOfPosLinear(u8, header.name, 0, "\r\n") == null);
-            assert(std.mem.indexOfPosLinear(u8, header.value, 0, "\r\n") == null);
+            assert(std.mem.findScalar(u8, header.name, ':') == null);
+            assert(std.mem.findPosLinear(u8, header.name, 0, "\r\n") == null);
+            assert(std.mem.findPosLinear(u8, header.value, 0, "\r\n") == null);
         }
         for (options.privileged_headers) |header| {
             assert(header.name.len != 0);
-            assert(std.mem.indexOfPosLinear(u8, header.name, 0, "\r\n") == null);
-            assert(std.mem.indexOfPosLinear(u8, header.value, 0, "\r\n") == null);
+            assert(std.mem.findPosLinear(u8, header.name, 0, "\r\n") == null);
+            assert(std.mem.findPosLinear(u8, header.value, 0, "\r\n") == null);
         }
     }
 

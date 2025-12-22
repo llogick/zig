@@ -35,7 +35,7 @@ const SparcCpuinfoImpl = struct {
     fn line_hook(self: *SparcCpuinfoImpl, key: []const u8, value: []const u8) !bool {
         if (mem.eql(u8, key, "cpu")) {
             inline for (cpu_names) |pair| {
-                if (mem.indexOfPos(u8, value, 0, pair[0]) != null) {
+                if (mem.findPos(u8, value, 0, pair[0]) != null) {
                     self.model = pair[1];
                     break;
                 }
@@ -147,7 +147,7 @@ const PowerpcCpuinfoImpl = struct {
             // The model name is often followed by a comma or space and extra
             // info.
             inline for (cpu_names) |pair| {
-                const end_index = mem.indexOfAny(u8, value, ", ") orelse value.len;
+                const end_index = mem.findAny(u8, value, ", ") orelse value.len;
                 if (mem.eql(u8, value[0..end_index], pair[0])) {
                     self.model = pair[1];
                     break;
@@ -318,7 +318,7 @@ const ArmCpuinfoImpl = struct {
             self.have_fields += 1;
         } else if (mem.eql(u8, key, "model name")) {
             // ARMv6 cores report "CPU architecture" equal to 7.
-            if (mem.indexOf(u8, value, "(v6l)")) |_| {
+            if (mem.find(u8, value, "(v6l)")) |_| {
                 info.is_really_v6 = true;
             }
         } else if (mem.eql(u8, key, "CPU revision")) {
@@ -427,7 +427,7 @@ fn CpuinfoParser(comptime impl: anytype) type {
         fn parse(arch: Target.Cpu.Arch, reader: *Io.Reader) !?Target.Cpu {
             var obj: impl = .{};
             while (try reader.takeDelimiter('\n')) |line| {
-                const colon_pos = mem.indexOfScalar(u8, line, ':') orelse continue;
+                const colon_pos = mem.findScalar(u8, line, ':') orelse continue;
                 const key = mem.trimEnd(u8, line[0..colon_pos], " \t");
                 const value = mem.trimStart(u8, line[colon_pos + 1 ..], " \t");
                 if (!try obj.line_hook(key, value)) break;

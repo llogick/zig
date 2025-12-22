@@ -180,7 +180,7 @@ pub fn main() !void {
     if (bench_prngs) {
         if (bench_long) {
             inline for (prngs) |R| {
-                if (filter == null or std.mem.indexOf(u8, R.name, filter.?) != null) {
+                if (filter == null or std.mem.find(u8, R.name, filter.?) != null) {
                     try stdout.print("{s} (long outputs)\n", .{R.name});
                     try stdout.flush();
 
@@ -191,7 +191,7 @@ pub fn main() !void {
         }
         if (bench_short) {
             inline for (prngs) |R| {
-                if (filter == null or std.mem.indexOf(u8, R.name, filter.?) != null) {
+                if (filter == null or std.mem.find(u8, R.name, filter.?) != null) {
                     try stdout.print("{s} (short outputs)\n", .{R.name});
                     try stdout.flush();
 
@@ -204,7 +204,7 @@ pub fn main() !void {
     if (bench_csprngs) {
         if (bench_long) {
             inline for (csprngs) |R| {
-                if (filter == null or std.mem.indexOf(u8, R.name, filter.?) != null) {
+                if (filter == null or std.mem.find(u8, R.name, filter.?) != null) {
                     try stdout.print("{s} (cryptographic, long outputs)\n", .{R.name});
                     try stdout.flush();
 
@@ -215,7 +215,7 @@ pub fn main() !void {
         }
         if (bench_short) {
             inline for (csprngs) |R| {
-                if (filter == null or std.mem.indexOf(u8, R.name, filter.?) != null) {
+                if (filter == null or std.mem.find(u8, R.name, filter.?) != null) {
                     try stdout.print("{s} (cryptographic, short outputs)\n", .{R.name});
                     try stdout.flush();
 

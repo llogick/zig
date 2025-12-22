@@ -578,12 +578,12 @@ fn expand_variables_autoconf_at(
     var source_offset: usize = 0;
     while (curr < contents.len) : (curr += 1) {
         if (contents[curr] != '@') continue;
-        if (std.mem.indexOfScalarPos(u8, contents, curr + 1, '@')) |close_pos| {
+        if (std.mem.findScalarPos(u8, contents, curr + 1, '@')) |close_pos| {
             if (close_pos == curr + 1) {
                 // closed immediately, preserve as a literal
                 continue;
             }
-            const valid_varname_end = std.mem.indexOfNonePos(u8, contents, curr + 1, valid_varname_chars) orelse 0;
+            const valid_varname_end = std.mem.findNonePos(u8, contents, curr + 1, valid_varname_chars) orelse 0;
             if (valid_varname_end != close_pos) {
                 // contains invalid characters, preserve as a literal
                 continue;
@@ -635,12 +635,12 @@ fn expand_variables_cmake(
     loop: while (curr < contents.len) : (curr += 1) {
         switch (contents[curr]) {
             '@' => blk: {
-                if (std.mem.indexOfScalarPos(u8, contents, curr + 1, '@')) |close_pos| {
+                if (std.mem.findScalarPos(u8, contents, curr + 1, '@')) |close_pos| {
                     if (close_pos == curr + 1) {
                         // closed immediately, preserve as a literal
                         break :blk;
                     }
-                    const valid_varname_end = std.mem.indexOfNonePos(u8, contents, curr + 1, valid_varname_chars) orelse 0;
+                    const valid_varname_end = std.mem.findNonePos(u8, contents, curr + 1, valid_varname_chars) orelse 0;
                     if (valid_varname_end != close_pos) {
                         // contains invalid characters, preserve as a literal
                         break :blk;
@@ -731,7 +731,7 @@ fn expand_variables_cmake(
             else => {},
         }
 
-        if (var_stack.items.len > 0 and std.mem.indexOfScalar(u8, valid_varname_chars, contents[curr]) == null) {
+        if (var_stack.items.len > 0 and std.mem.findScalar(u8, valid_varname_chars, contents[curr]) == null) {
             return error.InvalidCharacter;
         }
     }

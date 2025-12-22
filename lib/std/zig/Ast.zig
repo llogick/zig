@@ -234,7 +234,7 @@ pub fn tokenLocation(self: Ast, start_offset: ByteOffset, token_index: TokenInde
     const token_start = self.tokenStart(token_index);
 
     // Scan to by line until we go past the token start
-    while (std.mem.indexOfScalarPos(u8, self.source, loc.line_start, '\n')) |i| {
+    while (std.mem.findScalarPos(u8, self.source, loc.line_start, '\n')) |i| {
         if (i >= token_start) {
             break; // Went past
         }
@@ -1309,7 +1309,7 @@ pub fn lastToken(tree: Ast, node: Node.Index) TokenIndex {
 
 pub fn tokensOnSameLine(tree: Ast, token1: TokenIndex, token2: TokenIndex) bool {
     const source = tree.source[tree.tokenStart(token1)..tree.tokenStart(token2)];
-    return mem.indexOfScalar(u8, source, '\n') == null;
+    return mem.findScalar(u8, source, '\n') == null;
 }
 
 pub fn getNodeSource(tree: Ast, node: Node.Index) []const u8 {

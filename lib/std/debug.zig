@@ -1196,7 +1196,7 @@ fn printLineFromFile(writer: *Writer, source_location: SourceLocation) !void {
         var next_line: usize = 1;
         while (next_line != source_location.line) {
             const slice = buf[current_line_start..amt_read];
-            if (mem.indexOfScalar(u8, slice, '\n')) |pos| {
+            if (mem.findScalar(u8, slice, '\n')) |pos| {
                 next_line += 1;
                 if (pos == slice.len - 1) {
                     amt_read = try f.read(buf[0..]);
@@ -1212,7 +1212,7 @@ fn printLineFromFile(writer: *Writer, source_location: SourceLocation) !void {
         break :seek current_line_start;
     };
     const slice = buf[line_start..amt_read];
-    if (mem.indexOfScalar(u8, slice, '\n')) |pos| {
+    if (mem.findScalar(u8, slice, '\n')) |pos| {
         const line = slice[0 .. pos + 1];
         mem.replaceScalar(u8, line, '\t', ' ');
         return writer.writeAll(line);
@@ -1221,7 +1221,7 @@ fn printLineFromFile(writer: *Writer, source_location: SourceLocation) !void {
         try writer.writeAll(slice);
         while (amt_read == buf.len) {
             amt_read = try f.read(buf[0..]);
-            if (mem.indexOfScalar(u8, buf[0..amt_read], '\n')) |pos| {
+            if (mem.findScalar(u8, buf[0..amt_read], '\n')) |pos| {
                 const line = buf[0 .. pos + 1];
                 mem.replaceScalar(u8, line, '\t', ' ');
                 return writer.writeAll(line);

@@ -358,10 +358,10 @@ pub const Parsed = struct {
             const wildcard_suffix = dns_name[2..];
 
             // No additional wildcards allowed in the suffix
-            if (mem.indexOf(u8, wildcard_suffix, "*") != null) return false;
+            if (mem.find(u8, wildcard_suffix, "*") != null) return false;
 
             // Find the first dot in hostname to split first label from rest
-            const dot_pos = mem.indexOf(u8, host_name, ".") orelse return false;
+            const dot_pos = mem.find(u8, host_name, ".") orelse return false;
 
             // Wildcard matches exactly one label, so compare the rest
             const host_suffix = host_name[dot_pos + 1 ..];

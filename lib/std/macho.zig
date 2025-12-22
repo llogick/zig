@@ -825,7 +825,7 @@ pub const section_64 = extern struct {
 };
 
 fn parseName(name: *const [16]u8) []const u8 {
-    const len = mem.indexOfScalar(u8, name, @as(u8, 0)) orelse name.len;
+    const len = mem.findScalar(u8, name, @as(u8, 0)) orelse name.len;
     return name[0..len];
 }
 

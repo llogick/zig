@@ -221,7 +221,7 @@ pub const Node = union(enum) {
 pub const NullTerminatedString = enum(u32) {
     _,
     pub fn get(nts: NullTerminatedString, zoir: Zoir) [:0]const u8 {
-        const idx = std.mem.indexOfScalar(u8, zoir.string_bytes[@intFromEnum(nts)..], 0).?;
+        const idx = std.mem.findScalar(u8, zoir.string_bytes[@intFromEnum(nts)..], 0).?;
         return zoir.string_bytes[@intFromEnum(nts)..][0..idx :0];
     }
 };
