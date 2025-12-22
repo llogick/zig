@@ -1410,11 +1410,12 @@ fn workerMakeOneStep(
     if (s.max_rss != 0) {
         var dispatch_deps: std.ArrayList(*Step) = .empty;
         defer dispatch_deps.deinit(gpa);
-        dispatch_deps.ensureUnusedCapacity(gpa, run.memory_blocked_steps.items.len) catch @panic("OOM");
 
         {
             run.max_rss_mutex.lockUncancelable(io);
             defer run.max_rss_mutex.unlock(io);
+
+            dispatch_deps.ensureUnusedCapacity(gpa, run.memory_blocked_steps.items.len) catch @panic("OOM");
 
             // Give the memory back to the scheduler.
             run.claimed_rss -= s.max_rss;
