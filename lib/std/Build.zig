@@ -1762,7 +1762,10 @@ fn supportedWindowsProgramExtension(ext: []const u8) bool {
 }
 
 fn tryFindProgram(b: *Build, full_path: []const u8) ?[]const u8 {
-    if (fs.realpathAlloc(b.allocator, full_path)) |p| {
+    const io = b.graph.io;
+    const arena = b.allocator;
+
+    if (Io.Dir.realPathFileAbsoluteAlloc(io, full_path, arena)) |p| {
         return p;
     } else |err| switch (err) {
         error.OutOfMemory => @panic("OOM"),
@@ -1776,7 +1779,11 @@ fn tryFindProgram(b: *Build, full_path: []const u8) ?[]const u8 {
             while (it.next()) |ext| {
                 if (!supportedWindowsProgramExtension(ext)) continue;
 
-                return fs.realPathFileAlloc(b.graph.io, b.fmt("{s}{s}", .{ full_path, ext }), b.allocator) catch |err| switch (err) {
+                return Io.Dir.realPathFileAbsoluteAlloc(
+                    io,
+                    b.fmt("{s}{s}", .{ full_path, ext }),
+                    arena,
+                ) catch |err| switch (err) {
                     error.OutOfMemory => @panic("OOM"),
                     else => continue,
                 };

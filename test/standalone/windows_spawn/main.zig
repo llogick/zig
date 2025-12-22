@@ -22,11 +22,11 @@ pub fn main() anyerror!void {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const tmp_absolute_path = try tmp.dir.realpathAlloc(gpa, ".");
+    const tmp_absolute_path = try tmp.dir.realPathFileAlloc(io, ".", gpa);
     defer gpa.free(tmp_absolute_path);
     const tmp_absolute_path_w = try std.unicode.utf8ToUtf16LeAllocZ(gpa, tmp_absolute_path);
     defer gpa.free(tmp_absolute_path_w);
-    const cwd_absolute_path = try Io.Dir.cwd().realpathAlloc(gpa, ".");
+    const cwd_absolute_path = try Io.Dir.cwd().realPathFileAlloc(io, ".", gpa);
     defer gpa.free(cwd_absolute_path);
     const tmp_relative_path = try std.fs.path.relative(gpa, cwd_absolute_path, tmp_absolute_path);
     defer gpa.free(tmp_relative_path);

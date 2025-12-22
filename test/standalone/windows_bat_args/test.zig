@@ -101,7 +101,7 @@ pub fn main() anyerror!void {
     //     operable program or batch file.
     try std.testing.expectError(error.FileNotFound, testExecBat(gpa, "args1.bat .. ", &.{"abc"}, null));
     const absolute_with_trailing = blk: {
-        const absolute_path = try std.fs.realpathAlloc(gpa, "args1.bat");
+        const absolute_path = try Io.Dir.realPathFileAbsoluteAlloc(io, "args1.bat", gpa);
         defer gpa.free(absolute_path);
         break :blk try std.mem.concat(gpa, u8, &.{ absolute_path, " .. " });
     };
