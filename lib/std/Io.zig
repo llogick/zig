@@ -1592,7 +1592,7 @@ pub const Event = enum(u32) {
             // waiters would wake up when a *new waiter* was added. So it's easiest to just leave
             // the state at `.waiting`---at worst it causes one redundant call to `futexWake`.
         }
-        io.futexWaitTimeout(Event, event, .waiting, timeout);
+        try io.futexWaitTimeout(Event, event, .waiting, timeout);
         switch (@atomicLoad(Event, event, .acquire)) {
             .unset => unreachable, // `reset` called before pending `wait` returned
             .waiting => return error.Timeout,
