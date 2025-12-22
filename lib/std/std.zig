@@ -190,8 +190,6 @@ pub const Options = struct {
 };
 
 pub const IoOptions = struct {
-    /// Overrides `std.Io.File.Permissions`.
-    FilePermissions: ?type = null,
     debug_threaded_io: ?*Io.Threaded = Io.Threaded.global_single_threaded,
 };
 
