@@ -486,6 +486,7 @@ pub fn hasRuntimeBitsInner(
     tid: strat.Tid(),
 ) RuntimeBitsError!bool {
     const ip = &zcu.intern_pool;
+    const io = zcu.comp.io;
     return switch (ty.toIntern()) {
         .empty_tuple_type => false,
         else => switch (ip.indexToKey(ty.toIntern())) {
@@ -571,7 +572,7 @@ pub fn hasRuntimeBitsInner(
             },
             .struct_type => {
                 const struct_type = ip.loadStructType(ty.toIntern());
-                if (strat != .eager and struct_type.assumeRuntimeBitsIfFieldTypesWip(ip)) {
+                if (strat != .eager and struct_type.assumeRuntimeBitsIfFieldTypesWip(ip, io)) {
                     // In this case, we guess that hasRuntimeBits() for this type is true,
                     // and then later if our guess was incorrect, we emit a compile error.
                     return true;
@@ -610,7 +611,7 @@ pub fn hasRuntimeBitsInner(
                     .none => if (strat != .eager) {
                         // In this case, we guess that hasRuntimeBits() for this type is true,
                         // and then later if our guess was incorrect, we emit a compile error.
-                        if (union_type.assumeRuntimeBitsIfFieldTypesWip(ip)) return true;
+                        if (union_type.assumeRuntimeBitsIfFieldTypesWip(ip, io)) return true;
                     },
                     .safety, .tagged => {},
                 }
@@ -2491,8 +2492,11 @@ pub fn isNumeric(ty: Type, zcu: *const Zcu) bool {
 /// resolves field types rather than asserting they are already resolved.
 pub fn onePossibleValue(starting_type: Type, pt: Zcu.PerThread) !?Value {
     const zcu = pt.zcu;
-    var ty = starting_type;
+    const comp = zcu.comp;
+    const gpa = comp.gpa;
+    const io = comp.io;
     const ip = &zcu.intern_pool;
+    var ty = starting_type;
     while (true) switch (ty.toIntern()) {
         .empty_tuple_type => return Value.empty_tuple,
 
@@ -2664,7 +2668,8 @@ pub fn onePossibleValue(starting_type: Type, pt: Zcu.PerThread) !?Value {
                                     (try pt.intValue(.fromInterned(enum_type.tag_ty), 0)).toIntern()
                                 else
                                     try ip.getCoercedInts(
-                                        zcu.gpa,
+                                        gpa,
+                                        io,
                                         pt.tid,
                                         ip.indexToKey(enum_type.values.get(ip)[0]).int,
                                         enum_type.tag_ty,
@@ -2720,6 +2725,7 @@ pub fn comptimeOnlyInner(
     tid: strat.Tid(),
 ) SemaError!bool {
     const ip = &zcu.intern_pool;
+    const io = zcu.comp.io;
     return switch (ty.toIntern()) {
         .empty_tuple_type => false,
 
@@ -2798,16 +2804,16 @@ pub fn comptimeOnlyInner(
                         .yes => true,
                         .unknown => unreachable,
                     },
-                    .sema => switch (struct_type.setRequiresComptimeWip(ip)) {
+                    .sema => switch (struct_type.setRequiresComptimeWip(ip, io)) {
                         .no, .wip => false,
                         .yes => true,
                         .unknown => {
                             if (struct_type.flagsUnordered(ip).field_types_wip) {
-                                struct_type.setRequiresComptime(ip, .unknown);
+                                struct_type.setRequiresComptime(ip, io, .unknown);
                                 return false;
                             }
 
-                            errdefer struct_type.setRequiresComptime(ip, .unknown);
+                            errdefer struct_type.setRequiresComptime(ip, io, .unknown);
 
                             const pt = strat.pt(zcu, tid);
                             try ty.resolveFields(pt);
@@ -2821,12 +2827,12 @@ pub fn comptimeOnlyInner(
                                     // be considered resolved. Comptime-only types
                                     // still maintain a layout of their
                                     // runtime-known fields.
-                                    struct_type.setRequiresComptime(ip, .yes);
+                                    struct_type.setRequiresComptime(ip, io, .yes);
                                     return true;
                                 }
                             }
 
-                            struct_type.setRequiresComptime(ip, .no);
+                            struct_type.setRequiresComptime(ip, io, .no);
                             return false;
                         },
                     },
@@ -2850,16 +2856,16 @@ pub fn comptimeOnlyInner(
                         .yes => true,
                         .unknown => unreachable,
                     },
-                    .sema => switch (union_type.setRequiresComptimeWip(ip)) {
+                    .sema => switch (union_type.setRequiresComptimeWip(ip, io)) {
                         .no, .wip => return false,
                         .yes => return true,
                         .unknown => {
                             if (union_type.flagsUnordered(ip).status == .field_types_wip) {
-                                union_type.setRequiresComptime(ip, .unknown);
+                                union_type.setRequiresComptime(ip, io, .unknown);
                                 return false;
                             }
 
-                            errdefer union_type.setRequiresComptime(ip, .unknown);
+                            errdefer union_type.setRequiresComptime(ip, io, .unknown);
 
                             const pt = strat.pt(zcu, tid);
                             try ty.resolveFields(pt);
@@ -2867,12 +2873,12 @@ pub fn comptimeOnlyInner(
                             for (0..union_type.field_types.len) |field_idx| {
                                 const field_ty = union_type.field_types.get(ip)[field_idx];
                                 if (try Type.fromInterned(field_ty).comptimeOnlyInner(strat, zcu, tid)) {
-                                    union_type.setRequiresComptime(ip, .yes);
+                                    union_type.setRequiresComptime(ip, io, .yes);
                                     return true;
                                 }
                             }
 
-                            union_type.setRequiresComptime(ip, .no);
+                            union_type.setRequiresComptime(ip, io, .no);
                             return false;
                         },
                     },

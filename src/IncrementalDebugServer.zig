@@ -14,57 +14,122 @@ comptime {
 }
 
 zcu: *Zcu,
-thread: ?std.Thread,
-running: std.atomic.Value(bool),
+future: ?Io.Future(void),
 /// Held by our owner when an update is in-progress, and held by us when responding to a command.
 /// So, essentially guards all access to `Compilation`, including `Zcu`.
-mutex: std.Thread.Mutex,
+mutex: std.Io.Mutex,
 
 pub fn init(zcu: *Zcu) IncrementalDebugServer {
     return .{
         .zcu = zcu,
-        .thread = null,
-        .running = .init(true),
-        .mutex = .{},
+        .future = null,
+        .mutex = .init,
     };
 }
 
 pub fn deinit(ids: *IncrementalDebugServer) void {
-    if (ids.thread) |t| {
-        ids.running.store(false, .monotonic);
-        t.join();
-    }
+    const io = ids.zcu.comp.io;
+    if (ids.future) |*f| f.cancel(io);
 }
 
 const port = 7623;
 pub fn spawn(ids: *IncrementalDebugServer) void {
+    const io = ids.zcu.comp.io;
     std.debug.print("spawning incremental debug server on port {d}\n", .{port});
-    ids.thread = std.Thread.spawn(.{ .allocator = ids.zcu.comp.arena }, runThread, .{ids}) catch |err|
-        std.process.fatal("failed to spawn incremental debug server: {s}", .{@errorName(err)});
+    ids.future = io.concurrent(runServer, .{ids}) catch |err|
+        std.process.fatal("failed to start incremental debug server: {s}", .{@errorName(err)});
 }
-fn runThread(ids: *IncrementalDebugServer) void {
+fn runServer(ids: *IncrementalDebugServer) void {
+    const io = ids.zcu.comp.io;
+
+    const addr: Io.net.IpAddress = .{ .ip6 = .loopback(port) };
+    var server = addr.listen(io, .{}) catch |err| switch (err) {
+        error.Canceled => return,
+        else => |e| {
+            log.err("listen failed ({t}); closing server", .{e});
+            return;
+        },
+    };
+    defer server.deinit(io);
+
+    while (true) {
+        var stream = server.accept(io) catch |err| switch (err) {
+            error.Canceled => return,
+            error.ConnectionAborted => {
+                log.warn("client disconnected during accept", .{});
+                continue;
+            },
+            else => |e| {
+                log.err("accept failed ({t})", .{e});
+                return;
+            },
+        };
+        defer stream.close(io);
+        log.info("client '{f}' connected", .{stream.socket.address});
+        var cmd_buf: [1024]u8 = undefined;
+        var reader = stream.reader(io, &cmd_buf);
+        var writer = stream.writer(io, &.{});
+        ids.serveStream(&reader.interface, &writer.interface) catch |orig_err| {
+            const actual_err = switch (orig_err) {
+                error.Canceled,
+                error.OutOfMemory,
+                error.EndOfStream,
+                error.StreamTooLong,
+                => |e| e,
+
+                error.ReadFailed => reader.err.?,
+                error.WriteFailed => writer.err.?,
+            };
+            switch (actual_err) {
+                error.Canceled => return,
+
+                error.OutOfMemory,
+                error.Unexpected,
+                error.SystemResources,
+                error.Timeout,
+                error.NetworkDown,
+                error.NetworkUnreachable,
+                error.HostUnreachable,
+                error.FastOpenAlreadyInProgress,
+                error.ConnectionRefused,
+                error.StreamTooLong,
+                => |e| log.err("failed to serve '{f}' ({t})", .{ stream.socket.address, e }),
+
+                error.EndOfStream,
+                error.ConnectionResetByPeer,
+                => log.info("client '{f}' disconnected", .{stream.socket.address}),
+
+                error.AddressFamilyUnsupported,
+                error.SocketUnconnected,
+                error.SocketNotBound,
+                error.AccessDenied,
+                => unreachable,
+            }
+        };
+    }
+}
+
+fn serveStream(
+    ids: *IncrementalDebugServer,
+    stream_reader: *Io.Reader,
+    stream_writer: *Io.Writer,
+) error{
+    Canceled,
+    OutOfMemory,
+    EndOfStream,
+    StreamTooLong,
+    ReadFailed,
+    WriteFailed,
+}!noreturn {
     const gpa = ids.zcu.gpa;
     const io = ids.zcu.comp.io;
 
-    var cmd_buf: [1024]u8 = undefined;
     var text_out: std.ArrayList(u8) = .empty;
     defer text_out.deinit(gpa);
 
-    const addr: std.Io.net.IpAddress = .{ .ip6 = .loopback(port) };
-    var server = addr.listen(io, .{}) catch @panic("IncrementalDebugServer: failed to listen");
-    defer server.deinit(io);
-    var stream = server.accept(io) catch @panic("IncrementalDebugServer: failed to accept");
-    defer stream.close(io);
-
-    var stream_reader = stream.reader(io, &cmd_buf);
-    var stream_writer = stream.writer(io, &.{});
-
-    while (ids.running.load(.monotonic)) {
-        stream_writer.interface.writeAll("zig> ") catch @panic("IncrementalDebugServer: failed to write");
-        const untrimmed = stream_reader.interface.takeSentinel('\n') catch |err| switch (err) {
-            error.EndOfStream => break,
-            else => @panic("IncrementalDebugServer: failed to read command"),
-        };
+    while (true) {
+        try stream_writer.writeAll("zig> ");
+        const untrimmed = try stream_reader.takeSentinel('\n');
         const cmd_and_arg = std.mem.trim(u8, untrimmed, " \t\r\n");
         const cmd: []const u8, const arg: []const u8 = if (std.mem.indexOfScalar(u8, cmd_and_arg, ' ')) |i|
             .{ cmd_and_arg[0..i], cmd_and_arg[i + 1 ..] }
@@ -74,18 +139,21 @@ fn runThread(ids: *IncrementalDebugServer) void {
         text_out.clearRetainingCapacity();
         {
             if (!ids.mutex.tryLock()) {
-                stream_writer.interface.writeAll("waiting for in-progress update to finish...\n") catch @panic("IncrementalDebugServer: failed to write");
-                ids.mutex.lock();
+                try stream_writer.writeAll("waiting for in-progress update to finish...\n");
+                try ids.mutex.lock(io);
             }
-            defer ids.mutex.unlock();
-            var allocating: std.Io.Writer.Allocating = .fromArrayList(gpa, &text_out);
+            defer ids.mutex.unlock(io);
+            var allocating: Io.Writer.Allocating = .fromArrayList(gpa, &text_out);
             defer text_out = allocating.toArrayList();
-            handleCommand(ids.zcu, &allocating.writer, cmd, arg) catch @panic("IncrementalDebugServer: out of memory");
+            handleCommand(ids.zcu, &allocating.writer, cmd, arg) catch |err| switch (err) {
+                error.OutOfMemory,
+                error.WriteFailed,
+                => return error.OutOfMemory,
+            };
         }
-        text_out.append(gpa, '\n') catch @panic("IncrementalDebugServer: out of memory");
-        stream_writer.interface.writeAll(text_out.items) catch @panic("IncrementalDebugServer: failed to write");
+        try text_out.append(gpa, '\n');
+        try stream_writer.writeAll(text_out.items);
     }
-    std.debug.print("closing incremental debug server\n", .{});
 }
 
 const help_str: []const u8 =
@@ -123,7 +191,7 @@ const help_str: []const u8 =
     \\
 ;
 
-fn handleCommand(zcu: *Zcu, w: *std.Io.Writer, cmd_str: []const u8, arg_str: []const u8) error{ WriteFailed, OutOfMemory }!void {
+fn handleCommand(zcu: *Zcu, w: *Io.Writer, cmd_str: []const u8, arg_str: []const u8) error{ WriteFailed, OutOfMemory }!void {
     const ip = &zcu.intern_pool;
     if (std.mem.eql(u8, cmd_str, "help")) {
         try w.writeAll(help_str);
@@ -328,7 +396,8 @@ fn printAnalUnit(unit: AnalUnit, buf: *[32]u8) []const u8 {
     };
     return std.fmt.bufPrint(buf, "{s} {d}", .{ @tagName(unit.unwrap()), idx }) catch unreachable;
 }
-fn printType(ty: Type, zcu: *const Zcu, w: anytype) !void {
+
+fn printType(ty: Type, zcu: *const Zcu, w: *Io.Writer) Io.Writer.Error!void {
     const ip = &zcu.intern_pool;
     switch (ip.indexToKey(ty.toIntern())) {
         .int_type => |int| try w.print("{c}{d}", .{
@@ -377,6 +446,7 @@ fn printType(ty: Type, zcu: *const Zcu, w: anytype) !void {
 const std = @import("std");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
+const log = std.log.scoped(.incremental_debug_server);
 
 const Compilation = @import("Compilation.zig");
 const Zcu = @import("Zcu.zig");

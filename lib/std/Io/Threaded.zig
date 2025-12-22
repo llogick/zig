@@ -1117,8 +1117,8 @@ fn groupAsync(
     }
 
     // Append to the group linked list inside the mutex to make `Io.Group.async` thread-safe.
-    gc.node = .{ .next = @ptrCast(@alignCast(group.token)) };
-    group.token = &gc.node;
+    gc.node = .{ .next = @ptrCast(@alignCast(group.token.load(.monotonic))) };
+    group.token.store(&gc.node, .monotonic);
 
     t.run_queue.prepend(&gc.closure.node);
 
@@ -1169,8 +1169,8 @@ fn groupConcurrent(
     }
 
     // Append to the group linked list inside the mutex to make `Io.Group.concurrent` thread-safe.
-    gc.node = .{ .next = @ptrCast(@alignCast(group.token)) };
-    group.token = &gc.node;
+    gc.node = .{ .next = @ptrCast(@alignCast(group.token.load(.monotonic))) };
+    group.token.store(&gc.node, .monotonic);
 
     t.run_queue.prepend(&gc.closure.node);
 
@@ -1183,11 +1183,13 @@ fn groupConcurrent(
     t.cond.signal();
 }
 
-fn groupWait(userdata: ?*anyopaque, group: *Io.Group, token: *anyopaque) void {
+fn groupWait(userdata: ?*anyopaque, group: *Io.Group, initial_token: *anyopaque) void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const gpa = t.allocator;
 
-    if (builtin.single_threaded) return;
+    _ = initial_token; // we need to load `token` *after* the group finishes
+
+    if (builtin.single_threaded) unreachable; // we never set `group.token` to non-`null`
 
     const group_state: *std.atomic.Value(usize) = @ptrCast(&group.state);
     const event: *Io.Event = @ptrCast(&group.context);
@@ -1195,37 +1197,40 @@ fn groupWait(userdata: ?*anyopaque, group: *Io.Group, token: *anyopaque) void {
     assert(prev_state & GroupClosure.sync_is_waiting == 0);
     if ((prev_state / GroupClosure.sync_one_pending) > 0) event.wait(ioBasic(t)) catch |err| switch (err) {
         error.Canceled => {
-            var node: *std.SinglyLinkedList.Node = @ptrCast(@alignCast(token));
-            while (true) {
+            var it: ?*std.SinglyLinkedList.Node = @ptrCast(@alignCast(group.token.load(.monotonic)));
+            while (it) |node| : (it = node.next) {
                 const gc: *GroupClosure = @fieldParentPtr("node", node);
                 gc.closure.requestCancel(t);
-                node = node.next orelse break;
             }
             event.waitUncancelable(ioBasic(t));
         },
     };
 
-    var node: *std.SinglyLinkedList.Node = @ptrCast(@alignCast(token));
-    while (true) {
+    // Since the group has now finished, it's illegal to add more tasks to it until we return. It's
+    // also illegal for us to race with another `await` or `cancel`. Therefore, we must be the only
+    // thread who can access `group` right now.
+    var it: ?*std.SinglyLinkedList.Node = @ptrCast(@alignCast(group.token.raw));
+    group.token.raw = null;
+    while (it) |node| {
+        it = node.next; // update `it` now, because `deinit` will invalidate `node`
         const gc: *GroupClosure = @fieldParentPtr("node", node);
-        const node_next = node.next;
         gc.deinit(gpa);
-        node = node_next orelse break;
     }
 }
 
-fn groupCancel(userdata: ?*anyopaque, group: *Io.Group, token: *anyopaque) void {
+fn groupCancel(userdata: ?*anyopaque, group: *Io.Group, initial_token: *anyopaque) void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const gpa = t.allocator;
 
-    if (builtin.single_threaded) return;
+    _ = initial_token; // we need to load `token` *after* the group finishes
+
+    if (builtin.single_threaded) unreachable; // we never set `group.token` to non-`null`
 
     {
-        var node: *std.SinglyLinkedList.Node = @ptrCast(@alignCast(token));
-        while (true) {
+        var it: ?*std.SinglyLinkedList.Node = @ptrCast(@alignCast(group.token.load(.monotonic)));
+        while (it) |node| : (it = node.next) {
             const gc: *GroupClosure = @fieldParentPtr("node", node);
             gc.closure.requestCancel(t);
-            node = node.next orelse break;
         }
     }
 
@@ -1235,14 +1240,15 @@ fn groupCancel(userdata: ?*anyopaque, group: *Io.Group, token: *anyopaque) void 
     assert(prev_state & GroupClosure.sync_is_waiting == 0);
     if ((prev_state / GroupClosure.sync_one_pending) > 0) event.waitUncancelable(ioBasic(t));
 
-    {
-        var node: *std.SinglyLinkedList.Node = @ptrCast(@alignCast(token));
-        while (true) {
-            const gc: *GroupClosure = @fieldParentPtr("node", node);
-            const node_next = node.next;
-            gc.deinit(gpa);
-            node = node_next orelse break;
-        }
+    // Since the group has now finished, it's illegal to add more tasks to it until we return. It's
+    // also illegal for us to race with another `await` or `cancel`. Therefore, we must be the only
+    // thread who can access `group` right now.
+    var it: ?*std.SinglyLinkedList.Node = @ptrCast(@alignCast(group.token.raw));
+    group.token.raw = null;
+    while (it) |node| {
+        it = node.next; // update `it` now, because `deinit` will invalidate `node`
+        const gc: *GroupClosure = @fieldParentPtr("node", node);
+        gc.deinit(gpa);
     }
 }
 

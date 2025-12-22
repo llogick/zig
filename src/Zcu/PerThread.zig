@@ -269,8 +269,8 @@ pub fn updateFile(
         // Any potential AST errors are converted to ZIR errors when we run AstGen/ZonGen.
         file.tree = try Ast.parse(gpa, source, file.getMode());
         if (timer.finish()) |ns_parse| {
-            comp.mutex.lock();
-            defer comp.mutex.unlock();
+            comp.mutex.lockUncancelable(io);
+            defer comp.mutex.unlock(io);
             comp.time_report.?.stats.cpu_ns_parse += ns_parse;
         }
 
@@ -295,8 +295,8 @@ pub fn updateFile(
             },
         }
         if (timer.finish()) |ns_astgen| {
-            comp.mutex.lock();
-            defer comp.mutex.unlock();
+            comp.mutex.lockUncancelable(io);
+            defer comp.mutex.unlock(io);
             comp.time_report.?.stats.cpu_ns_astgen += ns_astgen;
         }
 
@@ -315,8 +315,8 @@ pub fn updateFile(
     switch (file.getMode()) {
         .zig => {
             if (file.zir.?.hasCompileErrors()) {
-                comp.mutex.lock();
-                defer comp.mutex.unlock();
+                comp.mutex.lockUncancelable(io);
+                defer comp.mutex.unlock(io);
                 try zcu.failed_files.putNoClobber(gpa, file_index, null);
             }
             if (file.zir.?.loweringFailed()) {
@@ -328,8 +328,8 @@ pub fn updateFile(
         .zon => {
             if (file.zoir.?.hasCompileErrors()) {
                 file.status = .astgen_failure;
-                comp.mutex.lock();
-                defer comp.mutex.unlock();
+                comp.mutex.lockUncancelable(io);
+                defer comp.mutex.unlock(io);
                 try zcu.failed_files.putNoClobber(gpa, file_index, null);
             } else {
                 file.status = .success;
@@ -415,7 +415,8 @@ pub fn updateZirRefs(pt: Zcu.PerThread) Allocator.Error!void {
     const zcu = pt.zcu;
     const comp = zcu.comp;
     const ip = &zcu.intern_pool;
-    const gpa = zcu.gpa;
+    const gpa = comp.gpa;
+    const io = comp.io;
 
     // We need to visit every updated File for every TrackedInst in InternPool.
     // This only includes Zig files; ZON files are omitted.
@@ -459,7 +460,7 @@ pub fn updateZirRefs(pt: Zcu.PerThread) Allocator.Error!void {
         return;
 
     for (ip.locals, 0..) |*local, tid| {
-        const tracked_insts_list = local.getMutableTrackedInsts(gpa);
+        const tracked_insts_list = local.getMutableTrackedInsts(gpa, io);
         for (tracked_insts_list.viewAllowEmpty().items(.@"0"), 0..) |*tracked_inst, tracked_inst_unwrapped_index| {
             const file_index = tracked_inst.file;
             const updated_file = updated_files.get(file_index) orelse continue;
@@ -530,6 +531,7 @@ pub fn updateZirRefs(pt: Zcu.PerThread) Allocator.Error!void {
                     if (old_decl.name == .empty) continue;
                     const name_ip = try zcu.intern_pool.getOrPutString(
                         zcu.gpa,
+                        io,
                         pt.tid,
                         old_zir.nullTerminatedString(old_decl.name),
                         .no_embedded_nulls,
@@ -545,6 +547,7 @@ pub fn updateZirRefs(pt: Zcu.PerThread) Allocator.Error!void {
                     if (new_decl.name == .empty) continue;
                     const name_ip = try zcu.intern_pool.getOrPutString(
                         zcu.gpa,
+                        io,
                         pt.tid,
                         new_zir.nullTerminatedString(new_decl.name),
                         .no_embedded_nulls,
@@ -575,7 +578,7 @@ pub fn updateZirRefs(pt: Zcu.PerThread) Allocator.Error!void {
         }
     }
 
-    try ip.rehashTrackedInsts(gpa, pt.tid);
+    try ip.rehashTrackedInsts(gpa, io, pt.tid);
 
     for (updated_files.keys(), updated_files.values()) |file_index, updated_file| {
         const file = updated_file.file;
@@ -700,7 +703,9 @@ pub fn ensureMemoizedStateUpToDate(pt: Zcu.PerThread, stage: InternPool.Memoized
 fn analyzeMemoizedState(pt: Zcu.PerThread, stage: InternPool.MemoizedStateStage) Zcu.CompileError!bool {
     const zcu = pt.zcu;
     const ip = &zcu.intern_pool;
-    const gpa = zcu.gpa;
+    const comp = zcu.comp;
+    const gpa = comp.gpa;
+    const io = comp.io;
 
     const unit: AnalUnit = .wrap(.{ .memoized_state = stage });
 
@@ -716,7 +721,7 @@ fn analyzeMemoizedState(pt: Zcu.PerThread, stage: InternPool.MemoizedStateStage)
     const std_type: Type = .fromInterned(zcu.fileRootType(std_file_index));
     const std_namespace = std_type.getNamespaceIndex(zcu);
     try pt.ensureNamespaceUpToDate(std_namespace);
-    const builtin_str = try ip.getOrPutString(gpa, pt.tid, "builtin", .no_embedded_nulls);
+    const builtin_str = try ip.getOrPutString(gpa, io, pt.tid, "builtin", .no_embedded_nulls);
     const builtin_nav = zcu.namespacePtr(std_namespace).pub_decls.getKeyAdapted(builtin_str, Zcu.Namespace.NameAdapter{ .zcu = zcu }) orelse
         @panic("lib/std.zig is corrupt and missing 'builtin'");
     try pt.ensureNavValUpToDate(builtin_nav);
@@ -857,8 +862,10 @@ pub fn ensureComptimeUnitUpToDate(pt: Zcu.PerThread, cu_id: InternPool.ComptimeU
 /// to `transitive_failed_analysis` if necessary.
 fn analyzeComptimeUnit(pt: Zcu.PerThread, cu_id: InternPool.ComptimeUnit.Id) Zcu.CompileError!void {
     const zcu = pt.zcu;
-    const gpa = zcu.gpa;
     const ip = &zcu.intern_pool;
+    const comp = zcu.comp;
+    const gpa = comp.gpa;
+    const io = comp.io;
 
     const anal_unit: AnalUnit = .wrap(.{ .@"comptime" = cu_id });
     const comptime_unit = ip.getComptimeUnit(cu_id);
@@ -909,7 +916,7 @@ fn analyzeComptimeUnit(pt: Zcu.PerThread, cu_id: InternPool.ComptimeUnit.Id) Zcu
             .r = .{ .simple = .comptime_keyword },
         } },
         .src_base_inst = comptime_unit.zir_index,
-        .type_name_ctx = try ip.getOrPutStringFmt(gpa, pt.tid, "{f}.comptime", .{
+        .type_name_ctx = try ip.getOrPutStringFmt(gpa, io, pt.tid, "{f}.comptime", .{
             Type.fromInterned(zcu.namespacePtr(comptime_unit.namespace).owner_type).containerTypeName(ip).fmt(ip),
         }, .no_embedded_nulls),
     };
@@ -1087,8 +1094,10 @@ pub fn ensureNavValUpToDate(pt: Zcu.PerThread, nav_id: InternPool.Nav.Index) Zcu
 
 fn analyzeNavVal(pt: Zcu.PerThread, nav_id: InternPool.Nav.Index) Zcu.CompileError!struct { val_changed: bool } {
     const zcu = pt.zcu;
-    const gpa = zcu.gpa;
     const ip = &zcu.intern_pool;
+    const comp = zcu.comp;
+    const gpa = comp.gpa;
+    const io = comp.io;
 
     const anal_unit: AnalUnit = .wrap(.{ .nav_val = nav_id });
     const old_nav = ip.getNav(nav_id);
@@ -1253,7 +1262,7 @@ fn analyzeNavVal(pt: Zcu.PerThread, nav_id: InternPool.Nav.Index) Zcu.CompileErr
             break :val .fromInterned(try pt.getExtern(.{
                 .name = old_nav.name,
                 .ty = nav_ty.toIntern(),
-                .lib_name = try ip.getOrPutStringOpt(gpa, pt.tid, lib_name, .no_embedded_nulls),
+                .lib_name = try ip.getOrPutStringOpt(gpa, io, pt.tid, lib_name, .no_embedded_nulls),
                 .is_threadlocal = zir_decl.is_threadlocal,
                 .linkage = .strong,
                 .visibility = .default,
@@ -1310,7 +1319,7 @@ fn analyzeNavVal(pt: Zcu.PerThread, nav_id: InternPool.Nav.Index) Zcu.CompileErr
         }
     }
 
-    ip.resolveNavValue(nav_id, .{
+    ip.resolveNavValue(io, nav_id, .{
         .val = nav_val.toIntern(),
         .is_const = is_const,
         .alignment = modifiers.alignment,
@@ -1327,7 +1336,7 @@ fn analyzeNavVal(pt: Zcu.PerThread, nav_id: InternPool.Nav.Index) Zcu.CompileErr
     if (zir_decl.linkage == .@"export") {
         const export_src = block.src(.{ .token_offset = @enumFromInt(@intFromBool(zir_decl.is_pub)) });
         const name_slice = zir.nullTerminatedString(zir_decl.name);
-        const name_ip = try ip.getOrPutString(gpa, pt.tid, name_slice, .no_embedded_nulls);
+        const name_ip = try ip.getOrPutString(gpa, io, pt.tid, name_slice, .no_embedded_nulls);
         try sema.analyzeExport(&block, export_src, .{ .name = name_ip }, nav_id);
     }
 
@@ -1472,7 +1481,9 @@ pub fn ensureNavTypeUpToDate(pt: Zcu.PerThread, nav_id: InternPool.Nav.Index) Zc
 
 fn analyzeNavType(pt: Zcu.PerThread, nav_id: InternPool.Nav.Index) Zcu.CompileError!struct { type_changed: bool } {
     const zcu = pt.zcu;
-    const gpa = zcu.gpa;
+    const comp = zcu.comp;
+    const gpa = comp.gpa;
+    const io = comp.io;
     const ip = &zcu.intern_pool;
 
     const anal_unit: AnalUnit = .wrap(.{ .nav_ty = nav_id });
@@ -1579,7 +1590,7 @@ fn analyzeNavType(pt: Zcu.PerThread, nav_id: InternPool.Nav.Index) Zcu.CompileEr
 
     if (!changed) return .{ .type_changed = false };
 
-    ip.resolveNavType(nav_id, .{
+    ip.resolveNavType(io, nav_id, .{
         .type = resolved_ty.toIntern(),
         .is_const = is_const,
         .alignment = modifiers.alignment,
@@ -1775,6 +1786,7 @@ fn createFileRootStruct(
 ) Allocator.Error!InternPool.Index {
     const zcu = pt.zcu;
     const gpa = zcu.gpa;
+    const io = zcu.comp.io;
     const ip = &zcu.intern_pool;
     const file = zcu.fileByIndex(file_index);
     const extended = file.zir.?.instructions.items(.data)[@intFromEnum(Zir.Inst.Index.main_struct_inst)].extended;
@@ -1797,11 +1809,11 @@ fn createFileRootStruct(
     const decls = file.zir.?.bodySlice(extra_index, decls_len);
     extra_index += decls_len;
 
-    const tracked_inst = try ip.trackZir(gpa, pt.tid, .{
+    const tracked_inst = try ip.trackZir(gpa, io, pt.tid, .{
         .file = file_index,
         .inst = .main_struct_inst,
     });
-    const wip_ty = switch (try ip.getStructType(gpa, pt.tid, .{
+    const wip_ty = switch (try ip.getStructType(gpa, io, pt.tid, .{
         .layout = .auto,
         .fields_len = fields_len,
         .known_non_opv = small.known_non_opv,
@@ -1916,7 +1928,9 @@ pub fn discoverImport(
     },
 } {
     const zcu = pt.zcu;
-    const gpa = zcu.gpa;
+    const comp = zcu.comp;
+    const io = comp.io;
+    const gpa = comp.gpa;
 
     if (!mem.endsWith(u8, import_string, ".zig") and !mem.endsWith(u8, import_string, ".zon")) {
         return .module;
@@ -1926,8 +1940,8 @@ pub fn discoverImport(
     errdefer new_path.deinit(gpa);
 
     // We're about to do a GOP on `import_table`, so we need the mutex.
-    zcu.comp.mutex.lock();
-    defer zcu.comp.mutex.unlock();
+    comp.mutex.lockUncancelable(io);
+    defer comp.mutex.unlock(io);
 
     const gop = try zcu.import_table.getOrPutAdapted(gpa, new_path, Zcu.ImportTableAdapter{ .zcu = zcu });
     errdefer _ = zcu.import_table.pop();
@@ -1942,7 +1956,7 @@ pub fn discoverImport(
     const new_file = try gpa.create(Zcu.File);
     errdefer gpa.destroy(new_file);
 
-    const new_file_index = try zcu.intern_pool.createFile(gpa, pt.tid, .{
+    const new_file_index = try zcu.intern_pool.createFile(gpa, io, pt.tid, .{
         .bin_digest = new_path.digest(),
         .file = new_file,
         .root_type = .none,
@@ -2027,7 +2041,9 @@ pub fn populateModuleRootTable(pt: Zcu.PerThread) error{
     IllegalZigImport,
 }!void {
     const zcu = pt.zcu;
-    const gpa = zcu.gpa;
+    const comp = zcu.comp;
+    const gpa = comp.gpa;
+    const io = comp.io;
 
     // We'll initially add [mod, undefined] pairs, and when we reach the pair while
     // iterating, rewrite the undefined value.
@@ -2085,7 +2101,7 @@ pub fn populateModuleRootTable(pt: Zcu.PerThread) error{
         const new_file = try gpa.create(Zcu.File);
         errdefer gpa.destroy(new_file);
 
-        const new_file_index = try zcu.intern_pool.createFile(gpa, pt.tid, .{
+        const new_file_index = try zcu.intern_pool.createFile(gpa, io, pt.tid, .{
             .bin_digest = path.digest(),
             .file = new_file,
             .root_type = .none,
@@ -2291,7 +2307,8 @@ pub fn computeAliveFiles(pt: Zcu.PerThread) Allocator.Error!bool {
 pub fn updateBuiltinModule(pt: Zcu.PerThread, opts: Builtin) Allocator.Error!void {
     const zcu = pt.zcu;
     const comp = zcu.comp;
-    const gpa = zcu.gpa;
+    const gpa = comp.gpa;
+    const io = comp.io;
 
     const gop = try zcu.builtin_modules.getOrPut(gpa, opts.hash());
     if (gop.found_existing) return; // the `File` is up-to-date
@@ -2330,7 +2347,7 @@ pub fn updateBuiltinModule(pt: Zcu.PerThread, opts: Builtin) Allocator.Error!voi
         .zoir_invalidated = false,
     };
 
-    const file_index = try zcu.intern_pool.createFile(gpa, pt.tid, .{
+    const file_index = try zcu.intern_pool.createFile(gpa, io, pt.tid, .{
         .bin_digest = path.digest(),
         .file = file,
         .root_type = .none,
@@ -2469,7 +2486,7 @@ fn updateEmbedFileInner(
 
     // The loaded bytes of the file, including a sentinel 0 byte.
     const ip_str: InternPool.String = str: {
-        const string_bytes = ip.getLocal(tid).getMutableStringBytes(gpa);
+        const string_bytes = ip.getLocal(tid).getMutableStringBytes(gpa, io);
         const old_len = string_bytes.mutate.len;
         errdefer string_bytes.shrinkRetainingCapacity(old_len);
         const bytes = (try string_bytes.addManyAsSlice(size_plus_one))[0];
@@ -2480,7 +2497,7 @@ fn updateEmbedFileInner(
             error.EndOfStream => return error.UnexpectedEof,
         };
         bytes[size] = 0;
-        break :str try ip.getOrPutTrailingString(gpa, tid, @intCast(bytes.len), .maybe_embedded_nulls);
+        break :str try ip.getOrPutTrailingString(gpa, io, tid, @intCast(bytes.len), .maybe_embedded_nulls);
     };
     if (ip_str_out) |p| p.* = ip_str;
 
@@ -2516,7 +2533,8 @@ fn newEmbedFile(
 ) !*Zcu.EmbedFile {
     const zcu = pt.zcu;
     const comp = zcu.comp;
-    const gpa = zcu.gpa;
+    const io = comp.io;
+    const gpa = comp.gpa;
     const ip = &zcu.intern_pool;
 
     const new_file = try gpa.create(Zcu.EmbedFile);
@@ -2549,8 +2567,8 @@ fn newEmbedFile(
         const path_str = try path.toAbsolute(comp.dirs, gpa);
         defer gpa.free(path_str);
 
-        whole.cache_manifest_mutex.lock();
-        defer whole.cache_manifest_mutex.unlock();
+        try whole.cache_manifest_mutex.lock(io);
+        defer whole.cache_manifest_mutex.unlock(io);
 
         man.addFilePostContents(path_str, contents, new_file.stat) catch |err| switch (err) {
             error.Unexpected => unreachable,
@@ -2647,13 +2665,15 @@ const ScanDeclIter = struct {
 
     fn avoidNameConflict(iter: *ScanDeclIter, comptime fmt: []const u8, args: anytype) !InternPool.NullTerminatedString {
         const pt = iter.pt;
-        const gpa = pt.zcu.gpa;
         const ip = &pt.zcu.intern_pool;
-        var name = try ip.getOrPutStringFmt(gpa, pt.tid, fmt, args, .no_embedded_nulls);
+        const comp = pt.zcu.comp;
+        const gpa = comp.gpa;
+        const io = comp.io;
+        var name = try ip.getOrPutStringFmt(gpa, io, pt.tid, fmt, args, .no_embedded_nulls);
         var gop = try iter.seen_decls.getOrPut(gpa, name);
         var next_suffix: u32 = 0;
         while (gop.found_existing) {
-            name = try ip.getOrPutStringFmt(gpa, pt.tid, "{f}_{d}", .{ name.fmt(ip), next_suffix }, .no_embedded_nulls);
+            name = try ip.getOrPutStringFmt(gpa, io, pt.tid, "{f}_{d}", .{ name.fmt(ip), next_suffix }, .no_embedded_nulls);
             gop = try iter.seen_decls.getOrPut(gpa, name);
             next_suffix += 1;
         }
@@ -2669,7 +2689,8 @@ const ScanDeclIter = struct {
         const comp = zcu.comp;
         const namespace_index = iter.namespace_index;
         const namespace = zcu.namespacePtr(namespace_index);
-        const gpa = zcu.gpa;
+        const gpa = comp.gpa;
+        const io = comp.io;
         const file = namespace.fileScope(zcu);
         const zir = file.zir.?;
         const ip = &zcu.intern_pool;
@@ -2697,6 +2718,7 @@ const ScanDeclIter = struct {
                 if (iter.pass != .named) return;
                 const name = try ip.getOrPutString(
                     gpa,
+                    io,
                     pt.tid,
                     zir.nullTerminatedString(decl.name),
                     .no_embedded_nulls,
@@ -2706,7 +2728,7 @@ const ScanDeclIter = struct {
             },
         };
 
-        const tracked_inst = try ip.trackZir(gpa, pt.tid, .{
+        const tracked_inst = try ip.trackZir(gpa, io, pt.tid, .{
             .file = namespace.file_scope,
             .inst = decl_inst,
         });
@@ -2718,7 +2740,7 @@ const ScanDeclIter = struct {
                 const cu = if (existing_unit) |eu|
                     eu.unwrap().@"comptime"
                 else
-                    try ip.createComptimeUnit(gpa, pt.tid, tracked_inst, namespace_index);
+                    try ip.createComptimeUnit(gpa, io, pt.tid, tracked_inst, namespace_index);
 
                 const unit: AnalUnit = .wrap(.{ .@"comptime" = cu });
 
@@ -2737,9 +2759,9 @@ const ScanDeclIter = struct {
             },
             else => unit: {
                 const name = maybe_name.unwrap().?;
-                const fqn = try namespace.internFullyQualifiedName(ip, gpa, pt.tid, name);
+                const fqn = try namespace.internFullyQualifiedName(ip, gpa, io, pt.tid, name);
                 const nav = if (existing_unit) |eu| eu.unwrap().nav_val else nav: {
-                    const nav = try ip.createDeclNav(gpa, pt.tid, name, fqn, tracked_inst, namespace_index);
+                    const nav = try ip.createDeclNav(gpa, io, pt.tid, name, fqn, tracked_inst, namespace_index);
                     if (zcu.comp.debugIncremental()) try zcu.incremental_debug_state.newNav(zcu, nav);
                     break :nav nav;
                 };
@@ -2798,7 +2820,9 @@ fn analyzeFnBodyInner(pt: Zcu.PerThread, func_index: InternPool.Index) Zcu.SemaE
     defer tracy.end();
 
     const zcu = pt.zcu;
-    const gpa = zcu.gpa;
+    const comp = zcu.comp;
+    const gpa = comp.gpa;
+    const io = comp.io;
     const ip = &zcu.intern_pool;
 
     const anal_unit = AnalUnit.wrap(.{ .func = func_index });
@@ -2810,9 +2834,9 @@ fn analyzeFnBodyInner(pt: Zcu.PerThread, func_index: InternPool.Index) Zcu.SemaE
     try zcu.analysis_in_progress.putNoClobber(gpa, anal_unit, {});
     errdefer _ = zcu.analysis_in_progress.swapRemove(anal_unit);
 
-    func.setAnalyzed(ip);
+    func.setAnalyzed(ip, io);
     if (func.analysisUnordered(ip).inferred_error_set) {
-        func.setResolvedErrorSet(ip, .none);
+        func.setResolvedErrorSet(ip, io, .none);
     }
 
     if (zcu.comp.time_report) |*tr| {
@@ -2872,7 +2896,7 @@ fn analyzeFnBodyInner(pt: Zcu.PerThread, func_index: InternPool.Index) Zcu.SemaE
     }
 
     // reset in case calls to errorable functions are removed.
-    ip.funcSetHasErrorTrace(func_index, fn_ty_info.cc == .auto);
+    ip.funcSetHasErrorTrace(io, func_index, fn_ty_info.cc == .auto);
 
     // First few indexes of extra are reserved and set at the end.
     const reserved_count = @typeInfo(Air.ExtraIndex).@"enum".fields.len;
@@ -2971,7 +2995,7 @@ fn analyzeFnBodyInner(pt: Zcu.PerThread, func_index: InternPool.Index) Zcu.SemaE
         });
     }
 
-    func.setBranchHint(ip, sema.branch_hint orelse .none);
+    func.setBranchHint(ip, io, sema.branch_hint orelse .none);
 
     if (zcu.comp.config.any_error_tracing and func.analysisUnordered(ip).has_error_trace and fn_ty_info.cc != .auto) {
         // We're using an error trace, but didn't start out with one from the caller.
@@ -3005,7 +3029,7 @@ fn analyzeFnBodyInner(pt: Zcu.PerThread, func_index: InternPool.Index) Zcu.SemaE
             else => |e| return e,
         };
         assert(ies.resolved != .none);
-        func.setResolvedErrorSet(ip, ies.resolved);
+        func.setResolvedErrorSet(ip, io, ies.resolved);
     }
 
     assert(zcu.analysis_in_progress.swapRemove(anal_unit));
@@ -3036,7 +3060,8 @@ fn analyzeFnBodyInner(pt: Zcu.PerThread, func_index: InternPool.Index) Zcu.SemaE
 }
 
 pub fn createNamespace(pt: Zcu.PerThread, initialization: Zcu.Namespace) !Zcu.Namespace.Index {
-    return pt.zcu.intern_pool.createNamespace(pt.zcu.gpa, pt.tid, initialization);
+    const comp = pt.zcu.comp;
+    return pt.zcu.intern_pool.createNamespace(comp.gpa, comp.io, pt.tid, initialization);
 }
 
 pub fn destroyNamespace(pt: Zcu.PerThread, namespace_index: Zcu.Namespace.Index) void {
@@ -3047,11 +3072,15 @@ pub fn getErrorValue(
     pt: Zcu.PerThread,
     name: InternPool.NullTerminatedString,
 ) Allocator.Error!Zcu.ErrorInt {
-    return pt.zcu.intern_pool.getErrorValue(pt.zcu.gpa, pt.tid, name);
+    const comp = pt.zcu.comp;
+    return pt.zcu.intern_pool.getErrorValue(comp.gpa, comp.io, pt.tid, name);
 }
 
 pub fn getErrorValueFromSlice(pt: Zcu.PerThread, name: []const u8) Allocator.Error!Zcu.ErrorInt {
-    return pt.getErrorValue(try pt.zcu.intern_pool.getOrPutString(pt.zcu.gpa, name));
+    const comp = pt.zcu.comp;
+    const gpa = comp.gpa;
+    const io = comp.io;
+    return pt.getErrorValue(try pt.zcu.intern_pool.getOrPutString(gpa, io, name));
 }
 
 /// Removes any entry from `Zcu.failed_files` associated with `file`. Acquires `Compilation.mutex` as needed.
@@ -3078,8 +3107,10 @@ fn lockAndClearFileCompileError(pt: Zcu.PerThread, file_index: Zcu.File.Index, f
         return;
     }
 
-    pt.zcu.comp.mutex.lock();
-    defer pt.zcu.comp.mutex.unlock();
+    const comp = pt.zcu.comp;
+    const io = comp.io;
+    comp.mutex.lockUncancelable(io);
+    defer comp.mutex.unlock(io);
     if (pt.zcu.failed_files.fetchSwapRemove(file_index)) |kv| {
         assert(maybe_has_error); // the runtime safety case above
         if (kv.value) |msg| pt.zcu.gpa.free(msg); // delete previous error message
@@ -3266,7 +3297,9 @@ fn processExportsInner(
 
 pub fn populateTestFunctions(pt: Zcu.PerThread) Allocator.Error!void {
     const zcu = pt.zcu;
-    const gpa = zcu.gpa;
+    const comp = zcu.comp;
+    const gpa = comp.gpa;
+    const io = comp.io;
     const ip = &zcu.intern_pool;
 
     // Our job is to correctly set the value of the `test_functions` declaration if it has been
@@ -3284,7 +3317,7 @@ pub fn populateTestFunctions(pt: Zcu.PerThread) Allocator.Error!void {
     const builtin_namespace = Type.fromInterned(builtin_root_type).getNamespace(zcu).unwrap().?;
     // We know that the namespace has a `test_functions`...
     const nav_index = zcu.namespacePtr(builtin_namespace).pub_decls.getKeyAdapted(
-        try ip.getOrPutString(gpa, pt.tid, "test_functions", .no_embedded_nulls),
+        try ip.getOrPutString(gpa, io, pt.tid, "test_functions", .no_embedded_nulls),
         Zcu.Namespace.NameAdapter{ .zcu = zcu },
     ).?;
     // ...but it might not be populated, so let's check that!
@@ -3392,7 +3425,7 @@ pub fn populateTestFunctions(pt: Zcu.PerThread) Allocator.Error!void {
             } }),
             .len = (try pt.intValue(Type.usize, zcu.test_functions.count())).toIntern(),
         } });
-        ip.mutateVarInit(test_fns_val.toIntern(), new_init);
+        ip.mutateVarInit(io, test_fns_val.toIntern(), new_init);
     }
     // The linker thread is not running, so we actually need to dispatch this task directly.
     @import("../link.zig").linkTestFunctionsNav(pt, nav_index);
@@ -3407,7 +3440,9 @@ pub fn reportRetryableFileError(
     args: anytype,
 ) error{OutOfMemory}!void {
     const zcu = pt.zcu;
-    const gpa = zcu.gpa;
+    const comp = zcu.comp;
+    const io = comp.io;
+    const gpa = comp.gpa;
 
     const file = zcu.fileByIndex(file_index);
 
@@ -3417,8 +3452,8 @@ pub fn reportRetryableFileError(
     errdefer gpa.free(msg);
 
     const old_msg: ?[]u8 = old_msg: {
-        zcu.comp.mutex.lock();
-        defer zcu.comp.mutex.unlock();
+        comp.mutex.lockUncancelable(io);
+        defer comp.mutex.unlock(io);
 
         const gop = try zcu.failed_files.getOrPut(gpa, file_index);
         const old: ?[]u8 = if (gop.found_existing) old: {
@@ -3433,12 +3468,8 @@ pub fn reportRetryableFileError(
 
 /// Shortcut for calling `intern_pool.get`.
 pub fn intern(pt: Zcu.PerThread, key: InternPool.Key) Allocator.Error!InternPool.Index {
-    return pt.zcu.intern_pool.get(pt.zcu.gpa, pt.tid, key);
-}
-
-/// Shortcut for calling `intern_pool.getUnion`.
-pub fn internUnion(pt: Zcu.PerThread, un: InternPool.Key.Union) Allocator.Error!InternPool.Index {
-    return pt.zcu.intern_pool.getUnion(pt.zcu.gpa, pt.tid, un);
+    const comp = pt.zcu.comp;
+    return pt.zcu.intern_pool.get(comp.gpa, comp.io, pt.tid, key);
 }
 
 /// Essentially a shortcut for calling `intern_pool.getCoerced`.
@@ -3446,6 +3477,9 @@ pub fn internUnion(pt: Zcu.PerThread, un: InternPool.Key.Union) Allocator.Error!
 /// this because it requires potentially pushing to the job queue.
 pub fn getCoerced(pt: Zcu.PerThread, val: Value, new_ty: Type) Allocator.Error!Value {
     const ip = &pt.zcu.intern_pool;
+    const comp = pt.zcu.comp;
+    const gpa = comp.gpa;
+    const io = comp.io;
     switch (ip.indexToKey(val.toIntern())) {
         .@"extern" => |e| {
             const coerced = try pt.getExtern(.{
@@ -3468,7 +3502,7 @@ pub fn getCoerced(pt: Zcu.PerThread, val: Value, new_ty: Type) Allocator.Error!V
         },
         else => {},
     }
-    return Value.fromInterned(try ip.getCoerced(pt.zcu.gpa, pt.tid, val.toIntern(), new_ty.toIntern()));
+    return Value.fromInterned(try ip.getCoerced(gpa, io, pt.tid, val.toIntern(), new_ty.toIntern()));
 }
 
 pub fn intType(pt: Zcu.PerThread, signedness: std.builtin.Signedness, bits: u16) Allocator.Error!Type {
@@ -3566,7 +3600,8 @@ pub fn adjustPtrTypeChild(pt: Zcu.PerThread, ptr_ty: Type, new_child: Type) Allo
 }
 
 pub fn funcType(pt: Zcu.PerThread, key: InternPool.GetFuncTypeKey) Allocator.Error!Type {
-    return Type.fromInterned(try pt.zcu.intern_pool.getFuncType(pt.zcu.gpa, pt.tid, key));
+    const comp = pt.zcu.comp;
+    return .fromInterned(try pt.zcu.intern_pool.getFuncType(comp.gpa, comp.io, pt.tid, key));
 }
 
 /// Use this for `anyframe->T` only.
@@ -3584,7 +3619,8 @@ pub fn errorUnionType(pt: Zcu.PerThread, error_set_ty: Type, payload_ty: Type) A
 
 pub fn singleErrorSetType(pt: Zcu.PerThread, name: InternPool.NullTerminatedString) Allocator.Error!Type {
     const names: *const [1]InternPool.NullTerminatedString = &name;
-    return Type.fromInterned(try pt.zcu.intern_pool.getErrorSetType(pt.zcu.gpa, pt.tid, names));
+    const comp = pt.zcu.comp;
+    return Type.fromInterned(try pt.zcu.intern_pool.getErrorSetType(comp.gpa, comp.io, pt.tid, names));
 }
 
 /// Sorts `names` in place.
@@ -3598,7 +3634,8 @@ pub fn errorSetFromUnsortedNames(
         {},
         InternPool.NullTerminatedString.indexLessThan,
     );
-    const new_ty = try pt.zcu.intern_pool.getErrorSetType(pt.zcu.gpa, pt.tid, names);
+    const comp = pt.zcu.comp;
+    const new_ty = try pt.zcu.intern_pool.getErrorSetType(comp.gpa, comp.io, pt.tid, names);
     return Type.fromInterned(new_ty);
 }
 
@@ -3709,9 +3746,17 @@ pub fn intValue_i64(pt: Zcu.PerThread, ty: Type, x: i64) Allocator.Error!Value {
     } }));
 }
 
+/// Shortcut for calling `intern_pool.getUnion`.
+/// TODO: remove either this or `unionValue`.
+pub fn internUnion(pt: Zcu.PerThread, un: InternPool.Key.Union) Allocator.Error!InternPool.Index {
+    const comp = pt.zcu.comp;
+    return pt.zcu.intern_pool.getUnion(comp.gpa, comp.io, pt.tid, un);
+}
+
+/// TODO: remove either this or `internUnion`.
 pub fn unionValue(pt: Zcu.PerThread, union_ty: Type, tag: Value, val: Value) Allocator.Error!Value {
-    const zcu = pt.zcu;
-    return Value.fromInterned(try zcu.intern_pool.getUnion(zcu.gpa, pt.tid, .{
+    const comp = pt.zcu.comp;
+    return Value.fromInterned(try pt.zcu.intern_pool.getUnion(comp.gpa, comp.io, pt.tid, .{
         .ty = union_ty.toIntern(),
         .tag = tag.toIntern(),
         .val = val.toIntern(),
@@ -3771,12 +3816,12 @@ pub fn nullValue(pt: Zcu.PerThread, opt_ty: Type) Allocator.Error!Value {
 /// `ty` is an integer or a vector of integers.
 pub fn overflowArithmeticTupleType(pt: Zcu.PerThread, ty: Type) !Type {
     const zcu = pt.zcu;
-    const ip = &zcu.intern_pool;
+    const comp = zcu.comp;
     const ov_ty: Type = if (ty.zigTypeTag(zcu) == .vector) try pt.vectorType(.{
         .len = ty.vectorLen(zcu),
         .child = .u1_type,
     }) else .u1;
-    const tuple_ty = try ip.getTupleType(zcu.gpa, pt.tid, .{
+    const tuple_ty = try zcu.intern_pool.getTupleType(comp.gpa, comp.io, pt.tid, .{
         .types = &.{ ty.toIntern(), ov_ty.toIntern() },
         .values = &.{ .none, .none },
     });
@@ -3872,12 +3917,14 @@ pub fn navPtrType(pt: Zcu.PerThread, nav_id: InternPool.Nav.Index) Allocator.Err
 /// If necessary, the new `Nav` is queued for codegen.
 /// `key.owner_nav` is ignored and may be `undefined`.
 pub fn getExtern(pt: Zcu.PerThread, key: InternPool.Key.Extern) Allocator.Error!InternPool.Index {
-    const result = try pt.zcu.intern_pool.getExtern(pt.zcu.gpa, pt.tid, key);
+    const zcu = pt.zcu;
+    const comp = zcu.comp;
+    const result = try zcu.intern_pool.getExtern(comp.gpa, comp.io, pt.tid, key);
     if (result.new_nav.unwrap()) |nav| {
         // This job depends on any resolve_type_fully jobs queued up before it.
-        pt.zcu.comp.link_prog_node.increaseEstimatedTotalItems(1);
-        try pt.zcu.comp.queueJob(.{ .link_nav = nav });
-        if (pt.zcu.comp.debugIncremental()) try pt.zcu.incremental_debug_state.newNav(pt.zcu, nav);
+        comp.link_prog_node.increaseEstimatedTotalItems(1);
+        try comp.queueJob(.{ .link_nav = nav });
+        if (comp.debugIncremental()) try zcu.incremental_debug_state.newNav(zcu, nav);
     }
     return result.index;
 }
@@ -3966,7 +4013,9 @@ fn recreateStructType(
     key: InternPool.Key.NamespaceType.Declared,
 ) Allocator.Error!InternPool.Index {
     const zcu = pt.zcu;
-    const gpa = zcu.gpa;
+    const comp = zcu.comp;
+    const gpa = comp.gpa;
+    const io = comp.io;
     const ip = &zcu.intern_pool;
 
     const inst_info = key.zir_index.resolveFull(ip).?;
@@ -3995,7 +4044,7 @@ fn recreateStructType(
 
     const struct_obj = ip.loadStructType(old_ty);
 
-    const wip_ty = switch (try ip.getStructType(gpa, pt.tid, .{
+    const wip_ty = switch (try ip.getStructType(gpa, io, pt.tid, .{
         .layout = small.layout,
         .fields_len = fields_len,
         .known_non_opv = small.known_non_opv,
@@ -4042,7 +4091,9 @@ fn recreateUnionType(
     key: InternPool.Key.NamespaceType.Declared,
 ) Allocator.Error!InternPool.Index {
     const zcu = pt.zcu;
-    const gpa = zcu.gpa;
+    const comp = zcu.comp;
+    const gpa = comp.gpa;
+    const io = comp.io;
     const ip = &zcu.intern_pool;
 
     const inst_info = key.zir_index.resolveFull(ip).?;
@@ -4075,7 +4126,7 @@ fn recreateUnionType(
 
     const namespace_index = union_obj.namespace;
 
-    const wip_ty = switch (try ip.getUnionType(gpa, pt.tid, .{
+    const wip_ty = switch (try ip.getUnionType(gpa, io, pt.tid, .{
         .flags = .{
             .layout = small.layout,
             .status = .none,
@@ -4133,7 +4184,9 @@ fn recreateEnumType(
     key: InternPool.Key.NamespaceType.Declared,
 ) (Allocator.Error || Io.Cancelable)!InternPool.Index {
     const zcu = pt.zcu;
-    const gpa = zcu.gpa;
+    const comp = zcu.comp;
+    const gpa = comp.gpa;
+    const io = comp.io;
     const ip = &zcu.intern_pool;
 
     const inst_info = key.zir_index.resolveFull(ip).?;
@@ -4197,7 +4250,7 @@ fn recreateEnumType(
 
     const namespace_index = enum_obj.namespace;
 
-    const wip_ty = switch (try ip.getEnumType(gpa, pt.tid, .{
+    const wip_ty = switch (try ip.getEnumType(gpa, io, pt.tid, .{
         .has_values = any_values,
         .tag_mode = if (small.nonexhaustive)
             .nonexhaustive
@@ -4404,7 +4457,7 @@ pub fn refValue(pt: Zcu.PerThread, val: InternPool.Index) Zcu.SemaError!InternPo
 
 pub fn addDependency(pt: Zcu.PerThread, unit: AnalUnit, dependee: InternPool.Dependee) Allocator.Error!void {
     const zcu = pt.zcu;
-    const gpa = zcu.gpa;
+    const gpa = zcu.comp.gpa;
     try zcu.intern_pool.addDependency(gpa, unit, dependee);
     if (zcu.comp.debugIncremental()) {
         const info = try zcu.incremental_debug_state.getUnitInfo(gpa, unit);
@@ -4412,50 +4465,38 @@ pub fn addDependency(pt: Zcu.PerThread, unit: AnalUnit, dependee: InternPool.Dep
     }
 }
 
-/// Performs code generation, which comes after `Sema` but before `link` in the pipeline.
-/// This part of the pipeline is self-contained/"pure", so can be run in parallel with most
-/// other code. This function is currently run either on the main thread, or on a separate
-/// codegen thread, depending on whether the backend supports `Zcu.Feature.separate_thread`.
-pub fn runCodegen(pt: Zcu.PerThread, func_index: InternPool.Index, air: *Air, out: *@import("../link.zig").ZcuTask.LinkFunc.SharedMir) void {
+pub const RunCodegenError = Io.Cancelable || error{AlreadyReported};
+
+/// Performs code generation, which comes after `Sema` but before `link` in the pipeline. This part
+/// of the pipeline is self-contained and can usually be run concurrently with other components.
+///
+/// This function is called asynchronously by `Zcu.CodegenTaskPool.start` and awaited by the linker.
+/// However, if the codegen backend does not support `Zcu.Feature.separate_thread`, then
+/// `Compilation.processOneJob` will immediately await the result of the linker task, meaning the
+/// pipeline becomes effectively single-threaded.
+pub fn runCodegen(pt: Zcu.PerThread, func_index: InternPool.Index, air: *Air) RunCodegenError!codegen.AnyMir {
     const zcu = pt.zcu;
+    const comp = zcu.comp;
+    const io = comp.io;
 
     crash_report.CodegenFunc.start(zcu, func_index);
     defer crash_report.CodegenFunc.stop(func_index);
 
-    var timer = zcu.comp.startTimer();
+    var timer = comp.startTimer();
 
-    const success: bool = if (runCodegenInner(pt, func_index, air)) |mir| success: {
-        out.value = mir;
-        break :success true;
-    } else |err| success: {
-        switch (err) {
-            error.OutOfMemory => zcu.comp.setAllocFailure(),
-            error.CodegenFail => zcu.assertCodegenFailed(zcu.funcInfo(func_index).owner_nav),
-            error.NoLinkFile => assert(zcu.comp.bin_file == null),
-            error.BackendDoesNotProduceMir => switch (target_util.zigBackend(
-                &zcu.root_mod.resolved_target.result,
-                zcu.comp.config.use_llvm,
-            )) {
-                else => unreachable, // assertion failure
-                .stage2_spirv,
-                .stage2_llvm,
-                => {},
-            },
-        }
-        break :success false;
-    };
+    const codegen_result = runCodegenInner(pt, func_index, air);
 
     if (timer.finish()) |ns_codegen| report_time: {
         const ip = &zcu.intern_pool;
         const nav = ip.indexToKey(func_index).func.owner_nav;
         const zir_decl = ip.getNav(nav).srcInst(ip);
-        zcu.comp.mutex.lock();
-        defer zcu.comp.mutex.unlock();
+        comp.mutex.lockUncancelable(io);
+        defer comp.mutex.unlock(io);
         const tr = &zcu.comp.time_report.?;
         tr.stats.cpu_ns_codegen += ns_codegen;
-        const gop = tr.decl_codegen_ns.getOrPut(zcu.gpa, zir_decl) catch |err| switch (err) {
+        const gop = tr.decl_codegen_ns.getOrPut(comp.gpa, zir_decl) catch |err| switch (err) {
             error.OutOfMemory => {
-                zcu.comp.setAllocFailure();
+                comp.setAllocFailure();
                 break :report_time;
             },
         };
@@ -4463,14 +4504,29 @@ pub fn runCodegen(pt: Zcu.PerThread, func_index: InternPool.Index, air: *Air, ou
         gop.value_ptr.* += ns_codegen;
     }
 
-    // release `out.value` with this store; synchronizes with acquire loads in `link`
-    out.status.store(if (success) .ready else .failed, .release);
-    zcu.comp.link_task_queue.mirReady(zcu.comp, func_index, out);
     if (zcu.pending_codegen_jobs.rmw(.Sub, 1, .monotonic) == 1) {
         // Decremented to 0, so all done.
         zcu.codegen_prog_node.end();
         zcu.codegen_prog_node = .none;
     }
+
+    return codegen_result catch |err| {
+        switch (err) {
+            error.OutOfMemory => comp.setAllocFailure(),
+            error.CodegenFail => zcu.assertCodegenFailed(zcu.funcInfo(func_index).owner_nav),
+            error.NoLinkFile => assert(comp.bin_file == null),
+            error.BackendDoesNotProduceMir => switch (target_util.zigBackend(
+                &zcu.root_mod.resolved_target.result,
+                comp.config.use_llvm,
+            )) {
+                else => unreachable, // assertion failure
+                .stage2_spirv,
+                .stage2_llvm,
+                => {},
+            },
+        }
+        return error.AlreadyReported;
+    };
 }
 fn runCodegenInner(pt: Zcu.PerThread, func_index: InternPool.Index, air: *Air) error{
     OutOfMemory,
@@ -4527,7 +4583,7 @@ fn runCodegenInner(pt: Zcu.PerThread, func_index: InternPool.Index, air: *Air) e
     // "emit" step because LLVM does not support incremental linking. Our linker (LLD or self-hosted)
     // will just see the ZCU object file which LLVM ultimately emits.
     if (zcu.llvm_object) |llvm_object| {
-        assert(pt.tid == .main); // LLVM has a lot of shared state
+        assert(zcu.pending_codegen_jobs.load(.monotonic) == 2); // only one codegen at a time (but the value is 2 because 1 is the base)
         try llvm_object.updateFunc(pt, func_index, air, &liveness);
         return error.BackendDoesNotProduceMir;
     }
@@ -4536,7 +4592,7 @@ fn runCodegenInner(pt: Zcu.PerThread, func_index: InternPool.Index, air: *Air) e
 
     // Just like LLVM, the SPIR-V backend can't multi-threaded due to SPIR-V design limitations.
     if (lf.cast(.spirv)) |spirv_file| {
-        assert(pt.tid == .main); // SPIR-V has a lot of shared state
+        assert(zcu.pending_codegen_jobs.load(.monotonic) == 2); // only one codegen at a time (but the value is 2 because 1 is the base)
         spirv_file.updateFunc(pt, func_index, air, &liveness) catch |err| {
             switch (err) {
                 error.OutOfMemory => comp.link_diags.setAllocFailure(),

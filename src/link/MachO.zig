@@ -29,9 +29,9 @@ resolver: SymbolResolver = .{},
 /// This table will be populated after `scanRelocs` has run.
 /// Key is symbol index.
 undefs: std.AutoArrayHashMapUnmanaged(SymbolResolver.Index, UndefRefs) = .empty,
-undefs_mutex: std.Thread.Mutex = .{},
+undefs_mutex: std.Io.Mutex = .init,
 dupes: std.AutoArrayHashMapUnmanaged(SymbolResolver.Index, std.ArrayList(File.Index)) = .empty,
-dupes_mutex: std.Thread.Mutex = .{},
+dupes_mutex: std.Io.Mutex = .init,
 
 dyld_info_cmd: macho.dyld_info_command = .{},
 symtab_cmd: macho.symtab_command = .{},
