@@ -7191,25 +7191,35 @@ fn processExecutablePath(userdata: ?*anyopaque, out_buffer: []u8) std.process.Ex
                 return error.FileNotFound;
 
             const argv0 = std.mem.span(std.os.argv[0]);
-            if (std.mem.findScalar(u8, argv0, std.fs.path.sep_posix) != null) {
+            if (std.mem.findScalar(u8, argv0, '/') != null) {
                 // argv[0] is a path (relative or absolute): use realpath(3) directly
                 const current_thread = Thread.getCurrent(t);
                 var resolved_buf: [std.c.PATH_MAX]u8 = undefined;
-                {
-                    try current_thread.beginSyscall();
-                    defer current_thread.endSyscall();
-                    _ = std.c.realpath(std.os.argv[0], &resolved_buf) orelse switch (@as(std.c.E, @enumFromInt(std.c._errno().*))) {
-                        .SUCCESS => unreachable,
-                        .ACCES => return error.AccessDenied,
-                        .INVAL => unreachable, // the pathname argument is a null pointer
-                        .IO => return error.InputOutput,
-                        .LOOP => return error.SymLinkLoop,
-                        .NAMETOOLONG => return error.NameTooLong,
-                        .NOENT => return error.FileNotFound,
-                        .NOTDIR => return error.NotDir,
-                        .NOMEM => unreachable, // sufficient storage space is unavailable for allocation
-                        else => |err| return posix.unexpectedErrno(err),
-                    };
+                try current_thread.beginSyscall();
+                while (true) {
+                    if (std.c.realpath(std.os.argv[0], &resolved_buf)) |p| {
+                        assert(p == &resolved_buf);
+                        break current_thread.endSyscall();
+                    } else switch (@as(std.c.E, @enumFromInt(std.c._errno().*))) {
+                        .INTR => {
+                            try current_thread.checkCancel();
+                            continue;
+                        },
+                        else => |e| {
+                            current_thread.endSyscall();
+                            switch (e) {
+                                .ACCES => return error.AccessDenied,
+                                .INVAL => |err| return errnoBug(err), // the pathname argument is a null pointer
+                                .IO => return error.InputOutput,
+                                .LOOP => return error.SymLinkLoop,
+                                .NAMETOOLONG => return error.NameTooLong,
+                                .NOENT => return error.FileNotFound,
+                                .NOTDIR => return error.NotDir,
+                                .NOMEM => |err| return errnoBug(err), // sufficient storage space is unavailable for allocation
+                                else => |err| return posix.unexpectedErrno(err),
+                            }
+                        },
+                    }
                 }
                 const resolved = std.mem.sliceTo(&resolved_buf, 0);
                 if (resolved.len > out_buffer.len)
@@ -7220,23 +7230,46 @@ fn processExecutablePath(userdata: ?*anyopaque, out_buffer: []u8) std.process.Ex
                 // argv[0] is not empty (and not a path): search PATH
                 const current_thread = Thread.getCurrent(t);
                 const PATH = posix.getenvZ("PATH") orelse return error.FileNotFound;
-                var it = std.mem.tokenizeScalar(u8, PATH, std.fs.path.delimiter);
-                while (it.next()) |dir| {
-                    var prospect_buf: [std.c.PATH_MAX]u8 = undefined;
-                    _ = std.fmt.bufPrintSentinel(
-                        &prospect_buf,
-                        "{s}" ++ std.fs.path.sep_str_posix ++ "{s}",
-                        .{ dir, std.os.argv[0] },
-                        0,
-                    ) catch continue;
+                var it = std.mem.tokenizeScalar(u8, PATH, ':');
+                it: while (it.next()) |dir| {
+                    var resolved_path_buf: [std.c.PATH_MAX]u8 = undefined;
+                    const resolved_path = std.fmt.bufPrintSentinel(&resolved_path_buf, "{s}/{s}", .{
+                        dir, std.os.argv[0],
+                    }, 0) catch continue;
 
                     var resolved_buf: [std.c.PATH_MAX]u8 = undefined;
                     try current_thread.beginSyscall();
-                    _ = std.c.realpath(@ptrCast(&prospect_buf), &resolved_buf) orelse {
-                        current_thread.endSyscall();
-                        continue;
-                    };
-                    current_thread.endSyscall();
+                    while (true) {
+                        if (std.c.realpath(resolved_path, &resolved_buf)) |p| {
+                            assert(p == &resolved_buf);
+                            break current_thread.endSyscall();
+                        } else switch (@as(std.c.E, @enumFromInt(std.c._errno().*))) {
+                            .INTR => {
+                                try current_thread.checkCancel();
+                                continue;
+                            },
+                            .NAMETOOLONG => {
+                                current_thread.endSyscall();
+                                return error.NameTooLong;
+                            },
+                            .NOMEM => {
+                                current_thread.endSyscall();
+                                return error.SystemResources;
+                            },
+                            .IO => {
+                                current_thread.endSyscall();
+                                return error.InputOutput;
+                            },
+                            .ACCES, .LOOP, .NOENT, .NOTDIR => {
+                                current_thread.endSyscall();
+                                continue :it;
+                            },
+                            else => |err| {
+                                current_thread.endSyscall();
+                                return posix.unexpectedErrno(err);
+                            },
+                        }
+                    }
                     const resolved = std.mem.sliceTo(&resolved_buf, 0);
                     if (resolved.len > out_buffer.len)
                         return error.NameTooLong;
