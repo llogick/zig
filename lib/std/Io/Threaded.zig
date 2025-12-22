@@ -77,17 +77,31 @@ pub const Environ = struct {
     /// memoized based on `block`.
     initialized: bool = false,
     /// Protected by `mutex`. Memoized based on `block`. Tracks whether the
-    /// environment variables are present and non-empty.
-    exist: struct {
-        NO_COLOR: bool = false,
-        CLICOLOR_FORCE: bool = false,
-    } = .{},
+    /// environment variables are present, ignoring their value.
+    exist: Exist = .{},
     /// Protected by `mutex`. Memoized based on `block`.
-    string: struct {
-        PATH: ?[:0]const u8 = null,
-    } = .{},
+    string: String = .{},
+    /// Protected by `mutex`. Tracks the problem, if any, that occurred when
+    /// trying to scan environment variables.
+    ///
+    /// Errors are only possible on WASI.
+    err: ?Error = null,
+
+    pub const Error = Allocator.Error || Io.UnexpectedError;
 
     pub const Block = []const [*:0]const u8;
+
+    pub const Exist = struct {
+        NO_COLOR: bool = false,
+        CLICOLOR_FORCE: bool = false,
+    };
+
+    pub const String = switch (native_os) {
+        .openbsd, .haiku => struct {
+            PATH: ?[:0]const u8 = null,
+        },
+        else => struct {},
+    };
 };
 
 pub const RobustCancel = if (std.Thread.use_pthreads or native_os == .linux) enum {
@@ -11917,13 +11931,111 @@ fn scanEnviron(t: *Threaded) void {
     if (t.environ.initialized) return;
     t.environ.initialized = true;
 
-    if (native_os == .wasi) {
-        @panic("TODO");
-    }
+    if (is_windows) {
+        const ptr = windows.peb().ProcessParameters.Environment;
 
-    for (t.environ.block) |kv| {
-        _ = kv;
-        @panic("TODO");
+        var i: usize = 0;
+        while (ptr[i] != 0) {
+            const key_start = i;
+
+            // There are some special environment variables that start with =,
+            // so we need a special case to not treat = as a key/value separator
+            // if it's the first character.
+            // https://devblogs.microsoft.com/oldnewthing/20100506-00/?p=14133
+            if (ptr[key_start] == '=') i += 1;
+
+            while (ptr[i] != 0 and ptr[i] != '=') : (i += 1) {}
+            const key_w = ptr[key_start..i];
+            if (std.mem.eql(u16, key_w, &.{ 'N', 'O', '_', 'C', 'O', 'L', 'O', 'R' })) {
+                t.environ.exist.NO_COLOR = true;
+            } else if (std.mem.eql(u16, key_w, &.{ 'C', 'L', 'I', 'C', 'O', 'L', 'O', 'R', '_', 'F', 'O', 'R', 'C', 'E' })) {
+                t.environ.exist.CLICOLOR_FORCE = true;
+            }
+            comptime assert(@sizeOf(Environ.String) == 0);
+
+            while (ptr[i] != 0) : (i += 1) {} // skip over '=' and value
+            i += 1; // skip over null byte
+        }
+    } else if (native_os == .wasi and !builtin.link_libc) {
+        var environ_count: usize = undefined;
+        var environ_buf_size: usize = undefined;
+
+        switch (std.os.wasi.environ_sizes_get(&environ_count, &environ_buf_size)) {
+            .SUCCESS => {},
+            else => |err| {
+                t.environ.err = posix.unexpectedErrno(err);
+                return;
+            },
+        }
+        if (environ_count == 0) return;
+
+        const environ = t.allocator.alloc([*:0]u8, environ_count) catch |err| {
+            t.environ.err = err;
+            return;
+        };
+        defer t.allocator.free(environ);
+        const environ_buf = t.allocator.alloc(u8, environ_buf_size) catch |err| {
+            t.environ.err = err;
+            return;
+        };
+        defer t.allocator.free(environ_buf);
+
+        switch (std.os.wasi.environ_get(environ.ptr, environ_buf.ptr)) {
+            .SUCCESS => {},
+            else => |err| {
+                t.environ.err = posix.unexpectedErrno(err);
+                return;
+            },
+        }
+
+        for (environ) |env| {
+            const pair = std.mem.sliceTo(env, 0);
+            var parts = std.mem.splitScalar(u8, pair, '=');
+            const key = parts.first();
+            if (std.mem.eql(u8, key, "NO_COLOR")) {
+                t.environ.exist.NO_COLOR = true;
+            } else if (std.mem.eql(u8, key, "CLICOLOR_FORCE")) {
+                t.environ.exist.CLICOLOR_FORCE = true;
+            }
+            comptime assert(@sizeOf(Environ.String) == 0);
+        }
+    } else if (builtin.link_libc) {
+        var ptr = std.c.environ;
+        while (ptr[0]) |line| : (ptr += 1) {
+            var line_i: usize = 0;
+            while (line[line_i] != 0 and line[line_i] != '=') : (line_i += 1) {}
+            const key = line[0..line_i];
+
+            var end_i: usize = line_i;
+            while (line[end_i] != 0) : (end_i += 1) {}
+            const value = line[line_i + 1 .. end_i];
+
+            if (std.mem.eql(u8, key, "NO_COLOR")) {
+                t.environ.exist.NO_COLOR = true;
+            } else if (std.mem.eql(u8, key, "CLICOLOR_FORCE")) {
+                t.environ.exist.CLICOLOR_FORCE = true;
+            } else if (@hasField(Environ.String, "PATH") and std.mem.eql(u8, key, "PATH")) {
+                t.environ.string.PATH = value;
+            }
+        }
+    } else {
+        for (t.environ.block) |line| {
+            var line_i: usize = 0;
+            while (line[line_i] != 0 and line[line_i] != '=') : (line_i += 1) {}
+            const key = line[0..line_i];
+
+            var end_i: usize = line_i;
+            while (line[end_i] != 0) : (end_i += 1) {}
+            const value = line[line_i + 1 .. end_i];
+
+            if (std.mem.eql(u8, key, "NO_COLOR")) {
+                t.environ.exist.NO_COLOR = true;
+            } else if (std.mem.eql(u8, key, "CLICOLOR_FORCE")) {
+                t.environ.exist.CLICOLOR_FORCE = true;
+            } else if (@hasField(Environ.String, "PATH") and std.mem.eql(u8, key, "PATH")) {
+                t.environ.string.PATH = value;
+            }
+        }
     }
 }
 
