@@ -281,8 +281,10 @@ pub const sys_can_stack_trace = switch (builtin.cpu.arch) {
 /// application's chosen `Io` implementation.
 pub fn lockStderr(buffer: []u8) Io.LockedStderr {
     const io = std.options.debug_io;
+    const prev = io.swapCancelProtection(.blocked);
+    defer _ = io.swapCancelProtection(prev);
     return io.lockStderr(buffer, null) catch |err| switch (err) {
-        error.Canceled => io.recancel(),
+        error.Canceled => unreachable, // Cancel protection enabled above.
     };
 }
 
