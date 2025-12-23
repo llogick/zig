@@ -1713,7 +1713,8 @@ pub fn initSearchPath(comp: *Compilation, includes: []const Include, verbose: bo
     }
 }
 fn addToSearchPath(comp: *Compilation, include: Include, verbose: bool) !void {
-    comp.cwd.access(include.path, .{}) catch {
+    const io = comp.io;
+    comp.cwd.access(io, include.path, .{}) catch {
         if (verbose) {
             std.debug.print("ignoring nonexistent directory \"{s}\"\n", .{include.path});
             return;

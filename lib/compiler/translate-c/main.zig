@@ -34,11 +34,14 @@ pub fn main() u8 {
         zig_integration = true;
     }
 
+    const NO_COLOR = std.zig.EnvVar.NO_COLOR.isSet();
+    const CLICOLOR_FORCE = std.zig.EnvVar.CLICOLOR_FORCE.isSet();
+
     var stderr_buf: [1024]u8 = undefined;
     var stderr = Io.File.stderr().writer(io, &stderr_buf);
     var diagnostics: aro.Diagnostics = switch (zig_integration) {
         false => .{ .output = .{ .to_writer = .{
-            .color = .detect(stderr.file),
+            .mode = Io.Terminal.Mode.detect(io, stderr.file, NO_COLOR, CLICOLOR_FORCE) catch unreachable,
             .writer = &stderr.interface,
         } } },
         true => .{ .output = .{ .to_list = .{
@@ -69,7 +72,7 @@ pub fn main() u8 {
             return 1;
         },
         error.FatalError => if (zig_integration) {
-            serveErrorBundle(arena, &diagnostics) catch |bundle_err| {
+            serveErrorBundle(arena, io, &diagnostics) catch |bundle_err| {
                 std.debug.print("unable to serve error bundle: {}\n", .{bundle_err});
                 if (fast_exit) process.exit(1);
                 return 1;
@@ -93,14 +96,14 @@ pub fn main() u8 {
     return @intFromBool(comp.diagnostics.errors != 0);
 }
 
-fn serveErrorBundle(arena: std.mem.Allocator, diagnostics: *const aro.Diagnostics) !void {
+fn serveErrorBundle(arena: std.mem.Allocator, io: Io, diagnostics: *const aro.Diagnostics) !void {
     const error_bundle = try compiler_util.aroDiagnosticsToErrorBundle(
         diagnostics,
         arena,
         "translation failure",
     );
     var stdout_buffer: [1024]u8 = undefined;
-    var stdout_writer = Io.File.stdout().writer(&stdout_buffer);
+    var stdout_writer = Io.File.stdout().writer(io, &stdout_buffer);
     var server: std.zig.Server = .{
         .out = &stdout_writer.interface,
         .in = undefined,
@@ -130,13 +133,13 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8, zig_integration
             args[i] = arg;
             if (mem.eql(u8, arg, "--help")) {
                 var stdout_buf: [512]u8 = undefined;
-                var stdout = Io.File.stdout().writer(&stdout_buf);
+                var stdout = Io.File.stdout().writer(io, &stdout_buf);
                 try stdout.interface.print(usage, .{args[0]});
                 try stdout.interface.flush();
                 return;
             } else if (mem.eql(u8, arg, "--version")) {
                 var stdout_buf: [512]u8 = undefined;
-                var stdout = Io.File.stdout().writer(&stdout_buf);
+                var stdout = Io.File.stdout().writer(io, &stdout_buf);
                 // TODO add version
                 try stdout.interface.writeAll("0.0.0-dev\n");
                 try stdout.interface.flush();
