@@ -121,7 +121,7 @@ pub fn enqueueZcu(
     link.doZcuTask(comp, tid, task);
 }
 
-pub fn finishPrelinkQueue(q: *Queue, comp: *Compilation) void {
+pub fn finishPrelinkQueue(q: *Queue, comp: *Compilation) Io.Cancelable!void {
     if (q.future != null) {
         q.prelink_queue.close(comp.io);
         return;
@@ -136,6 +136,7 @@ pub fn finishPrelinkQueue(q: *Queue, comp: *Compilation) void {
         } else |err| switch (err) {
             error.OutOfMemory => comp.link_diags.setAllocFailure(),
             error.LinkFailure => {},
+            error.Canceled => |e| return e,
         }
     }
 }

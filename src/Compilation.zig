@@ -5056,7 +5056,9 @@ fn dispatchPrelinkWork(comp: *Compilation, main_progress_node: std.Progress.Node
     }
 
     prelink_group.wait(io);
-    comp.link_queue.finishPrelinkQueue(comp);
+    comp.link_queue.finishPrelinkQueue(comp) catch |err| switch (err) {
+        error.Canceled => return,
+    };
 }
 
 const JobError = Allocator.Error || Io.Cancelable;

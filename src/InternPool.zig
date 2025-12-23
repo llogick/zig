@@ -11,7 +11,6 @@ const assert = std.debug.assert;
 const BigIntConst = std.math.big.int.Const;
 const BigIntMutable = std.math.big.int.Mutable;
 const Cache = std.Build.Cache;
-const Io = std.Io;
 const Limb = std.math.big.Limb;
 const Hash = std.hash.Wyhash;
 const Zir = std.zig.Zir;
