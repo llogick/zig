@@ -4153,6 +4153,8 @@ fn serve(
     var child_pid: ?std.process.Child.Id = null;
 
     const main_progress_node = std.Progress.start(io, .{});
+    defer main_progress_node.end();
+
     const file_system_inputs = comp.file_system_inputs.?;
 
     const IncrementalDebugServer = if (build_options.enable_debug_extensions and !builtin.single_threaded)
@@ -5515,6 +5517,7 @@ fn jitCmd(
     const root_prog_node = if (options.progress_node) |node| node else std.Progress.start(io, .{
         .disable_printing = (color == .off),
     });
+    defer root_prog_node.end();
 
     const target_query: std.Target.Query = .{};
     const resolved_target: Package.Module.ResolvedTarget = .{
