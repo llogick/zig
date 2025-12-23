@@ -96,7 +96,7 @@ pub fn compile(allocator: Allocator, io: Io, source: []const u8, writer: *std.Io
     var search_dirs: std.ArrayList(SearchDir) = .empty;
     defer {
         for (search_dirs.items) |*search_dir| {
-            search_dir.deinit(allocator);
+            search_dir.deinit(allocator, io);
         }
         search_dirs.deinit(allocator);
     }
@@ -406,7 +406,7 @@ pub const Compiler = struct {
         // `/test.bin` relative to include paths and instead only treats it as
         // an absolute path.
         if (std.fs.path.isAbsolute(path)) {
-            const file = try utils.openFileNotDir(Io.Dir.cwd(), path, .{});
+            const file = try utils.openFileNotDir(Io.Dir.cwd(), io, path, .{});
             errdefer file.close(io);
 
             if (self.dependencies) |dependencies| {
@@ -418,7 +418,7 @@ pub const Compiler = struct {
 
         var first_error: ?(std.Io.File.OpenError || std.Io.File.StatError) = null;
         for (self.search_dirs) |search_dir| {
-            if (utils.openFileNotDir(search_dir.dir, path, .{})) |file| {
+            if (utils.openFileNotDir(search_dir.dir, io, path, .{})) |file| {
                 errdefer file.close(io);
 
                 if (self.dependencies) |dependencies| {

@@ -134,8 +134,9 @@ strip: bool = false,
 unwindlib: ?[]const u8 = null,
 
 pub fn deinit(d: *Driver) void {
+    const io = d.comp.io;
     for (d.link_objects.items[d.link_objects.items.len - d.temp_file_count ..]) |obj| {
-        std.fs.deleteFileAbsolute(obj) catch {};
+        Io.Dir.deleteFileAbsolute(io, obj) catch {};
         d.comp.gpa.free(obj);
     }
     d.inputs.deinit(d.comp.gpa);

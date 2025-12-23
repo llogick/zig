@@ -64,18 +64,18 @@ pub fn main() !void {
     var options = options: {
         var cli_diagnostics = cli.Diagnostics.init(gpa);
         defer cli_diagnostics.deinit();
-        var options = cli.parse(gpa, cli_args, &cli_diagnostics) catch |err| switch (err) {
+        var options = cli.parse(gpa, io, cli_args, &cli_diagnostics) catch |err| switch (err) {
             error.ParseError => {
-                try error_handler.emitCliDiagnostics(gpa, cli_args, &cli_diagnostics);
+                try error_handler.emitCliDiagnostics(gpa, io, cli_args, &cli_diagnostics);
                 std.process.exit(1);
             },
             else => |e| return e,
         };
-        try options.maybeAppendRC(Io.Dir.cwd());
+        try options.maybeAppendRC(io, Io.Dir.cwd());
 
         if (!zig_integration) {
             // print any warnings/notes
-            cli_diagnostics.renderToStderr(io, cli_args);
+            try cli_diagnostics.renderToStderr(io, cli_args);
             // If there was something printed, then add an extra newline separator
             // so that there is a clear separation between the cli diagnostics and whatever
             // gets printed after
@@ -193,7 +193,7 @@ pub fn main() !void {
                     };
                 },
                 .filename => |input_filename| {
-                    break :full_input Io.Dir.cwd().readFileAlloc(input_filename, gpa, .unlimited) catch |err| {
+                    break :full_input Io.Dir.cwd().readFileAlloc(io, input_filename, gpa, .unlimited) catch |err| {
                         try error_handler.emitMessage(gpa, io, .err, "unable to read input file path '{s}': {s}", .{ input_filename, @errorName(err) });
                         std.process.exit(1);
                     };
@@ -206,7 +206,7 @@ pub fn main() !void {
     if (options.preprocess == .only) {
         switch (options.output_source) {
             .stdio => |output_file| {
-                try output_file.writeAll(full_input);
+                try output_file.writeStreamingAll(io, full_input);
             },
             .filename => |output_filename| {
                 try Io.Dir.cwd().writeFile(io, .{ .sub_path = output_filename, .data = full_input });
@@ -224,16 +224,16 @@ pub fn main() !void {
                 .source = .{ .memory = .empty },
             }
         else if (options.input_format == .res)
-            IoStream.fromIoSource(options.input_source, .input) catch |err| {
+            IoStream.fromIoSource(io, options.input_source, .input) catch |err| {
                 try error_handler.emitMessage(gpa, io, .err, "unable to read res file path '{s}': {s}", .{ options.input_source.filename, @errorName(err) });
                 std.process.exit(1);
             }
         else
-            IoStream.fromIoSource(options.output_source, .output) catch |err| {
+            IoStream.fromIoSource(io, options.output_source, .output) catch |err| {
                 try error_handler.emitMessage(gpa, io, .err, "unable to create output file '{s}': {s}", .{ options.output_source.filename, @errorName(err) });
                 std.process.exit(1);
             };
-        defer res_stream.deinit(gpa);
+        defer res_stream.deinit(gpa, io);
 
         const res_data = res_data: {
             if (options.input_format != .res) {
@@ -269,7 +269,7 @@ pub fn main() !void {
                 defer diagnostics.deinit();
 
                 var output_buffer: [4096]u8 = undefined;
-                var res_stream_writer = res_stream.source.writer(gpa, &output_buffer);
+                var res_stream_writer = res_stream.source.writer(gpa, io, &output_buffer);
                 defer res_stream_writer.deinit(&res_stream.source);
                 const output_buffered_stream = res_stream_writer.interface();
 
@@ -303,7 +303,7 @@ pub fn main() !void {
 
                 // print any warnings/notes
                 if (!zig_integration) {
-                    diagnostics.renderToStderr(io, Io.Dir.cwd(), final_input, mapping_results.mappings);
+                    try diagnostics.renderToStderr(Io.Dir.cwd(), final_input, mapping_results.mappings);
                 }
 
                 // write the depfile
@@ -356,14 +356,14 @@ pub fn main() !void {
     };
     defer resources.deinit();
 
-    var coff_stream = IoStream.fromIoSource(options.output_source, .output) catch |err| {
+    var coff_stream = IoStream.fromIoSource(io, options.output_source, .output) catch |err| {
         try error_handler.emitMessage(gpa, io, .err, "unable to create output file '{s}': {s}", .{ options.output_source.filename, @errorName(err) });
         std.process.exit(1);
     };
-    defer coff_stream.deinit(gpa);
+    defer coff_stream.deinit(gpa, io);
 
     var coff_output_buffer: [4096]u8 = undefined;
-    var coff_output_buffered_stream = coff_stream.source.writer(gpa, &coff_output_buffer);
+    var coff_output_buffered_stream = coff_stream.source.writer(gpa, io, &coff_output_buffer);
 
     var cvtres_diagnostics: cvtres.Diagnostics = .{ .none = {} };
     cvtres.writeCoff(gpa, coff_output_buffered_stream.interface(), resources.list.items, options.coff_options, &cvtres_diagnostics) catch |err| {
@@ -413,22 +413,22 @@ const IoStream = struct {
 
     pub const IoDirection = enum { input, output };
 
-    pub fn fromIoSource(source: cli.Options.IoSource, io: IoDirection) !IoStream {
+    pub fn fromIoSource(io: Io, source: cli.Options.IoSource, io_direction: IoDirection) !IoStream {
         return .{
             .name = switch (source) {
                 .filename => |filename| filename,
-                .stdio => switch (io) {
+                .stdio => switch (io_direction) {
                     .input => "<stdin>",
                     .output => "<stdout>",
                 },
             },
             .intermediate = false,
-            .source = try Source.fromIoSource(source, io),
+            .source = try Source.fromIoSource(io, source, io_direction),
         };
     }
 
-    pub fn deinit(self: *IoStream, allocator: Allocator) void {
-        self.source.deinit(allocator);
+    pub fn deinit(self: *IoStream, allocator: Allocator, io: Io) void {
+        self.source.deinit(allocator, io);
     }
 
     pub fn cleanupAfterError(self: *IoStream, io: Io) void {
@@ -450,11 +450,11 @@ const IoStream = struct {
         /// The source has been closed and any usage of the Source in this state is illegal (except deinit).
         closed: void,
 
-        pub fn fromIoSource(source: cli.Options.IoSource, io: IoDirection) !Source {
+        pub fn fromIoSource(io: Io, source: cli.Options.IoSource, io_direction: IoDirection) !Source {
             switch (source) {
                 .filename => |filename| return .{
-                    .file = switch (io) {
-                        .input => try openFileNotDir(Io.Dir.cwd(), filename, .{}),
+                    .file = switch (io_direction) {
+                        .input => try openFileNotDir(Io.Dir.cwd(), io, filename, .{}),
                         .output => try Io.Dir.cwd().createFile(io, filename, .{}),
                     },
                 },
@@ -641,7 +641,7 @@ fn getIncludePaths(
                 };
                 const target = std.zig.resolveTargetQueryOrFatal(io, target_query);
                 const is_native_abi = target_query.isNativeAbi();
-                const detected_libc = std.zig.LibCDirs.detect(arena, zig_lib_dir, &target, is_native_abi, true, null) catch |err| switch (err) {
+                const detected_libc = std.zig.LibCDirs.detect(arena, io, zig_lib_dir, &target, is_native_abi, true, null) catch |err| switch (err) {
                     error.OutOfMemory => |e| return e,
                     else => return error.MingwIncludesNotFound,
                 };
@@ -672,7 +672,7 @@ const ErrorHandler = union(enum) {
 
                 try server.serveErrorBundle(error_bundle);
             },
-            .stderr => diagnostics.renderToStderr(io, args),
+            .stderr => return diagnostics.renderToStderr(io, args),
         }
     }
 
@@ -696,7 +696,7 @@ const ErrorHandler = union(enum) {
             },
             .stderr => {
                 // aro errors have already been emitted
-                const stderr = io.lockStderr(&.{}, null);
+                const stderr = try io.lockStderr(&.{}, null);
                 defer io.unlockStderr();
                 try renderErrorMessage(stderr.terminal(), .err, "{s}", .{fail_msg});
             },
@@ -706,7 +706,6 @@ const ErrorHandler = union(enum) {
     pub fn emitDiagnostics(
         self: *ErrorHandler,
         allocator: Allocator,
-        io: Io,
         cwd: Io.Dir,
         source: []const u8,
         diagnostics: *Diagnostics,
@@ -719,7 +718,7 @@ const ErrorHandler = union(enum) {
 
                 try server.serveErrorBundle(error_bundle);
             },
-            .stderr => diagnostics.renderToStderr(io, cwd, source, mappings),
+            .stderr => return diagnostics.renderToStderr(cwd, source, mappings),
         }
     }
 

@@ -92,31 +92,32 @@ pub const ErrorMessageType = enum { err, warning, note };
 
 /// Used for generic colored errors/warnings/notes, more context-specific error messages
 /// are handled elsewhere.
-pub fn renderErrorMessage(writer: *std.Io.Writer, config: std.Io.tty.Config, msg_type: ErrorMessageType, comptime format: []const u8, args: anytype) !void {
+pub fn renderErrorMessage(t: Io.Terminal, msg_type: ErrorMessageType, comptime format: []const u8, args: anytype) !void {
+    const writer = t.writer;
     switch (msg_type) {
         .err => {
-            try config.setColor(writer, .bold);
-            try config.setColor(writer, .red);
+            try t.setColor(.bold);
+            try t.setColor(.red);
             try writer.writeAll("error: ");
         },
         .warning => {
-            try config.setColor(writer, .bold);
-            try config.setColor(writer, .yellow);
+            try t.setColor(.bold);
+            try t.setColor(.yellow);
             try writer.writeAll("warning: ");
         },
         .note => {
-            try config.setColor(writer, .reset);
-            try config.setColor(writer, .cyan);
+            try t.setColor(.reset);
+            try t.setColor(.cyan);
             try writer.writeAll("note: ");
         },
     }
-    try config.setColor(writer, .reset);
+    try t.setColor(.reset);
     if (msg_type == .err) {
-        try config.setColor(writer, .bold);
+        try t.setColor(.bold);
     }
     try writer.print(format, args);
     try writer.writeByte('\n');
-    try config.setColor(writer, .reset);
+    try t.setColor(.reset);
 }
 
 pub fn isLineEndingPair(first: u8, second: u8) bool {
