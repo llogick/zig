@@ -39,5 +39,5 @@ fn run(allocator: std.mem.Allocator) !void {
     var dir = try std.Io.Dir.cwd().openDir(io, dir_path, .{});
     defer dir.close(io);
 
-    _ = try dir.statFile(io, relpath);
+    _ = try dir.statFile(io, relpath, .{});
 }

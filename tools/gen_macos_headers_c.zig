@@ -38,7 +38,7 @@ pub fn main() anyerror!void {
 
     if (positionals.items.len != 1) fatal("expected one positional argument: [dir]", .{});
 
-    var dir = try std.fs.cwd().openDir(io, positionals.items[0], .{ .follow_symlinks = false });
+    var dir = try Io.Dir.cwd().openDir(io, positionals.items[0], .{ .follow_symlinks = false });
     defer dir.close(io);
     var paths = std.array_list.Managed([]const u8).init(arena);
     try findHeaders(arena, io, dir, "", &paths);
@@ -53,7 +53,7 @@ pub fn main() anyerror!void {
     std.mem.sort([]const u8, paths.items, {}, SortFn.lessThan);
 
     var buffer: [2000]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writerStreaming(&buffer);
+    var stdout_writer = Io.File.stdout().writerStreaming(io, &buffer);
     const w = &stdout_writer.interface;
     try w.writeAll("#define _XOPEN_SOURCE\n");
     for (paths.items) |path| {
@@ -75,18 +75,18 @@ fn findHeaders(
     paths: *std.array_list.Managed([]const u8),
 ) anyerror!void {
     var it = dir.iterate();
-    while (try it.next()) |entry| {
+    while (try it.next(io)) |entry| {
         switch (entry.kind) {
             .directory => {
-                const path = try std.fs.path.join(arena, &.{ prefix, entry.name });
+                const path = try Io.Dir.path.join(arena, &.{ prefix, entry.name });
                 var subdir = try dir.openDir(io, entry.name, .{ .follow_symlinks = false });
                 defer subdir.close(io);
                 try findHeaders(arena, io, subdir, path, paths);
             },
             .file, .sym_link => {
-                const ext = std.fs.path.extension(entry.name);
+                const ext = Io.Dir.path.extension(entry.name);
                 if (!std.mem.eql(u8, ext, ".h")) continue;
-                const path = try std.fs.path.join(arena, &.{ prefix, entry.name });
+                const path = try Io.Dir.path.join(arena, &.{ prefix, entry.name });
                 try paths.append(path);
             },
             else => {},

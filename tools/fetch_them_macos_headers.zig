@@ -92,7 +92,7 @@ pub fn main() anyerror!void {
 
     const sysroot_path = sysroot orelse blk: {
         const target = try std.zig.system.resolveTargetQuery(io, .{});
-        break :blk std.zig.system.darwin.getSdk(allocator, &target) orelse
+        break :blk std.zig.system.darwin.getSdk(allocator, io, &target) orelse
             fatal("no SDK found; you can provide one explicitly with '--sysroot' flag", .{});
     };
 
@@ -166,10 +166,7 @@ fn fetchTarget(
     });
     try cc_argv.appendSlice(args);
 
-    const res = try std.process.Child.run(.{
-        .allocator = arena,
-        .argv = cc_argv.items,
-    });
+    const res = try std.process.Child.run(arena, io, .{ .argv = cc_argv.items });
 
     if (res.stderr.len != 0) {
         std.log.err("{s}", .{res.stderr});
@@ -179,7 +176,7 @@ fn fetchTarget(
     const headers_list_file = try tmp.dir.openFile(io, headers_list_filename, .{});
     defer headers_list_file.close(io);
 
-    var headers_dir = Dir.cwd().openDir(headers_source_prefix, .{}) catch |err| switch (err) {
+    var headers_dir = Dir.cwd().openDir(io, headers_source_prefix, .{}) catch |err| switch (err) {
         error.FileNotFound,
         error.NotDir,
         => fatal("path '{s}' not found or not a directory. Did you accidentally delete it?", .{
@@ -215,15 +212,15 @@ fn fetchTarget(
 
             const line_stripped = mem.trim(u8, line, " \\");
             const abs_dirname = Dir.path.dirname(line_stripped).?;
-            var orig_subdir = try Dir.cwd().openDir(abs_dirname, .{});
+            var orig_subdir = try Dir.cwd().openDir(io, abs_dirname, .{});
             defer orig_subdir.close(io);
 
-            try orig_subdir.copyFile(basename, maybe_dir.value_ptr.*, basename, .{});
+            try orig_subdir.copyFile(basename, maybe_dir.value_ptr.*, basename, io, .{});
         }
     }
 
     var dir_it = dirs.iterator();
-    while (dir_it.next(io)) |entry| {
+    while (dir_it.next()) |entry| {
         entry.value_ptr.close(io);
     }
 }

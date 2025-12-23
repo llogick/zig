@@ -189,10 +189,10 @@ pub fn main() !void {
     const linux_path = args[1];
 
     var stdout_buffer: [2048]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writerStreaming(&stdout_buffer);
+    var stdout_writer = Io.File.stdout().writerStreaming(io, &stdout_buffer);
     const stdout = &stdout_writer.interface;
 
-    var linux_dir = try std.fs.cwd().openDir(io, linux_path, .{});
+    var linux_dir = try Io.Dir.cwd().openDir(io, linux_path, .{});
     defer linux_dir.close(io);
 
     // As of 6.11, the largest table is 24195 bytes.
@@ -225,7 +225,7 @@ pub fn main() !void {
     , .{version});
 
     for (architectures, 0..) |arch, i| {
-        const table = try linux_dir.readFile(switch (arch.table) {
+        const table = try linux_dir.readFile(io, switch (arch.table) {
             .generic => "scripts/syscall.tbl",
             .specific => |f| f,
         }, buf);

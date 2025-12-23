@@ -1,4 +1,5 @@
 const std = @import("std");
+const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
 const AtomicOp = enum {
@@ -15,10 +16,14 @@ pub fn main() !void {
     defer arena_instance.deinit();
     const arena = arena_instance.allocator();
 
+    var threaded: std.Io.Threaded = .init(arena, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
     //const args = try std.process.argsAlloc(arena);
 
     var stdout_buffer: [2000]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writerStreaming(&stdout_buffer);
+    var stdout_writer = Io.File.stdout().writerStreaming(io, &stdout_buffer);
     const w = &stdout_writer.interface;
 
     try w.writeAll(

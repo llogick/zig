@@ -66,7 +66,7 @@ pub fn main() !void {
         var walker = try dest_dir.walk(arena);
         defer walker.deinit();
 
-        walk: while (try walker.next()) |entry| {
+        walk: while (try walker.next(io)) |entry| {
             if (entry.kind != .file) continue;
             if (mem.startsWith(u8, entry.basename, ".")) continue;
             for (exempt_files) |p| {
@@ -76,7 +76,7 @@ pub fn main() !void {
                 if (mem.endsWith(u8, entry.path, ext)) continue :walk;
             }
 
-            glibc_src_dir.copyFile(entry.path, dest_dir, entry.path, .{}) catch |err| {
+            glibc_src_dir.copyFile(entry.path, dest_dir, entry.path, io, .{}) catch |err| {
                 log.warn("unable to copy '{s}/{s}' to '{s}/{s}': {t}", .{
                     glibc_src_path, entry.path, dest_dir_path, entry.path, err,
                 });
@@ -106,7 +106,7 @@ pub fn main() !void {
     var walker = try include_dir.walk(arena);
     defer walker.deinit();
 
-    walk: while (try walker.next()) |entry| {
+    walk: while (try walker.next(io)) |entry| {
         if (entry.kind != .file) continue;
         if (mem.startsWith(u8, entry.basename, ".")) continue;
         for (exempt_files) |p| {
@@ -116,23 +116,21 @@ pub fn main() !void {
         const max_file_size = 10 * 1024 * 1024;
 
         const generic_glibc_contents = generic_glibc_dir.readFileAlloc(
+            io,
             entry.path,
             arena,
             .limited(max_file_size),
         ) catch |err| switch (err) {
             error.FileNotFound => continue,
-            else => |e| fatal("unable to load '{s}/include/{s}': {s}", .{
-                generic_glibc_path, entry.path, @errorName(e),
-            }),
+            else => |e| fatal("unable to load '{s}/include/{s}': {t}", .{ generic_glibc_path, entry.path, e }),
         };
         const glibc_include_contents = include_dir.readFileAlloc(
+            io,
             entry.path,
             arena,
             .limited(max_file_size),
         ) catch |err| {
-            fatal("unable to load '{s}/include/{s}': {s}", .{
-                dest_dir_path, entry.path, @errorName(err),
-            });
+            fatal("unable to load '{s}/include/{s}': {t}", .{ dest_dir_path, entry.path, err });
         };
 
         const whitespace = " \r\n\t";
@@ -140,8 +138,7 @@ pub fn main() !void {
         const glibc_include_trimmed = mem.trim(u8, glibc_include_contents, whitespace);
         if (mem.eql(u8, generic_glibc_trimmed, glibc_include_trimmed)) {
             log.warn("same contents: '{s}/include/{s}' and '{s}/include/{s}'", .{
-                generic_glibc_path, entry.path,
-                dest_dir_path,      entry.path,
+                generic_glibc_path, entry.path, dest_dir_path, entry.path,
             });
         }
     }

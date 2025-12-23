@@ -26,15 +26,15 @@ pub fn main() !void {
     defer threaded.deinit();
     const io = threaded.io();
 
-    var in_file = try Dir.cwd().openFile(input_file, .{ .mode = .read_only });
+    var in_file = try Dir.cwd().openFile(io, input_file, .{ .mode = .read_only });
     defer in_file.close(io);
 
-    var out_file = try Dir.cwd().createFile(output_file, .{});
+    var out_file = try Dir.cwd().createFile(io, output_file, .{});
     defer out_file.close(io);
     var out_file_buffer: [4096]u8 = undefined;
-    var out_file_writer = out_file.writer(&out_file_buffer);
+    var out_file_writer = out_file.writer(io, &out_file_buffer);
 
-    var out_dir = try Dir.cwd().openDir(Dir.path.dirname(output_file).?, .{});
+    var out_dir = try Dir.cwd().openDir(io, Dir.path.dirname(output_file).?, .{});
     defer out_dir.close(io);
 
     var in_file_reader = in_file.reader(io, &.{});
@@ -42,7 +42,7 @@ pub fn main() !void {
 
     var tokenizer = Tokenizer.init(input_file, input_file_bytes);
 
-    try walk(arena, &tokenizer, out_dir, &out_file_writer.interface);
+    try walk(arena, io, &tokenizer, out_dir, &out_file_writer.interface);
 
     try out_file_writer.end();
 }
@@ -387,12 +387,12 @@ fn walk(arena: Allocator, io: Io, tokenizer: *Tokenizer, out_dir: Dir, w: anytyp
 
                     const basename = try std.fmt.allocPrint(arena, "{s}.zig", .{name});
 
-                    var file = out_dir.createFile(basename, .{ .exclusive = true }) catch |err| {
+                    var file = out_dir.createFile(io, basename, .{ .exclusive = true }) catch |err| {
                         fatal("unable to create file '{s}': {s}", .{ name, @errorName(err) });
                     };
                     defer file.close(io);
                     var file_buffer: [1024]u8 = undefined;
-                    var file_writer = file.writer(&file_buffer);
+                    var file_writer = file.writer(io, &file_buffer);
                     const code = &file_writer.interface;
 
                     const source = tokenizer.buffer[source_token.start..source_token.end];

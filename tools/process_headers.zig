@@ -131,7 +131,7 @@ pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const allocator = arena.allocator();
 
-    var threaded: Io.Threaded = .init(allocator);
+    var threaded: Io.Threaded = .init(allocator, .{});
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -253,14 +253,14 @@ pub fn main() !void {
 
                 var dir_it = dir.iterate();
 
-                while (try dir_it.next()) |entry| {
+                while (try dir_it.next(io)) |entry| {
                     const full_path = try Dir.path.join(allocator, &[_][]const u8{ full_dir_name, entry.name });
                     switch (entry.kind) {
                         .directory => try dir_stack.append(full_path),
                         .file, .sym_link => {
                             const rel_path = try Dir.path.relative(allocator, target_include_dir, full_path);
                             const max_size = 2 * 1024 * 1024 * 1024;
-                            const raw_bytes = try Dir.cwd().readFileAlloc(full_path, allocator, .limited(max_size));
+                            const raw_bytes = try Dir.cwd().readFileAlloc(io, full_path, allocator, .limited(max_size));
                             const trimmed = std.mem.trim(u8, raw_bytes, " \r\n\t");
                             total_bytes += raw_bytes.len;
                             const hash = try allocator.alloc(u8, 32);
@@ -273,9 +273,7 @@ pub fn main() !void {
                                 max_bytes_saved += raw_bytes.len;
                                 gop.value_ptr.hit_count += 1;
                                 std.debug.print("duplicate: {s} {s} ({B})\n", .{
-                                    libc_dir,
-                                    rel_path,
-                                    raw_bytes.len,
+                                    libc_dir, rel_path, raw_bytes.len,
                                 });
                             } else {
                                 gop.value_ptr.* = Contents{

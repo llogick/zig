@@ -10,8 +10,8 @@ pub fn main() !void {
     else
         dir_name, .{});
     const file_name = args.next().?;
-    const file = try dir.createFile(file_name, .{});
-    var file_writer = file.writer(&.{});
+    const file = try dir.createFile(io, file_name, .{});
+    var file_writer = file.writer(io, &.{});
     try file_writer.interface.print(
         \\{s}
         \\{s}

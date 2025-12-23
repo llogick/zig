@@ -26,14 +26,14 @@ fn run(allocator: std.mem.Allocator, io: Io) !void {
     const hello_arg = "hello arg";
     const a1 = args.next() orelse unreachable;
     if (!std.mem.eql(u8, a1, hello_arg)) {
-        testError("first arg: '{s}'; want '{s}'", .{ a1, hello_arg });
+        testError(io, "first arg: '{s}'; want '{s}'", .{ a1, hello_arg });
     }
     if (args.next()) |a2| {
-        testError("expected only one arg; got more: {s}", .{a2});
+        testError(io, "expected only one arg; got more: {s}", .{a2});
     }
 
     // test stdout pipe; parent verifies
-    try std.Io.File.stdout().writeAll("hello from stdout");
+    try std.Io.File.stdout().writeStreamingAll(io, "hello from stdout");
 
     // test stdin pipe from parent
     const hello_stdin = "hello from stdin";
@@ -42,12 +42,12 @@ fn run(allocator: std.mem.Allocator, io: Io) !void {
     var reader = stdin.reader(io, &.{});
     const n = try reader.interface.readSliceShort(&buf);
     if (!std.mem.eql(u8, buf[0..n], hello_stdin)) {
-        testError("stdin: '{s}'; want '{s}'", .{ buf[0..n], hello_stdin });
+        testError(io, "stdin: '{s}'; want '{s}'", .{ buf[0..n], hello_stdin });
     }
 }
 
-fn testError(comptime fmt: []const u8, args: anytype) void {
-    var stderr_writer = std.Io.File.stderr().writer(&.{});
+fn testError(io: Io, comptime fmt: []const u8, args: anytype) void {
+    var stderr_writer = std.Io.File.stderr().writer(io, &.{});
     const stderr = &stderr_writer.interface;
     stderr.print("CHILD TEST ERROR: ", .{}) catch {};
     stderr.print(fmt, args) catch {};

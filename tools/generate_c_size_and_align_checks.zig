@@ -7,6 +7,7 @@
 //! target.
 
 const std = @import("std");
+const Io = std.Io;
 
 fn cName(ty: std.Target.CType) []const u8 {
     return switch (ty) {
@@ -47,7 +48,7 @@ pub fn main() !void {
     const target = try std.zig.system.resolveTargetQuery(io, query);
 
     var buffer: [2000]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writerStreaming(&buffer);
+    var stdout_writer = Io.File.stdout().writerStreaming(io, &buffer);
     const w = &stdout_writer.interface;
     inline for (@typeInfo(std.Target.CType).@"enum".fields) |field| {
         const c_type: std.Target.CType = @enumFromInt(field.value);

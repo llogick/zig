@@ -206,7 +206,7 @@ pub fn main() !void {
 
                 var dir_it = dir.iterate();
 
-                while (try dir_it.next()) |entry| {
+                while (try dir_it.next(io)) |entry| {
                     const full_path = try Dir.path.join(arena, &[_][]const u8{ full_dir_name, entry.name });
                     switch (entry.kind) {
                         .directory => try dir_stack.append(full_path),

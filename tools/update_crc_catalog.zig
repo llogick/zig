@@ -35,7 +35,7 @@ pub fn main() anyerror!void {
     var zig_code_file = try hash_target_dir.createFile(io, "crc.zig", .{});
     defer zig_code_file.close(io);
     var zig_code_file_buffer: [4096]u8 = undefined;
-    var zig_code_file_writer = zig_code_file.writer(&zig_code_file_buffer);
+    var zig_code_file_writer = zig_code_file.writer(io, &zig_code_file_buffer);
     const code_writer = &zig_code_file_writer.interface;
 
     try code_writer.writeAll(
@@ -59,7 +59,7 @@ pub fn main() anyerror!void {
     var zig_test_file = try crc_target_dir.createFile(io, "test.zig", .{});
     defer zig_test_file.close(io);
     var zig_test_file_buffer: [4096]u8 = undefined;
-    var zig_test_file_writer = zig_test_file.writer(&zig_test_file_buffer);
+    var zig_test_file_writer = zig_test_file.writer(io, &zig_test_file_buffer);
     const test_writer = &zig_test_file_writer.interface;
 
     try test_writer.writeAll(

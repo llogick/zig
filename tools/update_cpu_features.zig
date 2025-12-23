@@ -1994,8 +1994,7 @@ fn processOneTarget(io: Io, job: Job) void {
             }),
         };
 
-        const child_result = try std.process.Child.run(.{
-            .allocator = arena,
+        const child_result = try std.process.Child.run(arena, io, .{
             .argv = &child_args,
             .max_output_bytes = 500 * 1024 * 1024,
         });
@@ -2250,7 +2249,7 @@ fn processOneTarget(io: Io, job: Job) void {
     defer zig_code_file.close(io);
 
     var zig_code_file_buffer: [4096]u8 = undefined;
-    var zig_code_file_writer = zig_code_file.writer(&zig_code_file_buffer);
+    var zig_code_file_writer = zig_code_file.writer(io, &zig_code_file_buffer);
     const w = &zig_code_file_writer.interface;
 
     try w.writeAll(

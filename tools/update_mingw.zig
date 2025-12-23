@@ -26,13 +26,13 @@ pub fn main() !void {
     // in zig's installation.
 
     var dest_crt_dir = Dir.cwd().openDir(io, dest_mingw_crt_path, .{ .iterate = true }) catch |err| {
-        std.log.err("unable to open directory '{s}': {s}", .{ dest_mingw_crt_path, @errorName(err) });
+        std.log.err("unable to open directory '{s}': {t}", .{ dest_mingw_crt_path, err });
         std.process.exit(1);
     };
     defer dest_crt_dir.close(io);
 
     var src_crt_dir = Dir.cwd().openDir(io, src_mingw_crt_path, .{ .iterate = true }) catch |err| {
-        std.log.err("unable to open directory '{s}': {s}", .{ src_mingw_crt_path, @errorName(err) });
+        std.log.err("unable to open directory '{s}': {t}", .{ src_mingw_crt_path, err });
         std.process.exit(1);
     };
     defer src_crt_dir.close(io);
@@ -43,10 +43,10 @@ pub fn main() !void {
 
         var fail = false;
 
-        while (try walker.next()) |entry| {
+        while (try walker.next(io)) |entry| {
             if (entry.kind != .file) continue;
 
-            src_crt_dir.copyFile(entry.path, dest_crt_dir, entry.path, .{}) catch |err| switch (err) {
+            src_crt_dir.copyFile(entry.path, dest_crt_dir, entry.path, io, .{}) catch |err| switch (err) {
                 error.FileNotFound => {
                     const keep = for (kept_crt_files) |item| {
                         if (std.mem.eql(u8, entry.path, item)) break true;
@@ -94,10 +94,10 @@ pub fn main() !void {
 
             var fail = false;
 
-            while (try walker.next()) |entry| {
+            while (try walker.next(io)) |entry| {
                 if (entry.kind != .file) continue;
 
-                src_winpthreads_dir.copyFile(entry.path, dest_winpthreads_dir, entry.path, .{}) catch |err| switch (err) {
+                src_winpthreads_dir.copyFile(entry.path, dest_winpthreads_dir, entry.path, io, .{}) catch |err| switch (err) {
                     error.FileNotFound => {
                         std.log.warn("deleting {s}", .{entry.path});
                         try dest_winpthreads_dir.deleteFile(io, entry.path);
@@ -120,17 +120,17 @@ pub fn main() !void {
 
         var fail = false;
 
-        while (try walker.next()) |entry| {
+        while (try walker.next(io)) |entry| {
             switch (entry.kind) {
                 .directory => {
                     switch (entry.depth()) {
                         1 => if (def_dirs.has(entry.basename)) {
-                            try walker.enter(entry);
+                            try walker.enter(io, entry);
                             continue;
                         },
                         else => {
                             // The top-level directory was already validated
-                            try walker.enter(entry);
+                            try walker.enter(io, entry);
                             continue;
                         },
                     }
@@ -157,15 +157,15 @@ pub fn main() !void {
             if (std.mem.endsWith(u8, entry.basename, "_onecore.def"))
                 continue;
 
-            src_crt_dir.copyFile(entry.path, dest_crt_dir, entry.path, .{}) catch |err| {
-                std.log.err("unable to copy {s}: {s}", .{ entry.path, @errorName(err) });
+            src_crt_dir.copyFile(entry.path, dest_crt_dir, entry.path, io, .{}) catch |err| {
+                std.log.err("unable to copy {s}: {t}", .{ entry.path, err });
                 fail = true;
             };
         }
         if (fail) std.process.exit(1);
     }
 
-    return std.process.cleanExit();
+    return std.process.cleanExit(io);
 }
 
 const kept_crt_files = [_][]const u8{

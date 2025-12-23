@@ -31,7 +31,7 @@ pub fn main() !void {
     child.stderr_behavior = .Inherit;
     try child.spawn(io);
     const child_stdin = child.stdin.?;
-    try child_stdin.writeAll("hello from stdin"); // verified in child
+    try child_stdin.writeStreamingAll(io, "hello from stdin"); // verified in child
     child_stdin.close(io);
     child.stdin = null;
 
@@ -43,7 +43,7 @@ pub fn main() !void {
         testError(io, "child stdout: '{s}'; want '{s}'", .{ buf[0..n], hello_stdout });
     }
 
-    switch (try child.wait()) {
+    switch (try child.wait(io)) {
         .Exited => |code| {
             const child_ok_code = 42; // set by child if no test errors
             if (code != child_ok_code) {

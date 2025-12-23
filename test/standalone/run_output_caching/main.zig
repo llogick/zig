@@ -7,5 +7,5 @@ pub fn main() !void {
     const filename = args.next().?;
     const file = try std.Io.Dir.cwd().createFile(io, filename, .{});
     defer file.close(io);
-    try file.writeAll(io, filename);
+    try file.writeStreamingAll(io, filename);
 }

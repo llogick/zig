@@ -1,5 +1,7 @@
 const std = @import("std");
+const Io = std.Io;
 const Allocator = std.mem.Allocator;
+
 const g = @import("spirv/grammar.zig");
 const CoreRegistry = g.CoreRegistry;
 const ExtensionRegistry = g.ExtensionRegistry;
@@ -63,24 +65,28 @@ pub fn main() !void {
         usageAndExit(args[0], 1);
     }
 
-    const json_path = try std.fs.path.join(allocator, &.{ args[1], "include/spirv/unified1/" });
-    const dir = try std.fs.cwd().openDir(json_path, .{ .iterate = true });
+    var threaded: std.Io.Threaded = .init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
 
-    const core_spec = try readRegistry(CoreRegistry, dir, "spirv.core.grammar.json");
+    const json_path = try Io.Dir.path.join(allocator, &.{ args[1], "include/spirv/unified1/" });
+    const dir = try Io.Dir.cwd().openDir(io, json_path, .{ .iterate = true });
+
+    const core_spec = try readRegistry(io, CoreRegistry, dir, "spirv.core.grammar.json");
     std.mem.sortUnstable(Instruction, core_spec.instructions, CmpInst{}, CmpInst.lt);
 
     var exts = std.array_list.Managed(Extension).init(allocator);
 
     var it = dir.iterate();
-    while (try it.next()) |entry| {
+    while (try it.next(io)) |entry| {
         if (entry.kind != .file) {
             continue;
         }
 
-        try readExtRegistry(&exts, dir, entry.name);
+        try readExtRegistry(io, &exts, dir, entry.name);
     }
 
-    try readExtRegistry(&exts, std.fs.cwd(), args[2]);
+    try readExtRegistry(io, &exts, Io.Dir.cwd(), args[2]);
 
     var allocating: std.Io.Writer.Allocating = .init(allocator);
     defer allocating.deinit();
@@ -91,7 +97,7 @@ pub fn main() !void {
     var tree = try std.zig.Ast.parse(allocator, output, .zig);
 
     if (tree.errors.len != 0) {
-        try std.zig.printAstErrorsToStderr(allocator, tree, "", .auto);
+        try std.zig.printAstErrorsToStderr(allocator, io, tree, "", .auto);
         return;
     }
 
@@ -103,22 +109,22 @@ pub fn main() !void {
         try wip_errors.addZirErrorMessages(zir, tree, output, "");
         var error_bundle = try wip_errors.toOwnedBundle("");
         defer error_bundle.deinit(allocator);
-        error_bundle.renderToStdErr(.{}, .auto);
+        try error_bundle.renderToStderr(io, .{}, .auto);
     }
 
     const formatted_output = try tree.renderAlloc(allocator);
-    _ = try std.fs.File.stdout().write(formatted_output);
+    try Io.File.stdout().writeStreamingAll(io, formatted_output);
 }
 
-fn readExtRegistry(exts: *std.array_list.Managed(Extension), dir: std.fs.Dir, sub_path: []const u8) !void {
-    const filename = std.fs.path.basename(sub_path);
+fn readExtRegistry(io: Io, exts: *std.array_list.Managed(Extension), dir: Io.Dir, sub_path: []const u8) !void {
+    const filename = Io.Dir.path.basename(sub_path);
     if (!std.mem.startsWith(u8, filename, "extinst.")) {
         return;
     }
 
     std.debug.assert(std.mem.endsWith(u8, filename, ".grammar.json"));
     const name = filename["extinst.".len .. filename.len - ".grammar.json".len];
-    const spec = try readRegistry(ExtensionRegistry, dir, sub_path);
+    const spec = try readRegistry(io, ExtensionRegistry, dir, sub_path);
 
     const set_name = set_names.get(name) orelse {
         std.log.info("ignored instruction set '{s}'", .{name});
@@ -134,8 +140,8 @@ fn readExtRegistry(exts: *std.array_list.Managed(Extension), dir: std.fs.Dir, su
     });
 }
 
-fn readRegistry(comptime RegistryType: type, dir: std.fs.Dir, path: []const u8) !RegistryType {
-    const spec = try dir.readFileAlloc(path, allocator, .unlimited);
+fn readRegistry(io: Io, comptime RegistryType: type, dir: Io.Dir, path: []const u8) !RegistryType {
+    const spec = try dir.readFileAlloc(io, path, allocator, .unlimited);
     // Required for json parsing.
     // TODO: ALI
     @setEvalBranchQuota(10000);

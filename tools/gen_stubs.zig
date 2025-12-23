@@ -55,12 +55,14 @@
 //       - e.g. find a common previous symbol and put it after that one
 //       - they definitely need to go into the correct section
 
+const builtin = @import("builtin");
+const native_endian = builtin.cpu.arch.endian();
+
 const std = @import("std");
-const builtin = std.builtin;
+const Io = std.Io;
 const mem = std.mem;
 const log = std.log;
 const elf = std.elf;
-const native_endian = @import("builtin").cpu.arch.endian();
 
 const Arch = enum {
     aarch64,
@@ -284,10 +286,14 @@ pub fn main() !void {
     defer arena_instance.deinit();
     const arena = arena_instance.allocator();
 
+    var threaded: std.Io.Threaded = .init(arena, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
     const args = try std.process.argsAlloc(arena);
     const build_all_path = args[1];
 
-    var build_all_dir = try std.fs.cwd().openDir(build_all_path, .{});
+    var build_all_dir = try Io.Dir.cwd().openDir(io, build_all_path, .{});
 
     var sym_table = std.StringArrayHashMap(MultiSym).init(arena);
     var sections = std.StringArrayHashMap(void).init(arena);
@@ -299,6 +305,7 @@ pub fn main() !void {
 
         // Read the ELF header.
         const elf_bytes = build_all_dir.readFileAllocOptions(
+            io,
             libc_so_path,
             arena,
             .limited(100 * 1024 * 1024),
@@ -334,7 +341,7 @@ pub fn main() !void {
     }
 
     var stdout_buffer: [2000]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writerStreaming(&stdout_buffer);
+    var stdout_writer = Io.File.stdout().writerStreaming(io, &stdout_buffer);
     const stdout = &stdout_writer.interface;
     try stdout.writeAll(
         \\#ifdef PTR64
@@ -539,7 +546,7 @@ pub fn main() !void {
     try stdout.flush();
 }
 
-fn parseElf(parse: Parse, comptime is_64: bool, comptime endian: builtin.Endian) !void {
+fn parseElf(parse: Parse, comptime is_64: bool, comptime endian: std.builtin.Endian) !void {
     const arena = parse.arena;
     const elf_bytes = parse.elf_bytes;
     const header = parse.header;
