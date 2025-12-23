@@ -322,7 +322,7 @@ pub fn getName(self: Thread, buffer_ptr: *[max_name_len:0]u8) GetNameError!?[]co
             var buf: [32]u8 = undefined;
             const path = try std.fmt.bufPrint(&buf, "/proc/self/task/{d}/comm", .{self.getHandle()});
 
-            const io = std.options.debug_io;
+            const io = std.Options.debug_io;
 
             const file = try Io.Dir.cwd().openFile(io, path, .{});
             defer file.close(io);

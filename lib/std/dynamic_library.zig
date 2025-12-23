@@ -222,7 +222,7 @@ pub const ElfDynLib = struct {
 
     /// Trusts the file. Malicious file will be able to execute arbitrary code.
     pub fn open(path: []const u8) Error!ElfDynLib {
-        const io = std.options.debug_io;
+        const io = std.Options.debug_io;
 
         const fd = try resolveFromName(io, path);
         defer posix.close(fd);
