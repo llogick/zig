@@ -2706,6 +2706,11 @@ pub fn addIncrementalTests(b: *std.Build, test_step: *Step) !void {
         run.addFileArg(b.path("test/incremental/").path(b, entry.path));
         run.addArgs(&.{ "--zig-lib-dir", b.fmt("{f}", .{b.graph.zig_lib_directory}) });
 
+        if (b.enable_qemu) run.addArg("-fqemu");
+        if (b.enable_wine) run.addArg("-fwine");
+        if (b.enable_wasmtime) run.addArg("-fwasmtime");
+        if (b.enable_darling) run.addArg("-fdarling");
+
         run.addCheck(.{ .expect_term = .{ .Exited = 0 } });
 
         test_step.dependOn(&run.step);

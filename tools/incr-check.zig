@@ -27,6 +27,10 @@ pub fn main() !void {
     var debug_dwarf = false;
     var debug_link = false;
     var preserve_tmp = false;
+    var enable_qemu: bool = false;
+    var enable_wine: bool = false;
+    var enable_wasmtime: bool = false;
+    var enable_darling: bool = false;
 
     var arg_it = try std.process.argsWithAllocator(arena);
     _ = arg_it.skip();
@@ -42,6 +46,14 @@ pub fn main() !void {
                 debug_link = true;
             } else if (std.mem.eql(u8, arg, "--preserve-tmp")) {
                 preserve_tmp = true;
+            } else if (std.mem.eql(u8, arg, "-fqemu")) {
+                enable_qemu = true;
+            } else if (std.mem.eql(u8, arg, "-fwine")) {
+                enable_wine = true;
+            } else if (std.mem.eql(u8, arg, "-fwasmtime")) {
+                enable_wasmtime = true;
+            } else if (std.mem.eql(u8, arg, "-fdarling")) {
+                enable_darling = true;
             } else if (std.mem.eql(u8, arg, "--zig-cc-binary")) {
                 opt_cc_zig = arg_it.next() orelse fatal("expect arg after '--zig-cc-binary'\n{s}", .{usage});
             } else {
@@ -196,6 +208,10 @@ pub fn main() !void {
             .allow_stderr = debug_log_verbose,
             .preserve_tmp_on_fatal = preserve_tmp,
             .cc_child_args = &cc_child_args,
+            .enable_qemu = enable_qemu,
+            .enable_wine = enable_wine,
+            .enable_wasmtime = enable_wasmtime,
+            .enable_darling = enable_darling,
         };
 
         try child.spawn(io);
@@ -242,6 +258,11 @@ const Eval = struct {
     /// When `target.backend == .cbe`, this contains the first few arguments to `zig cc` to build the generated binary.
     /// The arguments `out.c in.c` must be appended before spawning the subprocess.
     cc_child_args: *std.ArrayList([]const u8),
+
+    enable_qemu: bool,
+    enable_wine: bool,
+    enable_wasmtime: bool,
+    enable_darling: bool,
 
     const StreamEnum = enum { stdout, stderr };
     const Poller = Io.Poller(StreamEnum);
@@ -439,7 +460,7 @@ const Eval = struct {
         const io = eval.io;
 
         var argv_buf: [2][]const u8 = undefined;
-        const argv: []const []const u8, const is_foreign: bool = switch (std.zig.system.getExternalExecutor(
+        const argv: []const []const u8, const is_foreign: bool = sw: switch (std.zig.system.getExternalExecutor(
             io,
             &eval.host,
             &eval.target.resolved,
@@ -459,10 +480,41 @@ const Eval = struct {
                 argv_buf[0] = binary_path;
                 break :argv .{ argv_buf[0..1], false };
             },
-            .qemu, .wine, .wasmtime, .darling => |executor_cmd| argv: {
-                argv_buf[0] = executor_cmd;
-                argv_buf[1] = binary_path;
-                break :argv .{ argv_buf[0..2], true };
+            .qemu => |executor_cmd| argv: {
+                if (eval.enable_qemu) {
+                    argv_buf[0] = executor_cmd;
+                    argv_buf[1] = binary_path;
+                    break :argv .{ argv_buf[0..2], true };
+                } else {
+                    continue :sw .bad_os_or_cpu;
+                }
+            },
+            .wine => |executor_cmd| argv: {
+                if (eval.enable_wine) {
+                    argv_buf[0] = executor_cmd;
+                    argv_buf[1] = binary_path;
+                    break :argv .{ argv_buf[0..2], true };
+                } else {
+                    continue :sw .bad_os_or_cpu;
+                }
+            },
+            .wasmtime => |executor_cmd| argv: {
+                if (eval.enable_wasmtime) {
+                    argv_buf[0] = executor_cmd;
+                    argv_buf[1] = binary_path;
+                    break :argv .{ argv_buf[0..2], true };
+                } else {
+                    continue :sw .bad_os_or_cpu;
+                }
+            },
+            .darling => |executor_cmd| argv: {
+                if (eval.enable_darling) {
+                    argv_buf[0] = executor_cmd;
+                    argv_buf[1] = binary_path;
+                    break :argv .{ argv_buf[0..2], true };
+                } else {
+                    continue :sw .bad_os_or_cpu;
+                }
             },
         };
 
