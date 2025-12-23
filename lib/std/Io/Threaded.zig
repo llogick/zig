@@ -372,7 +372,10 @@ const Thread = struct {
                 };
             },
             else => if (std.Thread.use_pthreads) {
-                return pthreads_futex.wait(ptr, expect, timeout_ns);
+                // TODO integrate the following function being called with robust cancelation.
+                return pthreads_futex.wait(ptr, expect, timeout_ns) catch |err| switch (err) {
+                    error.Timeout => {},
+                };
             } else {
                 @compileError("unimplemented: futexWait");
             },
@@ -11583,7 +11586,7 @@ const pthreads_futex = struct {
             // This can be changed with pthread_condattr_setclock, but it's an extension and may not be available everywhere.
             var ts: c.timespec = undefined;
             if (timeout) |timeout_ns| {
-                ts = std.posix.clock_gettime(c.CLOCK.REALTIME) catch unreachable;
+                ts = std.posix.clock_gettime(c.CLOCK.REALTIME) catch return error.Timeout;
                 ts.sec +|= @as(@TypeOf(ts.sec), @intCast(timeout_ns / std.time.ns_per_s));
                 ts.nsec += @as(@TypeOf(ts.nsec), @intCast(timeout_ns % std.time.ns_per_s));
 
@@ -11617,9 +11620,9 @@ const pthreads_futex = struct {
                         self.state = .empty;
                         return error.Timeout;
                     },
-                    .INVAL => unreachable, // cond, mutex, and potentially ts should all be valid
-                    .PERM => unreachable, // mutex is locked when cond_*wait() functions are called
-                    else => unreachable,
+                    .INVAL => recoverableOsBugDetected(), // cond, mutex, and potentially ts should all be valid
+                    .PERM => recoverableOsBugDetected(), // mutex is locked when cond_*wait() functions are called
+                    else => recoverableOsBugDetected(),
                 }
             }
         }
@@ -11866,9 +11869,12 @@ const pthreads_futex = struct {
         }
 
         waiter.event.wait(timeout) catch {
-            // If we fail to cancel after a timeout, it means a wake() thread dequeued us and will wake us up.
-            // We must wait until the event is set as that's a signal that the wake() thread won't access the waiter memory anymore.
-            // If we return early without waiting, the waiter on the stack would be invalidated and the wake() thread risks a UAF.
+            // If we fail to cancel after a timeout, it means a wake() thread
+            // dequeued us and will wake us up. We must wait until the event is
+            // set as that's a signal that the wake() thread won't access the
+            // waiter memory anymore. If we return early without waiting, the
+            // waiter on the stack would be invalidated and the wake() thread
+            // risks a UAF.
             defer if (!canceled) waiter.event.wait(null) catch unreachable;
 
             assert(c.pthread_mutex_lock(&bucket.mutex) == .SUCCESS);
