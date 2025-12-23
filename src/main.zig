@@ -5687,14 +5687,18 @@ fn jitCmd(
     child.stdout_behavior = if (options.capture == null) .Inherit else .Pipe;
     child.stderr_behavior = .Inherit;
 
-    try child.spawn(io);
+    const term = t: {
+        _ = try io.lockStderr(&.{}, .no_color);
+        defer io.unlockStderr();
+        try child.spawn(io);
 
-    if (options.capture) |ptr| {
-        var stdout_reader = child.stdout.?.readerStreaming(io, &.{});
-        ptr.* = try stdout_reader.interface.allocRemaining(arena, .limited(std.math.maxInt(u32)));
-    }
+        if (options.capture) |ptr| {
+            var stdout_reader = child.stdout.?.readerStreaming(io, &.{});
+            ptr.* = try stdout_reader.interface.allocRemaining(arena, .limited(std.math.maxInt(u32)));
+        }
 
-    const term = try child.wait(io);
+        break :t try child.wait(io);
+    };
     switch (term) {
         .Exited => |code| {
             if (code == 0) {
