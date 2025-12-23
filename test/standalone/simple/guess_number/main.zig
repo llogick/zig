@@ -1,8 +1,18 @@
 const builtin = @import("builtin");
 const std = @import("std");
 
+// See https://github.com/ziglang/zig/issues/24510
+// for the plan to simplify this code.
 pub fn main() !void {
-    var stdout_writer = std.Io.File.stdout().writerStreaming(&.{});
+    var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
+    defer _ = debug_allocator.deinit();
+    const gpa = debug_allocator.allocator();
+
+    var threaded: std.Io.Threaded = .init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var stdout_writer = std.Io.File.stdout().writerStreaming(io, &.{});
     const out = &stdout_writer.interface;
     const stdin: std.Io.File = .stdin();
 

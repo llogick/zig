@@ -716,7 +716,7 @@ fn testHelloZig(b: *Build, opts: Options) *Step {
     const exe = addExecutable(b, opts, .{ .name = "main", .zig_source_bytes =
         \\const std = @import("std");
         \\pub fn main() void {
-        \\    std.Io.File.stdout().writeAll("Hello world!\n") catch @panic("fail");
+        \\    std.Io.File.stdout().writeStreamingAll(std.Options.debug_io, "Hello world!\n") catch @panic("fail");
         \\}
     });
 
@@ -2372,7 +2372,7 @@ fn testTlsZig(b: *Build, opts: Options) *Step {
         \\threadlocal var x: i32 = 0;
         \\threadlocal var y: i32 = -1;
         \\pub fn main() void {
-        \\    var stdout_writer = std.Io.File.stdout().writerStreaming(&.{});
+        \\    var stdout_writer = std.Io.File.stdout().writerStreaming(std.Options.debug_io, &.{});
         \\    stdout_writer.interface.print("{d} {d}\n", .{x, y}) catch unreachable;
         \\    x -= 1;
         \\    y += 1;

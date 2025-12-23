@@ -1,5 +1,7 @@
 const std = @import("std");
 
+// See https://github.com/ziglang/zig/issues/24510
+// for the plan to simplify this code.
 pub fn main() !void {
     var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
     defer _ = debug_allocator.deinit();
