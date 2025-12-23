@@ -25,11 +25,15 @@ pub fn main() !void {
     var general_purpose_allocator: std.heap.GeneralPurposeAllocator(.{}) = .init;
     const gpa = general_purpose_allocator.allocator();
 
+    var threaded: std.Io.Threaded = .init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
     const args = try std.process.argsAlloc(arena);
-    return cmdObjCopy(gpa, arena, args[1..]);
+    return cmdObjCopy(arena, io, args[1..]);
 }
 
-fn cmdObjCopy(gpa: Allocator, arena: Allocator, args: []const []const u8) !void {
+fn cmdObjCopy(arena: Allocator, io: Io, args: []const []const u8) !void {
     var i: usize = 0;
     var opt_out_fmt: ?std.Target.ObjectFormat = null;
     var opt_input: ?[]const u8 = null;
@@ -57,7 +61,7 @@ fn cmdObjCopy(gpa: Allocator, arena: Allocator, args: []const []const u8) !void 
                 fatal("unexpected positional argument: '{s}'", .{arg});
             }
         } else if (mem.eql(u8, arg, "-h") or mem.eql(u8, arg, "--help")) {
-            return Io.File.stdout().writeAll(usage);
+            return Io.File.stdout().writeStreamingAll(io, usage);
         } else if (mem.eql(u8, arg, "-O") or mem.eql(u8, arg, "--output-target")) {
             i += 1;
             if (i >= args.len) fatal("expected another argument after '{s}'", .{arg});
@@ -148,11 +152,7 @@ fn cmdObjCopy(gpa: Allocator, arena: Allocator, args: []const []const u8) !void 
     const input = opt_input orelse fatal("expected input parameter", .{});
     const output = opt_output orelse fatal("expected output parameter", .{});
 
-    var threaded: std.Io.Threaded = .init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    const input_file = Io.Dir.cwd().openFile(input, .{}) catch |err| fatal("failed to open {s}: {t}", .{ input, err });
+    const input_file = Io.Dir.cwd().openFile(io, input, .{}) catch |err| fatal("failed to open {s}: {t}", .{ input, err });
     defer input_file.close(io);
 
     const stat = input_file.stat(io) catch |err| fatal("failed to stat {s}: {t}", .{ input, err });
@@ -178,9 +178,9 @@ fn cmdObjCopy(gpa: Allocator, arena: Allocator, args: []const []const u8) !void 
         }
     };
 
-    const mode = if (out_fmt != .elf or only_keep_debug) Io.File.default_mode else stat.mode;
+    const permissions: Io.File.Permissions = if (out_fmt != .elf or only_keep_debug) .default_file else stat.permissions;
 
-    var output_file = try Io.Dir.cwd().createFile(io, output, .{ .mode = mode });
+    var output_file = try Io.Dir.cwd().createFile(io, output, .{ .permissions = permissions });
     defer output_file.close(io);
 
     var out = output_file.writer(io, &output_buffer);
@@ -223,7 +223,7 @@ fn cmdObjCopy(gpa: Allocator, arena: Allocator, args: []const []const u8) !void 
 
     if (listen) {
         var stdin_reader = Io.File.stdin().reader(io, &stdin_buffer);
-        var stdout_writer = Io.File.stdout().writer(&stdout_buffer);
+        var stdout_writer = Io.File.stdout().writer(io, &stdout_buffer);
         var server = try Server.init(.{
             .in = &stdin_reader.interface,
             .out = &stdout_writer.interface,

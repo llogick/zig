@@ -930,8 +930,9 @@ fn parseHexInt(text: []const u8) !u31 {
 }
 
 fn usageAndExit(arg0: []const u8, code: u8) noreturn {
-    const stderr, _ = std.debug.lockStderrWriter(&.{});
-    stderr.print(
+    const stderr = std.debug.lockStderr(&.{});
+    const w = &stderr.file_writer.interface;
+    w.print(
         \\Usage: {s} <SPIRV-Headers repository path> <path/to/zig/src/codegen/spirv/extinst.zig.grammar.json>
         \\
         \\Generates Zig bindings for SPIR-V specifications found in the SPIRV-Headers

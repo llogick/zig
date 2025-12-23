@@ -51,8 +51,8 @@ pub fn main() !void {
     var coverage: std.debug.Coverage = .init;
     defer coverage.deinit(gpa);
 
-    var debug_info = std.debug.Info.load(gpa, exe_path, &coverage, target.ofmt, target.cpu.arch) catch |err| {
-        fatal("failed to load debug info for {f}: {s}", .{ exe_path, @errorName(err) });
+    var debug_info = std.debug.Info.load(gpa, io, exe_path, &coverage, target.ofmt, target.cpu.arch) catch |err| {
+        fatal("failed to load debug info for {f}: {t}", .{ exe_path, err });
     };
     defer debug_info.deinit(gpa);
 

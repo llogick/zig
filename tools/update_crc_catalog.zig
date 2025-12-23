@@ -195,8 +195,8 @@ pub fn main() anyerror!void {
 }
 
 fn printUsageAndExit(arg0: []const u8) noreturn {
-    const w, _ = std.debug.lockStderrWriter(&.{});
-    defer std.debug.unlockStderrWriter();
+    const stderr = std.debug.lockStderr(&.{});
+    const w = &stderr.file_writer.interface;
     printUsage(w, arg0) catch std.process.exit(2);
     std.process.exit(1);
 }

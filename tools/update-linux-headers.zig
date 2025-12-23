@@ -197,7 +197,7 @@ pub fn main() !void {
             try dir_stack.append(target_include_dir);
 
             while (dir_stack.pop()) |full_dir_name| {
-                var dir = Dir.cwd().openDir(full_dir_name, .{ .iterate = true }) catch |err| switch (err) {
+                var dir = Dir.cwd().openDir(io, full_dir_name, .{ .iterate = true }) catch |err| switch (err) {
                     error.FileNotFound => continue :search,
                     error.AccessDenied => continue :search,
                     else => return err,
@@ -213,7 +213,7 @@ pub fn main() !void {
                         .file => {
                             const rel_path = try Dir.path.relative(arena, target_include_dir, full_path);
                             const max_size = 2 * 1024 * 1024 * 1024;
-                            const raw_bytes = try Dir.cwd().readFileAlloc(full_path, arena, .limited(max_size));
+                            const raw_bytes = try Dir.cwd().readFileAlloc(io, full_path, arena, .limited(max_size));
                             const trimmed = std.mem.trim(u8, raw_bytes, " \r\n\t");
                             total_bytes += raw_bytes.len;
                             const hash = try arena.alloc(u8, 32);

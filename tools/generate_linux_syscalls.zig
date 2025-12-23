@@ -181,8 +181,8 @@ pub fn main() !void {
 
     const args = try std.process.argsAlloc(gpa);
     if (args.len < 2 or mem.eql(u8, args[1], "--help")) {
-        const w, _ = std.debug.lockStderrWriter(&.{});
-        defer std.debug.unlockStderrWriter();
+        const stderr = std.debug.lockStderr(&.{});
+        const w = &stderr.file_writer.interface;
         usage(w, args[0]) catch std.process.exit(2);
         std.process.exit(1);
     }
