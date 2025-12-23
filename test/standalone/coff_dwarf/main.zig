@@ -11,7 +11,7 @@ pub fn main() void {
     var di: std.debug.SelfInfo = .init;
     defer di.deinit(gpa);
 
-    var threaded: std.Io.Threaded = .init(gpa);
+    var threaded: std.Io.Threaded = .init(gpa, .{});
     defer threaded.deinit();
     const io = threaded.io();
 

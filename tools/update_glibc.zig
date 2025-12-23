@@ -43,7 +43,7 @@ pub fn main() !void {
     defer arena_instance.deinit();
     const arena = arena_instance.allocator();
 
-    var threaded: Io.Threaded = .init(arena);
+    var threaded: Io.Threaded = .init(arena, .{});
     defer threaded.deinit();
     const io = threaded.io();
 

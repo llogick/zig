@@ -86,7 +86,7 @@ pub fn main() anyerror!void {
         } else try argv.append(arg);
     }
 
-    var threaded: Io.Threaded = .init(gpa);
+    var threaded: Io.Threaded = .init(gpa, .{});
     defer threaded.deinit();
     const io = threaded.io();
 

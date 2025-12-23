@@ -1702,7 +1702,7 @@ test "SHA-256 packfile indexing and checkout" {
 pub fn main() !void {
     const allocator = std.heap.smp_allocator;
 
-    var threaded: Io.Threaded = .init(allocator);
+    var threaded: Io.Threaded = .init(allocator, .{});
     defer threaded.deinit();
     const io = threaded.io();
 

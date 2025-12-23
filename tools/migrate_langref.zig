@@ -22,7 +22,7 @@ pub fn main() !void {
     const input_file = args[1];
     const output_file = args[2];
 
-    var threaded: std.Io.Threaded = .init(gpa);
+    var threaded: std.Io.Threaded = .init(gpa, .{});
     defer threaded.deinit();
     const io = threaded.io();
 

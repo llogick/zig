@@ -15,7 +15,7 @@ pub fn main() !void {
     defer args.deinit();
     _ = args.skip(); // executable name
 
-    var threaded: std.Io.Threaded = .init(gpa);
+    var threaded: std.Io.Threaded = .init(gpa, .{});
     defer threaded.deinit();
     const io = threaded.io();
 

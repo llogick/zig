@@ -30,7 +30,7 @@ pub fn main() !void {
     const arena = arena_instance.allocator();
     const gpa = arena;
 
-    var threaded: std.Io.Threaded = .init(gpa);
+    var threaded: std.Io.Threaded = .init(gpa, .{});
     defer threaded.deinit();
     const io = threaded.io();
 

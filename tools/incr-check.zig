@@ -15,7 +15,7 @@ pub fn main() !void {
 
     const gpa = arena;
 
-    var threaded: Io.Threaded = .init(gpa);
+    var threaded: Io.Threaded = .init(gpa, .{});
     defer threaded.deinit();
     const io = threaded.io();
 

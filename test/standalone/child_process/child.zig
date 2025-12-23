@@ -8,7 +8,7 @@ pub fn main() !void {
     var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const arena = arena_state.allocator();
 
-    var threaded: std.Io.Threaded = .init(arena);
+    var threaded: std.Io.Threaded = .init(arena, .{});
     defer threaded.deinit();
     const io = threaded.io();
 

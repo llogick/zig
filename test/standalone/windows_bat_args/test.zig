@@ -7,7 +7,7 @@ pub fn main() anyerror!void {
     defer std.debug.assert(debug_alloc_inst.deinit() == .ok);
     const gpa = debug_alloc_inst.allocator();
 
-    var threaded: Io.Threaded = .init(gpa);
+    var threaded: Io.Threaded = .init(gpa, .{});
     const io = threaded.io();
 
     var it = try std.process.argsWithAllocator(gpa);

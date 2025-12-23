@@ -10,7 +10,7 @@ pub fn main() anyerror!void {
     defer if (debug_allocator.deinit() == .leak) @panic("found memory leaks");
     const gpa = debug_allocator.allocator();
 
-    var threaded: std.Io.Threaded = .init(gpa);
+    var threaded: std.Io.Threaded = .init(gpa, .{});
     defer threaded.deinit();
     const io = threaded.io();
 

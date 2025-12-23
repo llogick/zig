@@ -11,7 +11,7 @@ pub fn main() anyerror!void {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var threaded: Io.Threaded = .init(arena);
+    var threaded: Io.Threaded = .init(arena, .{});
     defer threaded.deinit();
     const io = threaded.io();
 

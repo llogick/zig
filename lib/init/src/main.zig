@@ -13,7 +13,7 @@ pub fn main() !void {
     const gpa = debug_allocator.allocator();
 
     // In order to do I/O operations we must construct an `Io` instance.
-    var threaded: std.Io.Threaded = .init(gpa);
+    var threaded: std.Io.Threaded = .init(gpa, .{});
     defer threaded.deinit();
     const io = threaded.io();
 

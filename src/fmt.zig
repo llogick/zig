@@ -370,7 +370,7 @@ pub fn main() !void {
     var arena_instance = std.heap.ArenaAllocator.init(gpa);
     const arena = arena_instance.allocator();
     const args = try process.argsAlloc(arena);
-    var threaded: std.Io.Threaded = .init(gpa);
+    var threaded: std.Io.Threaded = .init(gpa, .{});
     defer threaded.deinit();
     const io = threaded.io();
     return run(gpa, arena, io, args[1..]);

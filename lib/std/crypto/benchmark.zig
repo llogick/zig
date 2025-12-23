@@ -556,7 +556,7 @@ pub fn main() !void {
         }
     }
 
-    var io_threaded = std.Io.Threaded.init(arena_allocator);
+    var io_threaded = std.Io.Threaded.init(arena_allocator, .{});
     defer io_threaded.deinit();
     const io = io_threaded.io();
 

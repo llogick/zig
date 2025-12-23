@@ -39,7 +39,7 @@ pub fn main() !void {
         std.process.exit(1);
     }
 
-    var threaded: std.Io.Threaded = .init(gpa);
+    var threaded: std.Io.Threaded = .init(gpa, .{});
     defer threaded.deinit();
     const io = threaded.io();
 
