@@ -292,7 +292,7 @@ const Thread = struct {
                     .INTR => {}, // caller's responsibility to retry
                     .AGAIN => {}, // ptr.* != expect
                     .INVAL => {}, // possibly timeout overflow
-                    .TIMEDOUT => {}, // timeout
+                    .TIMEDOUT => {},
                     .FAULT => recoverableOsBugDetected(), // ptr was invalid
                     else => recoverableOsBugDetected(),
                 }
@@ -1548,6 +1548,7 @@ fn cancel(
 }
 
 fn futexWait(userdata: ?*anyopaque, ptr: *const u32, expected: u32, timeout: Io.Timeout) Io.Cancelable!void {
+    if (builtin.single_threaded) unreachable; // Deadlock.
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
     const t_io = ioBasic(t);
@@ -1555,29 +1556,21 @@ fn futexWait(userdata: ?*anyopaque, ptr: *const u32, expected: u32, timeout: Io.
         const d = (timeout.toDurationFromNow(t_io) catch break :ns 10) orelse break :ns null;
         break :ns std.math.lossyCast(u64, d.raw.toNanoseconds());
     };
-    switch (native_os) {
-        .illumos, .netbsd, .openbsd => @panic("TODO"),
-        else => try current_thread.futexWaitTimed(ptr, expected, timeout_ns),
-    }
+    return Thread.futexWaitTimed(current_thread, ptr, expected, timeout_ns);
 }
 
 fn futexWaitUncancelable(userdata: ?*anyopaque, ptr: *const u32, expected: u32) void {
+    if (builtin.single_threaded) unreachable; // Deadlock.
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     _ = t;
-    switch (native_os) {
-        .illumos, .netbsd, .openbsd => @panic("TODO"),
-        else => Thread.futexWaitUncancelable(ptr, expected),
-    }
+    Thread.futexWaitUncancelable(ptr, expected);
 }
 
 fn futexWake(userdata: ?*anyopaque, ptr: *const u32, max_waiters: u32) void {
     if (builtin.single_threaded) unreachable; // Nothing to wake up.
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     _ = t;
-    switch (native_os) {
-        .illumos, .netbsd, .openbsd => @panic("TODO"),
-        else => Thread.futexWake(ptr, max_waiters),
-    }
+    Thread.futexWake(ptr, max_waiters);
 }
 
 const dirCreateDir = switch (native_os) {

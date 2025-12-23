@@ -1314,17 +1314,21 @@ pub fn futexWait(io: Io, comptime T: type, ptr: *align(@alignOf(u32)) const T, e
 /// wakeups are possible. It remains the caller's responsibility to differentiate between these
 /// three possible wake-up reasons if necessary.
 pub fn futexWaitTimeout(io: Io, comptime T: type, ptr: *align(@alignOf(u32)) const T, expected: T, timeout: Timeout) Cancelable!void {
-    comptime assert(@sizeOf(T) == 4);
-    const expected_raw: *align(1) const u32 = @ptrCast(&expected);
-    return io.vtable.futexWait(io.userdata, @ptrCast(ptr), expected_raw.*, timeout);
+    const expected_int: u32 = switch (@typeInfo(T)) {
+        .@"enum" => @bitCast(@intFromEnum(expected)),
+        else => @bitCast(expected),
+    };
+    return io.vtable.futexWait(io.userdata, @ptrCast(ptr), expected_int, timeout);
 }
 /// Same as `futexWait`, except does not introduce a cancelation point.
 ///
 /// For a description of cancelation and cancelation points, see `Future.cancel`.
 pub fn futexWaitUncancelable(io: Io, comptime T: type, ptr: *align(@alignOf(u32)) const T, expected: T) void {
-    comptime assert(@sizeOf(T) == @sizeOf(u32));
-    const expected_raw: *align(1) const u32 = @ptrCast(&expected);
-    io.vtable.futexWaitUncancelable(io.userdata, @ptrCast(ptr), expected_raw.*);
+    const expected_int: u32 = switch (@typeInfo(T)) {
+        .@"enum" => @bitCast(@intFromEnum(expected)),
+        else => @bitCast(expected),
+    };
+    io.vtable.futexWaitUncancelable(io.userdata, @ptrCast(ptr), expected_int);
 }
 /// Unblocks pending futex waits on `ptr`, up to a limit of `max_waiters` calls.
 pub fn futexWake(io: Io, comptime T: type, ptr: *align(@alignOf(u32)) const T, max_waiters: u32) void {
@@ -1576,10 +1580,12 @@ pub const Event = enum(u32) {
         }
     }
 
+    pub const WaitTimeoutError = error{Timeout} || Cancelable;
+
     /// Blocks the calling thread until either the logical boolean is set, the timeout expires, or a
     /// spurious wakeup occurs. If the timeout expires or a spurious wakeup occurs, `error.Timeout`
     /// is returned.
-    pub fn waitTimeout(event: *Event, io: Io, timeout: Timeout) (error{Timeout} || Cancelable)!void {
+    pub fn waitTimeout(event: *Event, io: Io, timeout: Timeout) WaitTimeoutError!void {
         if (@cmpxchgStrong(Event, event, .unset, .waiting, .acquire, .acquire)) |prev| switch (prev) {
             .unset => unreachable,
             .waiting => assert(!builtin.single_threaded), // invalid state
