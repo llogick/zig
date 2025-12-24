@@ -380,6 +380,12 @@ fn addFromDirInner(
                     // Other backends don't support new liveness format
                     continue;
                 }
+
+                if (backend == .selfhosted and target.cpu.arch == .aarch64) {
+                    // https://codeberg.org/ziglang/zig/pulls/30232#issuecomment-9182045
+                    continue;
+                }
+
                 if (backend == .selfhosted and target.os.tag == .macos and
                     target.cpu.arch == .x86_64 and builtin.cpu.arch == .aarch64)
                 {
