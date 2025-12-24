@@ -2700,6 +2700,7 @@ pub fn addIncrementalTests(b: *std.Build, test_step: *Step, test_filters: []cons
     var it = try dir.walk(b.graph.arena);
     while (try it.next(io)) |entry| {
         if (entry.kind != .file) continue;
+        if (std.mem.endsWith(u8, entry.basename, ".swp")) continue;
 
         for (test_filters) |test_filter| {
             if (std.mem.indexOf(u8, entry.path, test_filter)) |_| break;
