@@ -44,8 +44,8 @@ pub fn main() anyerror!void {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.setAsCwd();
-    defer tmp.parent_dir.setAsCwd() catch {};
+    try std.process.setCurrentDir(io, tmp.dir);
+    defer std.process.setCurrentDir(io, tmp.parent_dir) catch {};
 
     // `child_exe_path_orig` might be relative; make it relative to our new cwd.
     const child_exe_path = try std.fs.path.resolve(gpa, &.{ "..\\..\\..", child_exe_path_orig });

@@ -4,7 +4,6 @@ const Dir = std.Io.Dir;
 const mem = std.mem;
 const process = std.process;
 const assert = std.debug.assert;
-const tmpDir = std.testing.tmpDir;
 const fatal = std.process.fatal;
 const info = std.log.info;
 
@@ -111,15 +110,14 @@ pub fn main() anyerror!void {
     const os_ver: OsVer = @enumFromInt(version.major);
     info("found SDK deployment target macOS {f} aka '{t}'", .{ version, os_ver });
 
-    var tmp = tmpDir(.{});
-    defer tmp.cleanup();
+    const tmp_dir: Io.Dir = .cwd();
 
     for (&[_]Arch{ .aarch64, .x86_64 }) |arch| {
         const target: Target = .{
             .arch = arch,
             .os_ver = os_ver,
         };
-        try fetchTarget(allocator, io, argv.items, sysroot_path, target, version, tmp);
+        try fetchTarget(allocator, io, argv.items, sysroot_path, target, version, tmp_dir);
     }
 }
 
@@ -130,11 +128,11 @@ fn fetchTarget(
     sysroot: []const u8,
     target: Target,
     ver: Version,
-    tmp: std.testing.TmpDir,
+    tmp_dir: Io.Dir,
 ) !void {
     const tmp_filename = "macos-headers";
     const headers_list_filename = "macos-headers.o.d";
-    const tmp_path = try tmp.dir.realPathFileAlloc(io, ".", arena);
+    const tmp_path = try tmp_dir.realPathFileAlloc(io, ".", arena);
     const tmp_file_path = try Dir.path.join(arena, &[_][]const u8{ tmp_path, tmp_filename });
     const headers_list_path = try Dir.path.join(arena, &[_][]const u8{ tmp_path, headers_list_filename });
 
@@ -173,7 +171,7 @@ fn fetchTarget(
     }
 
     // Read in the contents of `macos-headers.o.d`
-    const headers_list_file = try tmp.dir.openFile(io, headers_list_filename, .{});
+    const headers_list_file = try tmp_dir.openFile(io, headers_list_filename, .{});
     defer headers_list_file.close(io);
 
     var headers_dir = Dir.cwd().openDir(io, headers_source_prefix, .{}) catch |err| switch (err) {

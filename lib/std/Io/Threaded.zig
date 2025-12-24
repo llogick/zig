@@ -648,7 +648,7 @@ pub fn init(
         .main_thread = .{
             .signal_id = Thread.currentSignalId(),
             .current_closure = null,
-            .cancel_protection = undefined,
+            .cancel_protection = .unblocked,
         },
         .argv0 = options.argv0,
         .environ = options.environ,
@@ -689,7 +689,7 @@ pub const init_single_threaded: Threaded = .{
     .main_thread = .{
         .signal_id = undefined,
         .current_closure = null,
-        .cancel_protection = undefined,
+        .cancel_protection = .unblocked,
     },
     .robust_cancel = .disabled,
     .argv0 = .{},
@@ -742,7 +742,7 @@ fn worker(t: *Threaded) void {
     var thread: Thread = .{
         .signal_id = Thread.currentSignalId(),
         .current_closure = null,
-        .cancel_protection = undefined,
+        .cancel_protection = .unblocked,
     };
     Thread.current = &thread;
 
@@ -844,6 +844,7 @@ pub fn io(t: *Threaded) Io {
             .lockStderr = lockStderr,
             .tryLockStderr = tryLockStderr,
             .unlockStderr = unlockStderr,
+            .processSetCurrentDir = processSetCurrentDir,
 
             .now = now,
             .sleep = sleep,
@@ -979,6 +980,7 @@ pub fn ioBasic(t: *Threaded) Io {
             .lockStderr = lockStderr,
             .tryLockStderr = tryLockStderr,
             .unlockStderr = unlockStderr,
+            .processSetCurrentDir = processSetCurrentDir,
 
             .now = now,
             .sleep = sleep,
@@ -7370,6 +7372,7 @@ fn processExecutablePath(userdata: ?*anyopaque, out_buffer: []u8) std.process.Ex
             };
             defer w.CloseHandle(h_file);
 
+            // TODO move GetFinalPathNameByHandle logic into std.Io.Threaded and add cancel checks
             const wide_slice = try w.GetFinalPathNameByHandle(h_file, .{}, &path_name_w_buf.data);
 
             const len = std.unicode.calcWtf8Len(wide_slice);
@@ -10794,6 +10797,71 @@ fn unlockStderr(userdata: ?*anyopaque) void {
     t.stderr_writer.interface.end = 0;
     t.stderr_writer.interface.buffer = &.{};
     std.process.stderr_thread_mutex.unlock();
+}
+
+fn processSetCurrentDir(userdata: ?*anyopaque, dir: Dir) std.process.SetCurrentDirError!void {
+    if (native_os == .wasi) return error.OperationUnsupported;
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+
+    if (is_windows) {
+        try current_thread.checkCancel();
+        var dir_path_buffer: [windows.PATH_MAX_WIDE]u16 = undefined;
+        // TODO move GetFinalPathNameByHandle logic into std.Io.Threaded and add cancel checks
+        const dir_path = try windows.GetFinalPathNameByHandle(dir.handle, .{}, &dir_path_buffer);
+        const path_len_bytes = std.math.cast(u16, dir_path.len * 2) orelse return error.NameTooLong;
+        try current_thread.checkCancel();
+        var nt_name: windows.UNICODE_STRING = .{
+            .Length = path_len_bytes,
+            .MaximumLength = path_len_bytes,
+            .Buffer = @constCast(dir_path.ptr),
+        };
+        switch (windows.ntdll.RtlSetCurrentDirectory_U(&nt_name)) {
+            .SUCCESS => return,
+            .OBJECT_NAME_INVALID => return error.BadPathName,
+            .OBJECT_NAME_NOT_FOUND => return error.FileNotFound,
+            .OBJECT_PATH_NOT_FOUND => return error.FileNotFound,
+            .NO_MEDIA_IN_DEVICE => return error.NoDevice,
+            .INVALID_PARAMETER => |err| return windows.statusBug(err),
+            .ACCESS_DENIED => return error.AccessDenied,
+            .OBJECT_PATH_SYNTAX_BAD => |err| return windows.statusBug(err),
+            .NOT_A_DIRECTORY => return error.NotDir,
+            else => |status| return windows.unexpectedStatus(status),
+        }
+    }
+
+    if (dir.handle == posix.AT.FDCWD) return;
+
+    try current_thread.beginSyscall();
+    while (true) {
+        switch (posix.errno(posix.system.fchdir(dir.handle))) {
+            .SUCCESS => return current_thread.endSyscall(),
+            .INTR => {
+                try current_thread.checkCancel();
+                continue;
+            },
+            .ACCES => {
+                current_thread.endSyscall();
+                return error.AccessDenied;
+            },
+            .BADF => |err| {
+                current_thread.endSyscall();
+                return errnoBug(err);
+            },
+            .NOTDIR => {
+                current_thread.endSyscall();
+                return error.NotDir;
+            },
+            .IO => {
+                current_thread.endSyscall();
+                return error.FileSystem;
+            },
+            else => |err| {
+                current_thread.endSyscall();
+                return posix.unexpectedErrno(err);
+            },
+        }
+    }
 }
 
 pub const PosixAddress = extern union {

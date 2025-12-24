@@ -2304,3 +2304,28 @@ pub fn exit(status: u8) noreturn {
         else => posix.system.exit(status),
     }
 }
+
+pub const SetCurrentDirError = error{
+    AccessDenied,
+    BadPathName,
+    FileNotFound,
+    FileSystem,
+    NameTooLong,
+    NoDevice,
+    NotDir,
+    OperationUnsupported,
+    UnrecognizedVolume,
+} || Io.Cancelable || Io.UnexpectedError;
+
+/// Changes the current working directory to the open directory handle.
+/// Corresponds to "fchdir" in libc.
+///
+/// This modifies global process state and can have surprising effects in
+/// multithreaded applications. Most applications and especially libraries
+/// should not call this function as a general rule, however it can have use
+/// cases in, for example, implementing a shell, or child process execution.
+///
+/// Calling this function makes code less portable and less reusable.
+pub fn setCurrentDir(io: Io, dir: Io.Dir) !void {
+    return io.vtable.processSetCurrentDir(io.userdata, dir);
+}

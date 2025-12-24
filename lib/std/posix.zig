@@ -1171,11 +1171,9 @@ pub const ChangeCurDirError = error{
 /// On other platforms, `dir_path` is an opaque sequence of bytes with no particular encoding.
 pub fn chdir(dir_path: []const u8) ChangeCurDirError!void {
     if (native_os == .wasi and !builtin.link_libc) {
-        @compileError("WASI does not support os.chdir");
+        @compileError("unsupported OS");
     } else if (native_os == .windows) {
-        var wtf16_dir_path: [windows.PATH_MAX_WIDE]u16 = undefined;
-        const len = try windows.wtf8ToWtf16Le(&wtf16_dir_path, dir_path);
-        return chdirW(wtf16_dir_path[0..len]);
+        @compileError("unsupported OS");
     } else {
         const dir_path_c = try toPosixPath(dir_path);
         return chdirZ(&dir_path_c);
@@ -1188,12 +1186,9 @@ pub fn chdir(dir_path: []const u8) ChangeCurDirError!void {
 /// On other platforms, `dir_path` is an opaque sequence of bytes with no particular encoding.
 pub fn chdirZ(dir_path: [*:0]const u8) ChangeCurDirError!void {
     if (native_os == .windows) {
-        const dir_path_span = mem.span(dir_path);
-        var wtf16_dir_path: [windows.PATH_MAX_WIDE]u16 = undefined;
-        const len = try windows.wtf8ToWtf16Le(&wtf16_dir_path, dir_path_span);
-        return chdirW(wtf16_dir_path[0..len]);
+        @compileError("unsupported OS");
     } else if (native_os == .wasi and !builtin.link_libc) {
-        return chdir(mem.span(dir_path));
+        @compileError("unsupported OS");
     }
     switch (errno(system.chdir(dir_path))) {
         .SUCCESS => return,
@@ -1208,14 +1203,6 @@ pub fn chdirZ(dir_path: [*:0]const u8) ChangeCurDirError!void {
         .ILSEQ => return error.BadPathName,
         else => |err| return unexpectedErrno(err),
     }
-}
-
-/// Windows-only. Same as `chdir` except the parameter is WTF16 LE encoded.
-pub fn chdirW(dir_path: []const u16) ChangeCurDirError!void {
-    windows.SetCurrentDirectory(dir_path) catch |err| switch (err) {
-        error.NoDevice => return error.FileSystem,
-        else => |e| return e,
-    };
 }
 
 pub const FchdirError = error{

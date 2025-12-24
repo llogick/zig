@@ -718,6 +718,7 @@ pub const VTable = struct {
     lockStderr: *const fn (?*anyopaque, buffer: []u8, ?Terminal.Mode) Cancelable!LockedStderr,
     tryLockStderr: *const fn (?*anyopaque, buffer: []u8, ?Terminal.Mode) Cancelable!?LockedStderr,
     unlockStderr: *const fn (?*anyopaque) void,
+    processSetCurrentDir: *const fn (?*anyopaque, Dir) std.process.SetCurrentDirError!void,
 
     now: *const fn (?*anyopaque, Clock) Clock.Error!Timestamp,
     sleep: *const fn (?*anyopaque, Timeout) SleepError!void,

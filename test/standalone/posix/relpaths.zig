@@ -14,21 +14,21 @@ pub fn main() !void {
     const gpa = debug_allocator.allocator();
     defer std.debug.assert(debug_allocator.deinit() == .ok);
 
-    const io = std.Io.Threaded.global_single_threaded.ioBasic();
+    var threaded: std.Io.Threaded = .init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
 
-    // TODO this API isn't supposed to be used outside of unit testing. make it compilation error if used
-    // outside of unit testing.
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+    var tmp = tmpDir(io, .{});
+    defer tmp.cleanup(io);
 
     // Want to test relative paths, so cd into the tmpdir for these tests
-    try tmp.dir.setAsCwd();
+    try std.process.setCurrentDir(io, tmp.dir);
 
     try test_symlink(gpa, io, tmp);
     try test_link(io, tmp);
 }
 
-fn test_symlink(gpa: Allocator, io: Io, tmp: std.testing.TmpDir) !void {
+fn test_symlink(gpa: Allocator, io: Io, tmp: TmpDir) !void {
     const target_name = "symlink-target";
     const symlink_name = "symlinker";
 
@@ -47,32 +47,15 @@ fn test_symlink(gpa: Allocator, io: Io, tmp: std.testing.TmpDir) !void {
             else => return err,
         };
     } else {
-        try std.posix.symlink(target_name, symlink_name);
+        try Io.Dir.cwd().symLink(io, target_name, symlink_name, .{});
     }
 
     var buffer: [std.fs.max_path_bytes]u8 = undefined;
-    const given = try std.posix.readlink(symlink_name, buffer[0..]);
+    const given = buffer[0..try Io.Dir.cwd().readLink(io, symlink_name, &buffer)];
     try std.testing.expectEqualStrings(target_name, given);
 }
 
-fn getLinkInfo(fd: std.posix.fd_t) !struct { std.posix.ino_t, std.posix.nlink_t } {
-    if (builtin.target.os.tag == .linux) {
-        const stx = try std.os.linux.wrapped.statx(
-            fd,
-            "",
-            std.posix.AT.EMPTY_PATH,
-            .{ .INO = true, .NLINK = true },
-        );
-        std.debug.assert(stx.mask.INO);
-        std.debug.assert(stx.mask.NLINK);
-        return .{ stx.ino, stx.nlink };
-    }
-
-    const st = try std.posix.fstat(fd);
-    return .{ st.ino, st.nlink };
-}
-
-fn test_link(io: Io, tmp: std.testing.TmpDir) !void {
+fn test_link(io: Io, tmp: TmpDir) !void {
     switch (builtin.target.os.tag) {
         .linux, .illumos => {},
         else => return,
@@ -84,7 +67,7 @@ fn test_link(io: Io, tmp: std.testing.TmpDir) !void {
     try tmp.dir.writeFile(io, .{ .sub_path = target_name, .data = "example" });
 
     // Test 1: create the relative link from inside tmp
-    try std.posix.link(target_name, link_name);
+    try Io.Dir.hardLink(.cwd(), target_name, .cwd(), link_name, io, .{});
 
     // Verify
     const efd = try tmp.dir.openFile(io, target_name, .{});
@@ -94,16 +77,54 @@ fn test_link(io: Io, tmp: std.testing.TmpDir) !void {
     defer nfd.close(io);
 
     {
-        const eino, _ = try getLinkInfo(efd.handle);
-        const nino, const nlink = try getLinkInfo(nfd.handle);
-        try std.testing.expectEqual(eino, nino);
-        try std.testing.expectEqual(@as(std.posix.nlink_t, 2), nlink);
+        const e_stat = try efd.stat(io);
+        const n_stat = try nfd.stat(io);
+        try std.testing.expectEqual(e_stat.inode, n_stat.inode);
+        try std.testing.expectEqual(2, n_stat.nlink);
     }
 
     // Test 2: Remove the link and see the stats update
-    try std.posix.unlink(link_name);
+    try Io.Dir.cwd().deleteFile(io, link_name);
     {
-        _, const elink = try getLinkInfo(efd.handle);
-        try std.testing.expectEqual(@as(std.posix.nlink_t, 1), elink);
+        const e_stat = try efd.stat(io);
+        try std.testing.expectEqual(1, e_stat.nlink);
     }
 }
+
+pub fn tmpDir(io: Io, opts: Io.Dir.OpenOptions) TmpDir {
+    var random_bytes: [TmpDir.random_bytes_count]u8 = undefined;
+    std.crypto.random.bytes(&random_bytes);
+    var sub_path: [TmpDir.sub_path_len]u8 = undefined;
+    _ = std.fs.base64_encoder.encode(&sub_path, &random_bytes);
+
+    const cwd = Io.Dir.cwd();
+    var cache_dir = cwd.createDirPathOpen(io, ".zig-cache", .{}) catch
+        @panic("unable to make tmp dir for testing: unable to make and open .zig-cache dir");
+    defer cache_dir.close(io);
+    const parent_dir = cache_dir.createDirPathOpen(io, "tmp", .{}) catch
+        @panic("unable to make tmp dir for testing: unable to make and open .zig-cache/tmp dir");
+    const dir = parent_dir.createDirPathOpen(io, &sub_path, .{ .open_options = opts }) catch
+        @panic("unable to make tmp dir for testing: unable to make and open the tmp dir");
+
+    return .{
+        .dir = dir,
+        .parent_dir = parent_dir,
+        .sub_path = sub_path,
+    };
+}
+
+pub const TmpDir = struct {
+    dir: Io.Dir,
+    parent_dir: Io.Dir,
+    sub_path: [sub_path_len]u8,
+
+    const random_bytes_count = 12;
+    const sub_path_len = std.fs.base64_encoder.calcSize(random_bytes_count);
+
+    pub fn cleanup(self: *TmpDir, io: Io) void {
+        self.dir.close(io);
+        self.parent_dir.deleteTree(io, &self.sub_path) catch {};
+        self.parent_dir.close(io);
+        self.* = undefined;
+    }
+};

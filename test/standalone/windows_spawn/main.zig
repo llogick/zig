@@ -127,8 +127,8 @@ pub fn main() anyerror!void {
     try testExecError(error.FileNotFound, gpa, "goodbye");
 
     // Now let's set the tmp dir as the cwd and set the path only include the "something" sub dir
-    try tmp.dir.setAsCwd();
-    defer tmp.parent_dir.setAsCwd() catch {};
+    try std.process.setCurrentDir(io, tmp.dir);
+    defer std.process.setCurrentDir(io, tmp.parent_dir) catch {};
     const something_subdir_abs_path = try std.mem.concatWithSentinel(gpa, u16, &.{ tmp_absolute_path_w, utf16Literal("\\something") }, 0);
     defer gpa.free(something_subdir_abs_path);
 
@@ -191,7 +191,7 @@ pub fn main() anyerror!void {
     defer subdir_cwd.close(io);
 
     try renameExe(tmp.dir, "something/goodbye.exe", "hello.exe");
-    try subdir_cwd.setAsCwd();
+    try std.process.setCurrentDir(io, subdir_cwd);
 
     // clear the PATH again
     std.debug.assert(windows.kernel32.SetEnvironmentVariableW(
