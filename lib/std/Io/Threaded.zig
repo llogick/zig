@@ -7152,7 +7152,30 @@ fn processExecutableOpen(userdata: ?*anyopaque, flags: File.OpenFlags) std.proce
             const prefixed_path_w = try windows.wToPrefixedFileW(null, image_path_name);
             return dirOpenFileWtf16(t, null, prefixed_path_w.span(), flags);
         },
-        else => @panic("TODO implement processExecutableOpen"),
+        .driverkit,
+        .ios,
+        .maccatalyst,
+        .macos,
+        .tvos,
+        .visionos,
+        .watchos,
+        => {
+            // _NSGetExecutablePath() returns a path that might be a symlink to
+            // the executable. Here it does not matter since we open it.
+            var symlink_path_buf: [posix.PATH_MAX + 1]u8 = undefined;
+            var n: u32 = symlink_path_buf.len;
+            const rc = std.c._NSGetExecutablePath(&symlink_path_buf, &n);
+            if (rc != 0) return error.NameTooLong;
+            const symlink_path = std.mem.sliceTo(&symlink_path_buf, 0);
+            return dirOpenFilePosix(t, .cwd(), symlink_path, flags);
+        },
+        else => {
+            var buffer: [Dir.max_path_bytes]u8 = undefined;
+            const n = try processExecutablePath(t, &buffer);
+            buffer[n] = 0;
+            const executable_path = buffer[0..n :0];
+            return dirOpenFilePosix(t, .cwd(), executable_path, flags);
+        },
     }
 }
 
@@ -7168,21 +7191,17 @@ fn processExecutablePath(userdata: ?*anyopaque, out_buffer: []u8) std.process.Ex
         .visionos,
         .watchos,
         => {
-            // Note that _NSGetExecutablePath() will return "a path" to
-            // the executable not a "real path" to the executable.
-            var symlink_path_buf: [posix.PATH_MAX:0]u8 = undefined;
-            var u32_len: u32 = posix.PATH_MAX + 1; // include the sentinel
-            const rc = std.c._NSGetExecutablePath(&symlink_path_buf, &u32_len);
+            // _NSGetExecutablePath() returns a path that might be a symlink to
+            // the executable.
+            var symlink_path_buf: [posix.PATH_MAX + 1]u8 = undefined;
+            var n: u32 = symlink_path_buf.len;
+            const rc = std.c._NSGetExecutablePath(&symlink_path_buf, &n);
             if (rc != 0) return error.NameTooLong;
-
-            var real_path_buf: [posix.PATH_MAX]u8 = undefined;
-            const n = Io.Dir.realPathFileAbsolute(ioBasic(t), &symlink_path_buf, &real_path_buf) catch |err| switch (err) {
+            const symlink_path = std.mem.sliceTo(&symlink_path_buf, 0);
+            return Io.Dir.realPathFileAbsolute(ioBasic(t), symlink_path, out_buffer) catch |err| switch (err) {
                 error.NetworkNotFound => unreachable, // Windows-only
                 else => |e| return e,
             };
-            if (n > out_buffer.len) return error.NameTooLong;
-            @memcpy(out_buffer[0..n], real_path_buf[0..n]);
-            return n;
         },
         .linux, .serenity => return Io.Dir.readLinkAbsolute(ioBasic(t), "/proc/self/exe", out_buffer) catch |err| switch (err) {
             error.UnsupportedReparsePointType => unreachable, // Windows-only
