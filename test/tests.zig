@@ -2682,7 +2682,7 @@ pub fn addDebuggerTests(b: *std.Build, options: DebuggerContext.Options) ?*Step 
     return step;
 }
 
-pub fn addIncrementalTests(b: *std.Build, test_step: *Step) !void {
+pub fn addIncrementalTests(b: *std.Build, test_step: *Step, test_filters: []const []const u8) !void {
     const io = b.graph.io;
 
     const incr_check = b.addExecutable(.{
@@ -2700,6 +2700,10 @@ pub fn addIncrementalTests(b: *std.Build, test_step: *Step) !void {
     var it = try dir.walk(b.graph.arena);
     while (try it.next(io)) |entry| {
         if (entry.kind != .file) continue;
+
+        for (test_filters) |test_filter| {
+            if (std.mem.indexOf(u8, entry.path, test_filter)) |_| break;
+        } else if (test_filters.len > 0) continue;
 
         const run = b.addRunArtifact(incr_check);
         run.setName(b.fmt("incr-check '{s}'", .{entry.basename}));

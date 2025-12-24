@@ -743,7 +743,7 @@ pub fn build(b: *std.Build) !void {
     }
 
     const test_incremental_step = b.step("test-incremental", "Run the incremental compilation test cases");
-    try tests.addIncrementalTests(b, test_incremental_step);
+    try tests.addIncrementalTests(b, test_incremental_step, test_filters);
     if (!skip_test_incremental) test_step.dependOn(test_incremental_step);
 
     if (tests.addLibcTests(b, .{
