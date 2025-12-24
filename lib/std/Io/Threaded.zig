@@ -4085,6 +4085,37 @@ fn dirRealPathFilePosix(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, o
     var path_buffer: [posix.PATH_MAX]u8 = undefined;
     const sub_path_posix = try pathToPosix(sub_path, &path_buffer);
 
+    if (builtin.link_libc and dir.handle == posix.AT.FDCWD) {
+        if (out_buffer.len < posix.PATH_MAX) return error.NameTooLong;
+        try current_thread.beginSyscall();
+        while (true) {
+            if (std.c.realpath(sub_path_posix, out_buffer.ptr)) |redundant_pointer| {
+                current_thread.endSyscall();
+                assert(redundant_pointer == out_buffer.ptr);
+                return std.mem.indexOfScalar(u8, out_buffer, 0) orelse out_buffer.len;
+            }
+            const err: posix.E = @enumFromInt(std.c._errno().*);
+            if (err == .INTR) {
+                try current_thread.checkCancel();
+                continue;
+            }
+            current_thread.endSyscall();
+            switch (err) {
+                .INVAL => return errnoBug(err),
+                .BADF => return errnoBug(err),
+                .FAULT => return errnoBug(err),
+                .ACCES => return error.AccessDenied,
+                .NOENT => return error.FileNotFound,
+                .OPNOTSUPP => return error.OperationUnsupported,
+                .NOTDIR => return error.NotDir,
+                .NAMETOOLONG => return error.NameTooLong,
+                .LOOP => return error.SymLinkLoop,
+                .IO => return error.InputOutput,
+                else => return posix.unexpectedErrno(err),
+            }
+        }
+    }
+
     var flags: posix.O = .{};
     if (@hasField(posix.O, "NONBLOCK")) flags.NONBLOCK = true;
     if (@hasField(posix.O, "CLOEXEC")) flags.CLOEXEC = true;
