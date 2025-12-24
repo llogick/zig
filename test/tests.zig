@@ -187,29 +187,30 @@ const test_targets = blk: {
             .link_libc = true,
         },
 
-        .{
-            .target = .{
-                .cpu_arch = .aarch64,
-                .os_tag = .linux,
-                .abi = .none,
-            },
-            .use_llvm = false,
-            .use_lld = false,
-            .optimize_mode = .ReleaseFast,
-            .strip = true,
-        },
-        .{
-            .target = .{
-                .cpu_arch = .aarch64,
-                .cpu_model = .{ .explicit = &std.Target.aarch64.cpu.neoverse_n1 },
-                .os_tag = .linux,
-                .abi = .none,
-            },
-            .use_llvm = false,
-            .use_lld = false,
-            .optimize_mode = .ReleaseFast,
-            .strip = true,
-        },
+        // Disabled due to https://codeberg.org/ziglang/zig/pulls/30232#issuecomment-9203351
+        //.{
+        //    .target = .{
+        //        .cpu_arch = .aarch64,
+        //        .os_tag = .linux,
+        //        .abi = .none,
+        //    },
+        //    .use_llvm = false,
+        //    .use_lld = false,
+        //    .optimize_mode = .ReleaseFast,
+        //    .strip = true,
+        //},
+        //.{
+        //    .target = .{
+        //        .cpu_arch = .aarch64,
+        //        .cpu_model = .{ .explicit = &std.Target.aarch64.cpu.neoverse_n1 },
+        //        .os_tag = .linux,
+        //        .abi = .none,
+        //    },
+        //    .use_llvm = false,
+        //    .use_lld = false,
+        //    .optimize_mode = .ReleaseFast,
+        //    .strip = true,
+        //},
 
         .{
             .target = .{
@@ -1204,17 +1205,18 @@ const test_targets = blk: {
             },
         },
 
-        .{
-            .target = .{
-                .cpu_arch = .aarch64,
-                .os_tag = .macos,
-                .abi = .none,
-            },
-            .use_llvm = false,
-            .use_lld = false,
-            .optimize_mode = .ReleaseFast,
-            .strip = true,
-        },
+        // Disabled due to https://codeberg.org/ziglang/zig/pulls/30232#issuecomment-9203351
+        //.{
+        //    .target = .{
+        //        .cpu_arch = .aarch64,
+        //        .os_tag = .macos,
+        //        .abi = .none,
+        //    },
+        //    .use_llvm = false,
+        //    .use_lld = false,
+        //    .optimize_mode = .ReleaseFast,
+        //    .strip = true,
+        //},
 
         .{
             .target = .{
