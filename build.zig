@@ -651,30 +651,7 @@ pub fn build(b: *std.Build) !void {
         .use_llvm = use_llvm,
         .use_lld = use_llvm,
         .zig_lib_dir = b.path("lib"),
-        .max_rss = switch (b.graph.host.result.os.tag) {
-            .freebsd => switch (b.graph.host.result.cpu.arch) {
-                .x86_64 => 2_188_099_584,
-                else => 2_200_000_000,
-            },
-            .linux => switch (b.graph.host.result.cpu.arch) {
-                .aarch64 => 1_991_934_771,
-                .loongarch64 => 1_844_538_572,
-                .powerpc64le => 1_793_035_059,
-                .riscv64 => 2_459_003_289,
-                .s390x => 1_781_248_409,
-                .x86_64 => 977_192_550,
-                else => 2_500_000_000,
-            },
-            .macos => switch (b.graph.host.result.cpu.arch) {
-                .aarch64 => 2_062_393_344,
-                else => 2_100_000_000,
-            },
-            .windows => switch (b.graph.host.result.cpu.arch) {
-                .x86_64 => 1_953_087_488,
-                else => 2_000_000_000,
-            },
-            else => 2_500_000_000,
-        },
+        .max_rss = 2_500_000_000,
     });
     if (link_libc) {
         unit_tests.root_module.link_libc = true;
