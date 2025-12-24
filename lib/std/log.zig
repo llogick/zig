@@ -80,6 +80,14 @@ pub fn logEnabled(comptime level: Level, comptime scope: @EnumLiteral()) bool {
     return @intFromEnum(level) <= @intFromEnum(std.options.log_level);
 }
 
+pub const terminalMode = std.options.logTerminalMode;
+
+pub fn defaultTerminalMode() std.Io.Terminal.Mode {
+    const stderr = std.debug.lockStderr(&.{}).terminal();
+    std.debug.unlockStderr();
+    return stderr.mode;
+}
+
 /// The default implementation for the log function. Custom log functions may
 /// forward log messages to this function.
 ///

@@ -84,7 +84,7 @@ const builtin = @import("builtin");
 const StackTrace = std.builtin.StackTrace;
 
 const std = @import("std");
-const log = std.log.scoped(.gpa);
+const log = std.log.scoped(.DebugAllocator);
 const math = std.math;
 const assert = std.debug.assert;
 const mem = std.mem;
@@ -441,7 +441,11 @@ pub fn DebugAllocator(comptime config: Config) type {
                             const page_addr = @intFromPtr(bucket) & ~(page_size - 1);
                             const addr = page_addr + slot_index * size_class;
                             log.err("memory address 0x{x} leaked: {f}", .{
-                                addr, std.debug.FormatStackTrace{ .stack_trace = stack_trace },
+                                addr,
+                                std.debug.FormatStackTrace{
+                                    .stack_trace = stack_trace,
+                                    .terminal_mode = std.log.terminalMode(),
+                                },
                             });
                             leaks += 1;
                         }
@@ -471,7 +475,10 @@ pub fn DebugAllocator(comptime config: Config) type {
                 const stack_trace = large_alloc.getStackTrace(.alloc);
                 log.err("memory address 0x{x} leaked: {f}", .{
                     @intFromPtr(large_alloc.bytes.ptr),
-                    std.debug.FormatStackTrace{ .stack_trace = stack_trace },
+                    std.debug.FormatStackTrace{
+                        .stack_trace = stack_trace,
+                        .terminal_mode = std.log.terminalMode(),
+                    },
                 });
                 leaks += 1;
             }
@@ -528,9 +535,18 @@ pub fn DebugAllocator(comptime config: Config) type {
             var addr_buf: [stack_n]usize = undefined;
             const second_free_stack_trace = std.debug.captureCurrentStackTrace(.{ .first_address = ret_addr }, &addr_buf);
             log.err("Double free detected. Allocation: {f} First free: {f} Second free: {f}", .{
-                std.debug.FormatStackTrace{ .stack_trace = alloc_stack_trace },
-                std.debug.FormatStackTrace{ .stack_trace = free_stack_trace },
-                std.debug.FormatStackTrace{ .stack_trace = second_free_stack_trace },
+                std.debug.FormatStackTrace{
+                    .stack_trace = alloc_stack_trace,
+                    .terminal_mode = std.log.terminalMode(),
+                },
+                std.debug.FormatStackTrace{
+                    .stack_trace = free_stack_trace,
+                    .terminal_mode = std.log.terminalMode(),
+                },
+                std.debug.FormatStackTrace{
+                    .stack_trace = second_free_stack_trace,
+                    .terminal_mode = std.log.terminalMode(),
+                },
             });
         }
 
@@ -575,8 +591,14 @@ pub fn DebugAllocator(comptime config: Config) type {
                 log.err("Allocation size {d} bytes does not match free size {d}. Allocation: {f} Free: {f}", .{
                     entry.value_ptr.bytes.len,
                     old_mem.len,
-                    std.debug.FormatStackTrace{ .stack_trace = entry.value_ptr.getStackTrace(.alloc) },
-                    std.debug.FormatStackTrace{ .stack_trace = free_stack_trace },
+                    std.debug.FormatStackTrace{
+                        .stack_trace = entry.value_ptr.getStackTrace(.alloc),
+                        .terminal_mode = std.log.terminalMode(),
+                    },
+                    std.debug.FormatStackTrace{
+                        .stack_trace = free_stack_trace,
+                        .terminal_mode = std.log.terminalMode(),
+                    },
                 });
             }
 
@@ -682,8 +704,14 @@ pub fn DebugAllocator(comptime config: Config) type {
                 log.err("Allocation size {d} bytes does not match free size {d}. Allocation: {f} Free: {f}", .{
                     entry.value_ptr.bytes.len,
                     old_mem.len,
-                    std.debug.FormatStackTrace{ .stack_trace = entry.value_ptr.getStackTrace(.alloc) },
-                    std.debug.FormatStackTrace{ .stack_trace = free_stack_trace },
+                    std.debug.FormatStackTrace{
+                        .stack_trace = entry.value_ptr.getStackTrace(.alloc),
+                        .terminal_mode = std.log.terminalMode(),
+                    },
+                    std.debug.FormatStackTrace{
+                        .stack_trace = free_stack_trace,
+                        .terminal_mode = std.log.terminalMode(),
+                    },
                 });
             }
 
@@ -910,8 +938,12 @@ pub fn DebugAllocator(comptime config: Config) type {
                             old_memory.len,
                             std.debug.FormatStackTrace{
                                 .stack_trace = bucketStackTrace(bucket, slot_count, slot_index, .alloc),
+                                .terminal_mode = std.log.terminalMode(),
                             },
-                            std.debug.FormatStackTrace{ .stack_trace = free_stack_trace },
+                            std.debug.FormatStackTrace{
+                                .stack_trace = free_stack_trace,
+                                .terminal_mode = std.log.terminalMode(),
+                            },
                         });
                     }
                     if (alignment != slot_alignment) {
@@ -921,8 +953,12 @@ pub fn DebugAllocator(comptime config: Config) type {
                             alignment.toByteUnits(),
                             std.debug.FormatStackTrace{
                                 .stack_trace = bucketStackTrace(bucket, slot_count, slot_index, .alloc),
+                                .terminal_mode = std.log.terminalMode(),
                             },
-                            std.debug.FormatStackTrace{ .stack_trace = free_stack_trace },
+                            std.debug.FormatStackTrace{
+                                .stack_trace = free_stack_trace,
+                                .terminal_mode = std.log.terminalMode(),
+                            },
                         });
                     }
                 }
@@ -1011,8 +1047,12 @@ pub fn DebugAllocator(comptime config: Config) type {
                         memory.len,
                         std.debug.FormatStackTrace{
                             .stack_trace = bucketStackTrace(bucket, slot_count, slot_index, .alloc),
+                            .terminal_mode = std.log.terminalMode(),
                         },
-                        std.debug.FormatStackTrace{ .stack_trace = free_stack_trace },
+                        std.debug.FormatStackTrace{
+                            .stack_trace = free_stack_trace,
+                            .terminal_mode = std.log.terminalMode(),
+                        },
                     });
                 }
                 if (alignment != slot_alignment) {
@@ -1022,8 +1062,12 @@ pub fn DebugAllocator(comptime config: Config) type {
                         alignment.toByteUnits(),
                         std.debug.FormatStackTrace{
                             .stack_trace = bucketStackTrace(bucket, slot_count, slot_index, .alloc),
+                            .terminal_mode = std.log.terminalMode(),
                         },
-                        std.debug.FormatStackTrace{ .stack_trace = free_stack_trace },
+                        std.debug.FormatStackTrace{
+                            .stack_trace = free_stack_trace,
+                            .terminal_mode = std.log.terminalMode(),
+                        },
                     });
                 }
             }

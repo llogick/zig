@@ -129,6 +129,8 @@ pub const Options = struct {
         args: anytype,
     ) void = log.defaultLog,
 
+    logTerminalMode: fn () Io.Terminal.Mode = log.defaultTerminalMode,
+
     /// Overrides `std.heap.page_size_min`.
     page_size_min: ?usize = null,
     /// Overrides `std.heap.page_size_max`.
