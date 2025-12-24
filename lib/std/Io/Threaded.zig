@@ -7142,6 +7142,7 @@ fn posixSeekTo(current_thread: *Thread, fd: posix.fd_t, offset: u64) File.SeekEr
 fn processExecutableOpen(userdata: ?*anyopaque, flags: File.OpenFlags) std.process.OpenExecutableError!File {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     switch (native_os) {
+        .wasi => return error.OperationUnsupported,
         .linux, .serenity => return dirOpenFilePosix(t, .{ .handle = posix.AT.FDCWD }, "/proc/self/exe", flags),
         .windows => {
             // If ImagePathName is a symlink, then it will contain the path of the symlink,
