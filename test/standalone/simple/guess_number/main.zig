@@ -14,7 +14,10 @@ pub fn main() !void {
 
     var stdout_writer = std.Io.File.stdout().writerStreaming(io, &.{});
     const out = &stdout_writer.interface;
-    const stdin: std.Io.File = .stdin();
+
+    var line_buffer: [20]u8 = undefined;
+    var stdin_reader: std.Io.File.Reader = .init(.stdin(), io, &line_buffer);
+    const in = &stdin_reader.interface;
 
     try out.writeAll("Welcome to the Guess Number Game in Zig.\n");
 
@@ -22,13 +25,15 @@ pub fn main() !void {
 
     while (true) {
         try out.writeAll("\nGuess a number between 1 and 100: ");
-        var line_buf: [20]u8 = undefined;
-        const amt = try stdin.read(&line_buf);
-        if (amt == line_buf.len) {
-            try out.writeAll("Input too long.\n");
-            continue;
-        }
-        const line = std.mem.trimEnd(u8, line_buf[0..amt], "\r\n");
+        const untrimmed_line = in.takeSentinel('\n') catch |err| switch (err) {
+            error.StreamTooLong => {
+                try out.writeAll("Line too long.\n");
+                _ = try in.discardDelimiterInclusive('\n');
+                continue;
+            },
+            else => |e| return e,
+        };
+        const line = std.mem.trimEnd(u8, untrimmed_line, "\r\n");
 
         const guess = std.fmt.parseUnsigned(u8, line, 10) catch {
             try out.writeAll("Invalid number.\n");
