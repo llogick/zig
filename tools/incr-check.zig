@@ -4,7 +4,7 @@ const Dir = std.Io.Dir;
 const Allocator = std.mem.Allocator;
 const Cache = std.Build.Cache;
 
-const usage = "usage: incr-check <zig binary path> <input file> [--zig-lib-dir lib] [--debug-zcu] [--debug-dwarf] [--debug-link] [--preserve-tmp] [--zig-cc-binary /path/to/zig]";
+const usage = "usage: incr-check <zig binary path> <input file> [--zig-lib-dir lib] [--debug-log foo] [--preserve-tmp] [--zig-cc-binary /path/to/zig]";
 
 pub fn main() !void {
     const fatal = std.process.fatal;
@@ -23,27 +23,25 @@ pub fn main() !void {
     var opt_input_file_name: ?[]const u8 = null;
     var opt_lib_dir: ?[]const u8 = null;
     var opt_cc_zig: ?[]const u8 = null;
-    var debug_zcu = false;
-    var debug_dwarf = false;
-    var debug_link = false;
     var preserve_tmp = false;
     var enable_qemu: bool = false;
     var enable_wine: bool = false;
     var enable_wasmtime: bool = false;
     var enable_darling: bool = false;
 
+    var debug_log_args: std.ArrayList([]const u8) = .empty;
+
     var arg_it = try std.process.argsWithAllocator(arena);
     _ = arg_it.skip();
     while (arg_it.next()) |arg| {
         if (arg.len > 0 and arg[0] == '-') {
             if (std.mem.eql(u8, arg, "--zig-lib-dir")) {
-                opt_lib_dir = arg_it.next() orelse fatal("expected arg after '--zig-lib-dir'\n{s}", .{usage});
-            } else if (std.mem.eql(u8, arg, "--debug-zcu")) {
-                debug_zcu = true;
-            } else if (std.mem.eql(u8, arg, "--debug-dwarf")) {
-                debug_dwarf = true;
-            } else if (std.mem.eql(u8, arg, "--debug-link")) {
-                debug_link = true;
+                opt_lib_dir = arg_it.next() orelse fatal("expected arg after --zig-lib-dir\n{s}", .{usage});
+            } else if (std.mem.eql(u8, arg, "--debug-log")) {
+                try debug_log_args.append(
+                    arena,
+                    arg_it.next() orelse fatal("expected arg after --debug-log\n{s}", .{usage}),
+                );
             } else if (std.mem.eql(u8, arg, "--preserve-tmp")) {
                 preserve_tmp = true;
             } else if (std.mem.eql(u8, arg, "-fqemu")) {
@@ -55,7 +53,7 @@ pub fn main() !void {
             } else if (std.mem.eql(u8, arg, "-fdarling")) {
                 enable_darling = true;
             } else if (std.mem.eql(u8, arg, "--zig-cc-binary")) {
-                opt_cc_zig = arg_it.next() orelse fatal("expect arg after '--zig-cc-binary'\n{s}", .{usage});
+                opt_cc_zig = arg_it.next() orelse fatal("expected arg after --zig-cc-binary\n{s}", .{usage});
             } else {
                 fatal("unknown option '{s}'\n{s}", .{ arg, usage });
             }
@@ -108,7 +106,7 @@ pub fn main() !void {
 
     const host = try std.zig.system.resolveTargetQuery(io, .{});
 
-    const debug_log_verbose = debug_zcu or debug_dwarf or debug_link;
+    const debug_log_verbose = debug_log_args.items.len != 0;
 
     for (case.targets) |target| {
         const target_prog_node = node: {
@@ -146,14 +144,8 @@ pub fn main() !void {
             .llvm => try child_args.appendSlice(arena, &.{ "-fllvm", "-flld" }),
             .cbe => try child_args.appendSlice(arena, &.{ "-ofmt=c", "-lc" }),
         }
-        if (debug_zcu) {
-            try child_args.appendSlice(arena, &.{ "--debug-log", "zcu" });
-        }
-        if (debug_dwarf) {
-            try child_args.appendSlice(arena, &.{ "--debug-log", "dwarf" });
-        }
-        if (debug_link) {
-            try child_args.appendSlice(arena, &.{ "--debug-log", "link", "--debug-log", "link_state", "--debug-log", "link_relocs" });
+        for (debug_log_args.items) |arg| {
+            try child_args.appendSlice(arena, &.{ "--debug-log", arg });
         }
         for (case.modules) |mod| {
             try child_args.appendSlice(arena, &.{ "--dep", mod.name });
