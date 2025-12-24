@@ -26,7 +26,6 @@ pub const Error = error{
     InputOutput,
     NoSpaceLeft,
     DeviceBusy,
-    InvalidArgument,
     /// File descriptor does not hold the required rights to write to it.
     AccessDenied,
     PermissionDenied,

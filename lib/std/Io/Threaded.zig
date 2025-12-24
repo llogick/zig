@@ -7449,6 +7449,8 @@ fn fileWritePositional(
         },
     };
 
+    if (iovlen == 0) return 0;
+
     if (native_os == .wasi and !builtin.link_libc) {
         var n_written: usize = undefined;
         try current_thread.beginSyscall();
@@ -7502,7 +7504,7 @@ fn fileWritePositional(
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
-                    .INVAL => return error.InvalidArgument,
+                    .INVAL => |err| return errnoBug(err),
                     .FAULT => |err| return errnoBug(err),
                     .AGAIN => return error.WouldBlock,
                     .BADF => return error.NotOpenForWriting, // Usually a race condition.
@@ -7569,6 +7571,8 @@ fn fileWriteStreaming(
         },
     };
 
+    if (iovlen == 0) return 0;
+
     if (native_os == .wasi and !builtin.link_libc) {
         var n_written: usize = undefined;
         try current_thread.beginSyscall();
@@ -7619,7 +7623,7 @@ fn fileWriteStreaming(
             else => |e| {
                 current_thread.endSyscall();
                 switch (e) {
-                    .INVAL => return error.InvalidArgument,
+                    .INVAL => |err| return errnoBug(err),
                     .FAULT => |err| return errnoBug(err),
                     .AGAIN => return error.WouldBlock,
                     .BADF => return error.NotOpenForWriting, // Can be a race condition.
