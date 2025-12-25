@@ -565,30 +565,7 @@ pub fn build(b: *std.Build) !void {
         .skip_llvm = skip_llvm,
         .skip_libc = true,
         .no_builtin = true,
-        .max_rss = switch (b.graph.host.result.os.tag) {
-            .freebsd => switch (b.graph.host.result.cpu.arch) {
-                .x86_64 => 557_892_403,
-                else => 600_000_000,
-            },
-            .linux => switch (b.graph.host.result.cpu.arch) {
-                .aarch64 => 615_302_758,
-                .loongarch64 => 598_974_464,
-                .powerpc64le => 587_845_632,
-                .riscv64 => 382_786_764,
-                .s390x => 395_555_635,
-                .x86_64 => 871_883_161,
-                else => 900_000_000,
-            },
-            .macos => switch (b.graph.host.result.cpu.arch) {
-                .aarch64 => 451_389_030,
-                else => 500_000_000,
-            },
-            .windows => switch (b.graph.host.result.cpu.arch) {
-                .x86_64 => 367_747_072,
-                else => 400_000_000,
-            },
-            else => 900_000_000,
-        },
+        .max_rss = 900_000_000,
     }));
 
     test_modules_step.dependOn(tests.addModuleTests(b, .{
