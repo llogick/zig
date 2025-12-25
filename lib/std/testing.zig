@@ -31,7 +31,7 @@ pub var allocator_instance: std.heap.GeneralPurposeAllocator(.{
 };
 
 pub var io_instance: Io.Threaded = undefined;
-pub const io = io_instance.io();
+pub const io = if (builtin.is_test) io_instance.io() else @compileError("not testing");
 
 /// TODO https://github.com/ziglang/zig/issues/5738
 pub var log_level = std.log.Level.warn;
