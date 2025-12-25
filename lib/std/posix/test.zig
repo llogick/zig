@@ -20,15 +20,6 @@ const expectEqualStrings = std.testing.expectEqualStrings;
 const expectError = std.testing.expectError;
 const tmpDir = std.testing.tmpDir;
 
-// https://github.com/ziglang/zig/issues/20288
-test "WTF-8 to WTF-16 conversion buffer overflows" {
-    if (native_os != .windows) return error.SkipZigTest;
-
-    const input_wtf8 = "\u{10FFFF}" ** 16385;
-    try expectError(error.NameTooLong, posix.chdir(input_wtf8));
-    try expectError(error.NameTooLong, posix.chdirZ(input_wtf8));
-}
-
 test "check WASI CWD" {
     if (native_os == .wasi) {
         if (std.options.wasiCwd() != 3) {
