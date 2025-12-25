@@ -429,7 +429,11 @@ pub const OutputFunctionIndex = enum(u32) {
 
     pub fn fromSymbolName(wasm: *const Wasm, name: String) OutputFunctionIndex {
         if (wasm.flush_buffer.function_imports.getIndex(name)) |i| return @enumFromInt(i);
-        return fromFunctionIndex(wasm, FunctionIndex.fromSymbolName(wasm, name).?);
+        return fromFunctionIndex(wasm, FunctionIndex.fromSymbolName(wasm, name) orelse {
+            if (std.debug.runtime_safety) {
+                std.debug.panic("function index for symbol not found: {s}", .{name.slice(wasm)});
+            } else unreachable;
+        });
     }
 };
 
@@ -3534,7 +3538,10 @@ pub fn markFunctionImport(
     import: *FunctionImport,
     func_index: FunctionImport.Index,
 ) link.File.FlushError!void {
-    if (import.flags.alive) return;
+    // import.flags.alive might be already true from a previous update. In such
+    // case, we must still run the logic in this function, in case the item
+    // being marked was reverted by the `flush` logic that resets the hash
+    // table watermarks.
     import.flags.alive = true;
 
     const comp = wasm.base.comp;
@@ -3554,8 +3561,9 @@ pub fn markFunctionImport(
         } else {
             try wasm.function_imports.put(gpa, name, .fromObject(func_index, wasm));
         }
-    } else {
-        try markFunction(wasm, import.resolution.unpack(wasm).object_function, import.flags.exported);
+    } else switch (import.resolution.unpack(wasm)) {
+        .object_function => try markFunction(wasm, import.resolution.unpack(wasm).object_function, import.flags.exported),
+        else => return,
     }
 }
 
@@ -3594,7 +3602,10 @@ fn markGlobalImport(
     import: *GlobalImport,
     global_index: GlobalImport.Index,
 ) link.File.FlushError!void {
-    if (import.flags.alive) return;
+    // import.flags.alive might be already true from a previous update. In such
+    // case, we must still run the logic in this function, in case the item
+    // being marked was reverted by the `flush` logic that resets the hash
+    // table watermarks.
     import.flags.alive = true;
 
     const comp = wasm.base.comp;
@@ -3624,8 +3635,9 @@ fn markGlobalImport(
         } else {
             try wasm.global_imports.put(gpa, name, .fromObject(global_index, wasm));
         }
-    } else {
-        try markGlobal(wasm, import.resolution.unpack(wasm).object_global, import.flags.exported);
+    } else switch (import.resolution.unpack(wasm)) {
+        .object_global => try markGlobal(wasm, import.resolution.unpack(wasm).object_global, import.flags.exported),
+        else => return,
     }
 }
 
@@ -4043,7 +4055,7 @@ pub fn tagNameSymbolIndex(wasm: *Wasm, ip_index: InternPool.Index) Allocator.Err
     const comp = wasm.base.comp;
     assert(comp.config.output_mode == .Obj);
     const gpa = comp.gpa;
-    const name = try wasm.internStringFmt("__zig_tag_name_{d}", .{@intFromEnum(ip_index)});
+    const name = try wasm.internStringFmt("__zig_tag_name_{d}", .{ip_index});
     const gop = try wasm.symbol_table.getOrPut(gpa, name);
     gop.value_ptr.* = {};
     return @enumFromInt(gop.index);
