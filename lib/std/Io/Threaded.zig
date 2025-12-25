@@ -3770,7 +3770,7 @@ fn dirReadHaiku(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Dir
     _ = userdata;
     _ = dr;
     _ = buffer;
-    @panic("TODO");
+    @panic("TODO implement dirReadHaiku");
 }
 
 fn dirReadWindows(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Dir.Reader.Error!usize {
@@ -5250,7 +5250,7 @@ fn dirSetPermissionsWindows(userdata: ?*anyopaque, dir: Dir, permissions: Dir.Pe
     _ = t;
     _ = dir;
     _ = permissions;
-    @panic("TODO");
+    @panic("TODO implement dirSetPermissionsWindows");
 }
 
 fn dirSetPermissionsPosix(userdata: ?*anyopaque, dir: Dir, permissions: Dir.Permissions) Dir.SetPermissionsError!void {
@@ -5268,7 +5268,7 @@ fn dirSetFilePermissions(
     options: Dir.SetFilePermissionsOptions,
 ) Dir.SetFilePermissionsError!void {
     if (@sizeOf(Dir.Permissions) == 0) return;
-    if (is_windows) @panic("TODO");
+    if (is_windows) @panic("TODO implement dirSetFilePermissions windows");
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
@@ -5557,7 +5557,7 @@ fn dirSetFileOwner(
     _ = owner;
     _ = group;
     _ = options;
-    @panic("TODO");
+    @panic("TODO implement dirSetFileOwner");
 }
 
 const fileSync = switch (native_os) {
@@ -6012,11 +6012,11 @@ fn dirSetTimestamps(
     const current_thread = Thread.getCurrent(t);
 
     if (is_windows) {
-        @panic("TODO");
+        @panic("TODO implement dirSetTimestamps windows");
     }
 
     if (native_os == .wasi and !builtin.link_libc) {
-        @panic("TODO");
+        @panic("TODO implement dirSetTimestamps wasi");
     }
 
     const times: [2]posix.timespec = .{
@@ -6063,11 +6063,11 @@ fn dirSetTimestampsNow(
     const current_thread = Thread.getCurrent(t);
 
     if (is_windows) {
-        @panic("TODO");
+        @panic("TODO implement dirSetTimestampsNow windows");
     }
 
     if (native_os == .wasi and !builtin.link_libc) {
-        @panic("TODO");
+        @panic("TODO implement dirSetTimestampsNow wasi");
     }
 
     const flags: u32 = if (!options.follow_symlinks) posix.AT.SYMLINK_NOFOLLOW else 0;
@@ -6188,7 +6188,7 @@ fn fileSetTimestampsNow(userdata: ?*anyopaque, file: File) File.SetTimestampsErr
     const current_thread = Thread.getCurrent(t);
 
     if (is_windows) {
-        @panic("TODO");
+        @panic("TODO implement fileSetTimestampsNow windows");
     }
 
     if (native_os == .wasi and !builtin.link_libc) {
@@ -6836,7 +6836,7 @@ fn fileReadPositionalPosix(userdata: ?*anyopaque, file: File, data: []const []u8
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
-    if (!have_preadv) @compileError("TODO");
+    if (!have_preadv) @compileError("TODO implement fileReadPositionalPosix for cursed operating systems that don't support preadv (it's only Haiku)");
 
     var iovecs_buffer: [max_iovecs_len]posix.iovec = undefined;
     var i: usize = 0;
@@ -7448,7 +7448,7 @@ fn fileWritePositional(
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
-    if (is_windows) @panic("TODO");
+    if (is_windows) @panic("TODO implement fileWritePositional windows");
 
     var iovecs: [max_iovecs_len]posix.iovec_const = undefined;
     var iovlen: iovlen_t = 0;
@@ -7570,7 +7570,7 @@ fn fileWriteStreaming(
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
-    if (is_windows) @panic("TODO");
+    if (is_windows) @panic("TODO implement fileWriteStreaming windows");
 
     var iovecs: [max_iovecs_len]posix.iovec_const = undefined;
     var iovlen: iovlen_t = 0;
@@ -8085,7 +8085,7 @@ fn netWriteFile(
     _ = header;
     _ = file_reader;
     _ = limit;
-    @panic("TODO");
+    @panic("TODO implement netWriteFile");
 }
 
 fn netWriteFileUnavailable(
