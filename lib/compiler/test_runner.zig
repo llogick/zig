@@ -329,6 +329,8 @@ pub fn mainSimple() anyerror!void {
         else => false,
     };
 
+    testing.io_instance = .init(testing.allocator, .{});
+
     var passed: u64 = 0;
     var skipped: u64 = 0;
     var failed: u64 = 0;
@@ -338,26 +340,26 @@ pub fn mainSimple() anyerror!void {
 
     for (builtin.test_functions) |test_fn| {
         if (enable_write) {
-            stdout.writeAll(test_fn.name) catch {};
-            stdout.writeAll("... ") catch {};
+            stdout.writeStreamingAll(runner_threaded_io, test_fn.name) catch {};
+            stdout.writeStreamingAll(runner_threaded_io, "... ") catch {};
         }
         if (test_fn.func()) |_| {
-            if (enable_write) stdout.writeAll("PASS\n") catch {};
+            if (enable_write) stdout.writeStreamingAll(runner_threaded_io, "PASS\n") catch {};
         } else |err| {
             if (err != error.SkipZigTest) {
-                if (enable_write) stdout.writeAll("FAIL\n") catch {};
+                if (enable_write) stdout.writeStreamingAll(runner_threaded_io, "FAIL\n") catch {};
                 failed += 1;
                 if (!enable_write) return err;
                 continue;
             }
-            if (enable_write) stdout.writeAll("SKIP\n") catch {};
+            if (enable_write) stdout.writeStreamingAll(runner_threaded_io, "SKIP\n") catch {};
             skipped += 1;
             continue;
         }
         passed += 1;
     }
     if (enable_print) {
-        var stdout_writer = stdout.writer(&.{});
+        var stdout_writer = stdout.writer(runner_threaded_io, &.{});
         stdout_writer.interface.print("{} passed, {} skipped, {} failed\n", .{ passed, skipped, failed }) catch {};
     }
     if (failed != 0) std.process.exit(1);
