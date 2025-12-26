@@ -4165,7 +4165,7 @@ fn dirRealPathFilePosix(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, o
             },
         }
     };
-    errdefer posix.close(fd);
+    defer posix.close(fd);
     return realPathPosix(current_thread, fd, out_buffer);
 }
 
@@ -4290,16 +4290,17 @@ fn realPathPosix(current_thread: *Thread, fd: posix.fd_t, out_buffer: []u8) File
                         try current_thread.checkCancel();
                         continue;
                     },
-                    else => |e| {
+                    .BADF => {
                         current_thread.endSyscall();
-                        switch (e) {
-                            .BADF => return error.FileNotFound,
-                            else => |err| return posix.unexpectedErrno(err),
-                        }
+                        return error.FileNotFound;
+                    },
+                    else => |err| {
+                        current_thread.endSyscall();
+                        return posix.unexpectedErrno(err);
                     },
                 }
             }
-            const len = std.mem.indexOfScalar(u8, &k_file.path, 0) orelse k_file.path.len;
+            const len = std.mem.findScalar(u8, &k_file.path, 0) orelse k_file.path.len;
             if (len == 0) return error.NameTooLong;
             return len;
         },
