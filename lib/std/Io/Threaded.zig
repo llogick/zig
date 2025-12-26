@@ -1919,23 +1919,7 @@ fn dirStatFileLinux(
     try current_thread.beginSyscall();
     while (true) {
         var statx = std.mem.zeroes(linux.Statx);
-        const rc = sys.statx(
-            dir.handle,
-            sub_path_posix,
-            flags,
-            .{
-                .TYPE = true,
-                .MODE = true,
-                .ATIME = true,
-                .MTIME = true,
-                .CTIME = true,
-                .INO = true,
-                .SIZE = true,
-                .NLINK = true,
-            },
-            &statx,
-        );
-        switch (sys.errno(rc)) {
+        switch (sys.errno(sys.statx(dir.handle, sub_path_posix, flags, linux_statx_mask, &statx))) {
             .SUCCESS => {
                 current_thread.endSyscall();
                 return statFromLinux(&statx);
@@ -2170,22 +2154,7 @@ fn fileStatLinux(userdata: ?*anyopaque, file: File) File.StatError!File.Stat {
     try current_thread.beginSyscall();
     while (true) {
         var statx = std.mem.zeroes(linux.Statx);
-        switch (sys.errno(sys.statx(
-            file.handle,
-            "",
-            linux.AT.EMPTY_PATH,
-            .{
-                .TYPE = true,
-                .MODE = true,
-                .ATIME = true,
-                .MTIME = true,
-                .CTIME = true,
-                .INO = true,
-                .SIZE = true,
-                .NLINK = true,
-            },
-            &statx,
-        ))) {
+        switch (sys.errno(sys.statx(file.handle, "", linux.AT.EMPTY_PATH, linux_statx_mask, &statx))) {
             .SUCCESS => {
                 current_thread.endSyscall();
                 return statFromLinux(&statx);
@@ -11113,15 +11082,22 @@ fn clockToWasi(clock: Io.Clock) std.os.wasi.clockid_t {
     };
 }
 
+const linux_statx_mask: std.os.linux.STATX = .{
+    .TYPE = true,
+    .MODE = true,
+    .ATIME = true,
+    .MTIME = true,
+    .CTIME = true,
+    .INO = true,
+    .SIZE = true,
+    .NLINK = true,
+};
+
 fn statFromLinux(stx: *const std.os.linux.Statx) Io.UnexpectedError!File.Stat {
-    if (!stx.mask.TYPE) return error.Unexpected;
-    if (!stx.mask.MODE) return error.Unexpected;
-    if (!stx.mask.ATIME) return error.Unexpected;
-    if (!stx.mask.MTIME) return error.Unexpected;
-    if (!stx.mask.CTIME) return error.Unexpected;
-    if (!stx.mask.INO) return error.Unexpected;
-    if (!stx.mask.SIZE) return error.Unexpected;
-    if (!stx.mask.NLINK) return error.Unexpected;
+    const actual_mask_int: u32 = @bitCast(stx.mask);
+    const wanted_mask_int: u32 = @bitCast(linux_statx_mask);
+    if ((actual_mask_int | wanted_mask_int) != actual_mask_int) return error.Unexpected;
+
     const atime = stx.atime;
     const mtime = stx.mtime;
     const ctime = stx.ctime;
