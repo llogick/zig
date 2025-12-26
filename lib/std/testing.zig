@@ -368,11 +368,11 @@ pub fn expectEqualSlices(comptime T: type, expected: []const T, actual: []const 
         break :diff_index if (expected.len == actual.len) return else shortest;
     };
     if (!backend_can_print) return error.TestExpectedEqual;
-    if (io.lockStderr(&.{}, null)) |stderr| {
-        defer io.unlockStderr();
-        const w = &stderr.file_writer.interface;
-        failEqualSlices(T, expected, actual, diff_index, w, stderr.terminal_mode) catch {};
-    } else |_| {}
+    // Intentionally using the debug Io instance rather than the testing Io instance.
+    const stderr = std.debug.lockStderr(&.{});
+    defer std.debug.unlockStderr();
+    const w = &stderr.file_writer.interface;
+    failEqualSlices(T, expected, actual, diff_index, w, stderr.terminal_mode) catch {};
     return error.TestExpectedEqual;
 }
 
