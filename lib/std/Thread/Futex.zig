@@ -20,8 +20,7 @@ const testing = std.testing;
 const atomic = std.atomic;
 
 /// Checks if `ptr` still contains the value `expect` and, if so, blocks the caller until either:
-/// - The value at `ptr` is no longer equal to `expect`.
-/// - The caller is unblocked by a matching `wake()`.
+/// - The value at `ptr` is no longer equal to `expect` and `wake()` is called on the same address.
 /// - The caller is unblocked spuriously ("at random").
 ///
 /// The checking of `ptr` and `expect`, along with blocking the caller, is done atomically
