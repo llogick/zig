@@ -2086,6 +2086,7 @@ fn fileLength(userdata: ?*anyopaque, file: File) File.LengthError!u64 {
             switch (linux.errno(linux.statx(file.handle, "", linux.AT.EMPTY_PATH, .{ .SIZE = true }, &statx))) {
                 .SUCCESS => {
                     current_thread.endSyscall();
+                    if (!statx.mask.SIZE) return error.Unexpected;
                     return statx.size;
                 },
                 .INTR => {
@@ -5431,7 +5432,7 @@ fn fchmodatFallback(
         switch (sys.errno(sys.statx(path_fd, "", posix.AT.EMPTY_PATH, .{ .TYPE = true }, &statx))) {
             .SUCCESS => {
                 current_thread.endSyscall();
-                assert(statx.mask.TYPE);
+                if (!statx.mask.TYPE) return error.Unexpected;
                 break statx.mode;
             },
             .INTR => {
@@ -11112,15 +11113,15 @@ fn clockToWasi(clock: Io.Clock) std.os.wasi.clockid_t {
     };
 }
 
-fn statFromLinux(stx: *const std.os.linux.Statx) File.Stat {
-    assert(stx.mask.TYPE);
-    assert(stx.mask.MODE);
-    assert(stx.mask.ATIME);
-    assert(stx.mask.MTIME);
-    assert(stx.mask.CTIME);
-    assert(stx.mask.INO);
-    assert(stx.mask.SIZE);
-    assert(stx.mask.NLINK);
+fn statFromLinux(stx: *const std.os.linux.Statx) Io.UnexpectedError!File.Stat {
+    if (!stx.mask.TYPE) return error.Unexpected;
+    if (!stx.mask.MODE) return error.Unexpected;
+    if (!stx.mask.ATIME) return error.Unexpected;
+    if (!stx.mask.MTIME) return error.Unexpected;
+    if (!stx.mask.CTIME) return error.Unexpected;
+    if (!stx.mask.INO) return error.Unexpected;
+    if (!stx.mask.SIZE) return error.Unexpected;
+    if (!stx.mask.NLINK) return error.Unexpected;
     const atime = stx.atime;
     const mtime = stx.mtime;
     const ctime = stx.ctime;
