@@ -4302,6 +4302,7 @@ fn realPathPosix(current_thread: *Thread, fd: posix.fd_t, out_buffer: []u8) File
             }
             const len = std.mem.findScalar(u8, &k_file.path, 0) orelse k_file.path.len;
             if (len == 0) return error.NameTooLong;
+            @memcpy(out_buffer[0..len], k_file.path[0..len]);
             return len;
         },
         else => return error.OperationUnsupported,
