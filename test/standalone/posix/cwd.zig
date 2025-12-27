@@ -8,9 +8,10 @@ const assert = std.debug.assert;
 const path_max = std.fs.max_path_bytes;
 
 pub fn main() !void {
-    if (builtin.target.os.tag == .wasi) {
-        // WASI doesn't support changing the working directory at all.
-        return;
+    switch (builtin.target.os.tag) {
+        .wasi => return, // WASI doesn't support changing the working directory at all.
+        .windows => return, // POSIX is not implemented by Windows
+        else => {},
     }
 
     var debug_allocator: std.heap.DebugAllocator(.{}) = .{};
