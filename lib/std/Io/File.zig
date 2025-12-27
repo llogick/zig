@@ -499,6 +499,14 @@ pub fn setTimestampsNow(file: File, io: Io) SetTimestampsError!void {
     return io.vtable.fileSetTimestampsNow(io.userdata, file);
 }
 
+/// Returns 0 on stream end or if `buffer` has no space available for data.
+///
+/// See also:
+/// * `reader`
+pub fn readStreaming(file: File, io: Io, buffer: []const []u8) Reader.Error!usize {
+    return io.vtable.fileReadStreaming(io.userdata, file, buffer);
+}
+
 pub const ReadPositionalError = Reader.Error || error{Unseekable};
 
 /// Returns 0 on stream end or if `buffer` has no space available for data.
