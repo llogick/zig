@@ -6046,11 +6046,34 @@ fn fileSetTimestamps(
     if (is_windows) {
         try current_thread.checkCancel();
 
-        const atime_ft = windows.nanoSecondsToFileTime(options.access_time);
-        const mtime_ft = windows.nanoSecondsToFileTime(options.modify_time);
+        var access_time_buffer: windows.FILETIME = undefined;
+        var modify_time_buffer: windows.FILETIME = undefined;
+        var system_time_buffer: windows.LARGE_INTEGER = undefined;
+
+        if (options.access_timestamp == .now or options.modify_timestamp == .now) {
+            system_time_buffer = windows.ntdll.RtlGetSystemTimePrecise();
+        }
+
+        const access_ptr = switch (options.access_timestamp) {
+            .unchanged => null,
+            .now => @panic("TODO do SystemTimeToFileTime logic here"),
+            .new => |ts| p: {
+                access_time_buffer = windows.nanoSecondsToFileTime(ts);
+                break :p &access_time_buffer;
+            },
+        };
+
+        const modify_ptr = switch (options.modify_timestamp) {
+            .unchanged => null,
+            .now => @panic("TODO do SystemTimeToFileTime logic here"),
+            .new => |ts| p: {
+                modify_time_buffer = windows.nanoSecondsToFileTime(ts);
+                break :p &modify_time_buffer;
+            },
+        };
 
         // https://github.com/ziglang/zig/issues/1840
-        const rc = windows.kernel32.SetFileTime(file.handle, null, &atime_ft, &mtime_ft);
+        const rc = windows.kernel32.SetFileTime(file.handle, null, access_ptr, modify_ptr);
         if (rc == 0) {
             switch (windows.GetLastError()) {
                 else => |err| return windows.unexpectedError(err),
@@ -6060,8 +6083,8 @@ fn fileSetTimestamps(
     }
 
     if (native_os == .wasi and !builtin.link_libc) {
-        const atim = timestampToPosix(options.access_time.nanoseconds).toTimestamp();
-        const mtim = timestampToPosix(options.modify_time.nanoseconds).toTimestamp();
+        const atim = timestampToPosix(options.access_timestamp.nanoseconds).toTimestamp();
+        const mtim = timestampToPosix(options.modify_timestamp.nanoseconds).toTimestamp();
         try current_thread.beginSyscall();
         while (true) switch (std.os.wasi.fd_filestat_set_times(file.handle, atim, mtim, .{
             .ATIM = true,
