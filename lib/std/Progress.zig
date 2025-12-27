@@ -127,20 +127,20 @@ pub const Node = struct {
         name: [max_name_len]u8 align(@alignOf(usize)),
 
         /// Not thread-safe.
-        fn getIpcFd(s: Storage) ?posix.fd_t {
-            return if (s.estimated_total_count == std.math.maxInt(u32)) switch (@typeInfo(posix.fd_t)) {
+        fn getIpcFd(s: Storage) ?Io.File.Handle {
+            return if (s.estimated_total_count == std.math.maxInt(u32)) switch (@typeInfo(Io.File.Handle)) {
                 .int => @bitCast(s.completed_count),
                 .pointer => @ptrFromInt(s.completed_count),
-                else => @compileError("unsupported fd_t of " ++ @typeName(posix.fd_t)),
+                else => @compileError("unsupported fd_t of " ++ @typeName(Io.File.Handle)),
             } else null;
         }
 
         /// Thread-safe.
-        fn setIpcFd(s: *Storage, fd: posix.fd_t) void {
-            const integer: u32 = switch (@typeInfo(posix.fd_t)) {
+        fn setIpcFd(s: *Storage, fd: Io.File.Handle) void {
+            const integer: u32 = switch (@typeInfo(Io.File.Handle)) {
                 .int => @bitCast(fd),
                 .pointer => @intFromPtr(fd),
-                else => @compileError("unsupported fd_t of " ++ @typeName(posix.fd_t)),
+                else => @compileError("unsupported fd_t of " ++ @typeName(Io.File.Handle)),
             };
             // `estimated_total_count` max int indicates the special state that
             // causes `completed_count` to be treated as a file descriptor, so
@@ -340,7 +340,7 @@ pub const Node = struct {
     }
 
     /// Posix-only. Used by `std.process.Child`. Thread-safe.
-    pub fn setIpcFd(node: Node, fd: posix.fd_t) void {
+    pub fn setIpcFd(node: Node, fd: Io.File.Handle) void {
         const index = node.index.unwrap() orelse return;
         assert(fd >= 0);
         assert(fd != posix.STDOUT_FILENO);
@@ -351,14 +351,14 @@ pub const Node = struct {
 
     /// Posix-only. Thread-safe. Assumes the node is storing an IPC file
     /// descriptor.
-    pub fn getIpcFd(node: Node) ?posix.fd_t {
+    pub fn getIpcFd(node: Node) ?Io.File.Handle {
         const index = node.index.unwrap() orelse return null;
         const storage = storageByIndex(index);
         const int = @atomicLoad(u32, &storage.completed_count, .monotonic);
-        return switch (@typeInfo(posix.fd_t)) {
+        return switch (@typeInfo(Io.File.Handle)) {
             .int => @bitCast(int),
             .pointer => @ptrFromInt(int),
-            else => @compileError("unsupported fd_t of " ++ @typeName(posix.fd_t)),
+            else => @compileError("unsupported fd_t of " ++ @typeName(Io.File.Handle)),
         };
     }
 
@@ -479,10 +479,10 @@ pub fn start(io: Io, options: Options) Node {
     if (std.process.parseEnvVarInt("ZIG_PROGRESS", u31, 10)) |ipc_fd| {
         global_progress.update_worker = io.concurrent(ipcThreadRun, .{
             io,
-            @as(Io.File, .{ .handle = switch (@typeInfo(posix.fd_t)) {
+            @as(Io.File, .{ .handle = switch (@typeInfo(Io.File.Handle)) {
                 .int => ipc_fd,
                 .pointer => @ptrFromInt(ipc_fd),
-                else => @compileError("unsupported fd_t of " ++ @typeName(posix.fd_t)),
+                else => @compileError("unsupported fd_t of " ++ @typeName(Io.File.Handle)),
             } }),
         }) catch |err| {
             global_progress.start_failure = .{ .spawn_ipc_worker = err };
@@ -934,11 +934,11 @@ const SavedMetadata = struct {
 const Fd = enum(i32) {
     _,
 
-    fn init(fd: posix.fd_t) Fd {
+    fn init(fd: Io.File.Handle) Fd {
         return @enumFromInt(if (is_windows) @as(isize, @bitCast(@intFromPtr(fd))) else fd);
     }
 
-    fn get(fd: Fd) posix.fd_t {
+    fn get(fd: Fd) Io.File.Handle {
         return if (is_windows)
             @ptrFromInt(@as(usize, @bitCast(@as(isize, @intFromEnum(fd)))))
         else
@@ -949,6 +949,7 @@ const Fd = enum(i32) {
 var ipc_metadata_len: u8 = 0;
 
 fn serializeIpc(start_serialized_len: usize, serialized_buffer: *Serialized.Buffer) usize {
+    const io = global_progress.io;
     const ipc_metadata_fds_copy = &serialized_buffer.ipc_metadata_fds_copy;
     const ipc_metadata_copy = &serialized_buffer.ipc_metadata_copy;
     const ipc_metadata_fds = &serialized_buffer.ipc_metadata_fds;
@@ -967,11 +968,11 @@ fn serializeIpc(start_serialized_len: usize, serialized_buffer: *Serialized.Buff
         0..,
     ) |main_parent, *main_storage, main_index| {
         if (main_parent == .unused) continue;
-        const fd = main_storage.getIpcFd() orelse continue;
-        const opt_saved_metadata = findOld(fd, old_ipc_metadata_fds, old_ipc_metadata);
+        const file: Io.File = .{ .handle = main_storage.getIpcFd() orelse continue };
+        const opt_saved_metadata = findOld(file.handle, old_ipc_metadata_fds, old_ipc_metadata);
         var bytes_read: usize = 0;
         while (true) {
-            const n = posix.read(fd, pipe_buf[bytes_read..]) catch |err| switch (err) {
+            const n = file.readStreaming(io, &.{pipe_buf[bytes_read..]}) catch |err| switch (err) {
                 error.WouldBlock => break,
                 else => |e| {
                     std.log.debug("failed to read child progress data: {t}", .{e});
@@ -1000,7 +1001,7 @@ fn serializeIpc(start_serialized_len: usize, serialized_buffer: *Serialized.Buff
         // Ignore all but the last message on the pipe.
         var input: []u8 = pipe_buf[0..bytes_read];
         if (input.len == 0) {
-            serialized_len = useSavedIpcData(serialized_len, serialized_buffer, main_storage, main_index, opt_saved_metadata, 0, fd);
+            serialized_len = useSavedIpcData(serialized_len, serialized_buffer, main_storage, main_index, opt_saved_metadata, 0, file.handle);
             continue;
         }
 
@@ -1010,7 +1011,7 @@ fn serializeIpc(start_serialized_len: usize, serialized_buffer: *Serialized.Buff
             if (input.len < expected_bytes) {
                 // Ignore short reads. We'll handle the next full message when it comes instead.
                 const remaining_read_trash_bytes: u16 = @intCast(expected_bytes - input.len);
-                serialized_len = useSavedIpcData(serialized_len, serialized_buffer, main_storage, main_index, opt_saved_metadata, remaining_read_trash_bytes, fd);
+                serialized_len = useSavedIpcData(serialized_len, serialized_buffer, main_storage, main_index, opt_saved_metadata, remaining_read_trash_bytes, file.handle);
                 continue :main_loop;
             }
             if (input.len > expected_bytes) {
@@ -1028,7 +1029,7 @@ fn serializeIpc(start_serialized_len: usize, serialized_buffer: *Serialized.Buff
         const nodes_len: u8 = @intCast(@min(parents.len - 1, serialized_buffer.storage.len - serialized_len));
 
         // Remember in case the pipe is empty on next update.
-        ipc_metadata_fds[ipc_metadata_len] = Fd.init(fd);
+        ipc_metadata_fds[ipc_metadata_len] = Fd.init(file.handle);
         ipc_metadata[ipc_metadata_len] = .{
             .remaining_read_trash_bytes = 0,
             .start_index = @intCast(serialized_len),
@@ -1086,7 +1087,7 @@ fn copyRoot(dest: *Node.Storage, src: *align(1) Node.Storage) void {
 }
 
 fn findOld(
-    ipc_fd: posix.fd_t,
+    ipc_fd: Io.File.Handle,
     old_metadata_fds: []Fd,
     old_metadata: []SavedMetadata,
 ) ?*SavedMetadata {
@@ -1104,7 +1105,7 @@ fn useSavedIpcData(
     main_index: usize,
     opt_saved_metadata: ?*SavedMetadata,
     remaining_read_trash_bytes: u16,
-    fd: posix.fd_t,
+    fd: Io.File.Handle,
 ) usize {
     const parents_copy = &serialized_buffer.parents_copy;
     const storage_copy = &serialized_buffer.storage_copy;
