@@ -56,6 +56,7 @@ stderr_writer: File.Writer = .{
     .io = undefined,
     .interface = Io.File.Writer.initInterface(&.{}),
     .file = if (is_windows) undefined else .stderr(),
+    .mode = .streaming,
 },
 stderr_mode: Io.Terminal.Mode = .no_color,
 stderr_writer_initialized: bool = false,
