@@ -504,7 +504,7 @@ pub fn start(io: Io, options: Options) Node {
                     } };
                 } else |err| switch (err) {
                     error.Canceled => {
-                        // TODO: recancel here, or block cancelation for this function
+                        io.recancel();
                         return Node.none;
                     },
                 }
