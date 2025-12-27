@@ -1934,7 +1934,7 @@ fn dirStatFileLinux(
     try current_thread.beginSyscall();
     while (true) {
         var statx = std.mem.zeroes(linux.Statx);
-        switch (sys.errno(sys.statx(dir.handle, sub_path_posix, flags, linux_statx_mask, &statx))) {
+        switch (sys.errno(sys.statx(dir.handle, sub_path_posix, flags, linux_statx_request, &statx))) {
             .SUCCESS => {
                 current_thread.endSyscall();
                 return statFromLinux(&statx);
@@ -2169,7 +2169,7 @@ fn fileStatLinux(userdata: ?*anyopaque, file: File) File.StatError!File.Stat {
     try current_thread.beginSyscall();
     while (true) {
         var statx = std.mem.zeroes(linux.Statx);
-        switch (sys.errno(sys.statx(file.handle, "", linux.AT.EMPTY_PATH, linux_statx_mask, &statx))) {
+        switch (sys.errno(sys.statx(file.handle, "", linux.AT.EMPTY_PATH, linux_statx_request, &statx))) {
             .SUCCESS => {
                 current_thread.endSyscall();
                 return statFromLinux(&statx);
@@ -11101,7 +11101,7 @@ fn clockToWasi(clock: Io.Clock) std.os.wasi.clockid_t {
     };
 }
 
-const linux_statx_mask: std.os.linux.STATX = .{
+const linux_statx_request: std.os.linux.STATX = .{
     .TYPE = true,
     .MODE = true,
     .ATIME = true,
@@ -11112,14 +11112,22 @@ const linux_statx_mask: std.os.linux.STATX = .{
     .NLINK = true,
 };
 
+const linux_statx_check: std.os.linux.STATX = .{
+    .TYPE = true,
+    .MODE = true,
+    .ATIME = false,
+    .MTIME = true,
+    .CTIME = true,
+    .INO = true,
+    .SIZE = true,
+    .NLINK = true,
+};
+
 fn statFromLinux(stx: *const std.os.linux.Statx) Io.UnexpectedError!File.Stat {
     const actual_mask_int: u32 = @bitCast(stx.mask);
-    const wanted_mask_int: u32 = @bitCast(linux_statx_mask);
+    const wanted_mask_int: u32 = @bitCast(linux_statx_check);
     if ((actual_mask_int | wanted_mask_int) != actual_mask_int) return error.Unexpected;
 
-    const atime = stx.atime;
-    const mtime = stx.mtime;
-    const ctime = stx.ctime;
     return .{
         .inode = stx.ino,
         .nlink = stx.nlink,
@@ -11135,9 +11143,11 @@ fn statFromLinux(stx: *const std.os.linux.Statx) Io.UnexpectedError!File.Stat {
             std.os.linux.S.IFSOCK => .unix_domain_socket,
             else => .unknown,
         },
-        .atime = .{ .nanoseconds = @intCast(@as(i128, atime.sec) * std.time.ns_per_s + atime.nsec) },
-        .mtime = .{ .nanoseconds = @intCast(@as(i128, mtime.sec) * std.time.ns_per_s + mtime.nsec) },
-        .ctime = .{ .nanoseconds = @intCast(@as(i128, ctime.sec) * std.time.ns_per_s + ctime.nsec) },
+        .atime = if (!stx.mask.ATIME) null else .{
+            .nanoseconds = @intCast(@as(i128, stx.atime.sec) * std.time.ns_per_s + stx.atime.nsec),
+        },
+        .mtime = .{ .nanoseconds = @intCast(@as(i128, stx.mtime.sec) * std.time.ns_per_s + stx.mtime.nsec) },
+        .ctime = .{ .nanoseconds = @intCast(@as(i128, stx.ctime.sec) * std.time.ns_per_s + stx.ctime.nsec) },
     };
 }
 
