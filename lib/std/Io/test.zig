@@ -174,14 +174,14 @@ test "setTimestamps" {
     defer file.close(io);
 
     const stat_old = try file.stat(io);
+
     // Set atime and mtime to 5s before
-    try file.setTimestamps(
-        io,
-        stat_old.atime.subDuration(.fromSeconds(5)),
-        stat_old.mtime.subDuration(.fromSeconds(5)),
-    );
+    try file.setTimestamps(io, .{
+        .access_timestamp = if (stat_old.atime) |atime| .{ .new = atime.subDuration(.fromSeconds(5)) } else .unchanged,
+        .modify_timestamp = .{ .new = stat_old.mtime.subDuration(.fromSeconds(5)) },
+    });
     const stat_new = try file.stat(io);
-    try expect(stat_new.atime.nanoseconds < stat_old.atime.nanoseconds);
+    if (stat_old.atime) |old_atime| try expect(stat_new.atime.?.nanoseconds < old_atime.nanoseconds);
     try expect(stat_new.mtime.nanoseconds < stat_old.mtime.nanoseconds);
 }
 

@@ -53,7 +53,12 @@ pub const Stat = struct {
     permissions: Permissions,
     kind: Kind,
     /// Last access time in nanoseconds, relative to UTC 1970-01-01.
-    atime: Io.Timestamp,
+    ///
+    /// Filesystems generally find this value problematic to keep updated since
+    /// it turns read-only file system accesses into file system mutations.
+    /// Some systems report stale values, and some systems explicitly refuse to
+    /// report this value. The latter case is handled by `null`.
+    atime: ?Io.Timestamp,
     /// Last modification time in nanoseconds, relative to UTC 1970-01-01.
     mtime: Io.Timestamp,
     /// Last status/metadata change time in nanoseconds, relative to UTC 1970-01-01.
@@ -478,16 +483,30 @@ pub const SetTimestampsError = error{
     ReadOnlyFileSystem,
 } || Io.Cancelable || Io.UnexpectedError;
 
+pub const SetTimestampsOptions = struct {
+    access_timestamp: SetTimestamp = .unchanged,
+    modify_timestamp: SetTimestamp = .unchanged,
+};
+
+pub const SetTimestamp = union(enum) {
+    /// Leave the existing timestamp unmodified.
+    unchanged,
+    /// Set to current time using `Io.Clock.real`.
+    now,
+    /// Set to provided timestamp using `Io.Clock.real`.
+    new: Io.Timestamp,
+
+    /// Convenience for interacting with `Stat`, in which `null` indicates `unchanged`.
+    pub fn init(optional: ?Io.Timestamp) SetTimestamp {
+        return if (optional) |t| .{ .new = t } else .unchanged;
+    }
+};
+
 /// The granularity that ultimately is stored depends on the combination of
 /// operating system and file system. When a value as provided that exceeds
 /// this range, the value is clamped to the maximum.
-pub fn setTimestamps(
-    file: File,
-    io: Io,
-    last_accessed: Io.Timestamp,
-    last_modified: Io.Timestamp,
-) SetTimestampsError!void {
-    return io.vtable.fileSetTimestamps(io.userdata, file, last_accessed, last_modified);
+pub fn setTimestamps(file: File, io: Io, options: SetTimestampsOptions) SetTimestampsError!void {
+    return io.vtable.fileSetTimestamps(io.userdata, file, options);
 }
 
 /// Sets the accessed and modification timestamps of `file` to the current wall
@@ -496,7 +515,10 @@ pub fn setTimestamps(
 /// The granularity that ultimately is stored depends on the combination of
 /// operating system and file system.
 pub fn setTimestampsNow(file: File, io: Io) SetTimestampsError!void {
-    return io.vtable.fileSetTimestampsNow(io.userdata, file);
+    return io.vtable.fileSetTimestamps(io.userdata, file, .{
+        .access_timestamp = .now,
+        .modify_timestamp = .now,
+    });
 }
 
 /// Returns 0 on stream end or if `buffer` has no space available for data.
