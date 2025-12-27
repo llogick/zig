@@ -10,6 +10,7 @@ pub fn main() anyerror!void {
     const gpa = debug_alloc_inst.allocator();
 
     var threaded: Io.Threaded = .init(gpa, .{});
+    defer threaded.deinit();
     const io = threaded.io();
 
     var it = try std.process.argsWithAllocator(gpa);
@@ -41,8 +42,8 @@ pub fn main() anyerror!void {
         std.debug.print("rand seed: {}\n", .{seed});
     }
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+    var tmp = tmpDir(io, .{});
+    defer tmp.cleanup(io);
 
     try std.process.setCurrentDir(io, tmp.dir);
     defer std.process.setCurrentDir(io, tmp.parent_dir) catch {};
@@ -167,3 +168,41 @@ fn randomArg(gpa: Allocator, rand: std.Random) ![]const u8 {
 
     return buf.toOwnedSlice(gpa);
 }
+
+pub fn tmpDir(io: Io, opts: Io.Dir.OpenOptions) TmpDir {
+    var random_bytes: [TmpDir.random_bytes_count]u8 = undefined;
+    std.crypto.random.bytes(&random_bytes);
+    var sub_path: [TmpDir.sub_path_len]u8 = undefined;
+    _ = std.fs.base64_encoder.encode(&sub_path, &random_bytes);
+
+    const cwd = Io.Dir.cwd();
+    var cache_dir = cwd.createDirPathOpen(io, ".zig-cache", .{}) catch
+        @panic("unable to make tmp dir for testing: unable to make and open .zig-cache dir");
+    defer cache_dir.close(io);
+    const parent_dir = cache_dir.createDirPathOpen(io, "tmp", .{}) catch
+        @panic("unable to make tmp dir for testing: unable to make and open .zig-cache/tmp dir");
+    const dir = parent_dir.createDirPathOpen(io, &sub_path, .{ .open_options = opts }) catch
+        @panic("unable to make tmp dir for testing: unable to make and open the tmp dir");
+
+    return .{
+        .dir = dir,
+        .parent_dir = parent_dir,
+        .sub_path = sub_path,
+    };
+}
+
+pub const TmpDir = struct {
+    dir: Io.Dir,
+    parent_dir: Io.Dir,
+    sub_path: [sub_path_len]u8,
+
+    const random_bytes_count = 12;
+    const sub_path_len = std.fs.base64_encoder.calcSize(random_bytes_count);
+
+    pub fn cleanup(self: *TmpDir, io: Io) void {
+        self.dir.close(io);
+        self.parent_dir.deleteTree(io, &self.sub_path) catch {};
+        self.parent_dir.close(io);
+        self.* = undefined;
+    }
+};

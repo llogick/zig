@@ -19,8 +19,8 @@ pub fn main() anyerror!void {
     _ = it.next() orelse unreachable; // skip binary name
     const hello_exe_cache_path = it.next() orelse unreachable;
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+    var tmp = tmpDir(io, .{});
+    defer tmp.cleanup(io);
 
     const tmp_absolute_path = try tmp.dir.realPathFileAlloc(io, ".", gpa);
     defer gpa.free(tmp_absolute_path);
@@ -44,10 +44,10 @@ pub fn main() anyerror!void {
     ) == windows.TRUE);
 
     // No PATH, so it should fail to find anything not in the cwd
-    try testExecError(error.FileNotFound, gpa, "something_missing");
+    try testExecError(error.FileNotFound, gpa, io, "something_missing");
 
     // make sure we don't get error.BadPath traversing out of cwd with a relative path
-    try testExecError(error.FileNotFound, gpa, "..\\.\\.\\.\\\\..\\more_missing");
+    try testExecError(error.FileNotFound, gpa, io, "..\\.\\.\\.\\\\..\\more_missing");
 
     std.debug.assert(windows.kernel32.SetEnvironmentVariableW(
         utf16Literal("PATH"),
@@ -55,12 +55,12 @@ pub fn main() anyerror!void {
     ) == windows.TRUE);
 
     // Move hello.exe into the tmp dir which is now added to the path
-    try Io.Dir.cwd().copyFile(hello_exe_cache_path, tmp.dir, "hello.exe", .{});
+    try Io.Dir.cwd().copyFile(hello_exe_cache_path, tmp.dir, "hello.exe", io, .{});
 
     // with extension should find the .exe (case insensitive)
-    try testExec(gpa, "HeLLo.exe", "hello from exe\n");
+    try testExec(gpa, io, "HeLLo.exe", "hello from exe\n");
     // without extension should find the .exe (case insensitive)
-    try testExec(gpa, "heLLo", "hello from exe\n");
+    try testExec(gpa, io, "heLLo", "hello from exe\n");
     // with invalid cwd
     try std.testing.expectError(error.FileNotFound, testExecWithCwd(gpa, io, "hello.exe", "missing_dir", ""));
 
@@ -70,33 +70,33 @@ pub fn main() anyerror!void {
     try tmp.dir.writeFile(io, .{ .sub_path = "hello.cmd", .data = "@echo hello from cmd" });
 
     // with extension should find the .bat (case insensitive)
-    try testExec(gpa, "heLLo.bat", "hello from bat\r\n");
+    try testExec(gpa, io, "heLLo.bat", "hello from bat\r\n");
     // with extension should find the .cmd (case insensitive)
-    try testExec(gpa, "heLLo.cmd", "hello from cmd\r\n");
+    try testExec(gpa, io, "heLLo.cmd", "hello from cmd\r\n");
     // without extension should find the .exe (since its first in PATHEXT)
-    try testExec(gpa, "heLLo", "hello from exe\n");
+    try testExec(gpa, io, "heLLo", "hello from exe\n");
 
     // now rename the exe to not have an extension
-    try renameExe(tmp.dir, "hello.exe", "hello");
+    try renameExe(tmp.dir, io, "hello.exe", "hello");
 
     // with extension should now fail
-    try testExecError(error.FileNotFound, gpa, "hello.exe");
+    try testExecError(error.FileNotFound, gpa, io, "hello.exe");
     // without extension should succeed (case insensitive)
-    try testExec(gpa, "heLLo", "hello from exe\n");
+    try testExec(gpa, io, "heLLo", "hello from exe\n");
 
     try tmp.dir.createDir(io, "something", .default_dir);
-    try renameExe(tmp.dir, "hello", "something/hello.exe");
+    try renameExe(tmp.dir, io, "hello", "something/hello.exe");
 
     const relative_path_no_ext = try std.fs.path.join(gpa, &.{ tmp_relative_path, "something/hello" });
     defer gpa.free(relative_path_no_ext);
 
     // Giving a full relative path to something/hello should work
-    try testExec(gpa, relative_path_no_ext, "hello from exe\n");
+    try testExec(gpa, io, relative_path_no_ext, "hello from exe\n");
     // But commands with path separators get excluded from PATH searching, so this will fail
-    try testExecError(error.FileNotFound, gpa, "something/hello");
+    try testExecError(error.FileNotFound, gpa, io, "something/hello");
 
     // Now that .BAT is the first PATHEXT that should be found, this should succeed
-    try testExec(gpa, "heLLo", "hello from bat\r\n");
+    try testExec(gpa, io, "heLLo", "hello from bat\r\n");
 
     // Add a hello.exe that is not a valid executable
     try tmp.dir.writeFile(io, .{ .sub_path = "hello.exe", .data = "invalid" });
@@ -105,26 +105,26 @@ pub fn main() anyerror!void {
     // case for .EXE extensions, where if they ever try to get executed but they are
     // invalid, that gets treated as a fatal error wherever they are found and InvalidExe
     // is returned immediately.
-    try testExecError(error.InvalidExe, gpa, "hello.exe");
+    try testExecError(error.InvalidExe, gpa, io, "hello.exe");
     // Same thing applies to the command with no extension--even though there is a
     // hello.bat that could be executed, it should stop after it tries executing
     // hello.exe and getting InvalidExe.
-    try testExecError(error.InvalidExe, gpa, "hello");
+    try testExecError(error.InvalidExe, gpa, io, "hello");
 
     // If we now rename hello.exe to have no extension, it will behave differently
-    try renameExe(tmp.dir, "hello.exe", "hello");
+    try renameExe(tmp.dir, io, "hello.exe", "hello");
 
     // Now, trying to execute it without an extension should treat InvalidExe as recoverable
     // and skip over it and find hello.bat and execute that
-    try testExec(gpa, "hello", "hello from bat\r\n");
+    try testExec(gpa, io, "hello", "hello from bat\r\n");
 
     // If we rename the invalid exe to something else
-    try renameExe(tmp.dir, "hello", "goodbye");
+    try renameExe(tmp.dir, io, "hello", "goodbye");
     // Then we should now get FileNotFound when trying to execute 'goodbye',
     // since that is what the original error will be after searching for 'goodbye'
     // in the cwd. It will try to execute 'goodbye' from the PATH but the InvalidExe error
     // should be ignored in this case.
-    try testExecError(error.FileNotFound, gpa, "goodbye");
+    try testExecError(error.FileNotFound, gpa, io, "goodbye");
 
     // Now let's set the tmp dir as the cwd and set the path only include the "something" sub dir
     try std.process.setCurrentDir(io, tmp.dir);
@@ -139,26 +139,26 @@ pub fn main() anyerror!void {
 
     // Now trying to execute goodbye should give error.InvalidExe since it's the original
     // error that we got when trying within the cwd
-    try testExecError(error.InvalidExe, gpa, "goodbye");
+    try testExecError(error.InvalidExe, gpa, io, "goodbye");
 
     // hello should still find the .bat
-    try testExec(gpa, "hello", "hello from bat\r\n");
+    try testExec(gpa, io, "hello", "hello from bat\r\n");
 
     // If we rename something/hello.exe to something/goodbye.exe
-    try renameExe(tmp.dir, "something/hello.exe", "something/goodbye.exe");
+    try renameExe(tmp.dir, io, "something/hello.exe", "something/goodbye.exe");
     // And try to execute goodbye, then the one in something should be found
     // since the one in cwd is an invalid executable
-    try testExec(gpa, "goodbye", "hello from exe\n");
+    try testExec(gpa, io, "goodbye", "hello from exe\n");
 
     // If we use an absolute path to execute the invalid goodbye
     const goodbye_abs_path = try std.mem.join(gpa, "\\", &.{ tmp_absolute_path, "goodbye" });
     defer gpa.free(goodbye_abs_path);
     // then the PATH should not be searched and we should get InvalidExe
-    try testExecError(error.InvalidExe, gpa, goodbye_abs_path);
+    try testExecError(error.InvalidExe, gpa, io, goodbye_abs_path);
 
     // If we try to exec but provide a cwd that is an absolute path, the PATH
     // should still be searched and the goodbye.exe in something should be found.
-    try testExecWithCwd(gpa, "goodbye", tmp_absolute_path, "hello from exe\n");
+    try testExecWithCwd(gpa, io, "goodbye", tmp_absolute_path, "hello from exe\n");
 
     // introduce some extra path separators into the path which is dealt with inside the spawn call.
     const denormed_something_subdir_size = std.mem.replacementSize(u16, something_subdir_abs_path, utf16Literal("\\"), utf16Literal("\\\\\\\\"));
@@ -177,20 +177,20 @@ pub fn main() anyerror!void {
         null,
     ) == windows.TRUE);
 
-    try testExecWithCwd(gpa, "goodbye", denormed_something_subdir_wtf8, "hello from exe\n");
+    try testExecWithCwd(gpa, io, "goodbye", denormed_something_subdir_wtf8, "hello from exe\n");
 
     // normalization should also work if the non-normalized path is found in the PATH var.
     std.debug.assert(windows.kernel32.SetEnvironmentVariableW(
         utf16Literal("PATH"),
         denormed_something_subdir_abs_path,
     ) == windows.TRUE);
-    try testExec(gpa, "goodbye", "hello from exe\n");
+    try testExec(gpa, io, "goodbye", "hello from exe\n");
 
     // now make sure we can launch executables "outside" of the cwd
-    var subdir_cwd = try tmp.dir.openDir(denormed_something_subdir_wtf8, .{});
+    var subdir_cwd = try tmp.dir.openDir(io, denormed_something_subdir_wtf8, .{});
     defer subdir_cwd.close(io);
 
-    try renameExe(tmp.dir, "something/goodbye.exe", "hello.exe");
+    try renameExe(tmp.dir, io, "something/goodbye.exe", "hello.exe");
     try std.process.setCurrentDir(io, subdir_cwd);
 
     // clear the PATH again
@@ -200,15 +200,15 @@ pub fn main() anyerror!void {
     ) == windows.TRUE);
 
     // while we're at it make sure non-windows separators work fine
-    try testExec(gpa, "../hello", "hello from exe\n");
+    try testExec(gpa, io, "../hello", "hello from exe\n");
 }
 
-fn testExecError(err: anyerror, gpa: Allocator, command: []const u8) !void {
-    return std.testing.expectError(err, testExec(gpa, command, ""));
+fn testExecError(err: anyerror, gpa: Allocator, io: Io, command: []const u8) !void {
+    return std.testing.expectError(err, testExec(gpa, io, command, ""));
 }
 
-fn testExec(gpa: Allocator, command: []const u8, expected_stdout: []const u8) !void {
-    return testExecWithCwd(gpa, command, null, expected_stdout);
+fn testExec(gpa: Allocator, io: Io, command: []const u8, expected_stdout: []const u8) !void {
+    return testExecWithCwd(gpa, io, command, null, expected_stdout);
 }
 
 fn testExecWithCwd(gpa: Allocator, io: Io, command: []const u8, cwd: ?[]const u8, expected_stdout: []const u8) !void {
@@ -223,9 +223,9 @@ fn testExecWithCwd(gpa: Allocator, io: Io, command: []const u8, cwd: ?[]const u8
     try std.testing.expectEqualStrings(expected_stdout, result.stdout);
 }
 
-fn renameExe(dir: Io.Dir, old_sub_path: []const u8, new_sub_path: []const u8) !void {
+fn renameExe(dir: Io.Dir, io: Io, old_sub_path: []const u8, new_sub_path: []const u8) !void {
     var attempt: u5 = 0;
-    while (true) break dir.rename(old_sub_path, new_sub_path) catch |err| switch (err) {
+    while (true) break dir.rename(old_sub_path, dir, new_sub_path, io) catch |err| switch (err) {
         error.AccessDenied => {
             if (attempt == 13) return error.AccessDenied;
             // give the kernel a chance to finish closing the executable handle
@@ -236,3 +236,41 @@ fn renameExe(dir: Io.Dir, old_sub_path: []const u8, new_sub_path: []const u8) !v
         else => |e| return e,
     };
 }
+
+pub fn tmpDir(io: Io, opts: Io.Dir.OpenOptions) TmpDir {
+    var random_bytes: [TmpDir.random_bytes_count]u8 = undefined;
+    std.crypto.random.bytes(&random_bytes);
+    var sub_path: [TmpDir.sub_path_len]u8 = undefined;
+    _ = std.fs.base64_encoder.encode(&sub_path, &random_bytes);
+
+    const cwd = Io.Dir.cwd();
+    var cache_dir = cwd.createDirPathOpen(io, ".zig-cache", .{}) catch
+        @panic("unable to make tmp dir for testing: unable to make and open .zig-cache dir");
+    defer cache_dir.close(io);
+    const parent_dir = cache_dir.createDirPathOpen(io, "tmp", .{}) catch
+        @panic("unable to make tmp dir for testing: unable to make and open .zig-cache/tmp dir");
+    const dir = parent_dir.createDirPathOpen(io, &sub_path, .{ .open_options = opts }) catch
+        @panic("unable to make tmp dir for testing: unable to make and open the tmp dir");
+
+    return .{
+        .dir = dir,
+        .parent_dir = parent_dir,
+        .sub_path = sub_path,
+    };
+}
+
+pub const TmpDir = struct {
+    dir: Io.Dir,
+    parent_dir: Io.Dir,
+    sub_path: [sub_path_len]u8,
+
+    const random_bytes_count = 12;
+    const sub_path_len = std.fs.base64_encoder.calcSize(random_bytes_count);
+
+    pub fn cleanup(self: *TmpDir, io: Io) void {
+        self.dir.close(io);
+        self.parent_dir.deleteTree(io, &self.sub_path) catch {};
+        self.parent_dir.close(io);
+        self.* = undefined;
+    }
+};
