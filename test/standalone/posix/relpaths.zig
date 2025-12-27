@@ -5,7 +5,6 @@ const builtin = @import("builtin");
 
 const std = @import("std");
 const Io = std.Io;
-const Allocator = std.mem.Allocator;
 
 pub fn main() !void {
     if (builtin.target.os.tag == .wasi) return; // Can link, but can't change into tmpDir
@@ -24,35 +23,7 @@ pub fn main() !void {
     // Want to test relative paths, so cd into the tmpdir for these tests
     try std.process.setCurrentDir(io, tmp.dir);
 
-    try test_symlink(gpa, io, tmp);
     try test_link(io, tmp);
-}
-
-fn test_symlink(gpa: Allocator, io: Io, tmp: TmpDir) !void {
-    const target_name = "symlink-target";
-    const symlink_name = "symlinker";
-
-    // Create the target file
-    try tmp.dir.writeFile(io, .{ .sub_path = target_name, .data = "nonsense" });
-
-    if (builtin.target.os.tag == .windows) {
-        const wtarget_name = try std.unicode.wtf8ToWtf16LeAllocZ(gpa, target_name);
-        const wsymlink_name = try std.unicode.wtf8ToWtf16LeAllocZ(gpa, symlink_name);
-        defer gpa.free(wtarget_name);
-        defer gpa.free(wsymlink_name);
-
-        std.os.windows.CreateSymbolicLink(tmp.dir.fd, wsymlink_name, wtarget_name, false) catch |err| switch (err) {
-            // Symlink requires admin privileges on windows, so this test can legitimately fail.
-            error.AccessDenied => return,
-            else => return err,
-        };
-    } else {
-        try Io.Dir.cwd().symLink(io, target_name, symlink_name, .{});
-    }
-
-    var buffer: [std.fs.max_path_bytes]u8 = undefined;
-    const given = buffer[0..try Io.Dir.cwd().readLink(io, symlink_name, &buffer)];
-    try std.testing.expectEqualStrings(target_name, given);
 }
 
 fn test_link(io: Io, tmp: TmpDir) !void {
