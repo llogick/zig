@@ -7420,7 +7420,18 @@ fn fileWritePositional(
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
-    if (is_windows) @panic("TODO implement fileWritePositional windows");
+    if (is_windows) {
+        if (header.len != 0) {
+            return writeFilePositionalWindows(current_thread, file.handle, header, offset);
+        }
+        for (data[0 .. data.len - 1]) |buf| {
+            if (buf.len == 0) continue;
+            return writeFilePositionalWindows(current_thread, file.handle, buf, offset);
+        }
+        const pattern = data[data.len - 1];
+        if (pattern.len == 0 or splat == 0) return 0;
+        return writeFilePositionalWindows(current_thread, file.handle, pattern, offset);
+    }
 
     var iovecs: [max_iovecs_len]posix.iovec_const = undefined;
     var iovlen: iovlen_t = 0;
@@ -7532,6 +7543,44 @@ fn fileWritePositional(
     }
 }
 
+fn writeFilePositionalWindows(
+    current_thread: *Thread,
+    handle: windows.HANDLE,
+    bytes: []const u8,
+    offset: u64,
+) File.WritePositionalError!usize {
+    try current_thread.checkCancel();
+
+    var bytes_written: windows.DWORD = undefined;
+    var overlapped: windows.OVERLAPPED = .{
+        .Internal = 0,
+        .InternalHigh = 0,
+        .DUMMYUNIONNAME = .{
+            .DUMMYSTRUCTNAME = .{
+                .Offset = @truncate(offset),
+                .OffsetHigh = @truncate(offset >> 32),
+            },
+        },
+        .hEvent = null,
+    };
+    const adjusted_len = std.math.lossyCast(u32, bytes.len);
+    if (windows.kernel32.WriteFile(handle, bytes.ptr, adjusted_len, &bytes_written, &overlapped) == 0) {
+        switch (windows.GetLastError()) {
+            .INVALID_USER_BUFFER => return error.SystemResources,
+            .NOT_ENOUGH_MEMORY => return error.SystemResources,
+            .OPERATION_ABORTED => return error.Canceled,
+            .NOT_ENOUGH_QUOTA => return error.SystemResources,
+            .NO_DATA => return error.BrokenPipe,
+            .INVALID_HANDLE => return error.NotOpenForWriting,
+            .LOCK_VIOLATION => return error.LockViolation,
+            .ACCESS_DENIED => return error.AccessDenied,
+            .WORKING_SET_QUOTA => return error.SystemResources,
+            else => |err| return windows.unexpectedError(err),
+        }
+    }
+    return bytes_written;
+}
+
 fn fileWriteStreaming(
     userdata: ?*anyopaque,
     file: File,
@@ -7542,7 +7591,18 @@ fn fileWriteStreaming(
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
 
-    if (is_windows) @panic("TODO implement fileWriteStreaming windows");
+    if (is_windows) {
+        if (header.len != 0) {
+            return writeFileStreamingWindows(current_thread, file.handle, header);
+        }
+        for (data[0 .. data.len - 1]) |buf| {
+            if (buf.len == 0) continue;
+            return writeFileStreamingWindows(current_thread, file.handle, buf);
+        }
+        const pattern = data[data.len - 1];
+        if (pattern.len == 0 or splat == 0) return 0;
+        return writeFileStreamingWindows(current_thread, file.handle, pattern);
+    }
 
     var iovecs: [max_iovecs_len]posix.iovec_const = undefined;
     var iovlen: iovlen_t = 0;
@@ -7645,6 +7705,32 @@ fn fileWriteStreaming(
             },
         }
     }
+}
+
+fn writeFileStreamingWindows(
+    current_thread: *Thread,
+    handle: windows.HANDLE,
+    bytes: []const u8,
+) File.Writer.Error!usize {
+    try current_thread.checkCancel();
+
+    var bytes_written: windows.DWORD = undefined;
+    const adjusted_len = std.math.lossyCast(u32, bytes.len);
+    if (windows.kernel32.WriteFile(handle, bytes.ptr, adjusted_len, &bytes_written, null) == 0) {
+        switch (windows.GetLastError()) {
+            .INVALID_USER_BUFFER => return error.SystemResources,
+            .NOT_ENOUGH_MEMORY => return error.SystemResources,
+            .OPERATION_ABORTED => return error.Canceled,
+            .NOT_ENOUGH_QUOTA => return error.SystemResources,
+            .NO_DATA => return error.BrokenPipe,
+            .INVALID_HANDLE => return error.NotOpenForWriting,
+            .LOCK_VIOLATION => return error.LockViolation,
+            .ACCESS_DENIED => return error.AccessDenied,
+            .WORKING_SET_QUOTA => return error.SystemResources,
+            else => |err| return windows.unexpectedError(err),
+        }
+    }
+    return bytes_written;
 }
 
 fn fileWriteFileStreaming(

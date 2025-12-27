@@ -486,34 +486,8 @@ pub const ReadError = std.Io.File.Reader.Error;
 /// The corresponding POSIX limit is `maxInt(isize)`.
 pub fn read(fd: fd_t, buf: []u8) ReadError!usize {
     if (buf.len == 0) return 0;
-    if (native_os == .windows) {
-        return windows.ReadFile(fd, buf, null);
-    }
-    if (native_os == .wasi and !builtin.link_libc) {
-        const iovs = [1]iovec{iovec{
-            .base = buf.ptr,
-            .len = buf.len,
-        }};
-
-        var nread: usize = undefined;
-        switch (wasi.fd_read(fd, &iovs, iovs.len, &nread)) {
-            .SUCCESS => return nread,
-            .INTR => unreachable,
-            .INVAL => unreachable,
-            .FAULT => unreachable,
-            .AGAIN => unreachable,
-            .BADF => return error.NotOpenForReading, // Can be a race condition.
-            .IO => return error.InputOutput,
-            .ISDIR => return error.IsDir,
-            .NOBUFS => return error.SystemResources,
-            .NOMEM => return error.SystemResources,
-            .NOTCONN => return error.SocketUnconnected,
-            .CONNRESET => return error.ConnectionResetByPeer,
-            .TIMEDOUT => return error.Timeout,
-            .NOTCAPABLE => return error.AccessDenied,
-            else => |err| return unexpectedErrno(err),
-        }
-    }
+    if (native_os == .windows) @compileError("unsupported OS");
+    if (native_os == .wasi) @compileError("unsupported OS");
 
     // Prevents EINVAL.
     const max_count = switch (native_os) {
@@ -606,34 +580,8 @@ pub const WriteError = error{
 /// The corresponding POSIX limit is `maxInt(isize)`.
 pub fn write(fd: fd_t, bytes: []const u8) WriteError!usize {
     if (bytes.len == 0) return 0;
-    if (native_os == .windows) {
-        return windows.WriteFile(fd, bytes, null);
-    }
-
-    if (native_os == .wasi and !builtin.link_libc) {
-        const ciovs = [_]iovec_const{iovec_const{
-            .base = bytes.ptr,
-            .len = bytes.len,
-        }};
-        var nwritten: usize = undefined;
-        switch (wasi.fd_write(fd, &ciovs, ciovs.len, &nwritten)) {
-            .SUCCESS => return nwritten,
-            .INTR => unreachable,
-            .INVAL => unreachable,
-            .FAULT => unreachable,
-            .AGAIN => unreachable,
-            .BADF => return error.NotOpenForWriting, // can be a race condition.
-            .DESTADDRREQ => unreachable, // `connect` was never called.
-            .DQUOT => return error.DiskQuota,
-            .FBIG => return error.FileTooBig,
-            .IO => return error.InputOutput,
-            .NOSPC => return error.NoSpaceLeft,
-            .PERM => return error.PermissionDenied,
-            .PIPE => return error.BrokenPipe,
-            .NOTCAPABLE => return error.AccessDenied,
-            else => |err| return unexpectedErrno(err),
-        }
-    }
+    if (native_os == .windows) @compileError("unsupported OS");
+    if (native_os == .wasi) @compileError("unsupported OS");
 
     const max_count = switch (native_os) {
         .linux => 0x7ffff000,
