@@ -1,10 +1,12 @@
-const std = @import("std.zig");
 const builtin = @import("builtin");
+const native_os = builtin.os.tag;
+
+const std = @import("std.zig");
+const Io = std.Io;
 const mem = std.mem;
 const testing = std.testing;
 const elf = std.elf;
 const windows = std.os.windows;
-const native_os = builtin.os.tag;
 const posix = std.posix;
 
 /// Cross-platform dynamic library loading and symbol lookup.
@@ -53,11 +55,11 @@ pub const DynLib = struct {
 // An iterator is provided in order to traverse the linked list in a idiomatic
 // fashion.
 const LinkMap = extern struct {
-    l_addr: usize,
-    l_name: [*:0]const u8,
-    l_ld: ?*elf.Dyn,
-    l_next: ?*LinkMap,
-    l_prev: ?*LinkMap,
+    addr: usize,
+    name: [*:0]const u8,
+    ld: ?*elf.Dyn,
+    next: ?*LinkMap,
+    prev: ?*LinkMap,
 
     pub const Iterator = struct {
         current: ?*LinkMap,
@@ -68,7 +70,7 @@ const LinkMap = extern struct {
 
         pub fn next(self: *Iterator) ?*LinkMap {
             if (self.current) |it| {
-                self.current = it.l_next;
+                self.current = it.next;
                 return it;
             }
             return null;
@@ -77,10 +79,10 @@ const LinkMap = extern struct {
 };
 
 const RDebug = extern struct {
-    r_version: i32,
-    r_map: ?*LinkMap,
-    r_brk: usize,
-    r_ldbase: usize,
+    version: i32,
+    map: ?*LinkMap,
+    brk: usize,
+    ldbase: usize,
 };
 
 /// TODO fix comparisons of extern symbol pointers so we don't need this helper function.
@@ -105,8 +107,8 @@ pub fn linkmap_iterator() error{InvalidExe}!LinkMap.Iterator {
                 elf.DT_DEBUG => {
                     const ptr = @as(?*RDebug, @ptrFromInt(_DYNAMIC[i].d_val));
                     if (ptr) |r_debug| {
-                        if (r_debug.r_version != 1) return error.InvalidExe;
-                        break :init r_debug.r_map;
+                        if (r_debug.version != 1) return error.InvalidExe;
+                        break :init r_debug.map;
                     }
                 },
                 elf.DT_PLTGOT => {
@@ -155,24 +157,24 @@ pub const ElfDynLib = struct {
         dt_gnu_hash: *elf.gnu_hash.Header,
     };
 
-    fn openPath(path: []const u8) !std.fs.Dir {
+    fn openPath(io: Io, path: []const u8) !Io.Dir {
         if (path.len == 0) return error.NotDir;
         var parts = std.mem.tokenizeScalar(u8, path, '/');
-        var parent = if (path[0] == '/') try std.fs.cwd().openDir("/", .{}) else std.fs.cwd();
+        var parent = if (path[0] == '/') try Io.Dir.cwd().openDir(io, "/", .{}) else Io.Dir.cwd();
         while (parts.next()) |part| {
-            const child = try parent.openDir(part, .{});
-            parent.close();
+            const child = try parent.openDir(io, part, .{});
+            parent.close(io);
             parent = child;
         }
         return parent;
     }
 
-    fn resolveFromSearchPath(search_path: []const u8, file_name: []const u8, delim: u8) ?posix.fd_t {
+    fn resolveFromSearchPath(io: Io, search_path: []const u8, file_name: []const u8, delim: u8) ?posix.fd_t {
         var paths = std.mem.tokenizeScalar(u8, search_path, delim);
         while (paths.next()) |p| {
-            var dir = openPath(p) catch continue;
-            defer dir.close();
-            const fd = posix.openat(dir.fd, file_name, .{
+            var dir = openPath(io, p) catch continue;
+            defer dir.close(io);
+            const fd = posix.openat(dir.handle, file_name, .{
                 .ACCMODE = .RDONLY,
                 .CLOEXEC = true,
             }, 0) catch continue;
@@ -181,10 +183,10 @@ pub const ElfDynLib = struct {
         return null;
     }
 
-    fn resolveFromParent(dir_path: []const u8, file_name: []const u8) ?posix.fd_t {
-        var dir = std.fs.cwd().openDir(dir_path, .{}) catch return null;
-        defer dir.close();
-        return posix.openat(dir.fd, file_name, .{
+    fn resolveFromParent(io: Io, dir_path: []const u8, file_name: []const u8) ?posix.fd_t {
+        var dir = Io.Dir.cwd().openDir(io, dir_path, .{}) catch return null;
+        defer dir.close(io);
+        return posix.openat(dir.handle, file_name, .{
             .ACCMODE = .RDONLY,
             .CLOEXEC = true,
         }, 0) catch null;
@@ -195,7 +197,7 @@ pub const ElfDynLib = struct {
     // - DT_RPATH of the calling binary is not used as a search path
     // - DT_RUNPATH of the calling binary is not used as a search path
     // - /etc/ld.so.cache is not read
-    fn resolveFromName(path_or_name: []const u8) !posix.fd_t {
+    fn resolveFromName(io: Io, path_or_name: []const u8) !posix.fd_t {
         // If filename contains a slash ("/"), then it is interpreted as a (relative or absolute) pathname
         if (std.mem.findScalarPos(u8, path_or_name, 0, '/')) |_| {
             return posix.open(path_or_name, .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, 0);
@@ -206,25 +208,27 @@ pub const ElfDynLib = struct {
             std.os.linux.getegid() == std.os.linux.getgid())
         {
             if (posix.getenvZ("LD_LIBRARY_PATH")) |ld_library_path| {
-                if (resolveFromSearchPath(ld_library_path, path_or_name, ':')) |fd| {
+                if (resolveFromSearchPath(io, ld_library_path, path_or_name, ':')) |fd| {
                     return fd;
                 }
             }
         }
 
         // Lastly the directories /lib and /usr/lib are searched (in this exact order)
-        if (resolveFromParent("/lib", path_or_name)) |fd| return fd;
-        if (resolveFromParent("/usr/lib", path_or_name)) |fd| return fd;
+        if (resolveFromParent(io, "/lib", path_or_name)) |fd| return fd;
+        if (resolveFromParent(io, "/usr/lib", path_or_name)) |fd| return fd;
         return error.FileNotFound;
     }
 
     /// Trusts the file. Malicious file will be able to execute arbitrary code.
     pub fn open(path: []const u8) Error!ElfDynLib {
-        const fd = try resolveFromName(path);
+        const io = std.Options.debug_io;
+
+        const fd = try resolveFromName(io, path);
         defer posix.close(fd);
 
-        const file: std.fs.File = .{ .handle = fd };
-        const stat = try file.stat();
+        const file: Io.File = .{ .handle = fd };
+        const stat = try file.stat(io);
         const size = std.math.cast(usize, stat.size) orelse return error.FileTooBig;
 
         const page_size = std.heap.pageSize();
@@ -549,11 +553,9 @@ fn checkver(def_arg: *elf.Verdef, vsym_arg: elf.Versym, vername: []const u8, str
 }
 
 test "ElfDynLib" {
-    if (native_os != .linux) {
-        return error.SkipZigTest;
-    }
-
+    if (native_os != .linux) return error.SkipZigTest;
     try testing.expectError(error.FileNotFound, ElfDynLib.open("invalid_so.so"));
+    try testing.expectError(error.FileNotFound, ElfDynLib.openZ("invalid_so.so"));
 }
 
 /// Separated to avoid referencing `WindowsDynLib`, because its field types may not

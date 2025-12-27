@@ -124,6 +124,7 @@ pub fn createEmpty(
     emit: Path,
     options: link.File.OpenOptions,
 ) !*C {
+    const io = comp.io;
     const target = &comp.root_mod.resolved_target.result;
     assert(target.ofmt == .c);
     const optimize_mode = comp.root_mod.optimize_mode;
@@ -135,11 +136,11 @@ pub fn createEmpty(
     assert(!use_lld);
     assert(!use_llvm);
 
-    const file = try emit.root_dir.handle.createFile(emit.sub_path, .{
+    const file = try emit.root_dir.handle.createFile(io, emit.sub_path, .{
         // Truncation is done on `flush`.
         .truncate = false,
     });
-    errdefer file.close();
+    errdefer file.close(io);
 
     const c_file = try arena.create(C);
 
@@ -370,6 +371,7 @@ pub fn flush(self: *C, arena: Allocator, tid: Zcu.PerThread.Id, prog_node: std.P
     const comp = self.base.comp;
     const diags = &comp.link_diags;
     const gpa = comp.gpa;
+    const io = comp.io;
     const zcu = self.base.comp.zcu.?;
     const ip = &zcu.intern_pool;
     const pt: Zcu.PerThread = .activate(zcu, tid);
@@ -507,8 +509,8 @@ pub fn flush(self: *C, arena: Allocator, tid: Zcu.PerThread.Id, prog_node: std.P
     }, self.getString(av_block.code));
 
     const file = self.base.file.?;
-    file.setEndPos(f.file_size) catch |err| return diags.fail("failed to allocate file: {s}", .{@errorName(err)});
-    var fw = file.writer(&.{});
+    file.setLength(io, f.file_size) catch |err| return diags.fail("failed to allocate file: {t}", .{err});
+    var fw = file.writer(io, &.{});
     var w = &fw.interface;
     w.writeVecAll(f.all_buffers.items) catch |err| switch (err) {
         error.WriteFailed => return diags.fail("failed to write to '{f}': {s}", .{
@@ -763,6 +765,7 @@ pub fn flushEmitH(zcu: *Zcu) !void {
     if (true) return; // emit-h is regressed
 
     const emit_h = zcu.emit_h orelse return;
+    const io = zcu.comp.io;
 
     // We collect a list of buffers to write, and write them all at once with pwritev 😎
     const num_buffers = emit_h.decl_table.count() + 1;
@@ -790,14 +793,14 @@ pub fn flushEmitH(zcu: *Zcu) !void {
     }
 
     const directory = emit_h.loc.directory orelse zcu.comp.local_cache_directory;
-    const file = try directory.handle.createFile(emit_h.loc.basename, .{
+    const file = try directory.handle.createFile(io, emit_h.loc.basename, .{
         // We set the end position explicitly below; by not truncating the file, we possibly
         // make it easier on the file system by doing 1 reallocation instead of two.
         .truncate = false,
     });
-    defer file.close();
+    defer file.close(io);
 
-    try file.setEndPos(file_size);
+    try file.setLength(io, file_size);
     try file.pwritevAll(all_buffers.items, 0);
 }
 

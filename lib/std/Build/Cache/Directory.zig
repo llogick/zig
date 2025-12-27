@@ -1,7 +1,9 @@
 const Directory = @This();
+
 const std = @import("../../std.zig");
-const assert = std.debug.assert;
+const Io = std.Io;
 const fs = std.fs;
+const assert = std.debug.assert;
 const fmt = std.fmt;
 const Allocator = std.mem.Allocator;
 
@@ -9,7 +11,7 @@ const Allocator = std.mem.Allocator;
 /// directly, but it is needed when passing the directory to a child process.
 /// `null` means cwd.
 path: ?[]const u8,
-handle: fs.Dir,
+handle: Io.Dir,
 
 pub fn clone(d: Directory, arena: Allocator) Allocator.Error!Directory {
     return .{
@@ -21,7 +23,7 @@ pub fn clone(d: Directory, arena: Allocator) Allocator.Error!Directory {
 pub fn cwd() Directory {
     return .{
         .path = null,
-        .handle = fs.cwd(),
+        .handle = .cwd(),
     };
 }
 
@@ -50,8 +52,8 @@ pub fn joinZ(self: Directory, allocator: Allocator, paths: []const []const u8) !
 /// Whether or not the handle should be closed, or the path should be freed
 /// is determined by usage, however this function is provided for convenience
 /// if it happens to be what the caller needs.
-pub fn closeAndFree(self: *Directory, gpa: Allocator) void {
-    self.handle.close();
+pub fn closeAndFree(self: *Directory, gpa: Allocator, io: Io) void {
+    self.handle.close(io);
     if (self.path) |p| gpa.free(p);
     self.* = undefined;
 }
@@ -64,5 +66,5 @@ pub fn format(self: Directory, writer: *std.Io.Writer) std.Io.Writer.Error!void 
 }
 
 pub fn eql(self: Directory, other: Directory) bool {
-    return self.handle.fd == other.handle.fd;
+    return self.handle.handle == other.handle.handle;
 }

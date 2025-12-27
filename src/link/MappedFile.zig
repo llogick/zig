@@ -1,3 +1,17 @@
+/// TODO add a mapped file abstraction to std.Io
+const MappedFile = @This();
+
+const builtin = @import("builtin");
+const is_linux = builtin.os.tag == .linux;
+const is_windows = builtin.os.tag == .windows;
+
+const std = @import("std");
+const Io = std.Io;
+const assert = std.debug.assert;
+const linux = std.os.linux;
+const windows = std.os.windows;
+
+io: Io,
 file: std.Io.File,
 flags: packed struct {
     block_size: std.mem.Alignment,
@@ -16,16 +30,22 @@ writers: std.SinglyLinkedList,
 
 pub const growth_factor = 4;
 
-pub const Error = std.posix.MMapError || std.posix.MRemapError || std.fs.File.SetEndPosError || error{
+pub const Error = std.posix.MMapError || std.posix.MRemapError || Io.File.LengthError || error{
     NotFile,
     SystemResources,
     IsDir,
     Unseekable,
     NoSpaceLeft,
+
+    InputOutput,
+    FileTooBig,
+    FileBusy,
+    NonResizable,
 };
 
-pub fn init(file: std.Io.File, gpa: std.mem.Allocator) !MappedFile {
+pub fn init(file: std.Io.File, gpa: std.mem.Allocator, io: Io) !MappedFile {
     var mf: MappedFile = .{
+        .io = io,
         .file = file,
         .flags = undefined,
         .section = if (is_windows) windows.INVALID_HANDLE_VALUE else {},
@@ -55,18 +75,41 @@ pub fn init(file: std.Io.File, gpa: std.mem.Allocator) !MappedFile {
             };
         }
         if (is_linux) {
-            const statx = try linux.wrapped.statx(
-                mf.file.handle,
-                "",
-                std.posix.AT.EMPTY_PATH,
-                .{ .TYPE = true, .SIZE = true, .BLOCKS = true },
-            );
-            assert(statx.mask.TYPE);
-            assert(statx.mask.SIZE);
-            assert(statx.mask.BLOCKS);
-
-            if (!std.posix.S.ISREG(statx.mode)) return error.PathAlreadyExists;
-            break :stat .{ statx.size, @max(std.heap.pageSize(), statx.blksize) };
+            const use_c = std.c.versionCheck(if (builtin.abi.isAndroid())
+                .{ .major = 30, .minor = 0, .patch = 0 }
+            else
+                .{ .major = 2, .minor = 28, .patch = 0 });
+            const sys = if (use_c) std.c else std.os.linux;
+            while (true) {
+                var statx = std.mem.zeroes(linux.Statx);
+                const rc = sys.statx(
+                    mf.file.handle,
+                    "",
+                    std.posix.AT.EMPTY_PATH,
+                    .{ .TYPE = true, .SIZE = true, .BLOCKS = true },
+                    &statx,
+                );
+                switch (sys.errno(rc)) {
+                    .SUCCESS => {
+                        assert(statx.mask.TYPE);
+                        assert(statx.mask.SIZE);
+                        assert(statx.mask.BLOCKS);
+                        if (!std.posix.S.ISREG(statx.mode)) return error.PathAlreadyExists;
+                        break :stat .{ statx.size, @max(std.heap.pageSize(), statx.blksize) };
+                    },
+                    .INTR => continue,
+                    .ACCES => return error.AccessDenied,
+                    .BADF => if (std.debug.runtime_safety) unreachable else return error.Unexpected,
+                    .FAULT => if (std.debug.runtime_safety) unreachable else return error.Unexpected,
+                    .INVAL => if (std.debug.runtime_safety) unreachable else return error.Unexpected,
+                    .LOOP => return error.SymLinkLoop,
+                    .NAMETOOLONG => return error.NameTooLong,
+                    .NOENT => return error.FileNotFound,
+                    .NOTDIR => return error.FileNotFound,
+                    .NOMEM => return error.SystemResources,
+                    else => |err| return std.posix.unexpectedErrno(err),
+                }
+            }
         }
         const stat = try std.posix.fstat(mf.file.handle);
         if (!std.posix.S.ISREG(stat.mode)) return error.PathAlreadyExists;
@@ -433,8 +476,8 @@ pub const Node = extern struct {
                     return n;
                 },
                 .streaming,
-                .streaming_reading,
-                .positional_reading,
+                .streaming_simple,
+                .positional_simple,
                 .failure,
                 => {
                     const dest = limit.slice(interface.unusedCapacitySlice());
@@ -612,13 +655,14 @@ pub fn addNodeAfter(
 }
 
 fn resizeNode(mf: *MappedFile, gpa: std.mem.Allocator, ni: Node.Index, requested_size: u64) !void {
+    const io = mf.io;
     const node = ni.get(mf);
     const old_offset, const old_size = node.location().resolve(mf);
     const new_size = node.flags.alignment.forward(@intCast(requested_size));
     // Resize the entire file
     if (ni == Node.Index.root) {
         try mf.ensureCapacityForSetLocation(gpa);
-        try std.fs.File.adaptFromNewApi(mf.file).setEndPos(new_size);
+        try mf.file.setLength(io, new_size);
         try mf.ensureTotalCapacity(@intCast(new_size));
         ni.setLocationAssumeCapacity(mf, old_offset, new_size);
         return;
@@ -1059,12 +1103,3 @@ fn verifyNode(mf: *MappedFile, parent_ni: Node.Index) void {
         ni = node.next;
     }
 }
-
-const assert = std.debug.assert;
-const builtin = @import("builtin");
-const is_linux = builtin.os.tag == .linux;
-const is_windows = builtin.os.tag == .windows;
-const linux = std.os.linux;
-const MappedFile = @This();
-const std = @import("std");
-const windows = std.os.windows;

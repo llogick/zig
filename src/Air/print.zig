@@ -9,7 +9,7 @@ const Type = @import("../Type.zig");
 const Air = @import("../Air.zig");
 const InternPool = @import("../InternPool.zig");
 
-pub fn write(air: Air, stream: *std.Io.Writer, pt: Zcu.PerThread, liveness: ?Air.Liveness) void {
+pub fn write(air: Air, stream: *std.Io.Writer, pt: Zcu.PerThread, liveness: ?Air.Liveness) !void {
     comptime assert(build_options.enable_debug_extensions);
     const instruction_bytes = air.instructions.len *
         // Here we don't use @sizeOf(Air.Inst.Data) because it would include
@@ -24,7 +24,7 @@ pub fn write(air: Air, stream: *std.Io.Writer, pt: Zcu.PerThread, liveness: ?Air
         liveness_special_bytes + tomb_bytes;
 
     // zig fmt: off
-    stream.print(
+    try stream.print(
         \\# Total AIR+Liveness bytes: {Bi}
         \\# AIR Instructions:         {d} ({Bi})
         \\# AIR Extra Data:           {d} ({Bi})
@@ -39,7 +39,7 @@ pub fn write(air: Air, stream: *std.Io.Writer, pt: Zcu.PerThread, liveness: ?Air
         tomb_bytes,
         if (liveness) |l| l.extra.len else 0, liveness_extra_bytes,
         if (liveness) |l| l.special.count() else 0, liveness_special_bytes,
-    }) catch return;
+    });
     // zig fmt: on
 
     var writer: Writer = .{
@@ -50,7 +50,7 @@ pub fn write(air: Air, stream: *std.Io.Writer, pt: Zcu.PerThread, liveness: ?Air
         .indent = 2,
         .skip_body = false,
     };
-    writer.writeBody(stream, air.getMainBody()) catch return;
+    try writer.writeBody(stream, air.getMainBody());
 }
 
 pub fn writeInst(
@@ -73,15 +73,23 @@ pub fn writeInst(
 }
 
 pub fn dump(air: Air, pt: Zcu.PerThread, liveness: ?Air.Liveness) void {
-    const stderr_bw, _ = std.debug.lockStderrWriter(&.{});
-    defer std.debug.unlockStderrWriter();
-    air.write(stderr_bw, pt, liveness);
+    const comp = pt.zcu.comp;
+    const io = comp.io;
+    var buffer: [512]u8 = undefined;
+    const stderr = try io.lockStderr(&buffer, null);
+    defer io.unlockStderr();
+    const w = &stderr.file_writer.interface;
+    air.write(w, pt, liveness);
 }
 
 pub fn dumpInst(air: Air, inst: Air.Inst.Index, pt: Zcu.PerThread, liveness: ?Air.Liveness) void {
-    const stderr_bw, _ = std.debug.lockStderrWriter(&.{});
-    defer std.debug.unlockStderrWriter();
-    air.writeInst(stderr_bw, inst, pt, liveness);
+    const comp = pt.zcu.comp;
+    const io = comp.io;
+    var buffer: [512]u8 = undefined;
+    const stderr = try io.lockStderr(&buffer, null);
+    defer io.unlockStderr();
+    const w = &stderr.file_writer.interface;
+    air.writeInst(w, inst, pt, liveness);
 }
 
 const Writer = struct {

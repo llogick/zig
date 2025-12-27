@@ -1,20 +1,25 @@
 const std = @import("std");
+const Io = std.Io;
+const Allocator = std.mem.Allocator;
 
 pub fn main() anyerror!void {
     var debug_alloc_inst: std.heap.DebugAllocator(.{}) = .init;
     defer std.debug.assert(debug_alloc_inst.deinit() == .ok);
     const gpa = debug_alloc_inst.allocator();
 
+    var threaded: Io.Threaded = .init(gpa, .{});
+    const io = threaded.io();
+
     var it = try std.process.argsWithAllocator(gpa);
     defer it.deinit();
     _ = it.next() orelse unreachable; // skip binary name
     const child_exe_path_orig = it.next() orelse unreachable;
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+    var tmp = tmpDir(io, .{});
+    defer tmp.cleanup(io);
 
-    try tmp.dir.setAsCwd();
-    defer tmp.parent_dir.setAsCwd() catch {};
+    try std.process.setCurrentDir(io, tmp.dir);
+    defer std.process.setCurrentDir(io, tmp.parent_dir) catch {};
 
     // `child_exe_path_orig` might be relative; make it relative to our new cwd.
     const child_exe_path = try std.fs.path.resolve(gpa, &.{ "..\\..\\..", child_exe_path_orig });
@@ -30,53 +35,53 @@ pub fn main() anyerror!void {
     const preamble_len = buf.items.len;
 
     try buf.appendSlice(gpa, " %*");
-    try tmp.dir.writeFile(.{ .sub_path = "args1.bat", .data = buf.items });
+    try tmp.dir.writeFile(io, .{ .sub_path = "args1.bat", .data = buf.items });
     buf.shrinkRetainingCapacity(preamble_len);
 
     try buf.appendSlice(gpa, " %1 %2 %3 %4 %5 %6 %7 %8 %9");
-    try tmp.dir.writeFile(.{ .sub_path = "args2.bat", .data = buf.items });
+    try tmp.dir.writeFile(io, .{ .sub_path = "args2.bat", .data = buf.items });
     buf.shrinkRetainingCapacity(preamble_len);
 
     try buf.appendSlice(gpa, " \"%~1\" \"%~2\" \"%~3\" \"%~4\" \"%~5\" \"%~6\" \"%~7\" \"%~8\" \"%~9\"");
-    try tmp.dir.writeFile(.{ .sub_path = "args3.bat", .data = buf.items });
+    try tmp.dir.writeFile(io, .{ .sub_path = "args3.bat", .data = buf.items });
     buf.shrinkRetainingCapacity(preamble_len);
 
     // Test cases are from https://github.com/rust-lang/rust/blob/master/tests/ui/std/windows-bat-args.rs
-    try testExecError(error.InvalidBatchScriptArg, gpa, &.{"\x00"});
-    try testExecError(error.InvalidBatchScriptArg, gpa, &.{"\n"});
-    try testExecError(error.InvalidBatchScriptArg, gpa, &.{"\r"});
-    try testExec(gpa, &.{ "a", "b" }, null);
-    try testExec(gpa, &.{ "c is for cat", "d is for dog" }, null);
-    try testExec(gpa, &.{ "\"", " \"" }, null);
-    try testExec(gpa, &.{ "\\", "\\" }, null);
-    try testExec(gpa, &.{">file.txt"}, null);
-    try testExec(gpa, &.{"whoami.exe"}, null);
-    try testExec(gpa, &.{"&a.exe"}, null);
-    try testExec(gpa, &.{"&echo hello "}, null);
-    try testExec(gpa, &.{ "&echo hello", "&whoami", ">file.txt" }, null);
-    try testExec(gpa, &.{"!TMP!"}, null);
-    try testExec(gpa, &.{"key=value"}, null);
-    try testExec(gpa, &.{"\"key=value\""}, null);
-    try testExec(gpa, &.{"key = value"}, null);
-    try testExec(gpa, &.{"key=[\"value\"]"}, null);
-    try testExec(gpa, &.{ "", "a=b" }, null);
-    try testExec(gpa, &.{"key=\"foo bar\""}, null);
-    try testExec(gpa, &.{"key=[\"my_value]"}, null);
-    try testExec(gpa, &.{"key=[\"my_value\",\"other-value\"]"}, null);
-    try testExec(gpa, &.{"key\\=value"}, null);
-    try testExec(gpa, &.{"key=\"&whoami\""}, null);
-    try testExec(gpa, &.{"key=\"value\"=5"}, null);
-    try testExec(gpa, &.{"key=[\">file.txt\"]"}, null);
-    try testExec(gpa, &.{"%hello"}, null);
-    try testExec(gpa, &.{"%PATH%"}, null);
-    try testExec(gpa, &.{"%%cd:~,%"}, null);
-    try testExec(gpa, &.{"%PATH%PATH%"}, null);
-    try testExec(gpa, &.{"\">file.txt"}, null);
-    try testExec(gpa, &.{"abc\"&echo hello"}, null);
-    try testExec(gpa, &.{"123\">file.txt"}, null);
-    try testExec(gpa, &.{"\"&echo hello&whoami.exe"}, null);
-    try testExec(gpa, &.{ "\"hello^\"world\"", "hello &echo oh no >file.txt" }, null);
-    try testExec(gpa, &.{"&whoami.exe"}, null);
+    try testExecError(error.InvalidBatchScriptArg, gpa, io, &.{"\x00"});
+    try testExecError(error.InvalidBatchScriptArg, gpa, io, &.{"\n"});
+    try testExecError(error.InvalidBatchScriptArg, gpa, io, &.{"\r"});
+    try testExec(gpa, io, &.{ "a", "b" }, null);
+    try testExec(gpa, io, &.{ "c is for cat", "d is for dog" }, null);
+    try testExec(gpa, io, &.{ "\"", " \"" }, null);
+    try testExec(gpa, io, &.{ "\\", "\\" }, null);
+    try testExec(gpa, io, &.{">file.txt"}, null);
+    try testExec(gpa, io, &.{"whoami.exe"}, null);
+    try testExec(gpa, io, &.{"&a.exe"}, null);
+    try testExec(gpa, io, &.{"&echo hello "}, null);
+    try testExec(gpa, io, &.{ "&echo hello", "&whoami", ">file.txt" }, null);
+    try testExec(gpa, io, &.{"!TMP!"}, null);
+    try testExec(gpa, io, &.{"key=value"}, null);
+    try testExec(gpa, io, &.{"\"key=value\""}, null);
+    try testExec(gpa, io, &.{"key = value"}, null);
+    try testExec(gpa, io, &.{"key=[\"value\"]"}, null);
+    try testExec(gpa, io, &.{ "", "a=b" }, null);
+    try testExec(gpa, io, &.{"key=\"foo bar\""}, null);
+    try testExec(gpa, io, &.{"key=[\"my_value]"}, null);
+    try testExec(gpa, io, &.{"key=[\"my_value\",\"other-value\"]"}, null);
+    try testExec(gpa, io, &.{"key\\=value"}, null);
+    try testExec(gpa, io, &.{"key=\"&whoami\""}, null);
+    try testExec(gpa, io, &.{"key=\"value\"=5"}, null);
+    try testExec(gpa, io, &.{"key=[\">file.txt\"]"}, null);
+    try testExec(gpa, io, &.{"%hello"}, null);
+    try testExec(gpa, io, &.{"%PATH%"}, null);
+    try testExec(gpa, io, &.{"%%cd:~,%"}, null);
+    try testExec(gpa, io, &.{"%PATH%PATH%"}, null);
+    try testExec(gpa, io, &.{"\">file.txt"}, null);
+    try testExec(gpa, io, &.{"abc\"&echo hello"}, null);
+    try testExec(gpa, io, &.{"123\">file.txt"}, null);
+    try testExec(gpa, io, &.{"\"&echo hello&whoami.exe"}, null);
+    try testExec(gpa, io, &.{ "\"hello^\"world\"", "hello &echo oh no >file.txt" }, null);
+    try testExec(gpa, io, &.{"&whoami.exe"}, null);
 
     // Ensure that trailing space and . characters can't lead to unexpected bat/cmd script execution.
     // In many Windows APIs (including CreateProcess), trailing space and . characters are stripped
@@ -94,14 +99,14 @@ pub fn main() anyerror!void {
     //     > "args1.bat .. "
     //     '"args1.bat .. "' is not recognized as an internal or external command,
     //     operable program or batch file.
-    try std.testing.expectError(error.FileNotFound, testExecBat(gpa, "args1.bat .. ", &.{"abc"}, null));
+    try std.testing.expectError(error.FileNotFound, testExecBat(gpa, io, "args1.bat .. ", &.{"abc"}, null));
     const absolute_with_trailing = blk: {
-        const absolute_path = try std.fs.realpathAlloc(gpa, "args1.bat");
+        const absolute_path = try Io.Dir.cwd().realPathFileAlloc(io, "args1.bat", gpa);
         defer gpa.free(absolute_path);
         break :blk try std.mem.concat(gpa, u8, &.{ absolute_path, " .. " });
     };
     defer gpa.free(absolute_with_trailing);
-    try std.testing.expectError(error.FileNotFound, testExecBat(gpa, absolute_with_trailing, &.{"abc"}, null));
+    try std.testing.expectError(error.FileNotFound, testExecBat(gpa, io, absolute_with_trailing, &.{"abc"}, null));
 
     var env = env: {
         var env = try std.process.getEnvMap(gpa);
@@ -115,23 +120,23 @@ pub fn main() anyerror!void {
         break :env env;
     };
     defer env.deinit();
-    try testExec(gpa, &.{"%FOO%"}, &env);
+    try testExec(gpa, io, &.{"%FOO%"}, &env);
 
     // Ensure that none of the `>file.txt`s have caused file.txt to be created
-    try std.testing.expectError(error.FileNotFound, tmp.dir.access("file.txt", .{}));
+    try std.testing.expectError(error.FileNotFound, tmp.dir.access(io, "file.txt", .{}));
 }
 
-fn testExecError(err: anyerror, gpa: std.mem.Allocator, args: []const []const u8) !void {
-    return std.testing.expectError(err, testExec(gpa, args, null));
+fn testExecError(err: anyerror, gpa: Allocator, io: Io, args: []const []const u8) !void {
+    return std.testing.expectError(err, testExec(gpa, io, args, null));
 }
 
-fn testExec(gpa: std.mem.Allocator, args: []const []const u8, env: ?*std.process.EnvMap) !void {
-    try testExecBat(gpa, "args1.bat", args, env);
-    try testExecBat(gpa, "args2.bat", args, env);
-    try testExecBat(gpa, "args3.bat", args, env);
+fn testExec(gpa: Allocator, io: Io, args: []const []const u8, env: ?*std.process.EnvMap) !void {
+    try testExecBat(gpa, io, "args1.bat", args, env);
+    try testExecBat(gpa, io, "args2.bat", args, env);
+    try testExecBat(gpa, io, "args3.bat", args, env);
 }
 
-fn testExecBat(gpa: std.mem.Allocator, bat: []const u8, args: []const []const u8, env: ?*std.process.EnvMap) !void {
+fn testExecBat(gpa: Allocator, io: Io, bat: []const u8, args: []const []const u8, env: ?*std.process.EnvMap) !void {
     const argv = try gpa.alloc([]const u8, 1 + args.len);
     defer gpa.free(argv);
     argv[0] = bat;
@@ -139,8 +144,7 @@ fn testExecBat(gpa: std.mem.Allocator, bat: []const u8, args: []const []const u8
 
     const can_have_trailing_empty_args = std.mem.eql(u8, bat, "args3.bat");
 
-    const result = try std.process.Child.run(.{
-        .allocator = gpa,
+    const result = try std.process.Child.run(gpa, io, .{
         .env_map = env,
         .argv = argv,
     });
@@ -160,3 +164,41 @@ fn testExecBat(gpa: std.mem.Allocator, bat: []const u8, args: []const []const u8
         i += 1;
     }
 }
+
+pub fn tmpDir(io: Io, opts: Io.Dir.OpenOptions) TmpDir {
+    var random_bytes: [TmpDir.random_bytes_count]u8 = undefined;
+    std.crypto.random.bytes(&random_bytes);
+    var sub_path: [TmpDir.sub_path_len]u8 = undefined;
+    _ = std.fs.base64_encoder.encode(&sub_path, &random_bytes);
+
+    const cwd = Io.Dir.cwd();
+    var cache_dir = cwd.createDirPathOpen(io, ".zig-cache", .{}) catch
+        @panic("unable to make tmp dir for testing: unable to make and open .zig-cache dir");
+    defer cache_dir.close(io);
+    const parent_dir = cache_dir.createDirPathOpen(io, "tmp", .{}) catch
+        @panic("unable to make tmp dir for testing: unable to make and open .zig-cache/tmp dir");
+    const dir = parent_dir.createDirPathOpen(io, &sub_path, .{ .open_options = opts }) catch
+        @panic("unable to make tmp dir for testing: unable to make and open the tmp dir");
+
+    return .{
+        .dir = dir,
+        .parent_dir = parent_dir,
+        .sub_path = sub_path,
+    };
+}
+
+pub const TmpDir = struct {
+    dir: Io.Dir,
+    parent_dir: Io.Dir,
+    sub_path: [sub_path_len]u8,
+
+    const random_bytes_count = 12;
+    const sub_path_len = std.fs.base64_encoder.calcSize(random_bytes_count);
+
+    pub fn cleanup(self: *TmpDir, io: Io) void {
+        self.dir.close(io);
+        self.parent_dir.deleteTree(io, &self.sub_path) catch {};
+        self.parent_dir.close(io);
+        self.* = undefined;
+    }
+};

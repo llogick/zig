@@ -10,7 +10,7 @@
 //! would mean that the next parameter specifies the target.
 
 const std = @import("std");
-const fs = std.fs;
+const Io = std.Io;
 const assert = std.debug.assert;
 const json = std.json;
 
@@ -634,8 +634,12 @@ pub fn main() anyerror!void {
     const allocator = arena.allocator();
     const args = try std.process.argsAlloc(allocator);
 
+    var threaded: std.Io.Threaded = .init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
     var stdout_buffer: [4000]u8 = undefined;
-    var stdout_writer = fs.File.stdout().writerStreaming(&stdout_buffer);
+    var stdout_writer = Io.File.stdout().writerStreaming(io, &stdout_buffer);
     const stdout = &stdout_writer.interface;
 
     if (args.len <= 1) printUsageAndExit(args[0]);
@@ -676,8 +680,7 @@ pub fn main() anyerror!void {
         try std.fmt.allocPrint(allocator, "-I={s}/clang/include/clang/Driver", .{llvm_src_root}),
     };
 
-    const child_result = try std.process.Child.run(.{
-        .allocator = allocator,
+    const child_result = try std.process.Child.run(allocator, io, .{
         .argv = &child_args,
         .max_output_bytes = 100 * 1024 * 1024,
     });
@@ -961,8 +964,8 @@ fn objectLessThan(context: void, a: *json.ObjectMap, b: *json.ObjectMap) bool {
 }
 
 fn printUsageAndExit(arg0: []const u8) noreturn {
-    const w, _ = std.debug.lockStderrWriter(&.{});
-    defer std.debug.unlockStderrWriter();
+    const stderr = std.debug.lockStderr(&.{});
+    const w = &stderr.file_writer.interface;
     printUsage(w, arg0) catch std.process.exit(2);
     std.process.exit(1);
 }

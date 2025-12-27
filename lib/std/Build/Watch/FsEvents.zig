@@ -102,10 +102,10 @@ pub fn init() error{ OpenFrameworkFailed, MissingCoreServicesSymbol }!FsEvents {
     };
 }
 
-pub fn deinit(fse: *FsEvents, gpa: Allocator) void {
+pub fn deinit(fse: *FsEvents, gpa: Allocator, io: Io) void {
     dispatch_release(fse.waiting_semaphore);
     dispatch_release(fse.dispatch_queue);
-    fse.core_services.close();
+    fse.core_services.close(io);
 
     gpa.free(fse.watch_roots);
     fse.watch_paths.deinit(gpa);
@@ -487,6 +487,7 @@ const FSEventStreamEventFlags = packed struct(u32) {
 };
 
 const std = @import("std");
+const Io = std.Io;
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const watch_log = std.log.scoped(.watch);

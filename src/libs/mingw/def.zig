@@ -1,4 +1,5 @@
 const std = @import("std");
+const Io = std.Io;
 
 pub const ModuleDefinitionType = enum {
     mingw,
@@ -663,7 +664,9 @@ test parse {
         \\
     ;
 
-    try testParse(.AMD64, source, "foo.dll", &[_]ModuleDefinition.Export{
+    const io = std.testing.io;
+
+    try testParse(io, .AMD64, source, "foo.dll", &[_]ModuleDefinition.Export{
         .{
             .name = "foo",
             .mangled_symbol_name = null,
@@ -743,7 +746,7 @@ test parse {
         },
     });
 
-    try testParse(.I386, source, "foo.dll", &[_]ModuleDefinition.Export{
+    try testParse(io, .I386, source, "foo.dll", &[_]ModuleDefinition.Export{
         .{
             .name = "_foo",
             .mangled_symbol_name = null,
@@ -823,7 +826,7 @@ test parse {
         },
     });
 
-    try testParse(.ARMNT, source, "foo.dll", &[_]ModuleDefinition.Export{
+    try testParse(io, .ARMNT, source, "foo.dll", &[_]ModuleDefinition.Export{
         .{
             .name = "foo",
             .mangled_symbol_name = null,
@@ -903,7 +906,7 @@ test parse {
         },
     });
 
-    try testParse(.ARM64, source, "foo.dll", &[_]ModuleDefinition.Export{
+    try testParse(io, .ARM64, source, "foo.dll", &[_]ModuleDefinition.Export{
         .{
             .name = "foo",
             .mangled_symbol_name = null,
@@ -997,7 +1000,9 @@ test "ntdll" {
         \\RtlActivateActivationContextUnsafeFast@0
     ;
 
-    try testParse(.AMD64, source, "ntdll.dll", &[_]ModuleDefinition.Export{
+    const io = std.testing.io;
+
+    try testParse(io, .AMD64, source, "ntdll.dll", &[_]ModuleDefinition.Export{
         .{
             .name = "RtlDispatchAPC@12",
             .mangled_symbol_name = null,
@@ -1023,15 +1028,22 @@ test "ntdll" {
     });
 }
 
-fn testParse(machine_type: std.coff.IMAGE.FILE.MACHINE, source: [:0]const u8, expected_module_name: []const u8, expected_exports: []const ModuleDefinition.Export) !void {
+fn testParse(
+    io: Io,
+    machine_type: std.coff.IMAGE.FILE.MACHINE,
+    source: [:0]const u8,
+    expected_module_name: []const u8,
+    expected_exports: []const ModuleDefinition.Export,
+) !void {
     var diagnostics: Diagnostics = undefined;
     const module = parse(std.testing.allocator, source, machine_type, .mingw, &diagnostics) catch |err| switch (err) {
         error.OutOfMemory => |e| return e,
         error.ParseError => {
-            const stderr, _ = std.debug.lockStderrWriter(&.{});
-            defer std.debug.unlockStderrWriter();
-            try diagnostics.writeMsg(stderr, source);
-            try stderr.writeByte('\n');
+            const stderr = try io.lockStderr(&.{}, null);
+            defer io.unlockStderr();
+            const w = &stderr.file_writer.interface;
+            try diagnostics.writeMsg(w, source);
+            try w.writeByte('\n');
             return err;
         },
     };

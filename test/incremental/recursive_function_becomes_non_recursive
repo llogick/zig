@@ -9,11 +9,12 @@ pub fn main() !void {
     try foo(false);
 }
 fn foo(recurse: bool) !void {
-    const stdout = std.fs.File.stdout();
+    const stdout = std.Io.File.stdout();
     if (recurse) return foo(true);
-    try stdout.writeAll("non-recursive path\n");
+    try stdout.writeStreamingAll(io, "non-recursive path\n");
 }
 const std = @import("std");
+const io = std.Io.Threaded.global_single_threaded.ioBasic();
 #expect_stdout="non-recursive path\n"
 
 #update=eliminate recursion and change argument
@@ -22,9 +23,10 @@ pub fn main() !void {
     try foo(true);
 }
 fn foo(recurse: bool) !void {
-    const stdout = std.fs.File.stdout();
-    if (recurse) return stdout.writeAll("x==1\n");
-    try stdout.writeAll("non-recursive path\n");
+    const stdout = std.Io.File.stdout();
+    if (recurse) return stdout.writeStreamingAll(io, "x==1\n");
+    try stdout.writeStreamingAll(io, "non-recursive path\n");
 }
 const std = @import("std");
+const io = std.Io.Threaded.global_single_threaded.ioBasic();
 #expect_stdout="x==1\n"

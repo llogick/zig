@@ -1,11 +1,12 @@
 const builtin = @import("builtin");
+const native_endian = builtin.cpu.arch.endian();
+
 const std = @import("../std.zig");
 const mem = std.mem;
 const elf = std.elf;
 const fs = std.fs;
 const assert = std.debug.assert;
 const Target = std.Target;
-const native_endian = builtin.cpu.arch.endian();
 const posix = std.posix;
 const Io = std.Io;
 
@@ -39,6 +40,7 @@ pub const GetExternalExecutorOptions = struct {
 /// Return whether or not the given host is capable of running executables of
 /// the other target.
 pub fn getExternalExecutor(
+    io: Io,
     host: *const std.Target,
     candidate: *const std.Target,
     options: GetExternalExecutorOptions,
@@ -69,7 +71,7 @@ pub fn getExternalExecutor(
     if (os_match and cpu_ok) native: {
         if (options.link_libc) {
             if (candidate.dynamic_linker.get()) |candidate_dl| {
-                fs.cwd().access(candidate_dl, .{}) catch {
+                Io.Dir.cwd().access(io, candidate_dl, .{}) catch {
                     bad_result = .{ .bad_dl = candidate_dl };
                     break :native;
                 };
@@ -209,7 +211,6 @@ pub const DetectError = error{
     DeviceBusy,
     OSVersionDetectionFail,
     Unexpected,
-    ProcessNotFound,
 } || Io.Cancelable;
 
 /// Given a `Target.Query`, which specifies in detail which parts of the
@@ -247,7 +248,7 @@ pub fn resolveTargetQuery(io: Io, query: Target.Query) DetectError!Target {
                 os.version_range.windows.min = detected_version;
                 os.version_range.windows.max = detected_version;
             },
-            .macos => try darwin.macos.detect(&os),
+            .macos => try darwin.macos.detect(io, &os),
             .freebsd, .netbsd, .dragonfly => {
                 const key = switch (builtin.target.os.tag) {
                     .freebsd => "kern.osreldate",
@@ -322,7 +323,7 @@ pub fn resolveTargetQuery(io: Io, query: Target.Query) DetectError!Target {
                     error.Unexpected => return error.OSVersionDetectionFail,
                 };
 
-                if (Target.Query.parseVersion(buf[0..len :0])) |ver| {
+                if (Target.Query.parseVersion(buf[0 .. len - 1 :0])) |ver| {
                     assert(ver.build == null);
                     assert(ver.pre == null);
                     os.version_range.semver.min = ver;
@@ -422,7 +423,6 @@ pub fn resolveTargetQuery(io: Io, query: Target.Query) DetectError!Target {
         error.SocketUnconnected => return error.Unexpected,
 
         error.AccessDenied,
-        error.ProcessNotFound,
         error.SymLinkLoop,
         error.ProcessFdQuotaExceeded,
         error.SystemFdQuotaExceeded,
@@ -553,7 +553,6 @@ pub const AbiAndDynamicLinkerFromFileError = error{
     SystemResources,
     ProcessFdQuotaExceeded,
     SystemFdQuotaExceeded,
-    ProcessNotFound,
     IsDir,
     WouldBlock,
     InputOutput,
@@ -693,8 +692,10 @@ fn abiAndDynamicLinkerFromFile(
 
             // So far, no luck. Next we try to see if the information is
             // present in the symlink data for the dynamic linker path.
-            var link_buf: [posix.PATH_MAX]u8 = undefined;
-            const link_name = posix.readlink(dl_path, &link_buf) catch |err| switch (err) {
+            var link_buffer: [posix.PATH_MAX]u8 = undefined;
+            const link_name = if (Io.Dir.readLinkAbsolute(io, dl_path, &link_buffer)) |n|
+                link_buffer[0..n]
+            else |err| switch (err) {
                 error.NameTooLong => unreachable,
                 error.BadPathName => unreachable, // Windows only
                 error.UnsupportedReparsePointType => unreachable, // Windows only
@@ -711,6 +712,7 @@ fn abiAndDynamicLinkerFromFile(
                 error.SystemResources,
                 error.FileSystem,
                 error.SymLinkLoop,
+                error.Canceled,
                 error.Unexpected,
                 => |e| return e,
             };
@@ -786,7 +788,9 @@ test glibcVerFromLinkName {
 }
 
 fn glibcVerFromRPath(io: Io, rpath: []const u8) !std.SemanticVersion {
-    var dir = fs.cwd().openDir(rpath, .{}) catch |err| switch (err) {
+    const cwd: Io.Dir = .cwd();
+
+    var dir = cwd.openDir(io, rpath, .{}) catch |err| switch (err) {
         error.NameTooLong => return error.Unexpected,
         error.BadPathName => return error.Unexpected,
         error.DeviceBusy => return error.Unexpected,
@@ -805,7 +809,7 @@ fn glibcVerFromRPath(io: Io, rpath: []const u8) !std.SemanticVersion {
         error.Unexpected => |e| return e,
         error.Canceled => |e| return e,
     };
-    defer dir.close();
+    defer dir.close(io);
 
     // Now we have a candidate for the path to libc shared object. In
     // the past, we used readlink() here because the link name would
@@ -815,14 +819,14 @@ fn glibcVerFromRPath(io: Io, rpath: []const u8) !std.SemanticVersion {
     // .dynstr section, and finding the max version number of symbols
     // that start with "GLIBC_2.".
     const glibc_so_basename = "libc.so.6";
-    var file = dir.openFile(glibc_so_basename, .{}) catch |err| switch (err) {
+    var file = dir.openFile(io, glibc_so_basename, .{}) catch |err| switch (err) {
         error.NameTooLong => return error.Unexpected,
         error.BadPathName => return error.Unexpected,
         error.PipeBusy => return error.Unexpected, // Windows-only
         error.SharingViolation => return error.Unexpected, // Windows-only
         error.NetworkNotFound => return error.Unexpected, // Windows-only
         error.AntivirusInterference => return error.Unexpected, // Windows-only
-        error.FileLocksNotSupported => return error.Unexpected, // No lock requested.
+        error.FileLocksUnsupported => return error.Unexpected, // No lock requested.
         error.NoSpaceLeft => return error.Unexpected, // read-only
         error.PathAlreadyExists => return error.Unexpected, // read-only
         error.DeviceBusy => return error.Unexpected, // read-only
@@ -837,7 +841,6 @@ fn glibcVerFromRPath(io: Io, rpath: []const u8) !std.SemanticVersion {
         error.NotDir => return error.GLibCNotFound,
         error.IsDir => return error.GLibCNotFound,
 
-        error.ProcessNotFound => |e| return e,
         error.ProcessFdQuotaExceeded => |e| return e,
         error.SystemFdQuotaExceeded => |e| return e,
         error.SystemResources => |e| return e,
@@ -845,11 +848,11 @@ fn glibcVerFromRPath(io: Io, rpath: []const u8) !std.SemanticVersion {
         error.Unexpected => |e| return e,
         error.Canceled => |e| return e,
     };
-    defer file.close();
+    defer file.close(io);
 
     // Empirically, glibc 2.34 libc.so .dynstr section is 32441 bytes on my system.
     var buffer: [8000]u8 = undefined;
-    var file_reader: Io.File.Reader = .initAdapted(file, io, &buffer);
+    var file_reader: Io.File.Reader = .init(file, io, &buffer);
 
     return glibcVerFromSoFile(&file_reader) catch |err| switch (err) {
         error.InvalidElfMagic,
@@ -1024,14 +1027,14 @@ fn detectAbiAndDynamicLinker(io: Io, cpu: Target.Cpu, os: Target.Os, query: Targ
         };
 
         while (true) {
-            const file = fs.openFileAbsolute(file_name, .{}) catch |err| switch (err) {
+            const file = Io.Dir.openFileAbsolute(io, file_name, .{}) catch |err| switch (err) {
                 error.NoSpaceLeft => return error.Unexpected,
                 error.NameTooLong => return error.Unexpected,
                 error.PathAlreadyExists => return error.Unexpected,
                 error.SharingViolation => return error.Unexpected,
                 error.BadPathName => return error.Unexpected,
                 error.PipeBusy => return error.Unexpected,
-                error.FileLocksNotSupported => return error.Unexpected,
+                error.FileLocksUnsupported => return error.Unexpected,
                 error.FileBusy => return error.Unexpected, // opened without write permissions
                 error.AntivirusInterference => return error.Unexpected, // Windows-only error
 
@@ -1049,9 +1052,9 @@ fn detectAbiAndDynamicLinker(io: Io, cpu: Target.Cpu, os: Target.Os, query: Targ
                 else => |e| return e,
             };
             var is_elf_file = false;
-            defer if (!is_elf_file) file.close();
+            defer if (!is_elf_file) file.close(io);
 
-            file_reader = .initAdapted(file, io, &file_reader_buffer);
+            file_reader = .init(file, io, &file_reader_buffer);
             file_name = undefined; // it aliases file_reader_buffer
 
             const header = elf.Header.read(&file_reader.interface) catch |hdr_err| switch (hdr_err) {
@@ -1101,7 +1104,6 @@ fn detectAbiAndDynamicLinker(io: Io, cpu: Target.Cpu, os: Target.Os, query: Targ
         error.SymLinkLoop,
         error.ProcessFdQuotaExceeded,
         error.SystemFdQuotaExceeded,
-        error.ProcessNotFound,
         error.Canceled,
         => |e| return e,
 

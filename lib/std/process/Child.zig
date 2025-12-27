@@ -1,13 +1,14 @@
-const ChildProcess = @This();
+const Child = @This();
 
 const builtin = @import("builtin");
 const native_os = builtin.os.tag;
 
 const std = @import("../std.zig");
+const Io = std.Io;
 const unicode = std.unicode;
 const fs = std.fs;
 const process = std.process;
-const File = std.fs.File;
+const File = std.Io.File;
 const windows = std.os.windows;
 const linux = std.os.linux;
 const posix = std.posix;
@@ -30,7 +31,7 @@ pub const Id = switch (native_os) {
 id: Id,
 thread_handle: if (native_os == .windows) windows.HANDLE else void,
 
-allocator: mem.Allocator,
+allocator: Allocator,
 
 /// The writing end of the child process's standard input pipe.
 /// Usage requires `stdin_behavior == StdIo.Pipe`.
@@ -76,7 +77,7 @@ cwd: ?[]const u8,
 /// Set to change the current working directory when spawning the child process.
 /// This is not yet implemented for Windows. See https://github.com/ziglang/zig/issues/5190
 /// Once that is done, `cwd` will be deprecated in favor of this field.
-cwd_dir: ?fs.Dir = null,
+cwd_dir: ?Io.Dir = null,
 
 err_pipe: if (native_os == .windows) void else ?posix.fd_t,
 
@@ -228,7 +229,7 @@ pub const StdIo = enum {
 };
 
 /// First argument in argv is the executable.
-pub fn init(argv: []const []const u8, allocator: mem.Allocator) ChildProcess {
+pub fn init(argv: []const []const u8, allocator: Allocator) Child {
     return .{
         .allocator = allocator,
         .argv = argv,
@@ -251,7 +252,7 @@ pub fn init(argv: []const []const u8, allocator: mem.Allocator) ChildProcess {
     };
 }
 
-pub fn setUserName(self: *ChildProcess, name: []const u8) !void {
+pub fn setUserName(self: *Child, name: []const u8) !void {
     const user_info = try process.getUserInfo(name);
     self.uid = user_info.uid;
     self.gid = user_info.gid;
@@ -259,35 +260,35 @@ pub fn setUserName(self: *ChildProcess, name: []const u8) !void {
 
 /// On success must call `kill` or `wait`.
 /// After spawning the `id` is available.
-pub fn spawn(self: *ChildProcess) SpawnError!void {
+pub fn spawn(self: *Child, io: Io) SpawnError!void {
     if (!process.can_spawn) {
         @compileError("the target operating system cannot spawn processes");
     }
 
     if (native_os == .windows) {
-        return self.spawnWindows();
+        return self.spawnWindows(io);
     } else {
-        return self.spawnPosix();
+        return self.spawnPosix(io);
     }
 }
 
-pub fn spawnAndWait(self: *ChildProcess) SpawnError!Term {
-    try self.spawn();
-    return self.wait();
+pub fn spawnAndWait(child: *Child, io: Io) SpawnError!Term {
+    try child.spawn(io);
+    return child.wait(io);
 }
 
 /// Forcibly terminates child process and then cleans up all resources.
-pub fn kill(self: *ChildProcess) !Term {
+pub fn kill(self: *Child, io: Io) !Term {
     if (native_os == .windows) {
-        return self.killWindows(1);
+        return self.killWindows(io, 1);
     } else {
-        return self.killPosix();
+        return self.killPosix(io);
     }
 }
 
-pub fn killWindows(self: *ChildProcess, exit_code: windows.UINT) !Term {
+pub fn killWindows(self: *Child, io: Io, exit_code: windows.UINT) !Term {
     if (self.term) |term| {
-        self.cleanupStreams();
+        self.cleanupStreams(io);
         return term;
     }
 
@@ -303,20 +304,20 @@ pub fn killWindows(self: *ChildProcess, exit_code: windows.UINT) !Term {
         },
         else => return err,
     };
-    try self.waitUnwrappedWindows();
+    try self.waitUnwrappedWindows(io);
     return self.term.?;
 }
 
-pub fn killPosix(self: *ChildProcess) !Term {
+pub fn killPosix(self: *Child, io: Io) !Term {
     if (self.term) |term| {
-        self.cleanupStreams();
+        self.cleanupStreams(io);
         return term;
     }
     posix.kill(self.id, posix.SIG.TERM) catch |err| switch (err) {
         error.ProcessNotFound => return error.AlreadyTerminated,
         else => return err,
     };
-    self.waitUnwrappedPosix();
+    self.waitUnwrappedPosix(io);
     return self.term.?;
 }
 
@@ -324,7 +325,7 @@ pub const WaitError = SpawnError || std.os.windows.GetProcessMemoryInfoError;
 
 /// On some targets, `spawn` may not report all spawn errors, such as `error.InvalidExe`.
 /// This function will block until any spawn errors can be reported, and return them.
-pub fn waitForSpawn(self: *ChildProcess) SpawnError!void {
+pub fn waitForSpawn(self: *Child) SpawnError!void {
     if (native_os == .windows) return; // `spawn` reports everything
     if (self.term) |term| {
         _ = term catch |spawn_err| return spawn_err;
@@ -354,15 +355,15 @@ pub fn waitForSpawn(self: *ChildProcess) SpawnError!void {
 }
 
 /// Blocks until child process terminates and then cleans up all resources.
-pub fn wait(self: *ChildProcess) WaitError!Term {
+pub fn wait(self: *Child, io: Io) WaitError!Term {
     try self.waitForSpawn(); // report spawn errors
     if (self.term) |term| {
-        self.cleanupStreams();
+        self.cleanupStreams(io);
         return term;
     }
     switch (native_os) {
-        .windows => try self.waitUnwrappedWindows(),
-        else => self.waitUnwrappedPosix(),
+        .windows => try self.waitUnwrappedWindows(io),
+        else => self.waitUnwrappedPosix(io),
     }
     self.id = undefined;
     return self.term.?;
@@ -380,7 +381,7 @@ pub const RunResult = struct {
 ///
 /// The process must be started with stdout_behavior and stderr_behavior == .Pipe
 pub fn collectOutput(
-    child: ChildProcess,
+    child: Child,
     /// Used for `stdout` and `stderr`.
     allocator: Allocator,
     stdout: *ArrayList(u8),
@@ -434,11 +435,10 @@ pub const RunError = posix.GetCwdError || posix.ReadError || SpawnError || posix
 
 /// Spawns a child process, waits for it, collecting stdout and stderr, and then returns.
 /// If it succeeds, the caller owns result.stdout and result.stderr memory.
-pub fn run(args: struct {
-    allocator: mem.Allocator,
+pub fn run(allocator: Allocator, io: Io, args: struct {
     argv: []const []const u8,
     cwd: ?[]const u8 = null,
-    cwd_dir: ?fs.Dir = null,
+    cwd_dir: ?Io.Dir = null,
     /// Required if unable to access the current env map (e.g. building a
     /// library on some platforms).
     env_map: ?*const EnvMap = null,
@@ -446,7 +446,7 @@ pub fn run(args: struct {
     expand_arg0: Arg0Expand = .no_expand,
     progress_node: std.Progress.Node = std.Progress.Node.none,
 }) RunError!RunResult {
-    var child = ChildProcess.init(args.argv, args.allocator);
+    var child = Child.init(args.argv, allocator);
     child.stdin_behavior = .Ignore;
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = .Pipe;
@@ -457,24 +457,24 @@ pub fn run(args: struct {
     child.progress_node = args.progress_node;
 
     var stdout: ArrayList(u8) = .empty;
-    defer stdout.deinit(args.allocator);
+    defer stdout.deinit(allocator);
     var stderr: ArrayList(u8) = .empty;
-    defer stderr.deinit(args.allocator);
+    defer stderr.deinit(allocator);
 
-    try child.spawn();
+    try child.spawn(io);
     errdefer {
-        _ = child.kill() catch {};
+        _ = child.kill(io) catch {};
     }
-    try child.collectOutput(args.allocator, &stdout, &stderr, args.max_output_bytes);
+    try child.collectOutput(allocator, &stdout, &stderr, args.max_output_bytes);
 
     return .{
-        .stdout = try stdout.toOwnedSlice(args.allocator),
-        .stderr = try stderr.toOwnedSlice(args.allocator),
-        .term = try child.wait(),
+        .stdout = try stdout.toOwnedSlice(allocator),
+        .stderr = try stderr.toOwnedSlice(allocator),
+        .term = try child.wait(io),
     };
 }
 
-fn waitUnwrappedWindows(self: *ChildProcess) WaitError!void {
+fn waitUnwrappedWindows(self: *Child, io: Io) WaitError!void {
     const result = windows.WaitForSingleObjectEx(self.id, windows.INFINITE, false);
 
     self.term = @as(SpawnError!Term, x: {
@@ -492,11 +492,11 @@ fn waitUnwrappedWindows(self: *ChildProcess) WaitError!void {
 
     posix.close(self.id);
     posix.close(self.thread_handle);
-    self.cleanupStreams();
+    self.cleanupStreams(io);
     return result;
 }
 
-fn waitUnwrappedPosix(self: *ChildProcess) void {
+fn waitUnwrappedPosix(self: *Child, io: Io) void {
     const res: posix.WaitPidResult = res: {
         if (self.request_resource_usage_statistics) {
             switch (native_os) {
@@ -527,25 +527,25 @@ fn waitUnwrappedPosix(self: *ChildProcess) void {
         break :res posix.waitpid(self.id, 0);
     };
     const status = res.status;
-    self.cleanupStreams();
+    self.cleanupStreams(io);
     self.handleWaitResult(status);
 }
 
-fn handleWaitResult(self: *ChildProcess, status: u32) void {
+fn handleWaitResult(self: *Child, status: u32) void {
     self.term = statusToTerm(status);
 }
 
-fn cleanupStreams(self: *ChildProcess) void {
+fn cleanupStreams(self: *Child, io: Io) void {
     if (self.stdin) |*stdin| {
-        stdin.close();
+        stdin.close(io);
         self.stdin = null;
     }
     if (self.stdout) |*stdout| {
-        stdout.close();
+        stdout.close(io);
         self.stdout = null;
     }
     if (self.stderr) |*stderr| {
-        stderr.close();
+        stderr.close(io);
         self.stderr = null;
     }
 }
@@ -561,7 +561,7 @@ fn statusToTerm(status: u32) Term {
         Term{ .Unknown = status };
 }
 
-fn spawnPosix(self: *ChildProcess) SpawnError!void {
+fn spawnPosix(self: *Child, io: Io) SpawnError!void {
     // The child process does need to access (one end of) these pipes. However,
     // we must initially set CLOEXEC to avoid a race condition. If another thread
     // is racing to spawn a different child process, we don't want it to inherit
@@ -596,7 +596,7 @@ fn spawnPosix(self: *ChildProcess) SpawnError!void {
             error.NoSpaceLeft => unreachable,
             error.FileTooBig => unreachable,
             error.DeviceBusy => unreachable,
-            error.FileLocksNotSupported => unreachable,
+            error.FileLocksUnsupported => unreachable,
             error.BadPathName => unreachable, // Windows-only
             error.WouldBlock => unreachable,
             error.NetworkNotFound => unreachable, // Windows-only
@@ -659,7 +659,7 @@ fn spawnPosix(self: *ChildProcess) SpawnError!void {
             })).ptr;
         } else {
             // TODO come up with a solution for this.
-            @panic("missing std lib enhancement: ChildProcess implementation has no way to collect the environment variables to forward to the child process");
+            @panic("missing std lib enhancement: std.process.Child implementation has no way to collect the environment variables to forward to the child process");
         }
     };
 
@@ -671,41 +671,41 @@ fn spawnPosix(self: *ChildProcess) SpawnError!void {
     const pid_result = try posix.fork();
     if (pid_result == 0) {
         // we are the child
-        setUpChildIo(self.stdin_behavior, stdin_pipe[0], posix.STDIN_FILENO, dev_null_fd) catch |err| forkChildErrReport(err_pipe[1], err);
-        setUpChildIo(self.stdout_behavior, stdout_pipe[1], posix.STDOUT_FILENO, dev_null_fd) catch |err| forkChildErrReport(err_pipe[1], err);
-        setUpChildIo(self.stderr_behavior, stderr_pipe[1], posix.STDERR_FILENO, dev_null_fd) catch |err| forkChildErrReport(err_pipe[1], err);
+        setUpChildIo(self.stdin_behavior, stdin_pipe[0], posix.STDIN_FILENO, dev_null_fd) catch |err| forkChildErrReport(io, err_pipe[1], err);
+        setUpChildIo(self.stdout_behavior, stdout_pipe[1], posix.STDOUT_FILENO, dev_null_fd) catch |err| forkChildErrReport(io, err_pipe[1], err);
+        setUpChildIo(self.stderr_behavior, stderr_pipe[1], posix.STDERR_FILENO, dev_null_fd) catch |err| forkChildErrReport(io, err_pipe[1], err);
 
         if (self.cwd_dir) |cwd| {
-            posix.fchdir(cwd.fd) catch |err| forkChildErrReport(err_pipe[1], err);
+            posix.fchdir(cwd.handle) catch |err| forkChildErrReport(io, err_pipe[1], err);
         } else if (self.cwd) |cwd| {
-            posix.chdir(cwd) catch |err| forkChildErrReport(err_pipe[1], err);
+            posix.chdir(cwd) catch |err| forkChildErrReport(io, err_pipe[1], err);
         }
 
         // Must happen after fchdir above, the cwd file descriptor might be
         // equal to prog_fileno and be clobbered by this dup2 call.
-        if (prog_pipe[1] != -1) posix.dup2(prog_pipe[1], prog_fileno) catch |err| forkChildErrReport(err_pipe[1], err);
+        if (prog_pipe[1] != -1) posix.dup2(prog_pipe[1], prog_fileno) catch |err| forkChildErrReport(io, err_pipe[1], err);
 
         if (self.gid) |gid| {
-            posix.setregid(gid, gid) catch |err| forkChildErrReport(err_pipe[1], err);
+            posix.setregid(gid, gid) catch |err| forkChildErrReport(io, err_pipe[1], err);
         }
 
         if (self.uid) |uid| {
-            posix.setreuid(uid, uid) catch |err| forkChildErrReport(err_pipe[1], err);
+            posix.setreuid(uid, uid) catch |err| forkChildErrReport(io, err_pipe[1], err);
         }
 
         if (self.pgid) |pid| {
-            posix.setpgid(0, pid) catch |err| forkChildErrReport(err_pipe[1], err);
+            posix.setpgid(0, pid) catch |err| forkChildErrReport(io, err_pipe[1], err);
         }
 
         if (self.start_suspended) {
-            posix.kill(posix.getpid(), .STOP) catch |err| forkChildErrReport(err_pipe[1], err);
+            posix.kill(posix.getpid(), .STOP) catch |err| forkChildErrReport(io, err_pipe[1], err);
         }
 
         const err = switch (self.expand_arg0) {
             .expand => posix.execvpeZ_expandArg0(.expand, argv_buf.ptr[0].?, argv_buf.ptr, envp),
             .no_expand => posix.execvpeZ_expandArg0(.no_expand, argv_buf.ptr[0].?, argv_buf.ptr, envp),
         };
-        forkChildErrReport(err_pipe[1], err);
+        forkChildErrReport(io, err_pipe[1], err);
     }
 
     // we are the parent
@@ -750,7 +750,7 @@ fn spawnPosix(self: *ChildProcess) SpawnError!void {
     self.progress_node.setIpcFd(prog_pipe[0]);
 }
 
-fn spawnWindows(self: *ChildProcess) SpawnError!void {
+fn spawnWindows(self: *Child, io: Io) SpawnError!void {
     var saAttr = windows.SECURITY_ATTRIBUTES{
         .nLength = @sizeOf(windows.SECURITY_ATTRIBUTES),
         .bInheritHandle = windows.TRUE,
@@ -880,7 +880,7 @@ fn spawnWindows(self: *ChildProcess) SpawnError!void {
     const app_name_wtf8 = self.argv[0];
     const app_name_is_absolute = fs.path.isAbsolute(app_name_wtf8);
 
-    // the cwd set in ChildProcess is in effect when choosing the executable path
+    // the cwd set in Child is in effect when choosing the executable path
     // to match posix semantics
     var cwd_path_w_needs_free = false;
     const cwd_path_w = x: {
@@ -953,7 +953,7 @@ fn spawnWindows(self: *ChildProcess) SpawnError!void {
             try dir_buf.appendSlice(self.allocator, app_dir);
         }
 
-        windowsCreateProcessPathExt(self.allocator, &dir_buf, &app_buf, PATHEXT, &cmd_line_cache, envp_ptr, cwd_w_ptr, flags, &siStartInfo, &piProcInfo) catch |no_path_err| {
+        windowsCreateProcessPathExt(self.allocator, io, &dir_buf, &app_buf, PATHEXT, &cmd_line_cache, envp_ptr, cwd_w_ptr, flags, &siStartInfo, &piProcInfo) catch |no_path_err| {
             const original_err = switch (no_path_err) {
                 // argv[0] contains unsupported characters that will never resolve to a valid exe.
                 error.InvalidArg0 => return error.FileNotFound,
@@ -965,7 +965,7 @@ fn spawnWindows(self: *ChildProcess) SpawnError!void {
             // If the app name had path separators, that disallows PATH searching,
             // and there's no need to search the PATH if the app name is absolute.
             // We still search the path if the cwd is absolute because of the
-            // "cwd set in ChildProcess is in effect when choosing the executable path
+            // "cwd set in Child is in effect when choosing the executable path
             // to match posix semantics" behavior--we don't want to skip searching
             // the PATH just because we were trying to set the cwd of the child process.
             if (app_dirname_w != null or app_name_is_absolute) {
@@ -977,7 +977,7 @@ fn spawnWindows(self: *ChildProcess) SpawnError!void {
                 dir_buf.clearRetainingCapacity();
                 try dir_buf.appendSlice(self.allocator, search_path);
 
-                if (windowsCreateProcessPathExt(self.allocator, &dir_buf, &app_buf, PATHEXT, &cmd_line_cache, envp_ptr, cwd_w_ptr, flags, &siStartInfo, &piProcInfo)) {
+                if (windowsCreateProcessPathExt(self.allocator, io, &dir_buf, &app_buf, PATHEXT, &cmd_line_cache, envp_ptr, cwd_w_ptr, flags, &siStartInfo, &piProcInfo)) {
                     break :run;
                 } else |err| switch (err) {
                     // argv[0] contains unsupported characters that will never resolve to a valid exe.
@@ -1039,8 +1039,8 @@ fn destroyPipe(pipe: [2]posix.fd_t) void {
 
 // Child of fork calls this to report an error to the fork parent.
 // Then the child exits.
-fn forkChildErrReport(fd: i32, err: ChildProcess.SpawnError) noreturn {
-    writeIntFd(fd, @as(ErrInt, @intFromError(err))) catch {};
+fn forkChildErrReport(io: Io, fd: i32, err: Child.SpawnError) noreturn {
+    writeIntFd(io, fd, @as(ErrInt, @intFromError(err))) catch {};
     // If we're linking libc, some naughty applications may have registered atexit handlers
     // which we really do not want to run in the fork child. I caught LLVM doing this and
     // it caused a deadlock instead of doing an exit syscall. In the words of Avril Lavigne,
@@ -1049,12 +1049,12 @@ fn forkChildErrReport(fd: i32, err: ChildProcess.SpawnError) noreturn {
         // The _exit(2) function does nothing but make the exit syscall, unlike exit(3)
         std.c._exit(1);
     }
-    posix.exit(1);
+    posix.system.exit(1);
 }
 
-fn writeIntFd(fd: i32, value: ErrInt) !void {
+fn writeIntFd(io: Io, fd: i32, value: ErrInt) !void {
     var buffer: [8]u8 = undefined;
-    var fw: std.fs.File.Writer = .initStreaming(.{ .handle = fd }, &buffer);
+    var fw: File.Writer = .initStreaming(.{ .handle = fd }, io, &buffer);
     fw.interface.writeInt(u64, value, .little) catch unreachable;
     fw.interface.flush() catch return error.SystemResources;
 }
@@ -1078,7 +1078,8 @@ const ErrInt = std.meta.Int(.unsigned, @sizeOf(anyerror) * 8);
 /// Note: `app_buf` should not contain any leading path separators.
 /// Note: If the dir is the cwd, dir_buf should be empty (len = 0).
 fn windowsCreateProcessPathExt(
-    allocator: mem.Allocator,
+    allocator: Allocator,
+    io: Io,
     dir_buf: *ArrayList(u16),
     app_buf: *ArrayList(u16),
     pathext: [:0]const u16,
@@ -1122,16 +1123,14 @@ fn windowsCreateProcessPathExt(
     // Under those conditions, here we will have access to lower level directory
     // opening function knowing which implementation we are in. Here, we imitate
     // that scenario.
-    var threaded: std.Io.Threaded = .init_single_threaded;
-    const io = threaded.ioBasic();
-
     var dir = dir: {
         // needs to be null-terminated
         try dir_buf.append(allocator, 0);
         defer dir_buf.shrinkRetainingCapacity(dir_path_len);
         const dir_path_z = dir_buf.items[0 .. dir_buf.items.len - 1 :0];
         const prefixed_path = try windows.wToPrefixedFileW(null, dir_path_z);
-        break :dir threaded.dirOpenDirWindows(.cwd(), prefixed_path.span(), .{
+        // TODO eliminate this reference
+        break :dir Io.Threaded.global_single_threaded.dirOpenDirWindows(.cwd(), prefixed_path.span(), .{
             .iterate = true,
         }) catch return error.FileNotFound;
     };
@@ -1525,9 +1524,9 @@ const WindowsCommandLineCache = struct {
     script_cmd_line: ?[:0]u16 = null,
     cmd_exe_path: ?[:0]u16 = null,
     argv: []const []const u8,
-    allocator: mem.Allocator,
+    allocator: Allocator,
 
-    fn init(allocator: mem.Allocator, argv: []const []const u8) WindowsCommandLineCache {
+    fn init(allocator: Allocator, argv: []const []const u8) WindowsCommandLineCache {
         return .{
             .allocator = allocator,
             .argv = argv,
@@ -1571,7 +1570,7 @@ const WindowsCommandLineCache = struct {
 
 /// Returns the absolute path of `cmd.exe` within the Windows system directory.
 /// The caller owns the returned slice.
-fn windowsCmdExePath(allocator: mem.Allocator) error{ OutOfMemory, Unexpected }![:0]u16 {
+fn windowsCmdExePath(allocator: Allocator) error{ OutOfMemory, Unexpected }![:0]u16 {
     var buf = try ArrayList(u16).initCapacity(allocator, 128);
     errdefer buf.deinit(allocator);
     while (true) {
@@ -1608,7 +1607,7 @@ const ArgvToCommandLineError = error{ OutOfMemory, InvalidWtf8, InvalidArg0 };
 ///
 /// When executing `.bat`/`.cmd` scripts, use `argvToScriptCommandLineWindows` instead.
 fn argvToCommandLineWindows(
-    allocator: mem.Allocator,
+    allocator: Allocator,
     argv: []const []const u8,
 ) ArgvToCommandLineError![:0]u16 {
     var buf = std.array_list.Managed(u8).init(allocator);
@@ -1784,7 +1783,7 @@ const ArgvToScriptCommandLineError = error{
 /// Should only be used when spawning `.bat`/`.cmd` scripts, see `argvToCommandLineWindows` otherwise.
 /// The `.bat`/`.cmd` file must be known to both have the `.bat`/`.cmd` extension and exist on the filesystem.
 fn argvToScriptCommandLineWindows(
-    allocator: mem.Allocator,
+    allocator: Allocator,
     /// Path to the `.bat`/`.cmd` script. If this path is relative, it is assumed to be relative to the CWD.
     /// The script must have been verified to exist at this path before calling this function.
     script_path: []const u16,

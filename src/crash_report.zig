@@ -95,19 +95,20 @@ fn dumpCrashContext() Io.Writer.Error!void {
 
     // TODO: this does mean that a different thread could grab the stderr mutex between the context
     // and the actual panic printing, which would be quite confusing.
-    const stderr, _ = std.debug.lockStderrWriter(&.{});
-    defer std.debug.unlockStderrWriter();
+    const stderr = std.debug.lockStderr(&.{});
+    defer std.debug.unlockStderr();
+    const w = &stderr.file_writer.interface;
 
-    try stderr.writeAll("Compiler crash context:\n");
+    try w.writeAll("Compiler crash context:\n");
 
     if (CodegenFunc.current) |*cg| {
         const func_nav = cg.zcu.funcInfo(cg.func_index).owner_nav;
         const func_fqn = cg.zcu.intern_pool.getNav(func_nav).fqn;
-        try stderr.print("Generating function '{f}'\n\n", .{func_fqn.fmt(&cg.zcu.intern_pool)});
+        try w.print("Generating function '{f}'\n\n", .{func_fqn.fmt(&cg.zcu.intern_pool)});
     } else if (AnalyzeBody.current) |anal| {
-        try dumpCrashContextSema(anal, stderr, &S.crash_heap);
+        try dumpCrashContextSema(anal, w, &S.crash_heap);
     } else {
-        try stderr.writeAll("(no context)\n\n");
+        try w.writeAll("(no context)\n\n");
     }
 }
 fn dumpCrashContextSema(anal: *AnalyzeBody, stderr: *Io.Writer, crash_heap: []u8) Io.Writer.Error!void {

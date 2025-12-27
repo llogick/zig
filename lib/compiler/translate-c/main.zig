@@ -1,4 +1,5 @@
 const std = @import("std");
+const Io = std.Io;
 const assert = std.debug.assert;
 const mem = std.mem;
 const process = std.process;
@@ -18,7 +19,7 @@ pub fn main() u8 {
     defer arena_instance.deinit();
     const arena = arena_instance.allocator();
 
-    var threaded: std.Io.Threaded = .init(gpa);
+    var threaded: std.Io.Threaded = .init(gpa, .{});
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -33,11 +34,14 @@ pub fn main() u8 {
         zig_integration = true;
     }
 
+    const NO_COLOR = std.zig.EnvVar.NO_COLOR.isSet();
+    const CLICOLOR_FORCE = std.zig.EnvVar.CLICOLOR_FORCE.isSet();
+
     var stderr_buf: [1024]u8 = undefined;
-    var stderr = std.fs.File.stderr().writer(&stderr_buf);
+    var stderr = Io.File.stderr().writer(io, &stderr_buf);
     var diagnostics: aro.Diagnostics = switch (zig_integration) {
         false => .{ .output = .{ .to_writer = .{
-            .color = .detect(stderr.file),
+            .mode = Io.Terminal.Mode.detect(io, stderr.file, NO_COLOR, CLICOLOR_FORCE) catch unreachable,
             .writer = &stderr.interface,
         } } },
         true => .{ .output = .{ .to_list = .{
@@ -46,7 +50,7 @@ pub fn main() u8 {
     };
     defer diagnostics.deinit();
 
-    var comp = aro.Compilation.initDefault(gpa, arena, io, &diagnostics, std.fs.cwd()) catch |err| switch (err) {
+    var comp = aro.Compilation.initDefault(gpa, arena, io, &diagnostics, Io.Dir.cwd()) catch |err| switch (err) {
         error.OutOfMemory => {
             std.debug.print("ran out of memory initializing C compilation\n", .{});
             if (fast_exit) process.exit(1);
@@ -68,7 +72,7 @@ pub fn main() u8 {
             return 1;
         },
         error.FatalError => if (zig_integration) {
-            serveErrorBundle(arena, &diagnostics) catch |bundle_err| {
+            serveErrorBundle(arena, io, &diagnostics) catch |bundle_err| {
                 std.debug.print("unable to serve error bundle: {}\n", .{bundle_err});
                 if (fast_exit) process.exit(1);
                 return 1;
@@ -92,14 +96,14 @@ pub fn main() u8 {
     return @intFromBool(comp.diagnostics.errors != 0);
 }
 
-fn serveErrorBundle(arena: std.mem.Allocator, diagnostics: *const aro.Diagnostics) !void {
+fn serveErrorBundle(arena: std.mem.Allocator, io: Io, diagnostics: *const aro.Diagnostics) !void {
     const error_bundle = try compiler_util.aroDiagnosticsToErrorBundle(
         diagnostics,
         arena,
         "translation failure",
     );
     var stdout_buffer: [1024]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    var stdout_writer = Io.File.stdout().writer(io, &stdout_buffer);
     var server: std.zig.Server = .{
         .out = &stdout_writer.interface,
         .in = undefined,
@@ -121,6 +125,7 @@ pub const usage =
 
 fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8, zig_integration: bool) !void {
     const gpa = d.comp.gpa;
+    const io = d.comp.io;
 
     const aro_args = args: {
         var i: usize = 0;
@@ -128,13 +133,13 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8, zig_integration
             args[i] = arg;
             if (mem.eql(u8, arg, "--help")) {
                 var stdout_buf: [512]u8 = undefined;
-                var stdout = std.fs.File.stdout().writer(&stdout_buf);
+                var stdout = Io.File.stdout().writer(io, &stdout_buf);
                 try stdout.interface.print(usage, .{args[0]});
                 try stdout.interface.flush();
                 return;
             } else if (mem.eql(u8, arg, "--version")) {
                 var stdout_buf: [512]u8 = undefined;
-                var stdout = std.fs.File.stdout().writer(&stdout_buf);
+                var stdout = Io.File.stdout().writer(io, &stdout_buf);
                 // TODO add version
                 try stdout.interface.writeAll("0.0.0-dev\n");
                 try stdout.interface.flush();
@@ -224,13 +229,13 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8, zig_integration
         const dep_file_name = try d.getDepFileName(source, out_buf[0..std.fs.max_name_bytes]);
 
         const file = if (dep_file_name) |path|
-            d.comp.cwd.createFile(path, .{}) catch |er|
+            d.comp.cwd.createFile(io, path, .{}) catch |er|
                 return d.fatal("unable to create dependency file '{s}': {s}", .{ path, aro.Driver.errorDescription(er) })
         else
-            std.fs.File.stdout();
-        defer if (dep_file_name != null) file.close();
+            Io.File.stdout();
+        defer if (dep_file_name != null) file.close(io);
 
-        var file_writer = file.writer(&out_buf);
+        var file_writer = file.writer(io, &out_buf);
         dep_file.write(&file_writer.interface) catch
             return d.fatal("unable to write dependency file: {s}", .{aro.Driver.errorDescription(file_writer.err.?)});
     }
@@ -245,23 +250,23 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8, zig_integration
 
     var close_out_file = false;
     var out_file_path: []const u8 = "<stdout>";
-    var out_file: std.fs.File = .stdout();
-    defer if (close_out_file) out_file.close();
+    var out_file: Io.File = .stdout();
+    defer if (close_out_file) out_file.close(io);
 
     if (d.output_name) |path| blk: {
         if (std.mem.eql(u8, path, "-")) break :blk;
         if (std.fs.path.dirname(path)) |dirname| {
-            std.fs.cwd().makePath(dirname) catch |err|
+            Io.Dir.cwd().createDirPath(io, dirname) catch |err|
                 return d.fatal("failed to create path to '{s}': {s}", .{ path, aro.Driver.errorDescription(err) });
         }
-        out_file = std.fs.cwd().createFile(path, .{}) catch |err| {
+        out_file = Io.Dir.cwd().createFile(io, path, .{}) catch |err| {
             return d.fatal("failed to create output file '{s}': {s}", .{ path, aro.Driver.errorDescription(err) });
         };
         close_out_file = true;
         out_file_path = path;
     }
 
-    var out_writer = out_file.writer(&out_buf);
+    var out_writer = out_file.writer(io, &out_buf);
     out_writer.interface.writeAll(rendered_zig) catch {};
     out_writer.interface.flush() catch {};
     if (out_writer.err) |write_err|

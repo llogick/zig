@@ -108,14 +108,14 @@ pub const start = @import("start.zig");
 
 const root = @import("root");
 
-/// Stdlib-wide options that can be overridden by the root file.
+/// Compile-time known settings overridable by the root source file.
 pub const options: Options = if (@hasDecl(root, "std_options")) root.std_options else .{};
 
 pub const Options = struct {
     enable_segfault_handler: bool = debug.default_enable_segfault_handler,
 
-    /// Function used to implement `std.fs.cwd` for WASI.
-    wasiCwd: fn () os.wasi.fd_t = fs.defaultWasiCwd,
+    /// Function used to implement `std.Io.Dir.cwd` for WASI.
+    wasiCwd: fn () os.wasi.fd_t = os.defaultWasiCwd,
 
     /// The current log level.
     log_level: log.Level = log.default_level,
@@ -128,6 +128,8 @@ pub const Options = struct {
         comptime format: []const u8,
         args: anytype,
     ) void = log.defaultLog,
+
+    logTerminalMode: fn () Io.Terminal.Mode = log.defaultTerminalMode,
 
     /// Overrides `std.heap.page_size_min`.
     page_size_min: ?usize = null,
@@ -173,6 +175,24 @@ pub const Options = struct {
     /// If this is `false`, then captured stack traces will always be empty, and attempts to write
     /// stack traces will just print an error to the relevant `Io.Writer` and return.
     allow_stack_tracing: bool = !@import("builtin").strip_debug_info,
+
+    pub const debug_threaded_io: ?*Io.Threaded = if (@hasDecl(root, "std_options_debug_threaded_io"))
+        root.std_options_debug_threaded_io
+    else
+        Io.Threaded.global_single_threaded;
+    /// The `Io` instance that `std.debug` uses for `std.debug.print`,
+    /// capturing stack traces, loading debug info, finding the executable's
+    /// own path, and environment variables that affect terminal mode
+    /// detection. The default is to use statically initialized singleton that
+    /// is independent from the application's `Io` instance in order to make
+    /// debugging more straightforward. For example, while debugging an `Io`
+    /// implementation based on coroutines, one likely wants `std.debug.print`
+    /// to directly write to stderr without trying to interact with the code
+    /// being debugged.
+    pub const debug_io: Io = if (@hasDecl(root, "std_options_debug_io")) root.std_options_debug_io else debug_threaded_io.?.ioBasic();
+
+    /// Overrides `std.Io.File.Permissions`.
+    pub const FilePermissions: ?type = if (@hasDecl(root, "std_options_FilePermissions")) root.std_options_FilePermissions else null;
 };
 
 // This forces the start.zig file to be imported, and the comptime logic inside that

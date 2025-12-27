@@ -7,6 +7,7 @@ const target = builtin.target;
 const native_os = builtin.os.tag;
 
 const std = @import("std.zig");
+const Io = std.Io;
 const math = std.math;
 const assert = std.debug.assert;
 const posix = std.posix;
@@ -174,9 +175,9 @@ pub const SetNameError = error{
     Unsupported,
     Unexpected,
     InvalidWtf8,
-} || posix.PrctlError || posix.WriteError || std.fs.File.OpenError || std.fmt.BufPrintError;
+} || posix.PrctlError || posix.WriteError || Io.File.OpenError || std.fmt.BufPrintError;
 
-pub fn setName(self: Thread, name: []const u8) SetNameError!void {
+pub fn setName(self: Thread, io: Io, name: []const u8) SetNameError!void {
     if (name.len > max_name_len) return error.NameTooLong;
 
     const name_with_terminator = blk: {
@@ -207,10 +208,10 @@ pub fn setName(self: Thread, name: []const u8) SetNameError!void {
             var buf: [32]u8 = undefined;
             const path = try std.fmt.bufPrint(&buf, "/proc/self/task/{d}/comm", .{self.getHandle()});
 
-            const file = try std.fs.cwd().openFile(path, .{ .mode = .write_only });
-            defer file.close();
+            const file = try Io.Dir.cwd().openFile(io, path, .{ .mode = .write_only });
+            defer file.close(io);
 
-            try file.writeAll(name);
+            try file.writeStreamingAll(io, name);
             return;
         },
         .windows => {
@@ -292,7 +293,7 @@ pub fn setName(self: Thread, name: []const u8) SetNameError!void {
 pub const GetNameError = error{
     Unsupported,
     Unexpected,
-} || posix.PrctlError || posix.ReadError || std.fs.File.OpenError || std.fmt.BufPrintError;
+} || posix.PrctlError || posix.ReadError || Io.File.OpenError || std.fmt.BufPrintError;
 
 /// On Windows, the result is encoded as [WTF-8](https://wtf-8.codeberg.page/).
 /// On other platforms, the result is an opaque sequence of bytes with no particular encoding.
@@ -321,11 +322,10 @@ pub fn getName(self: Thread, buffer_ptr: *[max_name_len:0]u8) GetNameError!?[]co
             var buf: [32]u8 = undefined;
             const path = try std.fmt.bufPrint(&buf, "/proc/self/task/{d}/comm", .{self.getHandle()});
 
-            var threaded: std.Io.Threaded = .init_single_threaded;
-            const io = threaded.ioBasic();
+            const io = std.Options.debug_io;
 
-            const file = try std.fs.cwd().openFile(path, .{});
-            defer file.close();
+            const file = try Io.Dir.cwd().openFile(io, path, .{});
+            defer file.close(io);
 
             var file_reader = file.readerStreaming(io, &.{});
             const data_len = file_reader.interface.readSliceShort(buffer_ptr[0 .. max_name_len + 1]) catch |err| switch (err) {
@@ -1675,14 +1675,14 @@ const LinuxThreadImpl = struct {
     }
 };
 
-fn testThreadName(thread: *Thread) !void {
+fn testThreadName(io: Io, thread: *Thread) !void {
     const testCases = &[_][]const u8{
         "mythread",
         "b" ** max_name_len,
     };
 
     inline for (testCases) |tc| {
-        try thread.setName(tc);
+        try thread.setName(io, tc);
 
         var name_buffer: [max_name_len:0]u8 = undefined;
 
@@ -1697,6 +1697,8 @@ fn testThreadName(thread: *Thread) !void {
 test "setName, getName" {
     if (builtin.single_threaded) return error.SkipZigTest;
 
+    const io = testing.io;
+
     const Context = struct {
         start_wait_event: ResetEvent = .unset,
         test_done_event: ResetEvent = .unset,
@@ -1710,11 +1712,11 @@ test "setName, getName" {
             ctx.start_wait_event.wait();
 
             switch (native_os) {
-                .windows => testThreadName(&ctx.thread) catch |err| switch (err) {
+                .windows => testThreadName(io, &ctx.thread) catch |err| switch (err) {
                     error.Unsupported => return error.SkipZigTest,
                     else => return err,
                 },
-                else => try testThreadName(&ctx.thread),
+                else => try testThreadName(io, &ctx.thread),
             }
 
             // Signal our test is done
@@ -1734,14 +1736,14 @@ test "setName, getName" {
 
     switch (native_os) {
         .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => {
-            const res = thread.setName("foobar");
+            const res = thread.setName(io, "foobar");
             try std.testing.expectError(error.Unsupported, res);
         },
-        .windows => testThreadName(&thread) catch |err| switch (err) {
+        .windows => testThreadName(io, &thread) catch |err| switch (err) {
             error.Unsupported => return error.SkipZigTest,
             else => return err,
         },
-        else => try testThreadName(&thread),
+        else => try testThreadName(io, &thread),
     }
 
     context.thread_done_event.set();

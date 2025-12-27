@@ -58,21 +58,20 @@ pub fn create(owner: *std.Build, options: Options) *InstallDir {
 fn make(step: *Step, options: Step.MakeOptions) !void {
     _ = options;
     const b = step.owner;
+    const io = b.graph.io;
     const install_dir: *InstallDir = @fieldParentPtr("step", step);
     step.clearWatchInputs();
     const arena = b.allocator;
     const dest_prefix = b.getInstallPath(install_dir.options.install_dir, install_dir.options.install_subdir);
     const src_dir_path = install_dir.options.source_dir.getPath3(b, step);
     const need_derived_inputs = try step.addDirectoryWatchInput(install_dir.options.source_dir);
-    var src_dir = src_dir_path.root_dir.handle.openDir(src_dir_path.subPathOrDot(), .{ .iterate = true }) catch |err| {
-        return step.fail("unable to open source directory '{f}': {s}", .{
-            src_dir_path, @errorName(err),
-        });
+    var src_dir = src_dir_path.root_dir.handle.openDir(io, src_dir_path.subPathOrDot(), .{ .iterate = true }) catch |err| {
+        return step.fail("unable to open source directory '{f}': {t}", .{ src_dir_path, err });
     };
-    defer src_dir.close();
+    defer src_dir.close(io);
     var it = try src_dir.walk(arena);
     var all_cached = true;
-    next_entry: while (try it.next()) |entry| {
+    next_entry: while (try it.next(io)) |entry| {
         for (install_dir.options.exclude_extensions) |ext| {
             if (mem.endsWith(u8, entry.path, ext)) continue :next_entry;
         }

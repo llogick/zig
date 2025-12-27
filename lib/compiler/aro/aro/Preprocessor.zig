@@ -1,4 +1,5 @@
 const std = @import("std");
+const Io = std.Io;
 const mem = std.mem;
 const Allocator = mem.Allocator;
 const assert = std.debug.assert;
@@ -1064,11 +1065,13 @@ fn fatalNotFound(pp: *Preprocessor, tok: TokenWithExpansionLocs, filename: []con
 
 fn verboseLog(pp: *Preprocessor, raw: RawToken, comptime fmt: []const u8, args: anytype) void {
     @branchHint(.cold);
-    const source = pp.comp.getSource(raw.source);
+    const comp = pp.comp;
+    const io = comp.io;
+    const source = comp.getSource(raw.source);
     const line_col = source.lineCol(.{ .id = raw.source, .line = raw.line, .byte_offset = raw.start });
 
     var stderr_buf: [4096]u8 = undefined;
-    var stderr = std.fs.File.stderr().writer(&stderr_buf);
+    var stderr = Io.File.stderr().writer(io, &stderr_buf);
     const w = &stderr.interface;
 
     w.print("{s}:{d}:{d}: ", .{ source.path, line_col.line_no, line_col.col }) catch return;
@@ -3899,7 +3902,7 @@ test "Preserve pragma tokens sometimes" {
             defer arena.deinit();
 
             var diagnostics: Diagnostics = .{ .output = .ignore };
-            var comp = Compilation.init(gpa, arena.allocator(), std.testing.io, &diagnostics, std.fs.cwd());
+            var comp = Compilation.init(gpa, arena.allocator(), std.testing.io, &diagnostics, Io.Dir.cwd());
             defer comp.deinit();
 
             try comp.addDefaultPragmaHandlers();
@@ -3966,7 +3969,7 @@ test "destringify" {
     var arena: std.heap.ArenaAllocator = .init(gpa);
     defer arena.deinit();
     var diagnostics: Diagnostics = .{ .output = .ignore };
-    var comp = Compilation.init(gpa, arena.allocator(), std.testing.io, &diagnostics, std.fs.cwd());
+    var comp = Compilation.init(gpa, arena.allocator(), std.testing.io, &diagnostics, Io.Dir.cwd());
     defer comp.deinit();
     var pp = Preprocessor.init(&comp, .default);
     defer pp.deinit();
@@ -4029,7 +4032,7 @@ test "Include guards" {
             const arena = arena_state.allocator();
 
             var diagnostics: Diagnostics = .{ .output = .ignore };
-            var comp = Compilation.init(gpa, arena, std.testing.io, &diagnostics, std.fs.cwd());
+            var comp = Compilation.init(gpa, arena, std.testing.io, &diagnostics, Io.Dir.cwd());
             defer comp.deinit();
             var pp = Preprocessor.init(&comp, .default);
             defer pp.deinit();

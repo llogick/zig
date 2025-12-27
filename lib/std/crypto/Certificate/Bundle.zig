@@ -9,8 +9,8 @@ const builtin = @import("builtin");
 
 const std = @import("../../std.zig");
 const Io = std.Io;
+const Dir = std.Io.Dir;
 const assert = std.debug.assert;
-const fs = std.fs;
 const mem = std.mem;
 const crypto = std.crypto;
 const Allocator = std.mem.Allocator;
@@ -171,17 +171,17 @@ fn rescanWindows(cb: *Bundle, gpa: Allocator, io: Io, now: Io.Timestamp) RescanW
     cb.bytes.shrinkAndFree(gpa, cb.bytes.items.len);
 }
 
-pub const AddCertsFromDirPathError = fs.File.OpenError || AddCertsFromDirError;
+pub const AddCertsFromDirPathError = Io.File.OpenError || AddCertsFromDirError;
 
 pub fn addCertsFromDirPath(
     cb: *Bundle,
     gpa: Allocator,
     io: Io,
-    dir: fs.Dir,
+    dir: Io.Dir,
     sub_dir_path: []const u8,
 ) AddCertsFromDirPathError!void {
-    var iterable_dir = try dir.openDir(sub_dir_path, .{ .iterate = true });
-    defer iterable_dir.close();
+    var iterable_dir = try dir.openDir(io, sub_dir_path, .{ .iterate = true });
+    defer iterable_dir.close(io);
     return addCertsFromDir(cb, gpa, io, iterable_dir);
 }
 
@@ -192,27 +192,27 @@ pub fn addCertsFromDirPathAbsolute(
     now: Io.Timestamp,
     abs_dir_path: []const u8,
 ) AddCertsFromDirPathError!void {
-    assert(fs.path.isAbsolute(abs_dir_path));
-    var iterable_dir = try fs.openDirAbsolute(abs_dir_path, .{ .iterate = true });
-    defer iterable_dir.close();
+    assert(Dir.path.isAbsolute(abs_dir_path));
+    var iterable_dir = try Dir.openDirAbsolute(io, abs_dir_path, .{ .iterate = true });
+    defer iterable_dir.close(io);
     return addCertsFromDir(cb, gpa, io, now, iterable_dir);
 }
 
 pub const AddCertsFromDirError = AddCertsFromFilePathError;
 
-pub fn addCertsFromDir(cb: *Bundle, gpa: Allocator, io: Io, now: Io.Timestamp, iterable_dir: fs.Dir) AddCertsFromDirError!void {
+pub fn addCertsFromDir(cb: *Bundle, gpa: Allocator, io: Io, now: Io.Timestamp, iterable_dir: Io.Dir) AddCertsFromDirError!void {
     var it = iterable_dir.iterate();
-    while (try it.next()) |entry| {
+    while (try it.next(io)) |entry| {
         switch (entry.kind) {
             .file, .sym_link => {},
             else => continue,
         }
 
-        try addCertsFromFilePath(cb, gpa, io, now, iterable_dir.adaptToNewApi(), entry.name);
+        try addCertsFromFilePath(cb, gpa, io, now, iterable_dir, entry.name);
     }
 }
 
-pub const AddCertsFromFilePathError = fs.File.OpenError || AddCertsFromFileError || Io.Clock.Error;
+pub const AddCertsFromFilePathError = Io.File.OpenError || AddCertsFromFileError || Io.Clock.Error;
 
 pub fn addCertsFromFilePathAbsolute(
     cb: *Bundle,
@@ -221,8 +221,8 @@ pub fn addCertsFromFilePathAbsolute(
     now: Io.Timestamp,
     abs_file_path: []const u8,
 ) AddCertsFromFilePathError!void {
-    var file = try fs.openFileAbsolute(abs_file_path, .{});
-    defer file.close();
+    var file = try Io.Dir.openFileAbsolute(io, abs_file_path, .{});
+    defer file.close(io);
     var file_reader = file.reader(io, &.{});
     return addCertsFromFile(cb, gpa, &file_reader, now.toSeconds());
 }
@@ -242,8 +242,8 @@ pub fn addCertsFromFilePath(
 }
 
 pub const AddCertsFromFileError = Allocator.Error ||
-    fs.File.GetSeekPosError ||
-    fs.File.ReadError ||
+    Io.File.Reader.Error ||
+    Io.File.Reader.SizeError ||
     ParseCertError ||
     std.base64.Error ||
     error{ CertificateAuthorityBundleTooBig, MissingEndCertificateMarker, Streaming };

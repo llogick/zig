@@ -12,7 +12,7 @@ const math = std.math;
 const mem = std.mem;
 const coff = std.coff;
 const fs = std.fs;
-const File = std.fs.File;
+const File = std.Io.File;
 const debug = std.debug;
 
 const ArrayList = std.ArrayList;

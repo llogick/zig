@@ -1323,7 +1323,7 @@ fn testGcSectionsZig(b: *Build, opts: Options) *Step {
             \\extern var live_var2: i32;
             \\extern fn live_fn2() void;
             \\pub fn main() void {
-            \\    var stdout_writer = std.fs.File.stdout().writerStreaming(&.{});
+            \\    var stdout_writer = std.Io.File.stdout().writerStreaming(std.Options.debug_io, &.{});
             \\    stdout_writer.interface.print("{d} {d}\n", .{ live_var1, live_var2 }) catch @panic("fail");
             \\    live_fn2();
             \\}
@@ -1365,7 +1365,7 @@ fn testGcSectionsZig(b: *Build, opts: Options) *Step {
             \\extern var live_var2: i32;
             \\extern fn live_fn2() void;
             \\pub fn main() void {
-            \\    var stdout_writer = std.fs.File.stdout().writerStreaming(&.{});
+            \\    var stdout_writer = std.Io.File.stdout().writerStreaming(std.Options.debug_io, &.{});
             \\    stdout_writer.interface.print("{d} {d}\n", .{ live_var1, live_var2 }) catch @panic("fail");
             \\    live_fn2();
             \\}

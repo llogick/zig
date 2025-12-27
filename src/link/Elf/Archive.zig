@@ -1,3 +1,21 @@
+const Archive = @This();
+
+const std = @import("std");
+const Io = std.Io;
+const assert = std.debug.assert;
+const elf = std.elf;
+const fs = std.fs;
+const log = std.log.scoped(.link);
+const mem = std.mem;
+const Path = std.Build.Cache.Path;
+const Allocator = std.mem.Allocator;
+
+const Diags = @import("../../link.zig").Diags;
+const Elf = @import("../Elf.zig");
+const File = @import("file.zig").File;
+const Object = @import("Object.zig");
+const StringTable = @import("../StringTable.zig");
+
 objects: []const Object,
 /// '\n'-delimited
 strtab: []const u8,
@@ -10,22 +28,23 @@ pub fn deinit(a: *Archive, gpa: Allocator) void {
 
 pub fn parse(
     gpa: Allocator,
+    io: Io,
     diags: *Diags,
     file_handles: *const std.ArrayList(File.Handle),
     path: Path,
     handle_index: File.HandleIndex,
 ) !Archive {
-    const handle = file_handles.items[handle_index];
+    const file = file_handles.items[handle_index];
     var pos: usize = 0;
     {
         var magic_buffer: [elf.ARMAG.len]u8 = undefined;
-        const n = try handle.preadAll(&magic_buffer, pos);
+        const n = try file.readPositionalAll(io, &magic_buffer, pos);
         if (n != magic_buffer.len) return error.BadMagic;
         if (!mem.eql(u8, &magic_buffer, elf.ARMAG)) return error.BadMagic;
         pos += magic_buffer.len;
     }
 
-    const size = (try handle.stat()).size;
+    const size = (try file.stat(io)).size;
 
     var objects: std.ArrayList(Object) = .empty;
     defer objects.deinit(gpa);
@@ -36,7 +55,7 @@ pub fn parse(
     while (pos < size) {
         var hdr: elf.ar_hdr = undefined;
         {
-            const n = try handle.preadAll(mem.asBytes(&hdr), pos);
+            const n = try file.readPositionalAll(io, mem.asBytes(&hdr), pos);
             if (n != @sizeOf(elf.ar_hdr)) return error.UnexpectedEndOfFile;
         }
         pos += @sizeOf(elf.ar_hdr);
@@ -53,7 +72,7 @@ pub fn parse(
         if (hdr.isSymtab() or hdr.isSymtab64()) continue;
         if (hdr.isStrtab()) {
             try strtab.resize(gpa, obj_size);
-            const amt = try handle.preadAll(strtab.items, pos);
+            const amt = try file.readPositionalAll(io, strtab.items, pos);
             if (amt != obj_size) return error.InputOutput;
             continue;
         }
@@ -120,7 +139,7 @@ pub fn setArHdr(opts: struct {
     @memset(mem.asBytes(&hdr), 0x20);
 
     {
-        var writer: std.Io.Writer = .fixed(&hdr.ar_name);
+        var writer: Io.Writer = .fixed(&hdr.ar_name);
         switch (opts.name) {
             .symtab => writer.print("{s}", .{elf.SYM64NAME}) catch unreachable,
             .strtab => writer.print("//", .{}) catch unreachable,
@@ -133,7 +152,7 @@ pub fn setArHdr(opts: struct {
     hdr.ar_gid[0] = '0';
     hdr.ar_mode[0] = '0';
     {
-        var writer: std.Io.Writer = .fixed(&hdr.ar_size);
+        var writer: Io.Writer = .fixed(&hdr.ar_size);
         writer.print("{d}", .{opts.size}) catch unreachable;
     }
     hdr.ar_fmag = elf.ARFMAG.*;
@@ -206,7 +225,7 @@ pub const ArSymtab = struct {
         ar: ArSymtab,
         elf_file: *Elf,
 
-        fn default(f: Format, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        fn default(f: Format, writer: *Io.Writer) Io.Writer.Error!void {
             const ar = f.ar;
             const elf_file = f.elf_file;
             for (ar.symtab.items, 0..) |entry, i| {
@@ -261,7 +280,7 @@ pub const ArStrtab = struct {
         try writer.writeAll(ar.buffer.items);
     }
 
-    pub fn format(ar: ArStrtab, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+    pub fn format(ar: ArStrtab, writer: *Io.Writer) Io.Writer.Error!void {
         try writer.print("{f}", .{std.ascii.hexEscape(ar.buffer.items, .lower)});
     }
 };
@@ -277,19 +296,3 @@ pub const ArState = struct {
     /// Total size of the contributing object (excludes ar_hdr).
     size: u64 = 0,
 };
-
-const std = @import("std");
-const assert = std.debug.assert;
-const elf = std.elf;
-const fs = std.fs;
-const log = std.log.scoped(.link);
-const mem = std.mem;
-const Path = std.Build.Cache.Path;
-const Allocator = std.mem.Allocator;
-
-const Diags = @import("../../link.zig").Diags;
-const Archive = @This();
-const Elf = @import("../Elf.zig");
-const File = @import("file.zig").File;
-const Object = @import("Object.zig");
-const StringTable = @import("../StringTable.zig");

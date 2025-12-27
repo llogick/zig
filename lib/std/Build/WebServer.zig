@@ -2,7 +2,6 @@ gpa: Allocator,
 graph: *const Build.Graph,
 all_steps: []const *Build.Step,
 listen_address: net.IpAddress,
-ttyconf: Io.tty.Config,
 root_prog_node: std.Progress.Node,
 watch: bool,
 
@@ -52,7 +51,6 @@ pub fn notifyUpdate(ws: *WebServer) void {
 
 pub const Options = struct {
     gpa: Allocator,
-    ttyconf: Io.tty.Config,
     graph: *const std.Build.Graph,
     all_steps: []const *Build.Step,
     root_prog_node: std.Progress.Node,
@@ -98,7 +96,6 @@ pub fn init(opts: Options) WebServer {
 
     return .{
         .gpa = opts.gpa,
-        .ttyconf = opts.ttyconf,
         .graph = opts.graph,
         .all_steps = all_steps,
         .listen_address = opts.listen_address,
@@ -129,6 +126,7 @@ pub fn init(opts: Options) WebServer {
 }
 pub fn deinit(ws: *WebServer) void {
     const gpa = ws.gpa;
+    const io = ws.graph.io;
 
     gpa.free(ws.step_names_trailing);
     gpa.free(ws.step_status_bits);
@@ -139,7 +137,7 @@ pub fn deinit(ws: *WebServer) void {
     gpa.free(ws.time_report_update_times);
 
     if (ws.serve_thread) |t| {
-        if (ws.tcp_server) |*s| s.stream.close();
+        if (ws.tcp_server) |*s| s.stream.close(io);
         t.join();
     }
     if (ws.tcp_server) |*s| s.deinit();
@@ -217,9 +215,9 @@ pub fn finishBuild(ws: *WebServer, opts: struct {
             else => {},
         }
         if (@bitSizeOf(usize) != 64) {
-            // Current implementation depends on posix.mmap()'s second parameter, `length: usize`,
-            // being compatible with `std.fs.getEndPos() u64`'s return value. This is not the case
-            // on 32-bit platforms.
+            // Current implementation depends on posix.mmap()'s second
+            // parameter, `length: usize`, being compatible with file system's
+            // u64 return value. This is not the case on 32-bit platforms.
             // Affects or affected by issues #5185, #22523, and #22464.
             std.process.fatal("--fuzz not yet implemented on {d}-bit platforms", .{@bitSizeOf(usize)});
         }
@@ -232,7 +230,6 @@ pub fn finishBuild(ws: *WebServer, opts: struct {
         ws.fuzz = Fuzz.init(
             ws.gpa,
             ws.graph.io,
-            ws.ttyconf,
             ws.all_steps,
             ws.root_prog_node,
             .{ .forever = .{ .ws = ws } },
@@ -468,11 +465,12 @@ pub fn serveFile(
     content_type: []const u8,
 ) !void {
     const gpa = ws.gpa;
+    const io = ws.graph.io;
     // The desired API is actually sendfile, which will require enhancing http.Server.
     // We load the file with every request so that the user can make changes to the file
     // and refresh the HTML page without restarting this server.
-    const file_contents = path.root_dir.handle.readFileAlloc(path.sub_path, gpa, .limited(10 * 1024 * 1024)) catch |err| {
-        log.err("failed to read '{f}': {s}", .{ path, @errorName(err) });
+    const file_contents = path.root_dir.handle.readFileAlloc(io, path.sub_path, gpa, .limited(10 * 1024 * 1024)) catch |err| {
+        log.err("failed to read '{f}': {t}", .{ path, err });
         return error.AlreadyReported;
     };
     defer gpa.free(file_contents);
@@ -503,14 +501,14 @@ pub fn serveTarFile(ws: *WebServer, request: *http.Server.Request, paths: []cons
     var archiver: std.tar.Writer = .{ .underlying_writer = &response.writer };
 
     for (paths) |path| {
-        var file = path.root_dir.handle.openFile(path.sub_path, .{}) catch |err| {
+        var file = path.root_dir.handle.openFile(io, path.sub_path, .{}) catch |err| {
             log.err("failed to open '{f}': {s}", .{ path, @errorName(err) });
             continue;
         };
-        defer file.close();
-        const stat = try file.stat();
+        defer file.close(io);
+        const stat = try file.stat(io);
         var read_buffer: [1024]u8 = undefined;
-        var file_reader: Io.File.Reader = .initSize(file.adaptToNewApi(), io, &read_buffer, stat.size);
+        var file_reader: Io.File.Reader = .initSize(file, io, &read_buffer, stat.size);
 
         // TODO: this logic is completely bogus -- obviously so, because `path.root_dir.path` can
         // be cwd-relative. This is also related to why linkification doesn't work in the fuzzer UI:
@@ -578,7 +576,7 @@ fn buildClientWasm(ws: *WebServer, arena: Allocator, optimize: std.builtin.Optim
     child.stdin_behavior = .Pipe;
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = .Pipe;
-    try child.spawn();
+    try child.spawn(io);
 
     var poller = Io.poll(gpa, enum { stdout, stderr }, .{
         .stdout = child.stdout.?,
@@ -586,7 +584,7 @@ fn buildClientWasm(ws: *WebServer, arena: Allocator, optimize: std.builtin.Optim
     });
     defer poller.deinit();
 
-    try child.stdin.?.writeAll(@ptrCast(@as([]const std.zig.Client.Message.Header, &.{
+    try child.stdin.?.writeStreamingAll(io, @ptrCast(@as([]const std.zig.Client.Message.Header, &.{
         .{ .tag = .update, .bytes_len = 0 },
         .{ .tag = .exit, .bytes_len = 0 },
     })));
@@ -634,10 +632,10 @@ fn buildClientWasm(ws: *WebServer, arena: Allocator, optimize: std.builtin.Optim
     }
 
     // Send EOF to stdin.
-    child.stdin.?.close();
+    child.stdin.?.close(io);
     child.stdin = null;
 
-    switch (try child.wait()) {
+    switch (try child.wait(io)) {
         .Exited => |code| {
             if (code != 0) {
                 log.err(
@@ -657,7 +655,7 @@ fn buildClientWasm(ws: *WebServer, arena: Allocator, optimize: std.builtin.Optim
     }
 
     if (result_error_bundle.errorMessageCount() > 0) {
-        result_error_bundle.renderToStdErr(.{}, .auto);
+        try result_error_bundle.renderToStderr(io, .{}, .auto);
         log.err("the following command failed with {d} compilation errors:\n{s}", .{
             result_error_bundle.errorMessageCount(),
             try Build.Step.allocPrintCmd(arena, null, argv.items),

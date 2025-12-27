@@ -67,12 +67,12 @@ pub const Diagnostics = struct {
         return @intCast(index);
     }
 
-    pub fn renderToStdErr(self: *Diagnostics, cwd: std.fs.Dir, source: []const u8, source_mappings: ?SourceMappings) void {
+    pub fn renderToStderr(self: *Diagnostics, cwd: Io.Dir, source: []const u8, source_mappings: ?SourceMappings) Io.Cancelable!void {
         const io = self.io;
-        const stderr, const ttyconf = std.debug.lockStderrWriter(&.{});
-        defer std.debug.unlockStderrWriter();
+        const stderr = try io.lockStderr(&.{}, null);
+        defer io.unlockStderr();
         for (self.errors.items) |err_details| {
-            renderErrorMessage(io, stderr, ttyconf, cwd, err_details, source, self.strings.items, source_mappings) catch return;
+            renderErrorMessage(io, stderr.terminal(), cwd, err_details, source, self.strings.items, source_mappings) catch return;
         }
     }
 
@@ -169,9 +169,9 @@ pub const ErrorDetails = struct {
         filename_string_index: FilenameStringIndex,
 
         pub const FilenameStringIndex = std.meta.Int(.unsigned, 32 - @bitSizeOf(FileOpenErrorEnum));
-        pub const FileOpenErrorEnum = std.meta.FieldEnum(std.fs.File.OpenError || std.fs.File.StatError);
+        pub const FileOpenErrorEnum = std.meta.FieldEnum(Io.File.OpenError || Io.File.StatError);
 
-        pub fn enumFromError(err: (std.fs.File.OpenError || std.fs.File.StatError)) FileOpenErrorEnum {
+        pub fn enumFromError(err: (Io.File.OpenError || Io.File.StatError)) FileOpenErrorEnum {
             return switch (err) {
                 inline else => |e| @field(ErrorDetails.FileOpenError.FileOpenErrorEnum, @errorName(e)),
             };
@@ -901,9 +901,8 @@ const truncated_str = "<...truncated...>";
 
 pub fn renderErrorMessage(
     io: Io,
-    writer: *std.Io.Writer,
-    tty_config: std.Io.tty.Config,
-    cwd: std.fs.Dir,
+    t: Io.Terminal,
+    cwd: Io.Dir,
     err_details: ErrorDetails,
     source: []const u8,
     strings: []const []const u8,
@@ -927,36 +926,37 @@ pub fn renderErrorMessage(
 
     const err_line = if (corresponding_span) |span| span.start_line else err_details.token.line_number;
 
-    try tty_config.setColor(writer, .bold);
+    const writer = t.writer;
+    try t.setColor(.bold);
     if (corresponding_file) |file| {
         try writer.writeAll(file);
     } else {
-        try tty_config.setColor(writer, .dim);
+        try t.setColor(.dim);
         try writer.writeAll("<after preprocessor>");
-        try tty_config.setColor(writer, .reset);
-        try tty_config.setColor(writer, .bold);
+        try t.setColor(.reset);
+        try t.setColor(.bold);
     }
     try writer.print(":{d}:{d}: ", .{ err_line, column });
     switch (err_details.type) {
         .err => {
-            try tty_config.setColor(writer, .red);
+            try t.setColor(.red);
             try writer.writeAll("error: ");
         },
         .warning => {
-            try tty_config.setColor(writer, .yellow);
+            try t.setColor(.yellow);
             try writer.writeAll("warning: ");
         },
         .note => {
-            try tty_config.setColor(writer, .cyan);
+            try t.setColor(.cyan);
             try writer.writeAll("note: ");
         },
         .hint => unreachable,
     }
-    try tty_config.setColor(writer, .reset);
-    try tty_config.setColor(writer, .bold);
+    try t.setColor(.reset);
+    try t.setColor(.bold);
     try err_details.render(writer, source, strings);
     try writer.writeByte('\n');
-    try tty_config.setColor(writer, .reset);
+    try t.setColor(.reset);
 
     if (!err_details.print_source_line) {
         try writer.writeByte('\n');
@@ -983,20 +983,20 @@ pub fn renderErrorMessage(
 
     try writer.writeAll(source_line_for_display.line);
     if (source_line_for_display.truncated) {
-        try tty_config.setColor(writer, .dim);
+        try t.setColor(.dim);
         try writer.writeAll(truncated_str);
-        try tty_config.setColor(writer, .reset);
+        try t.setColor(.reset);
     }
     try writer.writeByte('\n');
 
-    try tty_config.setColor(writer, .green);
+    try t.setColor(.green);
     const num_spaces = truncated_visual_info.point_offset - truncated_visual_info.before_len;
     try writer.splatByteAll(' ', num_spaces);
     try writer.splatByteAll('~', truncated_visual_info.before_len);
     try writer.writeByte('^');
     try writer.splatByteAll('~', truncated_visual_info.after_len);
     try writer.writeByte('\n');
-    try tty_config.setColor(writer, .reset);
+    try t.setColor(.reset);
 
     if (corresponding_span != null and corresponding_file != null) {
         var worth_printing_lines: bool = true;
@@ -1021,22 +1021,22 @@ pub fn renderErrorMessage(
                 break :blk null;
             },
         };
-        defer if (corresponding_lines) |*cl| cl.deinit();
+        defer if (corresponding_lines) |*cl| cl.deinit(io);
 
-        try tty_config.setColor(writer, .bold);
+        try t.setColor(.bold);
         if (corresponding_file) |file| {
             try writer.writeAll(file);
         } else {
-            try tty_config.setColor(writer, .dim);
+            try t.setColor(.dim);
             try writer.writeAll("<after preprocessor>");
-            try tty_config.setColor(writer, .reset);
-            try tty_config.setColor(writer, .bold);
+            try t.setColor(.reset);
+            try t.setColor(.bold);
         }
         try writer.print(":{d}:{d}: ", .{ err_line, column });
-        try tty_config.setColor(writer, .cyan);
+        try t.setColor(.cyan);
         try writer.writeAll("note: ");
-        try tty_config.setColor(writer, .reset);
-        try tty_config.setColor(writer, .bold);
+        try t.setColor(.reset);
+        try t.setColor(.bold);
         try writer.writeAll("this line originated from line");
         if (corresponding_span.?.start_line != corresponding_span.?.end_line) {
             try writer.print("s {}-{}", .{ corresponding_span.?.start_line, corresponding_span.?.end_line });
@@ -1044,7 +1044,7 @@ pub fn renderErrorMessage(
             try writer.print(" {}", .{corresponding_span.?.start_line});
         }
         try writer.print(" of file '{s}'\n", .{corresponding_file.?});
-        try tty_config.setColor(writer, .reset);
+        try t.setColor(.reset);
 
         if (!worth_printing_lines) return;
 
@@ -1055,21 +1055,21 @@ pub fn renderErrorMessage(
             }) |display_line| {
                 try writer.writeAll(display_line.line);
                 if (display_line.truncated) {
-                    try tty_config.setColor(writer, .dim);
+                    try t.setColor(.dim);
                     try writer.writeAll(truncated_str);
-                    try tty_config.setColor(writer, .reset);
+                    try t.setColor(.reset);
                 }
                 try writer.writeByte('\n');
             }
             break :write_lines null;
         };
         if (write_lines_err) |err| {
-            try tty_config.setColor(writer, .red);
+            try t.setColor(.red);
             try writer.writeAll(" | ");
-            try tty_config.setColor(writer, .reset);
-            try tty_config.setColor(writer, .dim);
+            try t.setColor(.reset);
+            try t.setColor(.dim);
             try writer.print("unable to print line(s) from file: {s}\n", .{@errorName(err)});
-            try tty_config.setColor(writer, .reset);
+            try t.setColor(.reset);
         }
         try writer.writeByte('\n');
     }
@@ -1094,13 +1094,13 @@ const CorrespondingLines = struct {
     last_byte: u8 = 0,
     at_eof: bool = false,
     span: SourceMappings.CorrespondingSpan,
-    file: std.fs.File,
-    file_reader: std.fs.File.Reader,
+    file: Io.File,
+    file_reader: Io.File.Reader,
     code_page: SupportedCodePage,
 
     pub fn init(
         io: Io,
-        cwd: std.fs.Dir,
+        cwd: Io.Dir,
         err_details: ErrorDetails,
         line_for_comparison: []const u8,
         corresponding_span: SourceMappings.CorrespondingSpan,
@@ -1120,12 +1120,12 @@ const CorrespondingLines = struct {
 
         var corresponding_lines = CorrespondingLines{
             .span = corresponding_span,
-            .file = try utils.openFileNotDir(cwd, corresponding_file, .{}),
+            .file = try utils.openFileNotDir(cwd, io, corresponding_file, .{}),
             .code_page = err_details.code_page,
             .file_reader = undefined,
         };
         corresponding_lines.file_reader = corresponding_lines.file.reader(io, file_reader_buf);
-        errdefer corresponding_lines.deinit();
+        errdefer corresponding_lines.deinit(io);
 
         try corresponding_lines.writeLineFromStreamVerbatim(
             &corresponding_lines.file_reader.interface,
@@ -1221,8 +1221,8 @@ const CorrespondingLines = struct {
         };
     }
 
-    pub fn deinit(self: *CorrespondingLines) void {
-        self.file.close();
+    pub fn deinit(self: *CorrespondingLines, io: Io) void {
+        self.file.close(io);
     }
 };
 

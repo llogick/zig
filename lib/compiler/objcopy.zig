@@ -1,12 +1,13 @@
 const builtin = @import("builtin");
+
 const std = @import("std");
+const Io = std.Io;
 const mem = std.mem;
 const fs = std.fs;
 const elf = std.elf;
 const Allocator = std.mem.Allocator;
-const File = std.fs.File;
+const File = std.Io.File;
 const assert = std.debug.assert;
-
 const fatal = std.process.fatal;
 const Server = std.zig.Server;
 
@@ -24,11 +25,15 @@ pub fn main() !void {
     var general_purpose_allocator: std.heap.GeneralPurposeAllocator(.{}) = .init;
     const gpa = general_purpose_allocator.allocator();
 
+    var threaded: std.Io.Threaded = .init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
     const args = try std.process.argsAlloc(arena);
-    return cmdObjCopy(gpa, arena, args[1..]);
+    return cmdObjCopy(arena, io, args[1..]);
 }
 
-fn cmdObjCopy(gpa: Allocator, arena: Allocator, args: []const []const u8) !void {
+fn cmdObjCopy(arena: Allocator, io: Io, args: []const []const u8) !void {
     var i: usize = 0;
     var opt_out_fmt: ?std.Target.ObjectFormat = null;
     var opt_input: ?[]const u8 = null;
@@ -56,7 +61,7 @@ fn cmdObjCopy(gpa: Allocator, arena: Allocator, args: []const []const u8) !void 
                 fatal("unexpected positional argument: '{s}'", .{arg});
             }
         } else if (mem.eql(u8, arg, "-h") or mem.eql(u8, arg, "--help")) {
-            return std.fs.File.stdout().writeAll(usage);
+            return Io.File.stdout().writeStreamingAll(io, usage);
         } else if (mem.eql(u8, arg, "-O") or mem.eql(u8, arg, "--output-target")) {
             i += 1;
             if (i >= args.len) fatal("expected another argument after '{s}'", .{arg});
@@ -147,16 +152,12 @@ fn cmdObjCopy(gpa: Allocator, arena: Allocator, args: []const []const u8) !void 
     const input = opt_input orelse fatal("expected input parameter", .{});
     const output = opt_output orelse fatal("expected output parameter", .{});
 
-    var threaded: std.Io.Threaded = .init(gpa);
-    defer threaded.deinit();
-    const io = threaded.io();
+    const input_file = Io.Dir.cwd().openFile(io, input, .{}) catch |err| fatal("failed to open {s}: {t}", .{ input, err });
+    defer input_file.close(io);
 
-    const input_file = fs.cwd().openFile(input, .{}) catch |err| fatal("failed to open {s}: {t}", .{ input, err });
-    defer input_file.close();
+    const stat = input_file.stat(io) catch |err| fatal("failed to stat {s}: {t}", .{ input, err });
 
-    const stat = input_file.stat() catch |err| fatal("failed to stat {s}: {t}", .{ input, err });
-
-    var in: File.Reader = .initSize(input_file.adaptToNewApi(), io, &input_buffer, stat.size);
+    var in: File.Reader = .initSize(input_file, io, &input_buffer, stat.size);
 
     const elf_hdr = std.elf.Header.read(&in.interface) catch |err| switch (err) {
         error.ReadFailed => fatal("unable to read {s}: {t}", .{ input, in.err.? }),
@@ -177,12 +178,12 @@ fn cmdObjCopy(gpa: Allocator, arena: Allocator, args: []const []const u8) !void 
         }
     };
 
-    const mode = if (out_fmt != .elf or only_keep_debug) fs.File.default_mode else stat.mode;
+    const permissions: Io.File.Permissions = if (out_fmt != .elf or only_keep_debug) .default_file else stat.permissions;
 
-    var output_file = try fs.cwd().createFile(output, .{ .mode = mode });
-    defer output_file.close();
+    var output_file = try Io.Dir.cwd().createFile(io, output, .{ .permissions = permissions });
+    defer output_file.close(io);
 
-    var out = output_file.writer(&output_buffer);
+    var out = output_file.writer(io, &output_buffer);
 
     switch (out_fmt) {
         .hex, .raw => {
@@ -221,8 +222,8 @@ fn cmdObjCopy(gpa: Allocator, arena: Allocator, args: []const []const u8) !void 
     try out.end();
 
     if (listen) {
-        var stdin_reader = fs.File.stdin().reader(io, &stdin_buffer);
-        var stdout_writer = fs.File.stdout().writer(&stdout_buffer);
+        var stdin_reader = Io.File.stdin().reader(io, &stdin_buffer);
+        var stdout_writer = Io.File.stdout().writer(io, &stdout_buffer);
         var server = try Server.init(.{
             .in = &stdin_reader.interface,
             .out = &stdout_writer.interface,
@@ -234,7 +235,7 @@ fn cmdObjCopy(gpa: Allocator, arena: Allocator, args: []const []const u8) !void 
             const hdr = try server.receiveMessage();
             switch (hdr.tag) {
                 .exit => {
-                    return std.process.cleanExit();
+                    return std.process.cleanExit(io);
                 },
                 .update => {
                     if (seen_update) fatal("zig objcopy only supports 1 update for now", .{});
@@ -249,7 +250,7 @@ fn cmdObjCopy(gpa: Allocator, arena: Allocator, args: []const []const u8) !void 
             }
         }
     }
-    return std.process.cleanExit();
+    return std.process.cleanExit(io);
 }
 
 const usage =
@@ -675,8 +676,9 @@ fn containsValidAddressRange(segments: []*BinaryElfSegment) bool {
 }
 
 fn padFile(out: *File.Writer, opt_size: ?u64) !void {
+    const io = out.io;
     const size = opt_size orelse return;
-    try out.file.setEndPos(size);
+    try out.file.setLength(io, size);
 }
 
 test "HexWriter.Record.Address has correct payload and checksum" {

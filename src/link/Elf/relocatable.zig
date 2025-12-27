@@ -1,5 +1,26 @@
+const std = @import("std");
+const assert = std.debug.assert;
+const elf = std.elf;
+const math = std.math;
+const mem = std.mem;
+const Path = std.Build.Cache.Path;
+const log = std.log.scoped(.link);
+const state_log = std.log.scoped(.link_state);
+
+const build_options = @import("build_options");
+
+const eh_frame = @import("eh_frame.zig");
+const link = @import("../../link.zig");
+const Archive = @import("Archive.zig");
+const Compilation = @import("../../Compilation.zig");
+const Elf = @import("../Elf.zig");
+const File = @import("file.zig").File;
+const Object = @import("Object.zig");
+const Symbol = @import("Symbol.zig");
+
 pub fn flushStaticLib(elf_file: *Elf, comp: *Compilation) !void {
     const gpa = comp.gpa;
+    const io = comp.io;
     const diags = &comp.link_diags;
 
     if (diags.hasErrors()) return error.LinkFailure;
@@ -125,8 +146,8 @@ pub fn flushStaticLib(elf_file: *Elf, comp: *Compilation) !void {
 
     assert(writer.buffered().len == total_size);
 
-    try elf_file.base.file.?.setEndPos(total_size);
-    try elf_file.base.file.?.pwriteAll(writer.buffered(), 0);
+    try elf_file.base.file.?.setLength(io, total_size);
+    try elf_file.base.file.?.writePositionalAll(io, writer.buffered(), 0);
 
     if (diags.hasErrors()) return error.LinkFailure;
 }
@@ -330,13 +351,7 @@ fn allocateAllocSections(elf_file: *Elf) !void {
 
             if (shdr.sh_offset > 0) {
                 const existing_size = elf_file.sectionSize(@intCast(shndx));
-                const amt = try elf_file.base.file.?.copyRangeAll(
-                    shdr.sh_offset,
-                    elf_file.base.file.?,
-                    new_offset,
-                    existing_size,
-                );
-                if (amt != existing_size) return error.InputOutput;
+                try elf_file.base.copyRangeAll(shdr.sh_offset, new_offset, existing_size);
             }
 
             shdr.sh_offset = new_offset;
@@ -360,7 +375,9 @@ fn writeAtoms(elf_file: *Elf) !void {
 }
 
 fn writeSyntheticSections(elf_file: *Elf) !void {
-    const gpa = elf_file.base.comp.gpa;
+    const comp = elf_file.base.comp;
+    const io = comp.io;
+    const gpa = comp.gpa;
     const slice = elf_file.sections.slice();
 
     const SortRelocs = struct {
@@ -397,7 +414,7 @@ fn writeSyntheticSections(elf_file: *Elf) !void {
             shdr.sh_offset + shdr.sh_size,
         });
 
-        try elf_file.base.file.?.pwriteAll(@ptrCast(relocs.items), shdr.sh_offset);
+        try elf_file.base.file.?.writePositionalAll(io, @ptrCast(relocs.items), shdr.sh_offset);
     }
 
     if (elf_file.section_indexes.eh_frame) |shndx| {
@@ -417,7 +434,7 @@ fn writeSyntheticSections(elf_file: *Elf) !void {
             shdr.sh_offset + sh_size,
         });
         assert(writer.buffered().len == sh_size - existing_size);
-        try elf_file.base.file.?.pwriteAll(writer.buffered(), shdr.sh_offset + existing_size);
+        try elf_file.base.file.?.writePositionalAll(io, writer.buffered(), shdr.sh_offset + existing_size);
     }
     if (elf_file.section_indexes.eh_frame_rela) |shndx| {
         const shdr = slice.items(.shdr)[shndx];
@@ -435,7 +452,7 @@ fn writeSyntheticSections(elf_file: *Elf) !void {
             shdr.sh_offset,
             shdr.sh_offset + shdr.sh_size,
         });
-        try elf_file.base.file.?.pwriteAll(@ptrCast(relocs.items), shdr.sh_offset);
+        try elf_file.base.file.?.writePositionalAll(io, @ptrCast(relocs.items), shdr.sh_offset);
     }
 
     try writeGroups(elf_file);
@@ -444,7 +461,9 @@ fn writeSyntheticSections(elf_file: *Elf) !void {
 }
 
 fn writeGroups(elf_file: *Elf) !void {
-    const gpa = elf_file.base.comp.gpa;
+    const comp = elf_file.base.comp;
+    const io = comp.io;
+    const gpa = comp.gpa;
     for (elf_file.group_sections.items) |cgs| {
         const shdr = elf_file.sections.items(.shdr)[cgs.shndx];
         const sh_size = math.cast(usize, shdr.sh_size) orelse return error.Overflow;
@@ -457,25 +476,6 @@ fn writeGroups(elf_file: *Elf) !void {
             shdr.sh_offset,
             shdr.sh_offset + shdr.sh_size,
         });
-        try elf_file.base.file.?.pwriteAll(writer.buffered(), shdr.sh_offset);
+        try elf_file.base.file.?.writePositionalAll(io, writer.buffered(), shdr.sh_offset);
     }
 }
-
-const assert = std.debug.assert;
-const build_options = @import("build_options");
-const eh_frame = @import("eh_frame.zig");
-const elf = std.elf;
-const link = @import("../../link.zig");
-const log = std.log.scoped(.link);
-const math = std.math;
-const mem = std.mem;
-const state_log = std.log.scoped(.link_state);
-const Path = std.Build.Cache.Path;
-const std = @import("std");
-
-const Archive = @import("Archive.zig");
-const Compilation = @import("../../Compilation.zig");
-const Elf = @import("../Elf.zig");
-const File = @import("file.zig").File;
-const Object = @import("Object.zig");
-const Symbol = @import("Symbol.zig");

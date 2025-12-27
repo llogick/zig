@@ -4,9 +4,11 @@
 //! Note that this file uses the abbreviation "cd" for "central directory"
 
 const builtin = @import("builtin");
-const std = @import("std");
-const File = std.fs.File;
 const is_le = builtin.target.cpu.arch.endian() == .little;
+
+const std = @import("std");
+const Io = std.Io;
+const File = std.Io.File;
 const Writer = std.Io.Writer;
 const Reader = std.Io.Reader;
 const flate = std.compress.flate;
@@ -115,7 +117,7 @@ pub const EndRecord = extern struct {
         return record;
     }
 
-    pub const FindFileError = File.Reader.SizeError || File.SeekError || File.ReadError || error{
+    pub const FindFileError = File.Reader.SizeError || File.SeekError || File.Reader.Error || error{
         ZipNoEndRecord,
         EndOfStream,
         ReadFailed,
@@ -460,8 +462,10 @@ pub const Iterator = struct {
             stream: *File.Reader,
             options: ExtractOptions,
             filename_buf: []u8,
-            dest: std.fs.Dir,
+            dest: Io.Dir,
         ) !void {
+            const io = stream.io;
+
             if (filename_buf.len < self.filename_len)
                 return error.ZipInsufficientBuffer;
             switch (self.compression_method) {
@@ -550,23 +554,23 @@ pub const Iterator = struct {
             if (filename[filename.len - 1] == '/') {
                 if (self.uncompressed_size != 0)
                     return error.ZipBadDirectorySize;
-                try dest.makePath(filename[0 .. filename.len - 1]);
+                try dest.createDirPath(io, filename[0 .. filename.len - 1]);
                 return;
             }
 
             const out_file = blk: {
                 if (std.fs.path.dirname(filename)) |dirname| {
-                    var parent_dir = try dest.makeOpenPath(dirname, .{});
-                    defer parent_dir.close();
+                    var parent_dir = try dest.createDirPathOpen(io, dirname, .{});
+                    defer parent_dir.close(io);
 
                     const basename = std.fs.path.basename(filename);
-                    break :blk try parent_dir.createFile(basename, .{ .exclusive = true });
+                    break :blk try parent_dir.createFile(io, basename, .{ .exclusive = true });
                 }
-                break :blk try dest.createFile(filename, .{ .exclusive = true });
+                break :blk try dest.createFile(io, filename, .{ .exclusive = true });
             };
-            defer out_file.close();
+            defer out_file.close(io);
             var out_file_buffer: [1024]u8 = undefined;
-            var file_writer = out_file.writer(&out_file_buffer);
+            var file_writer = out_file.writer(io, &out_file_buffer);
             const local_data_file_offset: u64 =
                 @as(u64, self.file_offset) +
                 @as(u64, @sizeOf(LocalFileHeader)) +
@@ -647,7 +651,7 @@ pub const ExtractOptions = struct {
 };
 
 /// Extract the zipped files to the given `dest` directory.
-pub fn extract(dest: std.fs.Dir, fr: *File.Reader, options: ExtractOptions) !void {
+pub fn extract(dest: Io.Dir, fr: *File.Reader, options: ExtractOptions) !void {
     if (options.verify_checksums) @panic("TODO unimplemented");
 
     var iter = try Iterator.init(fr);

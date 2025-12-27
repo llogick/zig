@@ -1,4 +1,5 @@
 const std = @import("std");
+const Io = std.Io;
 const code_pages = @import("code_pages.zig");
 const SupportedCodePage = code_pages.SupportedCodePage;
 const lang = @import("lang.zig");
@@ -124,15 +125,15 @@ pub const Diagnostics = struct {
         try self.errors.append(self.allocator, error_details);
     }
 
-    pub fn renderToStdErr(self: *Diagnostics, args: []const []const u8) void {
-        const stderr, const ttyconf = std.debug.lockStderrWriter(&.{});
-        defer std.debug.unlockStderrWriter();
-        self.renderToWriter(args, stderr, ttyconf) catch return;
+    pub fn renderToStderr(self: *Diagnostics, io: Io, args: []const []const u8) Io.Cancelable!void {
+        const stderr = try io.lockStderr(&.{}, null);
+        defer io.unlockStderr();
+        self.renderToWriter(args, stderr.terminal()) catch return;
     }
 
-    pub fn renderToWriter(self: *Diagnostics, args: []const []const u8, writer: *std.Io.Writer, config: std.Io.tty.Config) !void {
+    pub fn renderToWriter(self: *Diagnostics, args: []const []const u8, t: Io.Terminal) !void {
         for (self.errors.items) |err_details| {
-            try renderErrorMessage(writer, config, err_details, args);
+            try renderErrorMessage(t, err_details, args);
         }
     }
 
@@ -169,7 +170,7 @@ pub const Options = struct {
     coff_options: cvtres.CoffOptions = .{},
 
     pub const IoSource = union(enum) {
-        stdio: std.fs.File,
+        stdio: Io.File,
         filename: []const u8,
     };
     pub const AutoIncludes = enum { any, msvc, gnu, none };
@@ -249,13 +250,13 @@ pub const Options = struct {
     /// worlds' situation where we'll be compatible with most use-cases
     /// of the .rc extension being omitted from the CLI args, but still
     /// work fine if the file itself does not have an extension.
-    pub fn maybeAppendRC(options: *Options, cwd: std.fs.Dir) !void {
+    pub fn maybeAppendRC(options: *Options, io: Io, cwd: Io.Dir) !void {
         switch (options.input_source) {
             .stdio => return,
             .filename => {},
         }
         if (options.input_format == .rc and std.fs.path.extension(options.input_source.filename).len == 0) {
-            cwd.access(options.input_source.filename, .{}) catch |err| switch (err) {
+            cwd.access(io, options.input_source.filename, .{}) catch |err| switch (err) {
                 error.FileNotFound => {
                     var filename_bytes = try options.allocator.alloc(u8, options.input_source.filename.len + 3);
                     @memcpy(filename_bytes[0..options.input_source.filename.len], options.input_source.filename);
@@ -418,7 +419,7 @@ pub const Arg = struct {
         };
     }
 
-    pub fn looksLikeFilepath(self: Arg) bool {
+    pub fn looksLikeFilepath(self: Arg, io: Io) bool {
         const meets_min_requirements = self.prefix == .slash and isSupportedInputExtension(std.fs.path.extension(self.full));
         if (!meets_min_requirements) return false;
 
@@ -437,7 +438,7 @@ pub const Arg = struct {
         // It's still possible for a file path to look like a /fo option but not actually
         // be one, e.g. `/foo/bar.rc`. As a last ditch effort to reduce false negatives,
         // check if the file path exists and, if so, then we ignore the 'could be /fo option'-ness
-        std.fs.accessAbsolute(self.full, .{}) catch return false;
+        Io.Dir.accessAbsolute(io, self.full, .{}) catch return false;
         return true;
     }
 
@@ -489,7 +490,7 @@ pub const ParseError = error{ParseError} || Allocator.Error;
 
 /// Note: Does not run `Options.maybeAppendRC` automatically. If that behavior is desired,
 ///       it must be called separately.
-pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagnostics) ParseError!Options {
+pub fn parse(allocator: Allocator, io: Io, args: []const []const u8, diagnostics: *Diagnostics) ParseError!Options {
     var options = Options{ .allocator = allocator };
     errdefer options.deinit();
 
@@ -529,7 +530,7 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
         }
 
         const args_remaining = args.len - arg_i;
-        if (args_remaining <= 2 and arg.looksLikeFilepath()) {
+        if (args_remaining <= 2 and arg.looksLikeFilepath(io)) {
             var err_details = Diagnostics.ErrorDetails{ .type = .note, .print_args = true, .arg_index = arg_i };
             try err_details.msg.appendSlice(allocator, "this argument was inferred to be a filepath, so argument parsing was terminated");
             try diagnostics.append(err_details);
@@ -1343,41 +1344,42 @@ test parsePercent {
     try std.testing.expectError(error.InvalidFormat, parsePercent("~1"));
 }
 
-pub fn renderErrorMessage(writer: *std.Io.Writer, config: std.Io.tty.Config, err_details: Diagnostics.ErrorDetails, args: []const []const u8) !void {
-    try config.setColor(writer, .dim);
+pub fn renderErrorMessage(t: Io.Terminal, err_details: Diagnostics.ErrorDetails, args: []const []const u8) !void {
+    const writer = t.writer;
+    try t.setColor(.dim);
     try writer.writeAll("<cli>");
-    try config.setColor(writer, .reset);
-    try config.setColor(writer, .bold);
+    try t.setColor(.reset);
+    try t.setColor(.bold);
     try writer.writeAll(": ");
     switch (err_details.type) {
         .err => {
-            try config.setColor(writer, .red);
+            try t.setColor(.red);
             try writer.writeAll("error: ");
         },
         .warning => {
-            try config.setColor(writer, .yellow);
+            try t.setColor(.yellow);
             try writer.writeAll("warning: ");
         },
         .note => {
-            try config.setColor(writer, .cyan);
+            try t.setColor(.cyan);
             try writer.writeAll("note: ");
         },
     }
-    try config.setColor(writer, .reset);
-    try config.setColor(writer, .bold);
+    try t.setColor(.reset);
+    try t.setColor(.bold);
     try writer.writeAll(err_details.msg.items);
     try writer.writeByte('\n');
-    try config.setColor(writer, .reset);
+    try t.setColor(.reset);
 
     if (!err_details.print_args) {
         try writer.writeByte('\n');
         return;
     }
 
-    try config.setColor(writer, .dim);
+    try t.setColor(.dim);
     const prefix = " ... ";
     try writer.writeAll(prefix);
-    try config.setColor(writer, .reset);
+    try t.setColor(.reset);
 
     const arg_with_name = args[err_details.arg_index];
     const prefix_slice = arg_with_name[0..err_details.arg_span.prefix_len];
@@ -1388,15 +1390,15 @@ pub fn renderErrorMessage(writer: *std.Io.Writer, config: std.Io.tty.Config, err
 
     try writer.writeAll(prefix_slice);
     if (before_name_slice.len > 0) {
-        try config.setColor(writer, .dim);
+        try t.setColor(.dim);
         try writer.writeAll(before_name_slice);
-        try config.setColor(writer, .reset);
+        try t.setColor(.reset);
     }
     try writer.writeAll(name_slice);
     if (after_name_slice.len > 0) {
-        try config.setColor(writer, .dim);
+        try t.setColor(.dim);
         try writer.writeAll(after_name_slice);
-        try config.setColor(writer, .reset);
+        try t.setColor(.reset);
     }
 
     var next_arg_len: usize = 0;
@@ -1414,13 +1416,13 @@ pub fn renderErrorMessage(writer: *std.Io.Writer, config: std.Io.tty.Config, err
         if (err_details.arg_span.value_offset >= arg_with_name.len) {
             try writer.writeByte(' ');
         }
-        try config.setColor(writer, .dim);
+        try t.setColor(.dim);
         try writer.writeAll(" ...");
-        try config.setColor(writer, .reset);
+        try t.setColor(.reset);
     }
     try writer.writeByte('\n');
 
-    try config.setColor(writer, .green);
+    try t.setColor(.green);
     try writer.splatByteAll(' ', prefix.len);
     // Special case for when the option is *only* a prefix (e.g. invalid option: -)
     if (err_details.arg_span.prefix_len == arg_with_name.len) {
@@ -1446,7 +1448,7 @@ pub fn renderErrorMessage(writer: *std.Io.Writer, config: std.Io.tty.Config, err
         }
     }
     try writer.writeByte('\n');
-    try config.setColor(writer, .reset);
+    try t.setColor(.reset);
 }
 
 fn testParse(args: []const []const u8) !Options {
@@ -1991,6 +1993,8 @@ test "parse: input and output formats" {
 }
 
 test "maybeAppendRC" {
+    const io = std.testing.io;
+
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
@@ -2000,21 +2004,21 @@ test "maybeAppendRC" {
 
     // Create the file so that it's found. In this scenario, .rc should not get
     // appended.
-    var file = try tmp.dir.createFile("foo", .{});
-    file.close();
-    try options.maybeAppendRC(tmp.dir);
+    var file = try tmp.dir.createFile(io, "foo", .{});
+    file.close(io);
+    try options.maybeAppendRC(io, tmp.dir);
     try std.testing.expectEqualStrings("foo", options.input_source.filename);
 
     // Now delete the file and try again. But this time change the input format
     // to non-rc.
-    try tmp.dir.deleteFile("foo");
+    try tmp.dir.deleteFile(io, "foo");
     options.input_format = .res;
-    try options.maybeAppendRC(tmp.dir);
+    try options.maybeAppendRC(io, tmp.dir);
     try std.testing.expectEqualStrings("foo", options.input_source.filename);
 
     // Finally, reset the input format to rc. Since the verbatim name is no longer found
     // and the input filename does not have an extension, .rc should get appended.
     options.input_format = .rc;
-    try options.maybeAppendRC(tmp.dir);
+    try options.maybeAppendRC(io, tmp.dir);
     try std.testing.expectEqualStrings("foo.rc", options.input_source.filename);
 }

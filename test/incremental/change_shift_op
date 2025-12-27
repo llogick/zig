@@ -9,10 +9,11 @@ pub fn main() !void {
     try foo(0x1300);
 }
 fn foo(x: u16) !void {
-    var stdout_writer = std.fs.File.stdout().writerStreaming(&.{});
+    var stdout_writer = std.Io.File.stdout().writerStreaming(io, &.{});
     try stdout_writer.interface.print("0x{x}\n", .{x << 4});
 }
 const std = @import("std");
+const io = std.Io.Threaded.global_single_threaded.ioBasic();
 #expect_stdout="0x3000\n"
 #update=change to right shift
 #file=main.zig
@@ -20,8 +21,9 @@ pub fn main() !void {
     try foo(0x1300);
 }
 fn foo(x: u16) !void {
-    var stdout_writer = std.fs.File.stdout().writerStreaming(&.{});
+    var stdout_writer = std.Io.File.stdout().writerStreaming(io, &.{});
     try stdout_writer.interface.print("0x{x}\n", .{x >> 4});
 }
 const std = @import("std");
+const io = std.Io.Threaded.global_single_threaded.ioBasic();
 #expect_stdout="0x130\n"

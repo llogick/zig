@@ -1,14 +1,13 @@
 const std = @import("std.zig");
 const Io = std.Io;
 const Writer = std.Io.Writer;
-const tty = std.Io.tty;
 const math = std.math;
 const mem = std.mem;
 const posix = std.posix;
 const fs = std.fs;
 const testing = std.testing;
 const Allocator = mem.Allocator;
-const File = std.fs.File;
+const File = std.Io.File;
 const windows = std.os.windows;
 
 const builtin = @import("builtin");
@@ -60,7 +59,7 @@ pub const cpu_context = @import("debug/cpu_context.zig");
 /// };
 /// /// Only required if `can_unwind == true`. Unwinds a single stack frame, returning the frame's
 /// /// return address, or 0 if the end of the stack has been reached.
-/// pub fn unwindFrame(si: *SelfInfo, gpa: Allocator, context: *UnwindContext) SelfInfoError!usize;
+/// pub fn unwindFrame(si: *SelfInfo, gpa: Allocator, io: Io, context: *UnwindContext) SelfInfoError!usize;
 /// ```
 pub const SelfInfo = if (@hasDecl(root, "debug") and @hasDecl(root.debug, "SelfInfo"))
     root.debug.SelfInfo
@@ -262,53 +261,54 @@ pub const sys_can_stack_trace = switch (builtin.cpu.arch) {
     else => true,
 };
 
-/// Allows the caller to freely write to stderr until `unlockStdErr` is called.
-///
-/// During the lock, any `std.Progress` information is cleared from the terminal.
-pub fn lockStdErr() void {
-    std.Progress.lockStdErr();
-}
-
-pub fn unlockStdErr() void {
-    std.Progress.unlockStdErr();
-}
-
-/// Allows the caller to freely write to stderr until `unlockStderrWriter` is called.
+/// Allows the caller to freely write to stderr until `unlockStderr` is called.
 ///
 /// During the lock, any `std.Progress` information is cleared from the terminal.
 ///
-/// The lock is recursive, so it is valid for the same thread to call `lockStderrWriter` multiple
-/// times. The primary motivation is that this allows the panic handler to safely dump the stack
-/// trace and panic message even if the mutex was held at the panic site.
+/// The lock is recursive, so it is valid for the same thread to call
+/// `lockStderr` multiple times, allowing the panic handler to safely
+/// dump the stack trace and panic message even if the mutex was held at the
+/// panic site.
 ///
-/// The returned `Writer` does not need to be manually flushed: flushing is performed automatically
-/// when the matching `unlockStderrWriter` call occurs.
-pub fn lockStderrWriter(buffer: []u8) struct { *Writer, tty.Config } {
-    const global = struct {
-        var conf: ?tty.Config = null;
+/// The returned `Writer` does not need to be manually flushed: flushing is
+/// performed automatically when the matching `unlockStderr` call occurs.
+///
+/// This is a low-level debugging primitive that bypasses the `Io` interface,
+/// writing directly to stderr using the most basic syscalls available. This
+/// function does not switch threads, switch stacks, or suspend.
+///
+/// Alternatively, use the higher-level `Io.lockStderr` to integrate with the
+/// application's chosen `Io` implementation.
+pub fn lockStderr(buffer: []u8) Io.LockedStderr {
+    const io = std.Options.debug_io;
+    const prev = io.swapCancelProtection(.blocked);
+    defer _ = io.swapCancelProtection(prev);
+    return io.lockStderr(buffer, null) catch |err| switch (err) {
+        error.Canceled => unreachable, // Cancel protection enabled above.
     };
-    const w = std.Progress.lockStderrWriter(buffer);
-    // The stderr lock also locks access to `global.conf`.
-    if (global.conf == null) {
-        global.conf = .detect(.stderr());
-    }
-    return .{ w, global.conf.? };
 }
 
-pub fn unlockStderrWriter() void {
-    std.Progress.unlockStderrWriter();
+pub fn unlockStderr() void {
+    const io = std.Options.debug_io;
+    io.unlockStderr();
 }
 
-/// Print to stderr, silently returning on failure. Intended for use in "printf
-/// debugging". Use `std.log` functions for proper logging.
+/// Writes to stderr, ignoring errors.
+///
+/// This is a low-level debugging primitive that bypasses the `Io` interface,
+/// writing directly to stderr using the most basic syscalls available. This
+/// function does not switch threads, switch stacks, or suspend.
 ///
 /// Uses a 64-byte buffer for formatted printing which is flushed before this
 /// function returns.
+///
+/// Alternatively, use the higher-level `std.log` or `Io.lockStderr` to
+/// integrate with the application's chosen `Io` implementation.
 pub fn print(comptime fmt: []const u8, args: anytype) void {
     var buffer: [64]u8 = undefined;
-    const bw, _ = lockStderrWriter(&buffer);
-    defer unlockStderrWriter();
-    nosuspend bw.print(fmt, args) catch return;
+    const stderr = lockStderr(&buffer);
+    defer unlockStderr();
+    stderr.file_writer.interface.print(fmt, args) catch return;
 }
 
 /// Marked `inline` to propagate a comptime-known error to callers.
@@ -323,43 +323,44 @@ pub inline fn getSelfDebugInfo() !*SelfInfo {
 /// Tries to print a hexadecimal view of the bytes, unbuffered, and ignores any error returned.
 /// Obtains the stderr mutex while dumping.
 pub fn dumpHex(bytes: []const u8) void {
-    const bw, const ttyconf = lockStderrWriter(&.{});
-    defer unlockStderrWriter();
-    dumpHexFallible(bw, ttyconf, bytes) catch {};
+    const stderr = lockStderr(&.{}).terminal();
+    defer unlockStderr();
+    dumpHexFallible(stderr, bytes) catch {};
 }
 
 /// Prints a hexadecimal view of the bytes, returning any error that occurs.
-pub fn dumpHexFallible(bw: *Writer, tty_config: tty.Config, bytes: []const u8) !void {
+pub fn dumpHexFallible(t: Io.Terminal, bytes: []const u8) !void {
+    const w = t.writer;
     var chunks = mem.window(u8, bytes, 16, 16);
     while (chunks.next()) |window| {
         // 1. Print the address.
         const address = (@intFromPtr(bytes.ptr) + 0x10 * (std.math.divCeil(usize, chunks.index orelse bytes.len, 16) catch unreachable)) - 0x10;
-        try tty_config.setColor(bw, .dim);
+        try t.setColor(.dim);
         // We print the address in lowercase and the bytes in uppercase hexadecimal to distinguish them more.
         // Also, make sure all lines are aligned by padding the address.
-        try bw.print("{x:0>[1]}  ", .{ address, @sizeOf(usize) * 2 });
-        try tty_config.setColor(bw, .reset);
+        try w.print("{x:0>[1]}  ", .{ address, @sizeOf(usize) * 2 });
+        try t.setColor(.reset);
 
         // 2. Print the bytes.
         for (window, 0..) |byte, index| {
-            try bw.print("{X:0>2} ", .{byte});
-            if (index == 7) try bw.writeByte(' ');
+            try w.print("{X:0>2} ", .{byte});
+            if (index == 7) try w.writeByte(' ');
         }
-        try bw.writeByte(' ');
+        try w.writeByte(' ');
         if (window.len < 16) {
             var missing_columns = (16 - window.len) * 3;
             if (window.len < 8) missing_columns += 1;
-            try bw.splatByteAll(' ', missing_columns);
+            try w.splatByteAll(' ', missing_columns);
         }
 
         // 3. Print the characters.
         for (window) |byte| {
             if (std.ascii.isPrint(byte)) {
-                try bw.writeByte(byte);
+                try w.writeByte(byte);
             } else {
                 // Related: https://github.com/ziglang/zig/issues/7600
-                if (tty_config == .windows_api) {
-                    try bw.writeByte('.');
+                if (t.mode == .windows_api) {
+                    try w.writeByte('.');
                     continue;
                 }
 
@@ -367,24 +368,25 @@ pub fn dumpHexFallible(bw: *Writer, tty_config: tty.Config, bytes: []const u8) !
                 // We don't want to do this for all control codes because most control codes apart from
                 // the ones that Zig has escape sequences for are likely not very useful to print as symbols.
                 switch (byte) {
-                    '\n' => try bw.writeAll("␊"),
-                    '\r' => try bw.writeAll("␍"),
-                    '\t' => try bw.writeAll("␉"),
-                    else => try bw.writeByte('.'),
+                    '\n' => try w.writeAll("␊"),
+                    '\r' => try w.writeAll("␍"),
+                    '\t' => try w.writeAll("␉"),
+                    else => try w.writeByte('.'),
                 }
             }
         }
-        try bw.writeByte('\n');
+        try w.writeByte('\n');
     }
 }
 
 test dumpHexFallible {
+    const gpa = testing.allocator;
     const bytes: []const u8 = &.{ 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x01, 0x12, 0x13 };
-    var aw: Writer.Allocating = .init(std.testing.allocator);
+    var aw: Writer.Allocating = .init(gpa);
     defer aw.deinit();
 
-    try dumpHexFallible(&aw.writer, .no_color, bytes);
-    const expected = try std.fmt.allocPrint(std.testing.allocator,
+    try dumpHexFallible(.{ .writer = &aw.writer, .mode = .no_color }, bytes);
+    const expected = try std.fmt.allocPrint(gpa,
         \\{x:0>[2]}  00 11 22 33 44 55 66 77  88 99 AA BB CC DD EE FF  .."3DUfw........
         \\{x:0>[2]}  01 12 13                                          ...
         \\
@@ -393,8 +395,8 @@ test dumpHexFallible {
         @intFromPtr(bytes.ptr) + 16,
         @sizeOf(usize) * 2,
     });
-    defer std.testing.allocator.free(expected);
-    try std.testing.expectEqualStrings(expected, aw.written());
+    defer gpa.free(expected);
+    try testing.expectEqualStrings(expected, aw.written());
 }
 
 /// The pointer through which a `cpu_context.Native` is received from callers of stack tracing logic.
@@ -409,7 +411,7 @@ pub const CpuContextPtr = if (cpu_context.Native == noreturn) noreturn else *con
 /// away, and in fact the optimizer is able to use the assertion in its
 /// heuristics.
 ///
-/// Inside a test block, it is best to use the `std.testing` module rather than
+/// Inside a test block, it is best to use the `testing` module rather than
 /// this function, because this function may not detect a test failure in
 /// ReleaseFast and ReleaseSmall mode. Outside of a test block, this assert
 /// function is the correct function to use.
@@ -483,10 +485,7 @@ const use_trap_panic = switch (builtin.zig_backend) {
 };
 
 /// Dumps a stack trace to standard error, then aborts.
-pub fn defaultPanic(
-    msg: []const u8,
-    first_trace_addr: ?usize,
-) noreturn {
+pub fn defaultPanic(msg: []const u8, first_trace_addr: ?usize) noreturn {
     @branchHint(.cold);
 
     if (use_trap_panic) @trap();
@@ -522,7 +521,7 @@ pub fn defaultPanic(
             }
             @trap();
         },
-        .cuda, .amdhsa => std.posix.abort(),
+        .cuda, .amdhsa => std.process.abort(),
         .plan9 => {
             var status: [std.os.plan9.ERRMAX]u8 = undefined;
             const len = @min(msg.len, status.len - 1);
@@ -546,26 +545,27 @@ pub fn defaultPanic(
             _ = panicking.fetchAdd(1, .seq_cst);
 
             trace: {
-                const stderr, const tty_config = lockStderrWriter(&.{});
-                defer unlockStderrWriter();
+                const stderr = lockStderr(&.{}).terminal();
+                defer unlockStderr();
+                const writer = stderr.writer;
 
                 if (builtin.single_threaded) {
-                    stderr.print("panic: ", .{}) catch break :trace;
+                    writer.print("panic: ", .{}) catch break :trace;
                 } else {
                     const current_thread_id = std.Thread.getCurrentId();
-                    stderr.print("thread {d} panic: ", .{current_thread_id}) catch break :trace;
+                    writer.print("thread {d} panic: ", .{current_thread_id}) catch break :trace;
                 }
-                stderr.print("{s}\n", .{msg}) catch break :trace;
+                writer.print("{s}\n", .{msg}) catch break :trace;
 
                 if (@errorReturnTrace()) |t| if (t.index > 0) {
-                    stderr.writeAll("error return context:\n") catch break :trace;
-                    writeStackTrace(t, stderr, tty_config) catch break :trace;
-                    stderr.writeAll("\nstack trace:\n") catch break :trace;
+                    writer.writeAll("error return context:\n") catch break :trace;
+                    writeStackTrace(t, stderr) catch break :trace;
+                    writer.writeAll("\nstack trace:\n") catch break :trace;
                 };
                 writeCurrentStackTrace(.{
                     .first_address = first_trace_addr orelse @returnAddress(),
                     .allow_unsafe_unwind = true, // we're crashing anyway, give it our all!
-                }, stderr, tty_config) catch break :trace;
+                }, stderr) catch break :trace;
             }
 
             waitForOtherThreadToFinishPanicking();
@@ -575,12 +575,13 @@ pub fn defaultPanic(
             // A panic happened while trying to print a previous panic message.
             // We're still holding the mutex but that's fine as we're going to
             // call abort().
-            fs.File.stderr().writeAll("aborting due to recursive panic\n") catch {};
+            const stderr = lockStderr(&.{}).terminal();
+            stderr.writer.writeAll("aborting due to recursive panic\n") catch {};
         },
         else => {}, // Panicked while printing the recursive panic message.
     }
 
-    posix.abort();
+    std.process.abort();
 }
 
 /// Must be called only after adding 1 to `panicking`. There are three callsites.
@@ -621,13 +622,16 @@ pub noinline fn captureCurrentStackTrace(options: StackUnwindOptions, addr_buf: 
     var it: StackIterator = .init(options.context);
     defer it.deinit();
     if (!it.stratOk(options.allow_unsafe_unwind)) return empty_trace;
+
+    const io = std.Options.debug_io;
+
     var total_frames: usize = 0;
     var index: usize = 0;
     var wait_for = options.first_address;
     // Ideally, we would iterate the whole stack so that the `index` in the returned trace was
     // indicative of how many frames were skipped. However, this has a significant runtime cost
     // in some cases, so at least for now, we don't do that.
-    while (index < addr_buf.len) switch (it.next()) {
+    while (index < addr_buf.len) switch (it.next(io)) {
         .switch_to_fp => if (!it.stratOk(options.allow_unsafe_unwind)) break,
         .end => break,
         .frame => |ret_addr| {
@@ -653,37 +657,36 @@ pub noinline fn captureCurrentStackTrace(options: StackUnwindOptions, addr_buf: 
 /// Write the current stack trace to `writer`, annotated with source locations.
 ///
 /// See `captureCurrentStackTrace` to capture the trace addresses into a buffer instead of printing.
-pub noinline fn writeCurrentStackTrace(options: StackUnwindOptions, writer: *Writer, tty_config: tty.Config) Writer.Error!void {
-    var threaded: Io.Threaded = .init_single_threaded;
-    const io = threaded.ioBasic();
-
+pub noinline fn writeCurrentStackTrace(options: StackUnwindOptions, t: Io.Terminal) Writer.Error!void {
+    const writer = t.writer;
     if (!std.options.allow_stack_tracing) {
-        tty_config.setColor(writer, .dim) catch {};
+        t.setColor(.dim) catch {};
         try writer.print("Cannot print stack trace: stack tracing is disabled\n", .{});
-        tty_config.setColor(writer, .reset) catch {};
+        t.setColor(.reset) catch {};
         return;
     }
     const di_gpa = getDebugInfoAllocator();
     const di = getSelfDebugInfo() catch |err| switch (err) {
         error.UnsupportedTarget => {
-            tty_config.setColor(writer, .dim) catch {};
+            t.setColor(.dim) catch {};
             try writer.print("Cannot print stack trace: debug info unavailable for target\n", .{});
-            tty_config.setColor(writer, .reset) catch {};
+            t.setColor(.reset) catch {};
             return;
         },
     };
     var it: StackIterator = .init(options.context);
     defer it.deinit();
     if (!it.stratOk(options.allow_unsafe_unwind)) {
-        tty_config.setColor(writer, .dim) catch {};
+        t.setColor(.dim) catch {};
         try writer.print("Cannot print stack trace: safe unwind unavailable for target\n", .{});
-        tty_config.setColor(writer, .reset) catch {};
+        t.setColor(.reset) catch {};
         return;
     }
     var total_frames: usize = 0;
     var wait_for = options.first_address;
     var printed_any_frame = false;
-    while (true) switch (it.next()) {
+    const io = std.Options.debug_io;
+    while (true) switch (it.next(io)) {
         .switch_to_fp => |unwind_error| {
             switch (StackIterator.fp_usability) {
                 .useless, .unsafe => {},
@@ -700,31 +703,31 @@ pub noinline fn writeCurrentStackTrace(options: StackUnwindOptions, writer: *Wri
                 error.Unexpected => "unexpected error",
             };
             if (it.stratOk(options.allow_unsafe_unwind)) {
-                tty_config.setColor(writer, .dim) catch {};
+                t.setColor(.dim) catch {};
                 try writer.print(
                     "Unwind error at address `{s}:0x{x}` ({s}), remaining frames may be incorrect\n",
                     .{ module_name, unwind_error.address, caption },
                 );
-                tty_config.setColor(writer, .reset) catch {};
+                t.setColor(.reset) catch {};
             } else {
-                tty_config.setColor(writer, .dim) catch {};
+                t.setColor(.dim) catch {};
                 try writer.print(
                     "Unwind error at address `{s}:0x{x}` ({s}), stopping trace early\n",
                     .{ module_name, unwind_error.address, caption },
                 );
-                tty_config.setColor(writer, .reset) catch {};
+                t.setColor(.reset) catch {};
                 return;
             }
         },
         .end => break,
         .frame => |ret_addr| {
             if (total_frames > 10_000) {
-                tty_config.setColor(writer, .dim) catch {};
+                t.setColor(.dim) catch {};
                 try writer.print(
                     "Stopping trace after {d} frames (large frame count may indicate broken debug info)\n",
                     .{total_frames},
                 );
-                tty_config.setColor(writer, .reset) catch {};
+                t.setColor(.reset) catch {};
                 return;
             }
             total_frames += 1;
@@ -734,7 +737,7 @@ pub noinline fn writeCurrentStackTrace(options: StackUnwindOptions, writer: *Wri
             }
             // `ret_addr` is the return address, which is *after* the function call.
             // Subtract 1 to get an address *in* the function call for a better source location.
-            try printSourceAtAddress(di_gpa, io, di, writer, ret_addr -| StackIterator.ra_call_offset, tty_config);
+            try printSourceAtAddress(di_gpa, io, di, t, ret_addr -| StackIterator.ra_call_offset);
             printed_any_frame = true;
         },
     };
@@ -742,8 +745,8 @@ pub noinline fn writeCurrentStackTrace(options: StackUnwindOptions, writer: *Wri
 }
 /// A thin wrapper around `writeCurrentStackTrace` which writes to stderr and ignores write errors.
 pub fn dumpCurrentStackTrace(options: StackUnwindOptions) void {
-    const stderr, const tty_config = lockStderrWriter(&.{});
-    defer unlockStderrWriter();
+    const stderr = lockStderr(&.{}).terminal();
+    defer unlockStderr();
     writeCurrentStackTrace(.{
         .first_address = a: {
             if (options.first_address) |a| break :a a;
@@ -752,33 +755,30 @@ pub fn dumpCurrentStackTrace(options: StackUnwindOptions) void {
         },
         .context = options.context,
         .allow_unsafe_unwind = options.allow_unsafe_unwind,
-    }, stderr, tty_config) catch |err| switch (err) {
+    }, stderr) catch |err| switch (err) {
         error.WriteFailed => {},
     };
 }
 
 pub const FormatStackTrace = struct {
     stack_trace: StackTrace,
-    tty_config: tty.Config,
+    terminal_mode: Io.Terminal.Mode = .no_color,
 
-    pub fn format(context: @This(), writer: *Io.Writer) Io.Writer.Error!void {
-        try writer.writeAll("\n");
-        try writeStackTrace(&context.stack_trace, writer, context.tty_config);
+    pub fn format(fst: FormatStackTrace, writer: *Writer) Writer.Error!void {
+        try writer.writeByte('\n');
+        try writeStackTrace(&fst.stack_trace, .{ .writer = writer, .mode = fst.terminal_mode });
     }
 };
 
 /// Write a previously captured stack trace to `writer`, annotated with source locations.
-pub fn writeStackTrace(st: *const StackTrace, writer: *Writer, tty_config: tty.Config) Writer.Error!void {
+pub fn writeStackTrace(st: *const StackTrace, t: Io.Terminal) Writer.Error!void {
+    const writer = t.writer;
     if (!std.options.allow_stack_tracing) {
-        tty_config.setColor(writer, .dim) catch {};
+        t.setColor(.dim) catch {};
         try writer.print("Cannot print stack trace: stack tracing is disabled\n", .{});
-        tty_config.setColor(writer, .reset) catch {};
+        t.setColor(.reset) catch {};
         return;
     }
-    // We use an independent Io implementation here in case there was a problem
-    // with the application's Io implementation itself.
-    var threaded: Io.Threaded = .init_single_threaded;
-    const io = threaded.ioBasic();
 
     // Fetch `st.index` straight away. Aside from avoiding redundant loads, this prevents issues if
     // `st` is `@errorReturnTrace()` and errors are encountered while writing the stack trace.
@@ -787,29 +787,30 @@ pub fn writeStackTrace(st: *const StackTrace, writer: *Writer, tty_config: tty.C
     const di_gpa = getDebugInfoAllocator();
     const di = getSelfDebugInfo() catch |err| switch (err) {
         error.UnsupportedTarget => {
-            tty_config.setColor(writer, .dim) catch {};
+            t.setColor(.dim) catch {};
             try writer.print("Cannot print stack trace: debug info unavailable for target\n\n", .{});
-            tty_config.setColor(writer, .reset) catch {};
+            t.setColor(.reset) catch {};
             return;
         },
     };
+    const io = std.Options.debug_io;
     const captured_frames = @min(n_frames, st.instruction_addresses.len);
     for (st.instruction_addresses[0..captured_frames]) |ret_addr| {
         // `ret_addr` is the return address, which is *after* the function call.
         // Subtract 1 to get an address *in* the function call for a better source location.
-        try printSourceAtAddress(di_gpa, io, di, writer, ret_addr -| StackIterator.ra_call_offset, tty_config);
+        try printSourceAtAddress(di_gpa, io, di, t, ret_addr -| StackIterator.ra_call_offset);
     }
     if (n_frames > captured_frames) {
-        tty_config.setColor(writer, .bold) catch {};
+        t.setColor(.bold) catch {};
         try writer.print("({d} additional stack frames skipped...)\n", .{n_frames - captured_frames});
-        tty_config.setColor(writer, .reset) catch {};
+        t.setColor(.reset) catch {};
     }
 }
 /// A thin wrapper around `writeStackTrace` which writes to stderr and ignores write errors.
 pub fn dumpStackTrace(st: *const StackTrace) void {
-    const stderr, const tty_config = lockStderrWriter(&.{});
-    defer unlockStderrWriter();
-    writeStackTrace(st, stderr, tty_config) catch |err| switch (err) {
+    const stderr = lockStderr(&.{}).terminal();
+    defer unlockStderr();
+    writeStackTrace(st, stderr) catch |err| switch (err) {
         error.WriteFailed => {},
     };
 }
@@ -960,7 +961,7 @@ const StackIterator = union(enum) {
         },
     };
 
-    fn next(it: *StackIterator) Result {
+    fn next(it: *StackIterator, io: Io) Result {
         switch (it.*) {
             .ctx_first => |context_ptr| {
                 // After the first frame, start actually unwinding.
@@ -976,7 +977,7 @@ const StackIterator = union(enum) {
             .di => |*unwind_context| {
                 const di = getSelfDebugInfo() catch unreachable;
                 const di_gpa = getDebugInfoAllocator();
-                const ret_addr = di.unwindFrame(di_gpa, unwind_context) catch |err| {
+                const ret_addr = di.unwindFrame(di_gpa, io, unwind_context) catch |err| {
                     const pc = unwind_context.pc;
                     const fp = unwind_context.getFp();
                     it.* = .{ .fp = fp };
@@ -1104,170 +1105,146 @@ pub inline fn stripInstructionPtrAuthCode(ptr: usize) usize {
     return ptr;
 }
 
-fn printSourceAtAddress(gpa: Allocator, io: Io, debug_info: *SelfInfo, writer: *Writer, address: usize, tty_config: tty.Config) Writer.Error!void {
+fn printSourceAtAddress(
+    gpa: Allocator,
+    io: Io,
+    debug_info: *SelfInfo,
+    t: Io.Terminal,
+    address: usize,
+) Writer.Error!void {
     const symbol: Symbol = debug_info.getSymbol(gpa, io, address) catch |err| switch (err) {
         error.MissingDebugInfo,
         error.UnsupportedDebugInfo,
         error.InvalidDebugInfo,
         => .unknown,
         error.ReadFailed, error.Unexpected, error.Canceled => s: {
-            tty_config.setColor(writer, .dim) catch {};
-            try writer.print("Failed to read debug info from filesystem, trace may be incomplete\n\n", .{});
-            tty_config.setColor(writer, .reset) catch {};
+            t.setColor(.dim) catch {};
+            try t.writer.print("Failed to read debug info from filesystem, trace may be incomplete\n\n", .{});
+            t.setColor(.reset) catch {};
             break :s .unknown;
         },
         error.OutOfMemory => s: {
-            tty_config.setColor(writer, .dim) catch {};
-            try writer.print("Ran out of memory loading debug info, trace may be incomplete\n\n", .{});
-            tty_config.setColor(writer, .reset) catch {};
+            t.setColor(.dim) catch {};
+            try t.writer.print("Ran out of memory loading debug info, trace may be incomplete\n\n", .{});
+            t.setColor(.reset) catch {};
             break :s .unknown;
         },
     };
     defer if (symbol.source_location) |sl| gpa.free(sl.file_name);
     return printLineInfo(
-        writer,
+        io,
+        t,
         symbol.source_location,
         address,
         symbol.name orelse "???",
         symbol.compile_unit_name orelse debug_info.getModuleName(gpa, address) catch "???",
-        tty_config,
     );
 }
 fn printLineInfo(
-    writer: *Writer,
+    io: Io,
+    t: Io.Terminal,
     source_location: ?SourceLocation,
     address: usize,
     symbol_name: []const u8,
     compile_unit_name: []const u8,
-    tty_config: tty.Config,
 ) Writer.Error!void {
-    nosuspend {
-        tty_config.setColor(writer, .bold) catch {};
+    const writer = t.writer;
+    t.setColor(.bold) catch {};
 
-        if (source_location) |*sl| {
-            try writer.print("{s}:{d}:{d}", .{ sl.file_name, sl.line, sl.column });
-        } else {
-            try writer.writeAll("???:?:?");
-        }
+    if (source_location) |*sl| {
+        try writer.print("{s}:{d}:{d}", .{ sl.file_name, sl.line, sl.column });
+    } else {
+        try writer.writeAll("???:?:?");
+    }
 
-        tty_config.setColor(writer, .reset) catch {};
-        try writer.writeAll(": ");
-        tty_config.setColor(writer, .dim) catch {};
-        try writer.print("0x{x} in {s} ({s})", .{ address, symbol_name, compile_unit_name });
-        tty_config.setColor(writer, .reset) catch {};
-        try writer.writeAll("\n");
+    t.setColor(.reset) catch {};
+    try writer.writeAll(": ");
+    t.setColor(.dim) catch {};
+    try writer.print("0x{x} in {s} ({s})", .{ address, symbol_name, compile_unit_name });
+    t.setColor(.reset) catch {};
+    try writer.writeAll("\n");
 
-        // Show the matching source code line if possible
-        if (source_location) |sl| {
-            if (printLineFromFile(writer, sl)) {
-                if (sl.column > 0) {
-                    // The caret already takes one char
-                    const space_needed = @as(usize, @intCast(sl.column - 1));
+    // Show the matching source code line if possible
+    if (source_location) |sl| {
+        if (printLineFromFile(io, writer, sl)) {
+            if (sl.column > 0) {
+                // The caret already takes one char
+                const space_needed = @as(usize, @intCast(sl.column - 1));
 
-                    try writer.splatByteAll(' ', space_needed);
-                    tty_config.setColor(writer, .green) catch {};
-                    try writer.writeAll("^");
-                    tty_config.setColor(writer, .reset) catch {};
-                }
-                try writer.writeAll("\n");
-            } else |_| {
-                // Ignore all errors; it's a better UX to just print the source location without the
-                // corresponding line number. The user can always open the source file themselves.
+                try writer.splatByteAll(' ', space_needed);
+                t.setColor(.green) catch {};
+                try writer.writeAll("^");
+                t.setColor(.reset) catch {};
             }
+            try writer.writeAll("\n");
+        } else |_| {
+            // Ignore all errors; it's a better UX to just print the source location without the
+            // corresponding line number. The user can always open the source file themselves.
         }
     }
 }
-fn printLineFromFile(writer: *Writer, source_location: SourceLocation) !void {
+fn printLineFromFile(io: Io, writer: *Writer, source_location: SourceLocation) !void {
     // Allow overriding the target-agnostic source line printing logic by exposing `root.debug.printLineFromFile`.
     if (@hasDecl(root, "debug") and @hasDecl(root.debug, "printLineFromFile")) {
-        return root.debug.printLineFromFile(writer, source_location);
+        return root.debug.printLineFromFile(io, writer, source_location);
     }
 
     // Need this to always block even in async I/O mode, because this could potentially
     // be called from e.g. the event loop code crashing.
-    var f = try fs.cwd().openFile(source_location.file_name, .{});
-    defer f.close();
-    // TODO fstat and make sure that the file has the correct size
+    const cwd: Io.Dir = .cwd();
+    var file = try cwd.openFile(io, source_location.file_name, .{});
+    defer file.close(io);
 
-    var buf: [4096]u8 = undefined;
-    var amt_read = try f.read(buf[0..]);
-    const line_start = seek: {
-        var current_line_start: usize = 0;
-        var next_line: usize = 1;
-        while (next_line != source_location.line) {
-            const slice = buf[current_line_start..amt_read];
-            if (mem.findScalar(u8, slice, '\n')) |pos| {
-                next_line += 1;
-                if (pos == slice.len - 1) {
-                    amt_read = try f.read(buf[0..]);
-                    current_line_start = 0;
-                } else current_line_start += pos + 1;
-            } else if (amt_read < buf.len) {
-                return error.EndOfFile;
-            } else {
-                amt_read = try f.read(buf[0..]);
-                current_line_start = 0;
-            }
+    var buffer: [4096]u8 = undefined;
+    var file_reader: File.Reader = .init(file, io, &buffer);
+    var line_index: usize = 0;
+    const r = &file_reader.interface;
+    while (true) {
+        line_index += 1;
+        if (line_index == source_location.line) {
+            // TODO delete hard tabs from the language
+            _ = try r.streamDelimiterEnding(writer, '\n');
+            try writer.writeByte('\n');
+            return;
         }
-        break :seek current_line_start;
-    };
-    const slice = buf[line_start..amt_read];
-    if (mem.findScalar(u8, slice, '\n')) |pos| {
-        const line = slice[0 .. pos + 1];
-        mem.replaceScalar(u8, line, '\t', ' ');
-        return writer.writeAll(line);
-    } else { // Line is the last inside the buffer, and requires another read to find delimiter. Alternatively the file ends.
-        mem.replaceScalar(u8, slice, '\t', ' ');
-        try writer.writeAll(slice);
-        while (amt_read == buf.len) {
-            amt_read = try f.read(buf[0..]);
-            if (mem.findScalar(u8, buf[0..amt_read], '\n')) |pos| {
-                const line = buf[0 .. pos + 1];
-                mem.replaceScalar(u8, line, '\t', ' ');
-                return writer.writeAll(line);
-            } else {
-                const line = buf[0..amt_read];
-                mem.replaceScalar(u8, line, '\t', ' ');
-                try writer.writeAll(line);
-            }
-        }
-        // Make sure printing last line of file inserts extra newline
-        try writer.writeByte('\n');
+        _ = try r.discardDelimiterInclusive('\n');
     }
 }
 
 test printLineFromFile {
-    var aw: Writer.Allocating = .init(std.testing.allocator);
+    const io = testing.io;
+    const gpa = testing.allocator;
+
+    var aw: Writer.Allocating = .init(gpa);
     defer aw.deinit();
     const output_stream = &aw.writer;
 
-    const allocator = std.testing.allocator;
     const join = std.fs.path.join;
-    const expectError = std.testing.expectError;
-    const expectEqualStrings = std.testing.expectEqualStrings;
+    const expectError = testing.expectError;
+    const expectEqualStrings = testing.expectEqualStrings;
 
-    var test_dir = std.testing.tmpDir(.{});
+    var test_dir = testing.tmpDir(.{});
     defer test_dir.cleanup();
     // Relies on testing.tmpDir internals which is not ideal, but SourceLocation requires paths.
-    const test_dir_path = try join(allocator, &.{ ".zig-cache", "tmp", test_dir.sub_path[0..] });
-    defer allocator.free(test_dir_path);
+    const test_dir_path = try join(gpa, &.{ ".zig-cache", "tmp", test_dir.sub_path[0..] });
+    defer gpa.free(test_dir_path);
 
     // Cases
     {
-        const path = try join(allocator, &.{ test_dir_path, "one_line.zig" });
-        defer allocator.free(path);
-        try test_dir.dir.writeFile(.{ .sub_path = "one_line.zig", .data = "no new lines in this file, but one is printed anyway" });
+        const path = try join(gpa, &.{ test_dir_path, "one_line.zig" });
+        defer gpa.free(path);
+        try test_dir.dir.writeFile(io, .{ .sub_path = "one_line.zig", .data = "no new lines in this file, but one is printed anyway" });
 
-        try expectError(error.EndOfFile, printLineFromFile(output_stream, .{ .file_name = path, .line = 2, .column = 0 }));
+        try expectError(error.EndOfStream, printLineFromFile(io, output_stream, .{ .file_name = path, .line = 2, .column = 0 }));
 
-        try printLineFromFile(output_stream, .{ .file_name = path, .line = 1, .column = 0 });
+        try printLineFromFile(io, output_stream, .{ .file_name = path, .line = 1, .column = 0 });
         try expectEqualStrings("no new lines in this file, but one is printed anyway\n", aw.written());
         aw.clearRetainingCapacity();
     }
     {
-        const path = try fs.path.join(allocator, &.{ test_dir_path, "three_lines.zig" });
-        defer allocator.free(path);
-        try test_dir.dir.writeFile(.{
+        const path = try fs.path.join(gpa, &.{ test_dir_path, "three_lines.zig" });
+        defer gpa.free(path);
+        try test_dir.dir.writeFile(io, .{
             .sub_path = "three_lines.zig",
             .data =
             \\1
@@ -1276,90 +1253,90 @@ test printLineFromFile {
             ,
         });
 
-        try printLineFromFile(output_stream, .{ .file_name = path, .line = 1, .column = 0 });
+        try printLineFromFile(io, output_stream, .{ .file_name = path, .line = 1, .column = 0 });
         try expectEqualStrings("1\n", aw.written());
         aw.clearRetainingCapacity();
 
-        try printLineFromFile(output_stream, .{ .file_name = path, .line = 3, .column = 0 });
+        try printLineFromFile(io, output_stream, .{ .file_name = path, .line = 3, .column = 0 });
         try expectEqualStrings("3\n", aw.written());
         aw.clearRetainingCapacity();
     }
     {
-        const file = try test_dir.dir.createFile("line_overlaps_page_boundary.zig", .{});
-        defer file.close();
-        const path = try fs.path.join(allocator, &.{ test_dir_path, "line_overlaps_page_boundary.zig" });
-        defer allocator.free(path);
+        const file = try test_dir.dir.createFile(io, "line_overlaps_page_boundary.zig", .{});
+        defer file.close(io);
+        const path = try fs.path.join(gpa, &.{ test_dir_path, "line_overlaps_page_boundary.zig" });
+        defer gpa.free(path);
 
         const overlap = 10;
         var buf: [16]u8 = undefined;
-        var file_writer = file.writer(&buf);
+        var file_writer = file.writer(io, &buf);
         const writer = &file_writer.interface;
         try writer.splatByteAll('a', std.heap.page_size_min - overlap);
         try writer.writeByte('\n');
         try writer.splatByteAll('a', overlap);
         try writer.flush();
 
-        try printLineFromFile(output_stream, .{ .file_name = path, .line = 2, .column = 0 });
+        try printLineFromFile(io, output_stream, .{ .file_name = path, .line = 2, .column = 0 });
         try expectEqualStrings(("a" ** overlap) ++ "\n", aw.written());
         aw.clearRetainingCapacity();
     }
     {
-        const file = try test_dir.dir.createFile("file_ends_on_page_boundary.zig", .{});
-        defer file.close();
-        const path = try fs.path.join(allocator, &.{ test_dir_path, "file_ends_on_page_boundary.zig" });
-        defer allocator.free(path);
+        const file = try test_dir.dir.createFile(io, "file_ends_on_page_boundary.zig", .{});
+        defer file.close(io);
+        const path = try fs.path.join(gpa, &.{ test_dir_path, "file_ends_on_page_boundary.zig" });
+        defer gpa.free(path);
 
-        var file_writer = file.writer(&.{});
+        var file_writer = file.writer(io, &.{});
         const writer = &file_writer.interface;
         try writer.splatByteAll('a', std.heap.page_size_max);
 
-        try printLineFromFile(output_stream, .{ .file_name = path, .line = 1, .column = 0 });
+        try printLineFromFile(io, output_stream, .{ .file_name = path, .line = 1, .column = 0 });
         try expectEqualStrings(("a" ** std.heap.page_size_max) ++ "\n", aw.written());
         aw.clearRetainingCapacity();
     }
     {
-        const file = try test_dir.dir.createFile("very_long_first_line_spanning_multiple_pages.zig", .{});
-        defer file.close();
-        const path = try fs.path.join(allocator, &.{ test_dir_path, "very_long_first_line_spanning_multiple_pages.zig" });
-        defer allocator.free(path);
+        const file = try test_dir.dir.createFile(io, "very_long_first_line_spanning_multiple_pages.zig", .{});
+        defer file.close(io);
+        const path = try fs.path.join(gpa, &.{ test_dir_path, "very_long_first_line_spanning_multiple_pages.zig" });
+        defer gpa.free(path);
 
-        var file_writer = file.writer(&.{});
+        var file_writer = file.writer(io, &.{});
         const writer = &file_writer.interface;
         try writer.splatByteAll('a', 3 * std.heap.page_size_max);
 
-        try expectError(error.EndOfFile, printLineFromFile(output_stream, .{ .file_name = path, .line = 2, .column = 0 }));
+        try expectError(error.EndOfStream, printLineFromFile(io, output_stream, .{ .file_name = path, .line = 2, .column = 0 }));
 
-        try printLineFromFile(output_stream, .{ .file_name = path, .line = 1, .column = 0 });
+        try printLineFromFile(io, output_stream, .{ .file_name = path, .line = 1, .column = 0 });
         try expectEqualStrings(("a" ** (3 * std.heap.page_size_max)) ++ "\n", aw.written());
         aw.clearRetainingCapacity();
 
         try writer.writeAll("a\na");
 
-        try printLineFromFile(output_stream, .{ .file_name = path, .line = 1, .column = 0 });
+        try printLineFromFile(io, output_stream, .{ .file_name = path, .line = 1, .column = 0 });
         try expectEqualStrings(("a" ** (3 * std.heap.page_size_max)) ++ "a\n", aw.written());
         aw.clearRetainingCapacity();
 
-        try printLineFromFile(output_stream, .{ .file_name = path, .line = 2, .column = 0 });
+        try printLineFromFile(io, output_stream, .{ .file_name = path, .line = 2, .column = 0 });
         try expectEqualStrings("a\n", aw.written());
         aw.clearRetainingCapacity();
     }
     {
-        const file = try test_dir.dir.createFile("file_of_newlines.zig", .{});
-        defer file.close();
-        const path = try fs.path.join(allocator, &.{ test_dir_path, "file_of_newlines.zig" });
-        defer allocator.free(path);
+        const file = try test_dir.dir.createFile(io, "file_of_newlines.zig", .{});
+        defer file.close(io);
+        const path = try fs.path.join(gpa, &.{ test_dir_path, "file_of_newlines.zig" });
+        defer gpa.free(path);
 
-        var file_writer = file.writer(&.{});
+        var file_writer = file.writer(io, &.{});
         const writer = &file_writer.interface;
         const real_file_start = 3 * std.heap.page_size_min;
         try writer.splatByteAll('\n', real_file_start);
         try writer.writeAll("abc\ndef");
 
-        try printLineFromFile(output_stream, .{ .file_name = path, .line = real_file_start + 1, .column = 0 });
+        try printLineFromFile(io, output_stream, .{ .file_name = path, .line = real_file_start + 1, .column = 0 });
         try expectEqualStrings("abc\n", aw.written());
         aw.clearRetainingCapacity();
 
-        try printLineFromFile(output_stream, .{ .file_name = path, .line = real_file_start + 2, .column = 0 });
+        try printLineFromFile(io, output_stream, .{ .file_name = path, .line = real_file_start + 2, .column = 0 });
         try expectEqualStrings("def\n", aw.written());
         aw.clearRetainingCapacity();
     }
@@ -1563,19 +1540,19 @@ pub fn defaultHandleSegfault(addr: ?usize, name: []const u8, opt_ctx: ?CpuContex
             _ = panicking.fetchAdd(1, .seq_cst);
 
             trace: {
-                const stderr, const tty_config = lockStderrWriter(&.{});
-                defer unlockStderrWriter();
+                const stderr = lockStderr(&.{}).terminal();
+                defer unlockStderr();
 
                 if (addr) |a| {
-                    stderr.print("{s} at address 0x{x}\n", .{ name, a }) catch break :trace;
+                    stderr.writer.print("{s} at address 0x{x}\n", .{ name, a }) catch break :trace;
                 } else {
-                    stderr.print("{s} (no address available)\n", .{name}) catch break :trace;
+                    stderr.writer.print("{s} (no address available)\n", .{name}) catch break :trace;
                 }
                 if (opt_ctx) |context| {
                     writeCurrentStackTrace(.{
                         .context = context,
                         .allow_unsafe_unwind = true, // we're crashing anyway, give it our all!
-                    }, stderr, tty_config) catch break :trace;
+                    }, stderr) catch break :trace;
                 }
             }
         },
@@ -1584,7 +1561,8 @@ pub fn defaultHandleSegfault(addr: ?usize, name: []const u8, opt_ctx: ?CpuContex
             // A segfault happened while trying to print a previous panic message.
             // We're still holding the mutex but that's fine as we're going to
             // call abort().
-            fs.File.stderr().writeAll("aborting due to recursive panic\n") catch {};
+            const stderr = lockStderr(&.{}).terminal();
+            stderr.writer.writeAll("aborting due to recursive panic\n") catch {};
         },
         else => {}, // Panicked while printing the recursive panic message.
     }
@@ -1592,7 +1570,7 @@ pub fn defaultHandleSegfault(addr: ?usize, name: []const u8, opt_ctx: ?CpuContex
     // We cannot allow the signal handler to return because when it runs the original instruction
     // again, the memory may be mapped and undefined behavior would occur rather than repeating
     // the segfault. So we simply abort here.
-    posix.abort();
+    std.process.abort();
 }
 
 pub fn dumpStackPointerAddr(prefix: []const u8) void {
@@ -1616,20 +1594,14 @@ test "manage resources correctly" {
             return @returnAddress();
         }
     };
-    const gpa = std.testing.allocator;
-    var threaded: Io.Threaded = .init_single_threaded;
-    const io = threaded.ioBasic();
-    var discarding: Io.Writer.Discarding = .init(&.{});
+    const gpa = testing.allocator;
+    const io = testing.io;
+
+    var discarding: Writer.Discarding = .init(&.{});
     var di: SelfInfo = .init;
     defer di.deinit(gpa);
-    try printSourceAtAddress(
-        gpa,
-        io,
-        &di,
-        &discarding.writer,
-        S.showMyTrace(),
-        .no_color,
-    );
+    const t: Io.Terminal = .{ .writer = &discarding.writer, .mode = .no_color };
+    try printSourceAtAddress(gpa, io, &di, t, S.showMyTrace());
 }
 
 /// This API helps you track where a value originated and where it was mutated,
@@ -1690,21 +1662,21 @@ pub fn ConfigurableTrace(comptime size: usize, comptime stack_frame_count: usize
         pub fn dump(t: @This()) void {
             if (!enabled) return;
 
-            const stderr, const tty_config = lockStderrWriter(&.{});
-            defer unlockStderrWriter();
+            const stderr = lockStderr(&.{}).terminal();
+            defer unlockStderr();
             const end = @min(t.index, size);
             for (t.addrs[0..end], 0..) |frames_array, i| {
-                stderr.print("{s}:\n", .{t.notes[i]}) catch return;
+                stderr.writer.print("{s}:\n", .{t.notes[i]}) catch return;
                 var frames_array_mutable = frames_array;
                 const frames = mem.sliceTo(frames_array_mutable[0..], 0);
                 const stack_trace: StackTrace = .{
                     .index = frames.len,
                     .instruction_addresses = frames,
                 };
-                writeStackTrace(&stack_trace, stderr, tty_config) catch return;
+                writeStackTrace(&stack_trace, stderr) catch return;
             }
             if (t.index > end) {
-                stderr.print("{d} more traces not shown; consider increasing trace size\n", .{
+                stderr.writer.print("{d} more traces not shown; consider increasing trace size\n", .{
                     t.index - end,
                 }) catch return;
             }

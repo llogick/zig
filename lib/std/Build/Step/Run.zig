@@ -1,15 +1,16 @@
-const std = @import("std");
+const Run = @This();
 const builtin = @import("builtin");
+
+const std = @import("std");
+const Io = std.Io;
 const Build = std.Build;
-const Step = Build.Step;
-const fs = std.fs;
+const Step = std.Build.Step;
+const Dir = std.Io.Dir;
 const mem = std.mem;
 const process = std.process;
-const EnvMap = process.EnvMap;
+const EnvMap = std.process.EnvMap;
 const assert = std.debug.assert;
-const Path = Build.Cache.Path;
-
-const Run = @This();
+const Path = std.Build.Cache.Path;
 
 pub const base_id: Step.Id = .run;
 
@@ -25,19 +26,7 @@ cwd: ?Build.LazyPath,
 env_map: ?*EnvMap,
 
 /// Controls the `NO_COLOR` and `CLICOLOR_FORCE` environment variables.
-color: enum {
-    /// `CLICOLOR_FORCE` is set, and `NO_COLOR` is unset.
-    enable,
-    /// `NO_COLOR` is set, and `CLICOLOR_FORCE` is unset.
-    disable,
-    /// If the build runner is using color, equivalent to `.enable`. Otherwise, equivalent to `.disable`.
-    inherit,
-    /// If stderr is captured or checked, equivalent to `.disable`. Otherwise, equivalent to `.inherit`.
-    auto,
-    /// The build runner does not modify the `CLICOLOR_FORCE` or `NO_COLOR` environment variables.
-    /// They are treated like normal variables, so can be controlled through `setEnvironmentVariable`.
-    manual,
-} = .auto,
+color: Color = .auto,
 
 /// When `true` prevents `ZIG_PROGRESS` environment variable from being passed
 /// to the child process, which otherwise would be used for the child to send
@@ -110,6 +99,20 @@ rebuilt_executable: ?Path,
 
 /// If this Run step was produced by a Compile step, it is tracked here.
 producer: ?*Step.Compile,
+
+pub const Color = enum {
+    /// `CLICOLOR_FORCE` is set, and `NO_COLOR` is unset.
+    enable,
+    /// `NO_COLOR` is set, and `CLICOLOR_FORCE` is unset.
+    disable,
+    /// If the build runner is using color, equivalent to `.enable`. Otherwise, equivalent to `.disable`.
+    inherit,
+    /// If stderr is captured or checked, equivalent to `.disable`. Otherwise, equivalent to `.inherit`.
+    auto,
+    /// The build runner does not modify the `CLICOLOR_FORCE` or `NO_COLOR` environment variables.
+    /// They are treated like normal variables, so can be controlled through `setEnvironmentVariable`.
+    manual,
+};
 
 pub const StdIn = union(enum) {
     none,
@@ -564,7 +567,7 @@ pub fn addPathDir(run: *Run, search_path: []const u8) void {
     if (prev_path) |pp| {
         const new_path = b.fmt("{s}{c}{s}", .{
             pp,
-            if (use_wine) fs.path.delimiter_windows else fs.path.delimiter,
+            if (use_wine) Dir.path.delimiter_windows else Dir.path.delimiter,
             search_path,
         });
         env_map.put(key, new_path) catch @panic("OOM");
@@ -747,7 +750,7 @@ fn checksContainStderr(checks: []const StdIo.Check) bool {
 fn convertPathArg(run: *Run, path: Build.Cache.Path) []const u8 {
     const b = run.step.owner;
     const path_str = path.toString(b.graph.arena) catch @panic("OOM");
-    if (std.fs.path.isAbsolute(path_str)) {
+    if (Dir.path.isAbsolute(path_str)) {
         // Absolute paths don't need changing.
         return path_str;
     }
@@ -755,19 +758,19 @@ fn convertPathArg(run: *Run, path: Build.Cache.Path) []const u8 {
         const child_lazy_cwd = run.cwd orelse break :rel path_str;
         const child_cwd = child_lazy_cwd.getPath3(b, &run.step).toString(b.graph.arena) catch @panic("OOM");
         // Convert it from relative to *our* cwd, to relative to the *child's* cwd.
-        break :rel std.fs.path.relative(b.graph.arena, child_cwd, path_str) catch @panic("OOM");
+        break :rel Dir.path.relative(b.graph.arena, child_cwd, path_str) catch @panic("OOM");
     };
     // Not every path can be made relative, e.g. if the path and the child cwd are on different
     // disk designators on Windows. In that case, `relative` will return an absolute path which we can
     // just return.
-    if (std.fs.path.isAbsolute(child_cwd_rel)) {
+    if (Dir.path.isAbsolute(child_cwd_rel)) {
         return child_cwd_rel;
     }
     // We're not done yet. In some cases this path must be prefixed with './':
     // * On POSIX, the executable name cannot be a single component like 'foo'
     // * Some executables might treat a leading '-' like a flag, which we must avoid
     // There's no harm in it, so just *always* apply this prefix.
-    return std.fs.path.join(b.graph.arena, &.{ ".", child_cwd_rel }) catch @panic("OOM");
+    return Dir.path.join(b.graph.arena, &.{ ".", child_cwd_rel }) catch @panic("OOM");
 }
 
 const IndexedOutput = struct {
@@ -845,13 +848,13 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
                 errdefer result.deinit();
                 result.writer.writeAll(file_plp.prefix) catch return error.OutOfMemory;
 
-                const file = file_path.root_dir.handle.openFile(file_path.subPathOrDot(), .{}) catch |err| {
+                const file = file_path.root_dir.handle.openFile(io, file_path.subPathOrDot(), .{}) catch |err| {
                     return step.fail(
                         "unable to open input file '{f}': {t}",
                         .{ file_path, err },
                     );
                 };
-                defer file.close();
+                defer file.close(io);
 
                 var buf: [1024]u8 = undefined;
                 var file_reader = file.reader(io, &buf);
@@ -964,15 +967,15 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
             &digest,
         );
 
-        const output_dir_path = "o" ++ fs.path.sep_str ++ &digest;
+        const output_dir_path = "o" ++ Dir.path.sep_str ++ &digest;
         for (output_placeholders.items) |placeholder| {
             const output_sub_path = b.pathJoin(&.{ output_dir_path, placeholder.output.basename });
             const output_sub_dir_path = switch (placeholder.tag) {
-                .output_file => fs.path.dirname(output_sub_path).?,
+                .output_file => Dir.path.dirname(output_sub_path).?,
                 .output_directory => output_sub_path,
                 else => unreachable,
             };
-            b.cache_root.handle.makePath(output_sub_dir_path) catch |err| {
+            b.cache_root.handle.createDirPath(io, output_sub_dir_path) catch |err| {
                 return step.fail("unable to make path '{f}{s}': {s}", .{
                     b.cache_root, output_sub_dir_path, @errorName(err),
                 });
@@ -994,17 +997,17 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
 
     // We do not know the final output paths yet, use temp paths to run the command.
     const rand_int = std.crypto.random.int(u64);
-    const tmp_dir_path = "tmp" ++ fs.path.sep_str ++ std.fmt.hex(rand_int);
+    const tmp_dir_path = "tmp" ++ Dir.path.sep_str ++ std.fmt.hex(rand_int);
 
     for (output_placeholders.items) |placeholder| {
         const output_components = .{ tmp_dir_path, placeholder.output.basename };
         const output_sub_path = b.pathJoin(&output_components);
         const output_sub_dir_path = switch (placeholder.tag) {
-            .output_file => fs.path.dirname(output_sub_path).?,
+            .output_file => Dir.path.dirname(output_sub_path).?,
             .output_directory => output_sub_path,
             else => unreachable,
         };
-        b.cache_root.handle.makePath(output_sub_dir_path) catch |err| {
+        b.cache_root.handle.createDirPath(io, output_sub_dir_path) catch |err| {
             return step.fail("unable to make path '{f}{s}': {s}", .{
                 b.cache_root, output_sub_dir_path, @errorName(err),
             });
@@ -1022,7 +1025,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
 
     try runCommand(run, argv_list.items, has_side_effects, tmp_dir_path, options, null);
 
-    const dep_file_dir = std.fs.cwd();
+    const dep_file_dir = Dir.cwd();
     const dep_file_basename = dep_output_file.generated_file.getPath2(b, step);
     if (has_side_effects)
         try man.addDepFile(dep_file_dir, dep_file_basename)
@@ -1039,29 +1042,23 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
 
     // Rename into place
     if (any_output) {
-        const o_sub_path = "o" ++ fs.path.sep_str ++ &digest;
+        const o_sub_path = "o" ++ Dir.path.sep_str ++ &digest;
 
-        b.cache_root.handle.rename(tmp_dir_path, o_sub_path) catch |err| {
+        b.cache_root.handle.rename(tmp_dir_path, b.cache_root.handle, o_sub_path, io) catch |err| {
             if (err == error.PathAlreadyExists) {
-                b.cache_root.handle.deleteTree(o_sub_path) catch |del_err| {
-                    return step.fail("unable to remove dir '{f}'{s}: {s}", .{
-                        b.cache_root,
-                        tmp_dir_path,
-                        @errorName(del_err),
+                b.cache_root.handle.deleteTree(io, o_sub_path) catch |del_err| {
+                    return step.fail("unable to remove dir '{f}'{s}: {t}", .{
+                        b.cache_root, tmp_dir_path, del_err,
                     });
                 };
-                b.cache_root.handle.rename(tmp_dir_path, o_sub_path) catch |retry_err| {
-                    return step.fail("unable to rename dir '{f}{s}' to '{f}{s}': {s}", .{
-                        b.cache_root,          tmp_dir_path,
-                        b.cache_root,          o_sub_path,
-                        @errorName(retry_err),
+                b.cache_root.handle.rename(tmp_dir_path, b.cache_root.handle, o_sub_path, io) catch |retry_err| {
+                    return step.fail("unable to rename dir '{f}{s}' to '{f}{s}': {t}", .{
+                        b.cache_root, tmp_dir_path, b.cache_root, o_sub_path, retry_err,
                     });
                 };
             } else {
-                return step.fail("unable to rename dir '{f}{s}' to '{f}{s}': {s}", .{
-                    b.cache_root,    tmp_dir_path,
-                    b.cache_root,    o_sub_path,
-                    @errorName(err),
+                return step.fail("unable to rename dir '{f}{s}' to '{f}{s}': {t}", .{
+                    b.cache_root, tmp_dir_path, b.cache_root, o_sub_path, err,
                 });
             }
         };
@@ -1110,8 +1107,8 @@ pub fn rerunInFuzzMode(
                 errdefer result.deinit();
                 result.writer.writeAll(file_plp.prefix) catch return error.OutOfMemory;
 
-                const file = try file_path.root_dir.handle.openFile(file_path.subPathOrDot(), .{});
-                defer file.close();
+                const file = try file_path.root_dir.handle.openFile(io, file_path.subPathOrDot(), .{});
+                defer file.close(io);
 
                 var buf: [1024]u8 = undefined;
                 var file_reader = file.reader(io, &buf);
@@ -1144,12 +1141,11 @@ pub fn rerunInFuzzMode(
 
     const has_side_effects = false;
     const rand_int = std.crypto.random.int(u64);
-    const tmp_dir_path = "tmp" ++ fs.path.sep_str ++ std.fmt.hex(rand_int);
+    const tmp_dir_path = "tmp" ++ Dir.path.sep_str ++ std.fmt.hex(rand_int);
     try runCommand(run, argv_list.items, has_side_effects, tmp_dir_path, .{
         .progress_node = prog_node,
         .watch = undefined, // not used by `runCommand`
         .web_server = null, // only needed for time reports
-        .ttyconf = fuzz.ttyconf,
         .unit_test_timeout_ns = null, // don't time out fuzz tests for now
         .gpa = fuzz.gpa,
     }, .{
@@ -1240,6 +1236,7 @@ fn runCommand(
     const b = step.owner;
     const arena = b.allocator;
     const gpa = options.gpa;
+    const io = b.graph.io;
 
     const cwd: ?[]const u8 = if (run.cwd) |lazy_cwd| lazy_cwd.getPath2(b, step) else null;
 
@@ -1259,33 +1256,6 @@ fn runCommand(
         break :env try orig.clone(gpa);
     };
     defer env_map.deinit();
-
-    color: switch (run.color) {
-        .manual => {},
-        .enable => {
-            try env_map.put("CLICOLOR_FORCE", "1");
-            env_map.remove("NO_COLOR");
-        },
-        .disable => {
-            try env_map.put("NO_COLOR", "1");
-            env_map.remove("CLICOLOR_FORCE");
-        },
-        .inherit => switch (options.ttyconf) {
-            .no_color, .windows_api => continue :color .disable,
-            .escape_codes => continue :color .enable,
-        },
-        .auto => {
-            const capture_stderr = run.captured_stderr != null or switch (run.stdio) {
-                .check => |checks| checksContainStderr(checks.items),
-                .infer_from_args, .inherit, .zig_test => false,
-            };
-            if (capture_stderr) {
-                continue :color .disable;
-            } else {
-                continue :color .inherit;
-            }
-        },
-    }
 
     const opt_generic_result = spawnChildAndCollect(run, argv, &env_map, has_side_effects, options, fuzz_context) catch |err| term: {
         // InvalidExe: cpu arch mismatch
@@ -1308,7 +1278,7 @@ fn runCommand(
             const need_cross_libc = exe.is_linking_libc and
                 (root_target.isGnuLibC() or (root_target.isMuslLibC() and exe.linkage == .dynamic));
             const other_target = exe.root_module.resolved_target.?.result;
-            switch (std.zig.system.getExternalExecutor(&b.graph.host.result, &other_target, .{
+            switch (std.zig.system.getExternalExecutor(io, &b.graph.host.result, &other_target, .{
                 .qemu_fixes_dl = need_cross_libc and b.libc_runtimes_dir != null,
                 .link_libc = exe.is_linking_libc,
             })) {
@@ -1468,8 +1438,8 @@ fn runCommand(
             captured.output.generated_file.path = output_path;
 
             const sub_path = b.pathJoin(&output_components);
-            const sub_path_dirname = fs.path.dirname(sub_path).?;
-            b.cache_root.handle.makePath(sub_path_dirname) catch |err| {
+            const sub_path_dirname = Dir.path.dirname(sub_path).?;
+            b.cache_root.handle.createDirPath(io, sub_path_dirname) catch |err| {
                 return step.fail("unable to make path '{f}{s}': {s}", .{
                     b.cache_root, sub_path_dirname, @errorName(err),
                 });
@@ -1480,7 +1450,7 @@ fn runCommand(
                 .leading => mem.trimStart(u8, stream.bytes.?, &std.ascii.whitespace),
                 .trailing => mem.trimEnd(u8, stream.bytes.?, &std.ascii.whitespace),
             };
-            b.cache_root.handle.writeFile(.{ .sub_path = sub_path, .data = data }) catch |err| {
+            b.cache_root.handle.writeFile(io, .{ .sub_path = sub_path, .data = data }) catch |err| {
                 return step.fail("unable to write file '{f}{s}': {s}", .{
                     b.cache_root, sub_path, @errorName(err),
                 });
@@ -1589,6 +1559,8 @@ fn spawnChildAndCollect(
 ) !?EvalGenericResult {
     const b = run.step.owner;
     const arena = b.allocator;
+    const graph = b.graph;
+    const io = graph.io;
 
     if (fuzz_context != null) {
         assert(!has_side_effects);
@@ -1654,12 +1626,45 @@ fn spawnChildAndCollect(
         if (!run.disable_zig_progress and !inherit) {
             child.progress_node = options.progress_node;
         }
-        if (inherit) std.debug.lockStdErr();
-        defer if (inherit) std.debug.unlockStdErr();
+        const terminal_mode: Io.Terminal.Mode = if (inherit) m: {
+            const stderr = try io.lockStderr(&.{}, graph.stderr_mode);
+            break :m stderr.terminal_mode;
+        } else .no_color;
+        defer if (inherit) io.unlockStderr();
+        try setColorEnvironmentVariables(run, env_map, terminal_mode);
         var timer = try std.time.Timer.start();
         const res = try evalGeneric(run, &child);
         run.step.result_duration_ns = timer.read();
         return .{ .term = res.term, .stdout = res.stdout, .stderr = res.stderr };
+    }
+}
+
+fn setColorEnvironmentVariables(run: *Run, env_map: *EnvMap, terminal_mode: Io.Terminal.Mode) !void {
+    color: switch (run.color) {
+        .manual => {},
+        .enable => {
+            try env_map.put("CLICOLOR_FORCE", "1");
+            env_map.remove("NO_COLOR");
+        },
+        .disable => {
+            try env_map.put("NO_COLOR", "1");
+            env_map.remove("CLICOLOR_FORCE");
+        },
+        .inherit => switch (terminal_mode) {
+            .no_color, .windows_api => continue :color .disable,
+            .escape_codes => continue :color .enable,
+        },
+        .auto => {
+            const capture_stderr = run.captured_stderr != null or switch (run.stdio) {
+                .check => |checks| checksContainStderr(checks.items),
+                .infer_from_args, .inherit, .zig_test => false,
+            };
+            if (capture_stderr) {
+                continue :color .disable;
+            } else {
+                continue :color .inherit;
+            }
+        },
     }
 }
 
@@ -1671,8 +1676,10 @@ fn evalZigTest(
     options: Step.MakeOptions,
     fuzz_context: ?FuzzContext,
 ) !EvalZigTestResult {
-    const gpa = run.step.owner.allocator;
-    const arena = run.step.owner.allocator;
+    const step_owner = run.step.owner;
+    const gpa = step_owner.allocator;
+    const arena = step_owner.allocator;
+    const io = step_owner.graph.io;
 
     // We will update this every time a child runs.
     run.step.result_peak_rss = 0;
@@ -1691,14 +1698,14 @@ fn evalZigTest(
     };
 
     while (true) {
-        try child.spawn();
+        try child.spawn(io);
         var poller = std.Io.poll(gpa, StdioPollEnum, .{
             .stdout = child.stdout.?,
             .stderr = child.stderr.?,
         });
         var child_killed = false;
         defer if (!child_killed) {
-            _ = child.kill() catch {};
+            _ = child.kill(io) catch {};
             poller.deinit();
             run.step.result_peak_rss = @max(
                 run.step.result_peak_rss,
@@ -1724,11 +1731,11 @@ fn evalZigTest(
                 run.step.result_stderr = try arena.dupe(u8, poller.reader(.stderr).buffered());
 
                 // Clean up everything and wait for the child to exit.
-                child.stdin.?.close();
+                child.stdin.?.close(io);
                 child.stdin = null;
                 poller.deinit();
                 child_killed = true;
-                const term = try child.wait();
+                const term = try child.wait(io);
                 run.step.result_peak_rss = @max(
                     run.step.result_peak_rss,
                     child.resource_usage_statistics.getMaxRss() orelse 0,
@@ -1744,11 +1751,11 @@ fn evalZigTest(
                 poller.reader(.stderr).tossBuffered();
 
                 // Clean up everything and wait for the child to exit.
-                child.stdin.?.close();
+                child.stdin.?.close(io);
                 child.stdin = null;
                 poller.deinit();
                 child_killed = true;
-                const term = try child.wait();
+                const term = try child.wait(io);
                 run.step.result_peak_rss = @max(
                     run.step.result_peak_rss,
                     child.resource_usage_statistics.getMaxRss() orelse 0,
@@ -1836,6 +1843,7 @@ fn pollZigTest(
         switch (ctx.fuzz.mode) {
             .forever => {
                 sendRunFuzzTestMessage(
+                    io,
                     child.stdin.?,
                     ctx.unit_test_index,
                     .forever,
@@ -1844,6 +1852,7 @@ fn pollZigTest(
             },
             .limit => |limit| {
                 sendRunFuzzTestMessage(
+                    io,
                     child.stdin.?,
                     ctx.unit_test_index,
                     .iterations,
@@ -1853,11 +1862,11 @@ fn pollZigTest(
         }
     } else if (opt_metadata.*) |*md| {
         // Previous unit test process died or was killed; we're continuing where it left off
-        requestNextTest(child.stdin.?, md, &sub_prog_node) catch |err| return .{ .write_failed = err };
+        requestNextTest(io, child.stdin.?, md, &sub_prog_node) catch |err| return .{ .write_failed = err };
     } else {
         // Running unit tests normally
         run.fuzz_tests.clearRetainingCapacity();
-        sendMessage(child.stdin.?, .query_test_metadata) catch |err| return .{ .write_failed = err };
+        sendMessage(io, child.stdin.?, .query_test_metadata) catch |err| return .{ .write_failed = err };
     }
 
     var active_test_index: ?u32 = null;
@@ -1973,7 +1982,7 @@ fn pollZigTest(
                 active_test_index = null;
                 if (timer) |*t| t.reset();
 
-                requestNextTest(child.stdin.?, &opt_metadata.*.?, &sub_prog_node) catch |err| return .{ .write_failed = err };
+                requestNextTest(io, child.stdin.?, &opt_metadata.*.?, &sub_prog_node) catch |err| return .{ .write_failed = err };
             },
             .test_started => {
                 active_test_index = opt_metadata.*.?.next_index - 1;
@@ -2022,7 +2031,7 @@ fn pollZigTest(
                 active_test_index = null;
                 if (timer) |*t| md.ns_per_test[tr_hdr.index] = t.lap();
 
-                requestNextTest(child.stdin.?, md, &sub_prog_node) catch |err| return .{ .write_failed = err };
+                requestNextTest(io, child.stdin.?, md, &sub_prog_node) catch |err| return .{ .write_failed = err };
             },
             .coverage_id => {
                 coverage_id = body_r.takeInt(u64, .little) catch unreachable;
@@ -2093,7 +2102,7 @@ pub const CachedTestMetadata = struct {
     }
 };
 
-fn requestNextTest(in: fs.File, metadata: *TestMetadata, sub_prog_node: *?std.Progress.Node) !void {
+fn requestNextTest(io: Io, in: Io.File, metadata: *TestMetadata, sub_prog_node: *?std.Progress.Node) !void {
     while (metadata.next_index < metadata.names.len) {
         const i = metadata.next_index;
         metadata.next_index += 1;
@@ -2104,31 +2113,31 @@ fn requestNextTest(in: fs.File, metadata: *TestMetadata, sub_prog_node: *?std.Pr
         if (sub_prog_node.*) |n| n.end();
         sub_prog_node.* = metadata.prog_node.start(name, 0);
 
-        try sendRunTestMessage(in, .run_test, i);
+        try sendRunTestMessage(io, in, .run_test, i);
         return;
     } else {
         metadata.next_index = std.math.maxInt(u32); // indicate that all tests are done
-        try sendMessage(in, .exit);
+        try sendMessage(io, in, .exit);
     }
 }
 
-fn sendMessage(file: std.fs.File, tag: std.zig.Client.Message.Tag) !void {
+fn sendMessage(io: Io, file: Io.File, tag: std.zig.Client.Message.Tag) !void {
     const header: std.zig.Client.Message.Header = .{
         .tag = tag,
         .bytes_len = 0,
     };
-    var w = file.writer(&.{});
+    var w = file.writer(io, &.{});
     w.interface.writeStruct(header, .little) catch |err| switch (err) {
         error.WriteFailed => return w.err.?,
     };
 }
 
-fn sendRunTestMessage(file: std.fs.File, tag: std.zig.Client.Message.Tag, index: u32) !void {
+fn sendRunTestMessage(io: Io, file: Io.File, tag: std.zig.Client.Message.Tag, index: u32) !void {
     const header: std.zig.Client.Message.Header = .{
         .tag = tag,
         .bytes_len = 4,
     };
-    var w = file.writer(&.{});
+    var w = file.writer(io, &.{});
     w.interface.writeStruct(header, .little) catch |err| switch (err) {
         error.WriteFailed => return w.err.?,
     };
@@ -2138,7 +2147,8 @@ fn sendRunTestMessage(file: std.fs.File, tag: std.zig.Client.Message.Tag, index:
 }
 
 fn sendRunFuzzTestMessage(
-    file: std.fs.File,
+    io: Io,
+    file: Io.File,
     index: u32,
     kind: std.Build.abi.fuzz.LimitKind,
     amount_or_instance: u64,
@@ -2147,7 +2157,7 @@ fn sendRunFuzzTestMessage(
         .tag = .start_fuzzing,
         .bytes_len = 4 + 1 + 8,
     };
-    var w = file.writer(&.{});
+    var w = file.writer(io, &.{});
     w.interface.writeStruct(header, .little) catch |err| switch (err) {
         error.WriteFailed => return w.err.?,
     };
@@ -2167,30 +2177,30 @@ fn evalGeneric(run: *Run, child: *std.process.Child) !EvalGenericResult {
     const io = b.graph.io;
     const arena = b.allocator;
 
-    try child.spawn();
-    errdefer _ = child.kill() catch {};
+    try child.spawn(io);
+    errdefer _ = child.kill(io) catch {};
 
     try child.waitForSpawn();
 
     switch (run.stdin) {
         .bytes => |bytes| {
-            child.stdin.?.writeAll(bytes) catch |err| {
-                return run.step.fail("unable to write stdin: {s}", .{@errorName(err)});
+            child.stdin.?.writeStreamingAll(io, bytes) catch |err| {
+                return run.step.fail("unable to write stdin: {t}", .{err});
             };
-            child.stdin.?.close();
+            child.stdin.?.close(io);
             child.stdin = null;
         },
         .lazy_path => |lazy_path| {
             const path = lazy_path.getPath3(b, &run.step);
-            const file = path.root_dir.handle.openFile(path.subPathOrDot(), .{}) catch |err| {
-                return run.step.fail("unable to open stdin file: {s}", .{@errorName(err)});
+            const file = path.root_dir.handle.openFile(io, path.subPathOrDot(), .{}) catch |err| {
+                return run.step.fail("unable to open stdin file: {t}", .{err});
             };
-            defer file.close();
+            defer file.close(io);
             // TODO https://github.com/ziglang/zig/issues/23955
             var read_buffer: [1024]u8 = undefined;
             var file_reader = file.reader(io, &read_buffer);
             var write_buffer: [1024]u8 = undefined;
-            var stdin_writer = child.stdin.?.writer(&write_buffer);
+            var stdin_writer = child.stdin.?.writer(io, &write_buffer);
             _ = stdin_writer.interface.sendFileAll(&file_reader, .unlimited) catch |err| switch (err) {
                 error.ReadFailed => return run.step.fail("failed to read from {f}: {t}", .{
                     path, file_reader.err.?,
@@ -2204,7 +2214,7 @@ fn evalGeneric(run: *Run, child: *std.process.Child) !EvalGenericResult {
                     stdin_writer.err.?,
                 }),
             };
-            child.stdin.?.close();
+            child.stdin.?.close(io);
             child.stdin = null;
         },
         .none => {},
@@ -2263,7 +2273,7 @@ fn evalGeneric(run: *Run, child: *std.process.Child) !EvalGenericResult {
     run.step.result_peak_rss = child.resource_usage_statistics.getMaxRss() orelse 0;
 
     return .{
-        .term = try child.wait(),
+        .term = try child.wait(io),
         .stdout = stdout_bytes,
         .stderr = stderr_bytes,
     };
@@ -2276,7 +2286,7 @@ fn addPathForDynLibs(run: *Run, artifact: *Step.Compile) void {
         if (compile.root_module.resolved_target.?.result.os.tag == .windows and
             compile.isDynamicLibrary())
         {
-            addPathDir(run, fs.path.dirname(compile.getEmittedBin().getPath2(b, &run.step)).?);
+            addPathDir(run, Dir.path.dirname(compile.getEmittedBin().getPath2(b, &run.step)).?);
         }
     }
 }

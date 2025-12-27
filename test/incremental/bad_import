@@ -8,9 +8,10 @@
 #file=main.zig
 pub fn main() !void {
     _ = @import("foo.zig");
-    try std.fs.File.stdout().writeAll("success\n");
+    try std.Io.File.stdout().writeStreamingAll(io, "success\n");
 }
 const std = @import("std");
+const io = std.Io.Threaded.global_single_threaded.ioBasic();
 #file=foo.zig
 comptime {
     _ = @import("bad.zig");
@@ -30,7 +31,8 @@ comptime {
 #file=main.zig
 pub fn main() !void {
     //_ = @import("foo.zig");
-    try std.fs.File.stdout().writeAll("success\n");
+    try std.Io.File.stdout().writeStreamingAll(io, "success\n");
 }
 const std = @import("std");
+const io = std.Io.Threaded.global_single_threaded.ioBasic();
 #expect_stdout="success\n"

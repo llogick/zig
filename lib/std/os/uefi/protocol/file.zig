@@ -163,15 +163,6 @@ pub const File = extern struct {
         }
     }
 
-    fn getEndPos(self: *File) SeekError!u64 {
-        const start_pos = try self.getPosition();
-        // ignore error
-        defer self.setPosition(start_pos) catch {};
-
-        try self.setPosition(end_of_file);
-        return self.getPosition();
-    }
-
     pub fn setPosition(self: *File, position: u64) SeekError!void {
         switch (self._set_position(self, position)) {
             .success => {},

@@ -1,7 +1,8 @@
+const Writer = @This();
+
 const builtin = @import("builtin");
 const native_endian = builtin.target.cpu.arch.endian();
 
-const Writer = @This();
 const std = @import("../std.zig");
 const assert = std.debug.assert;
 const Limit = std.Io.Limit;
@@ -960,7 +961,7 @@ pub fn sendFileAll(w: *Writer, file_reader: *File.Reader, limit: Limit) FileAllE
         const n = sendFile(w, file_reader, .limited(remaining)) catch |err| switch (err) {
             error.EndOfStream => break,
             error.Unimplemented => {
-                file_reader.mode = file_reader.mode.toReading();
+                file_reader.mode = file_reader.mode.toSimple();
                 remaining -= try w.sendFileReadingAll(file_reader, .limited(remaining));
                 break;
             },
@@ -2834,14 +2835,14 @@ test "discarding sendFile" {
     var tmp_dir = testing.tmpDir(.{});
     defer tmp_dir.cleanup();
 
-    const file = try tmp_dir.dir.createFile("input.txt", .{ .read = true });
-    defer file.close();
+    const file = try tmp_dir.dir.createFile(io, "input.txt", .{ .read = true });
+    defer file.close(io);
     var r_buffer: [256]u8 = undefined;
-    var file_writer: std.fs.File.Writer = .init(file, &r_buffer);
+    var file_writer: File.Writer = .init(file, io, &r_buffer);
     try file_writer.interface.writeByte('h');
     try file_writer.interface.flush();
 
-    var file_reader = file_writer.moveToReader(io);
+    var file_reader = file_writer.moveToReader();
     try file_reader.seekTo(0);
 
     var w_buffer: [256]u8 = undefined;
@@ -2856,14 +2857,14 @@ test "allocating sendFile" {
     var tmp_dir = testing.tmpDir(.{});
     defer tmp_dir.cleanup();
 
-    const file = try tmp_dir.dir.createFile("input.txt", .{ .read = true });
-    defer file.close();
+    const file = try tmp_dir.dir.createFile(io, "input.txt", .{ .read = true });
+    defer file.close(io);
     var r_buffer: [2]u8 = undefined;
-    var file_writer: std.fs.File.Writer = .init(file, &r_buffer);
+    var file_writer: File.Writer = .init(file, io, &r_buffer);
     try file_writer.interface.writeAll("abcd");
     try file_writer.interface.flush();
 
-    var file_reader = file_writer.moveToReader(io);
+    var file_reader = file_writer.moveToReader();
     try file_reader.seekTo(0);
     try file_reader.interface.fill(2);
 
@@ -2880,14 +2881,14 @@ test sendFileReading {
     var tmp_dir = testing.tmpDir(.{});
     defer tmp_dir.cleanup();
 
-    const file = try tmp_dir.dir.createFile("input.txt", .{ .read = true });
-    defer file.close();
+    const file = try tmp_dir.dir.createFile(io, "input.txt", .{ .read = true });
+    defer file.close(io);
     var r_buffer: [2]u8 = undefined;
-    var file_writer: std.fs.File.Writer = .init(file, &r_buffer);
+    var file_writer: File.Writer = .init(file, io, &r_buffer);
     try file_writer.interface.writeAll("abcd");
     try file_writer.interface.flush();
 
-    var file_reader = file_writer.moveToReader(io);
+    var file_reader = file_writer.moveToReader();
     try file_reader.seekTo(0);
     try file_reader.interface.fill(2);
 

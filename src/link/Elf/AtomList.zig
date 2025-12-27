@@ -90,7 +90,9 @@ pub fn allocate(list: *AtomList, elf_file: *Elf) !void {
 }
 
 pub fn write(list: AtomList, buffer: *std.Io.Writer.Allocating, undefs: anytype, elf_file: *Elf) !void {
-    const gpa = elf_file.base.comp.gpa;
+    const comp = elf_file.base.comp;
+    const gpa = comp.gpa;
+    const io = comp.io;
     const osec = elf_file.sections.items(.shdr)[list.output_section_index];
     assert(osec.sh_type != elf.SHT_NOBITS);
     assert(!list.dirty);
@@ -121,12 +123,14 @@ pub fn write(list: AtomList, buffer: *std.Io.Writer.Allocating, undefs: anytype,
             try atom_ptr.resolveRelocsAlloc(elf_file, out_code);
     }
 
-    try elf_file.base.file.?.pwriteAll(buffer.written(), list.offset(elf_file));
+    try elf_file.base.file.?.writePositionalAll(io, buffer.written(), list.offset(elf_file));
     buffer.clearRetainingCapacity();
 }
 
 pub fn writeRelocatable(list: AtomList, buffer: *std.array_list.Managed(u8), elf_file: *Elf) !void {
-    const gpa = elf_file.base.comp.gpa;
+    const comp = elf_file.base.comp;
+    const gpa = comp.gpa;
+    const io = comp.io;
     const osec = elf_file.sections.items(.shdr)[list.output_section_index];
     assert(osec.sh_type != elf.SHT_NOBITS);
 
@@ -152,7 +156,7 @@ pub fn writeRelocatable(list: AtomList, buffer: *std.array_list.Managed(u8), elf
         @memcpy(out_code, code);
     }
 
-    try elf_file.base.file.?.pwriteAll(buffer.items, list.offset(elf_file));
+    try elf_file.base.file.?.writePositionalAll(io, buffer.items, list.offset(elf_file));
     buffer.clearRetainingCapacity();
 }
 

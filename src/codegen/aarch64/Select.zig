@@ -11273,14 +11273,16 @@ fn initValueAdvanced(
     return @enumFromInt(isel.values.items.len);
 }
 pub fn dumpValues(isel: *Select, which: enum { only_referenced, all }) void {
-    errdefer |err| @panic(@errorName(err));
-    const stderr, _ = std.debug.lockStderrWriter(&.{});
-    defer std.debug.unlockStderrWriter();
-
     const zcu = isel.pt.zcu;
     const gpa = zcu.gpa;
     const ip = &zcu.intern_pool;
     const nav = ip.getNav(isel.nav_index);
+
+    errdefer |err| @panic(@errorName(err));
+
+    const locked_stderr = std.debug.lockStderr(&.{});
+    defer std.debug.unlockStderr();
+    const stderr = &locked_stderr.file_writer.interface;
 
     var reverse_live_values: std.AutoArrayHashMapUnmanaged(Value.Index, std.ArrayList(Air.Inst.Index)) = .empty;
     defer {

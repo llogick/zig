@@ -12,6 +12,8 @@
 //! You'll then have to manually update Zig source repo with these new files.
 
 const std = @import("std");
+const Io = std.Io;
+const Dir = std.Io.Dir;
 const Arch = std.Target.Cpu.Arch;
 const Abi = std.Target.Abi;
 const OsTag = std.Target.Os.Tag;
@@ -128,6 +130,11 @@ const LibCVendor = enum {
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const allocator = arena.allocator();
+
+    var threaded: Io.Threaded = .init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
     const args = try std.process.argsAlloc(allocator);
     var search_paths = std.array_list.Managed([]const u8).init(allocator);
     var opt_out_dir: ?[]const u8 = null;
@@ -232,28 +239,28 @@ pub fn main() !void {
                 => &[_][]const u8{ search_path, libc_dir, "usr", "include" },
                 .musl => &[_][]const u8{ search_path, libc_dir, "usr", "local", "musl", "include" },
             };
-            const target_include_dir = try std.fs.path.join(allocator, sub_path);
+            const target_include_dir = try Dir.path.join(allocator, sub_path);
             var dir_stack = std.array_list.Managed([]const u8).init(allocator);
             try dir_stack.append(target_include_dir);
 
             while (dir_stack.pop()) |full_dir_name| {
-                var dir = std.fs.cwd().openDir(full_dir_name, .{ .iterate = true }) catch |err| switch (err) {
+                var dir = Dir.cwd().openDir(io, full_dir_name, .{ .iterate = true }) catch |err| switch (err) {
                     error.FileNotFound => continue :search,
                     error.AccessDenied => continue :search,
                     else => return err,
                 };
-                defer dir.close();
+                defer dir.close(io);
 
                 var dir_it = dir.iterate();
 
-                while (try dir_it.next()) |entry| {
-                    const full_path = try std.fs.path.join(allocator, &[_][]const u8{ full_dir_name, entry.name });
+                while (try dir_it.next(io)) |entry| {
+                    const full_path = try Dir.path.join(allocator, &[_][]const u8{ full_dir_name, entry.name });
                     switch (entry.kind) {
                         .directory => try dir_stack.append(full_path),
                         .file, .sym_link => {
-                            const rel_path = try std.fs.path.relative(allocator, target_include_dir, full_path);
+                            const rel_path = try Dir.path.relative(allocator, target_include_dir, full_path);
                             const max_size = 2 * 1024 * 1024 * 1024;
-                            const raw_bytes = try std.fs.cwd().readFileAlloc(full_path, allocator, .limited(max_size));
+                            const raw_bytes = try Dir.cwd().readFileAlloc(io, full_path, allocator, .limited(max_size));
                             const trimmed = std.mem.trim(u8, raw_bytes, " \r\n\t");
                             total_bytes += raw_bytes.len;
                             const hash = try allocator.alloc(u8, 32);
@@ -266,9 +273,7 @@ pub fn main() !void {
                                 max_bytes_saved += raw_bytes.len;
                                 gop.value_ptr.hit_count += 1;
                                 std.debug.print("duplicate: {s} {s} ({B})\n", .{
-                                    libc_dir,
-                                    rel_path,
-                                    raw_bytes.len,
+                                    libc_dir, rel_path, raw_bytes.len,
                                 });
                             } else {
                                 gop.value_ptr.* = Contents{
@@ -314,7 +319,7 @@ pub fn main() !void {
         total_bytes,
         total_bytes - max_bytes_saved,
     });
-    try std.fs.cwd().makePath(out_dir);
+    try Dir.cwd().createDirPath(io, out_dir);
 
     var missed_opportunity_bytes: usize = 0;
     // iterate path_table. for each path, put all the hashes into a list. sort by hit_count.
@@ -334,9 +339,9 @@ pub fn main() !void {
         const best_contents = contents_list.pop().?;
         if (best_contents.hit_count > 1) {
             // worth it to make it generic
-            const full_path = try std.fs.path.join(allocator, &[_][]const u8{ out_dir, generic_name, path_kv.key_ptr.* });
-            try std.fs.cwd().makePath(std.fs.path.dirname(full_path).?);
-            try std.fs.cwd().writeFile(.{ .sub_path = full_path, .data = best_contents.bytes });
+            const full_path = try Dir.path.join(allocator, &[_][]const u8{ out_dir, generic_name, path_kv.key_ptr.* });
+            try Dir.cwd().createDirPath(io, Dir.path.dirname(full_path).?);
+            try Dir.cwd().writeFile(io, .{ .sub_path = full_path, .data = best_contents.bytes });
             best_contents.is_generic = true;
             while (contents_list.pop()) |contender| {
                 if (contender.hit_count > 1) {
@@ -355,9 +360,9 @@ pub fn main() !void {
             if (contents.is_generic) continue;
 
             const dest_target = hash_kv.key_ptr.*;
-            const full_path = try std.fs.path.join(allocator, &[_][]const u8{ out_dir, dest_target, path_kv.key_ptr.* });
-            try std.fs.cwd().makePath(std.fs.path.dirname(full_path).?);
-            try std.fs.cwd().writeFile(.{ .sub_path = full_path, .data = contents.bytes });
+            const full_path = try Dir.path.join(allocator, &[_][]const u8{ out_dir, dest_target, path_kv.key_ptr.* });
+            try Dir.cwd().createDirPath(io, Dir.path.dirname(full_path).?);
+            try Dir.cwd().writeFile(io, .{ .sub_path = full_path, .data = contents.bytes });
         }
     }
 }

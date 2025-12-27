@@ -119,6 +119,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
     _ = options;
     const install_artifact: *InstallArtifact = @fieldParentPtr("step", step);
     const b = step.owner;
+    const io = b.graph.io;
 
     var all_cached = true;
 
@@ -163,15 +164,15 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
                 const src_dir_path = dir.source.getPath3(b, step);
                 const full_h_prefix = b.getInstallPath(h_dir, dir.dest_rel_path);
 
-                var src_dir = src_dir_path.root_dir.handle.openDir(src_dir_path.subPathOrDot(), .{ .iterate = true }) catch |err| {
+                var src_dir = src_dir_path.root_dir.handle.openDir(io, src_dir_path.subPathOrDot(), .{ .iterate = true }) catch |err| {
                     return step.fail("unable to open source directory '{f}': {s}", .{
                         src_dir_path, @errorName(err),
                     });
                 };
-                defer src_dir.close();
+                defer src_dir.close(io);
 
                 var it = try src_dir.walk(b.allocator);
-                next_entry: while (try it.next()) |entry| {
+                next_entry: while (try it.next(io)) |entry| {
                     for (dir.options.exclude_extensions) |ext| {
                         if (std.mem.endsWith(u8, entry.path, ext)) continue :next_entry;
                     }

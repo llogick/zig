@@ -21,11 +21,10 @@ pub fn deinit(si: *SelfInfo, gpa: Allocator) void {
 }
 
 pub fn getSymbol(si: *SelfInfo, gpa: Allocator, io: Io, address: usize) Error!std.debug.Symbol {
-    _ = io;
     const module = try si.findModule(gpa, address);
     defer si.mutex.unlock();
 
-    const file = try module.getFile(gpa);
+    const file = try module.getFile(gpa, io);
 
     // This is not necessarily the same as the vmaddr_slide that dyld would report. This is
     // because the segments in the file on disk might differ from the ones in memory. Normally
@@ -39,7 +38,7 @@ pub fn getSymbol(si: *SelfInfo, gpa: Allocator, io: Io, address: usize) Error!st
 
     const vaddr = address - vaddr_offset;
 
-    const ofile_dwarf, const ofile_vaddr = file.getDwarfForAddress(gpa, vaddr) catch {
+    const ofile_dwarf, const ofile_vaddr = file.getDwarfForAddress(gpa, io, vaddr) catch {
         // Return at least the symbol name if available.
         return .{
             .name = try file.lookupSymbolName(vaddr),
@@ -107,7 +106,8 @@ pub const UnwindContext = std.debug.Dwarf.SelfUnwinder;
 /// Unwind a frame using MachO compact unwind info (from `__unwind_info`).
 /// If the compact encoding can't encode a way to unwind a frame, it will
 /// defer unwinding to DWARF, in which case `__eh_frame` will be used if available.
-pub fn unwindFrame(si: *SelfInfo, gpa: Allocator, context: *UnwindContext) Error!usize {
+pub fn unwindFrame(si: *SelfInfo, gpa: Allocator, io: Io, context: *UnwindContext) Error!usize {
+    _ = io;
     return unwindFrameInner(si, gpa, context) catch |err| switch (err) {
         error.InvalidDebugInfo,
         error.MissingDebugInfo,
@@ -546,12 +546,12 @@ const Module = struct {
         };
     }
 
-    fn getFile(module: *Module, gpa: Allocator) Error!*MachOFile {
+    fn getFile(module: *Module, gpa: Allocator, io: Io) Error!*MachOFile {
         if (module.file == null) {
             const path = std.mem.span(
                 std.c.dyld_image_path_containing_address(@ptrFromInt(module.text_base)).?,
             );
-            module.file = MachOFile.load(gpa, path, builtin.cpu.arch) catch |err| switch (err) {
+            module.file = MachOFile.load(gpa, io, path, builtin.cpu.arch) catch |err| switch (err) {
                 error.InvalidMachO, error.InvalidDwarf => error.InvalidDebugInfo,
                 error.MissingDebugInfo, error.OutOfMemory, error.UnsupportedDebugInfo, error.ReadFailed => |e| e,
             };
@@ -615,14 +615,14 @@ test {
 }
 
 /// Uses `mmap` to map the file at `path` into memory.
-fn mapDebugInfoFile(path: []const u8) ![]align(std.heap.page_size_min) const u8 {
-    const file = std.fs.cwd().openFile(path, .{}) catch |err| switch (err) {
+fn mapDebugInfoFile(io: Io, path: []const u8) ![]align(std.heap.page_size_min) const u8 {
+    const file = Io.Dir.cwd().openFile(io, path, .{}) catch |err| switch (err) {
         error.FileNotFound => return error.MissingDebugInfo,
         else => return error.ReadFailed,
     };
-    defer file.close();
+    defer file.close(io);
 
-    const file_end_pos = file.getEndPos() catch |err| switch (err) {
+    const file_end_pos = file.length(io) catch |err| switch (err) {
         error.Unexpected => |e| return e,
         else => return error.ReadFailed,
     };

@@ -8,10 +8,11 @@ pub fn main() !void {
     try foo(123);
 }
 fn foo(x: u8) !void {
-    var stdout_writer = std.fs.File.stdout().writerStreaming(&.{});
+    var stdout_writer = std.Io.File.stdout().writerStreaming(io, &.{});
     return stdout_writer.interface.print("{d}\n", .{x});
 }
 const std = @import("std");
+const io = std.Io.Threaded.global_single_threaded.ioBasic();
 #expect_stdout="123\n"
 
 #update=change function type
@@ -20,10 +21,11 @@ pub fn main() !void {
     try foo(123);
 }
 fn foo(x: i64) !void {
-    var stdout_writer = std.fs.File.stdout().writerStreaming(&.{});
+    var stdout_writer = std.Io.File.stdout().writerStreaming(io, &.{});
     return stdout_writer.interface.print("{d}\n", .{x});
 }
 const std = @import("std");
+const io = std.Io.Threaded.global_single_threaded.ioBasic();
 #expect_stdout="123\n"
 
 #update=change function argument
@@ -32,8 +34,9 @@ pub fn main() !void {
     try foo(-42);
 }
 fn foo(x: i64) !void {
-    var stdout_writer = std.fs.File.stdout().writerStreaming(&.{});
+    var stdout_writer = std.Io.File.stdout().writerStreaming(io, &.{});
     return stdout_writer.interface.print("{d}\n", .{x});
 }
 const std = @import("std");
+const io = std.Io.Threaded.global_single_threaded.ioBasic();
 #expect_stdout="-42\n"

@@ -1,5 +1,7 @@
-const std = @import("std");
 const builtin = @import("builtin");
+
+const std = @import("std");
+const Io = std.Io;
 
 pub const UncheckedSliceWriter = struct {
     const Self = @This();
@@ -23,19 +25,20 @@ pub const UncheckedSliceWriter = struct {
     }
 };
 
-/// Cross-platform 'std.fs.Dir.openFile' wrapper that will always return IsDir if
+/// Cross-platform 'Io.Dir.openFile' wrapper that will always return IsDir if
 /// a directory is attempted to be opened.
 /// TODO: Remove once https://github.com/ziglang/zig/issues/5732 is addressed.
 pub fn openFileNotDir(
-    cwd: std.fs.Dir,
+    cwd: Io.Dir,
+    io: Io,
     path: []const u8,
-    flags: std.fs.File.OpenFlags,
-) (std.fs.File.OpenError || std.fs.File.StatError)!std.fs.File {
-    const file = try cwd.openFile(path, flags);
-    errdefer file.close();
+    flags: Io.File.OpenFlags,
+) (Io.File.OpenError || Io.File.StatError)!Io.File {
+    const file = try cwd.openFile(io, path, flags);
+    errdefer file.close(io);
     // https://github.com/ziglang/zig/issues/5732
     if (builtin.os.tag != .windows) {
-        const stat = try file.stat();
+        const stat = try file.stat(io);
 
         if (stat.kind == .directory)
             return error.IsDir;
@@ -89,31 +92,32 @@ pub const ErrorMessageType = enum { err, warning, note };
 
 /// Used for generic colored errors/warnings/notes, more context-specific error messages
 /// are handled elsewhere.
-pub fn renderErrorMessage(writer: *std.Io.Writer, config: std.Io.tty.Config, msg_type: ErrorMessageType, comptime format: []const u8, args: anytype) !void {
+pub fn renderErrorMessage(t: Io.Terminal, msg_type: ErrorMessageType, comptime format: []const u8, args: anytype) !void {
+    const writer = t.writer;
     switch (msg_type) {
         .err => {
-            try config.setColor(writer, .bold);
-            try config.setColor(writer, .red);
+            try t.setColor(.bold);
+            try t.setColor(.red);
             try writer.writeAll("error: ");
         },
         .warning => {
-            try config.setColor(writer, .bold);
-            try config.setColor(writer, .yellow);
+            try t.setColor(.bold);
+            try t.setColor(.yellow);
             try writer.writeAll("warning: ");
         },
         .note => {
-            try config.setColor(writer, .reset);
-            try config.setColor(writer, .cyan);
+            try t.setColor(.reset);
+            try t.setColor(.cyan);
             try writer.writeAll("note: ");
         },
     }
-    try config.setColor(writer, .reset);
+    try t.setColor(.reset);
     if (msg_type == .err) {
-        try config.setColor(writer, .bold);
+        try t.setColor(.bold);
     }
     try writer.print(format, args);
     try writer.writeByte('\n');
-    try config.setColor(writer, .reset);
+    try t.setColor(.reset);
 }
 
 pub fn isLineEndingPair(first: u8, second: u8) bool {

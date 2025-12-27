@@ -11,17 +11,17 @@
 //!  * In the future, possibly inline assembly, which needs to get parsed and
 //!    handled by the codegen backend, and errors reported there. However for now,
 //!    inline assembly is not an exception.
+const Zir = @This();
+const builtin = @import("builtin");
 
 const std = @import("std");
-const builtin = @import("builtin");
+const Io = std.Io;
 const mem = std.mem;
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 const BigIntConst = std.math.big.int.Const;
 const BigIntMutable = std.math.big.int.Mutable;
 const Ast = std.zig.Ast;
-
-const Zir = @This();
 
 instructions: std.MultiArrayList(Inst).Slice,
 /// In order to store references to strings in fewer bytes, we copy all
@@ -45,7 +45,7 @@ pub const Header = extern struct {
     /// it's essentially free to have a zero field here and makes the warning go away,
     /// making it more likely that following Valgrind warnings will be taken seriously.
     unused: u32 = 0,
-    stat_inode: std.fs.File.INode,
+    stat_inode: Io.File.INode,
     stat_size: u64,
     stat_mtime: i128,
 };

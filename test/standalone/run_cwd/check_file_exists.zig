@@ -8,7 +8,9 @@ pub fn main() !void {
     if (args.len != 2) return error.BadUsage;
     const path = args[1];
 
-    std.fs.cwd().access(path, .{}) catch return error.AccessFailed;
+    const io = std.Io.Threaded.global_single_threaded.ioBasic();
+
+    std.Io.Dir.cwd().access(io, path, .{}) catch return error.AccessFailed;
 }
 
 const std = @import("std");

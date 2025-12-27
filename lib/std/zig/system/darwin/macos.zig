@@ -1,14 +1,15 @@
-const std = @import("std");
 const builtin = @import("builtin");
+
+const std = @import("std");
+const Io = std.Io;
 const assert = std.debug.assert;
 const mem = std.mem;
 const testing = std.testing;
-
 const Target = std.Target;
 
 /// Detect macOS version.
 /// `target_os` is not modified in case of error.
-pub fn detect(target_os: *Target.Os) !void {
+pub fn detect(io: Io, target_os: *Target.Os) !void {
     // Drop use of osproductversion sysctl because:
     //   1. only available 10.13.4 High Sierra and later
     //   2. when used from a binary built against < SDK 11.0 it returns 10.16 and masks Big Sur 11.x version
@@ -54,7 +55,7 @@ pub fn detect(target_os: *Target.Os) !void {
         // approx. 4 times historical file size
         var buf: [2048]u8 = undefined;
 
-        if (std.fs.cwd().readFile(path, &buf)) |bytes| {
+        if (Io.Dir.cwd().readFile(io, path, &buf)) |bytes| {
             if (parseSystemVersion(bytes)) |ver| {
                 // never return non-canonical `10.(16+)`
                 if (!(ver.major == 10 and ver.minor >= 16)) {

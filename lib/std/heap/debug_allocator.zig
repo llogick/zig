@@ -84,7 +84,7 @@ const builtin = @import("builtin");
 const StackTrace = std.builtin.StackTrace;
 
 const std = @import("std");
-const log = std.log.scoped(.gpa);
+const log = std.log.scoped(.DebugAllocator);
 const math = std.math;
 const assert = std.debug.assert;
 const mem = std.mem;
@@ -425,7 +425,6 @@ pub fn DebugAllocator(comptime config: Config) type {
             bucket: *BucketHeader,
             size_class_index: usize,
             used_bits_count: usize,
-            tty_config: std.Io.tty.Config,
         ) usize {
             const size_class = @as(usize, 1) << @as(Log2USize, @intCast(size_class_index));
             const slot_count = slot_counts[size_class_index];
@@ -445,7 +444,7 @@ pub fn DebugAllocator(comptime config: Config) type {
                                 addr,
                                 std.debug.FormatStackTrace{
                                     .stack_trace = stack_trace,
-                                    .tty_config = tty_config,
+                                    .terminal_mode = std.log.terminalMode(),
                                 },
                             });
                             leaks += 1;
@@ -460,14 +459,12 @@ pub fn DebugAllocator(comptime config: Config) type {
         pub fn detectLeaks(self: *Self) usize {
             var leaks: usize = 0;
 
-            const tty_config: std.Io.tty.Config = .detect(.stderr());
-
             for (self.buckets, 0..) |init_optional_bucket, size_class_index| {
                 var optional_bucket = init_optional_bucket;
                 const slot_count = slot_counts[size_class_index];
                 const used_bits_count = usedBitsCount(slot_count);
                 while (optional_bucket) |bucket| {
-                    leaks += detectLeaksInBucket(bucket, size_class_index, used_bits_count, tty_config);
+                    leaks += detectLeaksInBucket(bucket, size_class_index, used_bits_count);
                     optional_bucket = bucket.prev;
                 }
             }
@@ -480,7 +477,7 @@ pub fn DebugAllocator(comptime config: Config) type {
                     @intFromPtr(large_alloc.bytes.ptr),
                     std.debug.FormatStackTrace{
                         .stack_trace = stack_trace,
-                        .tty_config = tty_config,
+                        .terminal_mode = std.log.terminalMode(),
                     },
                 });
                 leaks += 1;
@@ -534,21 +531,21 @@ pub fn DebugAllocator(comptime config: Config) type {
         }
 
         fn reportDoubleFree(ret_addr: usize, alloc_stack_trace: StackTrace, free_stack_trace: StackTrace) void {
+            @branchHint(.cold);
             var addr_buf: [stack_n]usize = undefined;
             const second_free_stack_trace = std.debug.captureCurrentStackTrace(.{ .first_address = ret_addr }, &addr_buf);
-            const tty_config: std.Io.tty.Config = .detect(.stderr());
             log.err("Double free detected. Allocation: {f} First free: {f} Second free: {f}", .{
                 std.debug.FormatStackTrace{
                     .stack_trace = alloc_stack_trace,
-                    .tty_config = tty_config,
+                    .terminal_mode = std.log.terminalMode(),
                 },
                 std.debug.FormatStackTrace{
                     .stack_trace = free_stack_trace,
-                    .tty_config = tty_config,
+                    .terminal_mode = std.log.terminalMode(),
                 },
                 std.debug.FormatStackTrace{
                     .stack_trace = second_free_stack_trace,
-                    .tty_config = tty_config,
+                    .terminal_mode = std.log.terminalMode(),
                 },
             });
         }
@@ -588,19 +585,19 @@ pub fn DebugAllocator(comptime config: Config) type {
             }
 
             if (config.safety and old_mem.len != entry.value_ptr.bytes.len) {
+                @branchHint(.cold);
                 var addr_buf: [stack_n]usize = undefined;
                 const free_stack_trace = std.debug.captureCurrentStackTrace(.{ .first_address = ret_addr }, &addr_buf);
-                const tty_config: std.Io.tty.Config = .detect(.stderr());
                 log.err("Allocation size {d} bytes does not match free size {d}. Allocation: {f} Free: {f}", .{
                     entry.value_ptr.bytes.len,
                     old_mem.len,
                     std.debug.FormatStackTrace{
                         .stack_trace = entry.value_ptr.getStackTrace(.alloc),
-                        .tty_config = tty_config,
+                        .terminal_mode = std.log.terminalMode(),
                     },
                     std.debug.FormatStackTrace{
                         .stack_trace = free_stack_trace,
-                        .tty_config = tty_config,
+                        .terminal_mode = std.log.terminalMode(),
                     },
                 });
             }
@@ -701,19 +698,19 @@ pub fn DebugAllocator(comptime config: Config) type {
             }
 
             if (config.safety and old_mem.len != entry.value_ptr.bytes.len) {
+                @branchHint(.cold);
                 var addr_buf: [stack_n]usize = undefined;
                 const free_stack_trace = std.debug.captureCurrentStackTrace(.{ .first_address = ret_addr }, &addr_buf);
-                const tty_config: std.Io.tty.Config = .detect(.stderr());
                 log.err("Allocation size {d} bytes does not match free size {d}. Allocation: {f} Free: {f}", .{
                     entry.value_ptr.bytes.len,
                     old_mem.len,
                     std.debug.FormatStackTrace{
                         .stack_trace = entry.value_ptr.getStackTrace(.alloc),
-                        .tty_config = tty_config,
+                        .terminal_mode = std.log.terminalMode(),
                     },
                     std.debug.FormatStackTrace{
                         .stack_trace = free_stack_trace,
-                        .tty_config = tty_config,
+                        .terminal_mode = std.log.terminalMode(),
                     },
                 });
             }
@@ -935,32 +932,32 @@ pub fn DebugAllocator(comptime config: Config) type {
                     var addr_buf: [stack_n]usize = undefined;
                     const free_stack_trace = std.debug.captureCurrentStackTrace(.{ .first_address = return_address }, &addr_buf);
                     if (old_memory.len != requested_size) {
-                        const tty_config: std.Io.tty.Config = .detect(.stderr());
+                        @branchHint(.cold);
                         log.err("Allocation size {d} bytes does not match free size {d}. Allocation: {f} Free: {f}", .{
                             requested_size,
                             old_memory.len,
                             std.debug.FormatStackTrace{
                                 .stack_trace = bucketStackTrace(bucket, slot_count, slot_index, .alloc),
-                                .tty_config = tty_config,
+                                .terminal_mode = std.log.terminalMode(),
                             },
                             std.debug.FormatStackTrace{
                                 .stack_trace = free_stack_trace,
-                                .tty_config = tty_config,
+                                .terminal_mode = std.log.terminalMode(),
                             },
                         });
                     }
                     if (alignment != slot_alignment) {
-                        const tty_config: std.Io.tty.Config = .detect(.stderr());
+                        @branchHint(.cold);
                         log.err("Allocation alignment {d} does not match free alignment {d}. Allocation: {f} Free: {f}", .{
                             slot_alignment.toByteUnits(),
                             alignment.toByteUnits(),
                             std.debug.FormatStackTrace{
                                 .stack_trace = bucketStackTrace(bucket, slot_count, slot_index, .alloc),
-                                .tty_config = tty_config,
+                                .terminal_mode = std.log.terminalMode(),
                             },
                             std.debug.FormatStackTrace{
                                 .stack_trace = free_stack_trace,
-                                .tty_config = tty_config,
+                                .terminal_mode = std.log.terminalMode(),
                             },
                         });
                     }
@@ -1044,32 +1041,32 @@ pub fn DebugAllocator(comptime config: Config) type {
                 var addr_buf: [stack_n]usize = undefined;
                 const free_stack_trace = std.debug.captureCurrentStackTrace(.{ .first_address = return_address }, &addr_buf);
                 if (memory.len != requested_size) {
-                    const tty_config: std.Io.tty.Config = .detect(.stderr());
+                    @branchHint(.cold);
                     log.err("Allocation size {d} bytes does not match free size {d}. Allocation: {f} Free: {f}", .{
                         requested_size,
                         memory.len,
                         std.debug.FormatStackTrace{
                             .stack_trace = bucketStackTrace(bucket, slot_count, slot_index, .alloc),
-                            .tty_config = tty_config,
+                            .terminal_mode = std.log.terminalMode(),
                         },
                         std.debug.FormatStackTrace{
                             .stack_trace = free_stack_trace,
-                            .tty_config = tty_config,
+                            .terminal_mode = std.log.terminalMode(),
                         },
                     });
                 }
                 if (alignment != slot_alignment) {
-                    const tty_config: std.Io.tty.Config = .detect(.stderr());
+                    @branchHint(.cold);
                     log.err("Allocation alignment {d} does not match free alignment {d}. Allocation: {f} Free: {f}", .{
                         slot_alignment.toByteUnits(),
                         alignment.toByteUnits(),
                         std.debug.FormatStackTrace{
                             .stack_trace = bucketStackTrace(bucket, slot_count, slot_index, .alloc),
-                            .tty_config = tty_config,
+                            .terminal_mode = std.log.terminalMode(),
                         },
                         std.debug.FormatStackTrace{
                             .stack_trace = free_stack_trace,
-                            .tty_config = tty_config,
+                            .terminal_mode = std.log.terminalMode(),
                         },
                     });
                 }

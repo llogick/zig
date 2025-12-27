@@ -15,6 +15,8 @@
 //! You'll then have to manually update Zig source repo with these new files.
 
 const std = @import("std");
+const Io = std.Io;
+const Dir = std.Io.Dir;
 const Arch = std.Target.Cpu.Arch;
 const Abi = std.Target.Abi;
 const assert = std.debug.assert;
@@ -142,6 +144,11 @@ const PathTable = std.StringHashMap(*TargetToHash);
 pub fn main() !void {
     var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const arena = arena_state.allocator();
+
+    var threaded: Io.Threaded = .init(arena, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
     const args = try std.process.argsAlloc(arena);
     var search_paths = std.array_list.Managed([]const u8).init(arena);
     var opt_out_dir: ?[]const u8 = null;
@@ -183,30 +190,30 @@ pub fn main() !void {
             .arch = linux_target.arch,
         };
         search: for (search_paths.items) |search_path| {
-            const target_include_dir = try std.fs.path.join(arena, &.{
+            const target_include_dir = try Dir.path.join(arena, &.{
                 search_path, linux_target.name, "include",
             });
             var dir_stack = std.array_list.Managed([]const u8).init(arena);
             try dir_stack.append(target_include_dir);
 
             while (dir_stack.pop()) |full_dir_name| {
-                var dir = std.fs.cwd().openDir(full_dir_name, .{ .iterate = true }) catch |err| switch (err) {
+                var dir = Dir.cwd().openDir(io, full_dir_name, .{ .iterate = true }) catch |err| switch (err) {
                     error.FileNotFound => continue :search,
                     error.AccessDenied => continue :search,
                     else => return err,
                 };
-                defer dir.close();
+                defer dir.close(io);
 
                 var dir_it = dir.iterate();
 
-                while (try dir_it.next()) |entry| {
-                    const full_path = try std.fs.path.join(arena, &[_][]const u8{ full_dir_name, entry.name });
+                while (try dir_it.next(io)) |entry| {
+                    const full_path = try Dir.path.join(arena, &[_][]const u8{ full_dir_name, entry.name });
                     switch (entry.kind) {
                         .directory => try dir_stack.append(full_path),
                         .file => {
-                            const rel_path = try std.fs.path.relative(arena, target_include_dir, full_path);
+                            const rel_path = try Dir.path.relative(arena, target_include_dir, full_path);
                             const max_size = 2 * 1024 * 1024 * 1024;
-                            const raw_bytes = try std.fs.cwd().readFileAlloc(full_path, arena, .limited(max_size));
+                            const raw_bytes = try Dir.cwd().readFileAlloc(io, full_path, arena, .limited(max_size));
                             const trimmed = std.mem.trim(u8, raw_bytes, " \r\n\t");
                             total_bytes += raw_bytes.len;
                             const hash = try arena.alloc(u8, 32);
@@ -253,7 +260,7 @@ pub fn main() !void {
         total_bytes,
         total_bytes - max_bytes_saved,
     });
-    try std.fs.cwd().makePath(out_dir);
+    try Dir.cwd().createDirPath(io, out_dir);
 
     var missed_opportunity_bytes: usize = 0;
     // iterate path_table. for each path, put all the hashes into a list. sort by hit_count.
@@ -273,9 +280,9 @@ pub fn main() !void {
         const best_contents = contents_list.pop().?;
         if (best_contents.hit_count > 1) {
             // worth it to make it generic
-            const full_path = try std.fs.path.join(arena, &[_][]const u8{ out_dir, generic_name, path_kv.key_ptr.* });
-            try std.fs.cwd().makePath(std.fs.path.dirname(full_path).?);
-            try std.fs.cwd().writeFile(.{ .sub_path = full_path, .data = best_contents.bytes });
+            const full_path = try Dir.path.join(arena, &[_][]const u8{ out_dir, generic_name, path_kv.key_ptr.* });
+            try Dir.cwd().createDirPath(io, Dir.path.dirname(full_path).?);
+            try Dir.cwd().writeFile(io, .{ .sub_path = full_path, .data = best_contents.bytes });
             best_contents.is_generic = true;
             while (contents_list.pop()) |contender| {
                 if (contender.hit_count > 1) {
@@ -299,9 +306,9 @@ pub fn main() !void {
                 else => @tagName(dest_target.arch),
             };
             const out_subpath = try std.fmt.allocPrint(arena, "{s}-linux-any", .{arch_name});
-            const full_path = try std.fs.path.join(arena, &[_][]const u8{ out_dir, out_subpath, path_kv.key_ptr.* });
-            try std.fs.cwd().makePath(std.fs.path.dirname(full_path).?);
-            try std.fs.cwd().writeFile(.{ .sub_path = full_path, .data = contents.bytes });
+            const full_path = try Dir.path.join(arena, &[_][]const u8{ out_dir, out_subpath, path_kv.key_ptr.* });
+            try Dir.cwd().createDirPath(io, Dir.path.dirname(full_path).?);
+            try Dir.cwd().writeFile(io, .{ .sub_path = full_path, .data = contents.bytes });
         }
     }
 
@@ -316,8 +323,8 @@ pub fn main() !void {
         "any-linux-any/linux/netfilter_ipv6/ip6t_HL.h",
     };
     for (bad_files) |bad_file| {
-        const full_path = try std.fs.path.join(arena, &[_][]const u8{ out_dir, bad_file });
-        try std.fs.cwd().deleteFile(full_path);
+        const full_path = try Dir.path.join(arena, &[_][]const u8{ out_dir, bad_file });
+        try Dir.cwd().deleteFile(io, full_path);
     }
 }
 

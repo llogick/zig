@@ -1,21 +1,20 @@
+const Build = @This();
 const builtin = @import("builtin");
 
 const std = @import("std.zig");
 const Io = std.Io;
 const fs = std.fs;
 const mem = std.mem;
-const debug = std.debug;
 const panic = std.debug.panic;
-const assert = debug.assert;
+const assert = std.debug.assert;
 const log = std.log;
 const StringHashMap = std.StringHashMap;
-const Allocator = mem.Allocator;
+const Allocator = std.mem.Allocator;
 const Target = std.Target;
 const process = std.process;
 const EnvMap = std.process.EnvMap;
-const File = fs.File;
+const File = std.Io.File;
 const Sha256 = std.crypto.hash.sha2.Sha256;
-const Build = @This();
 const ArrayList = std.ArrayList;
 
 pub const Cache = @import("Build/Cache.zig");
@@ -130,6 +129,9 @@ pub const Graph = struct {
     dependency_cache: InitializedDepMap = .empty,
     allow_so_scripts: ?bool = null,
     time_report: bool,
+    /// Similar to the `Io.Terminal.Mode` returned by `Io.lockStderr`, but also
+    /// respects the '--color' flag.
+    stderr_mode: ?Io.Terminal.Mode = null,
 };
 
 const AvailableDeps = []const struct { []const u8, []const u8 };
@@ -1699,21 +1701,20 @@ pub fn addCheckFile(
     return Step.CheckFile.create(b, file_source, options);
 }
 
-pub fn truncateFile(b: *Build, dest_path: []const u8) (fs.Dir.MakeError || fs.Dir.StatFileError)!void {
-    if (b.verbose) {
-        log.info("truncate {s}", .{dest_path});
-    }
-    const cwd = fs.cwd();
-    var src_file = cwd.createFile(dest_path, .{}) catch |err| switch (err) {
+pub fn truncateFile(b: *Build, dest_path: []const u8) (Io.Dir.CreateDirError || Io.Dir.StatFileError)!void {
+    const io = b.graph.io;
+    if (b.verbose) log.info("truncate {s}", .{dest_path});
+    const cwd = Io.Dir.cwd();
+    var src_file = cwd.createFile(io, dest_path, .{}) catch |err| switch (err) {
         error.FileNotFound => blk: {
             if (fs.path.dirname(dest_path)) |dirname| {
-                try cwd.makePath(dirname);
+                try cwd.createDirPath(io, dirname);
             }
-            break :blk try cwd.createFile(dest_path, .{});
+            break :blk try cwd.createFile(io, dest_path, .{});
         },
         else => |e| return e,
     };
-    src_file.close();
+    src_file.close(io);
 }
 
 /// References a file or directory relative to the source root.
@@ -1761,7 +1762,10 @@ fn supportedWindowsProgramExtension(ext: []const u8) bool {
 }
 
 fn tryFindProgram(b: *Build, full_path: []const u8) ?[]const u8 {
-    if (fs.realpathAlloc(b.allocator, full_path)) |p| {
+    const io = b.graph.io;
+    const arena = b.allocator;
+
+    if (Io.Dir.realPathFileAbsoluteAlloc(io, full_path, arena)) |p| {
         return p;
     } else |err| switch (err) {
         error.OutOfMemory => @panic("OOM"),
@@ -1775,7 +1779,11 @@ fn tryFindProgram(b: *Build, full_path: []const u8) ?[]const u8 {
             while (it.next()) |ext| {
                 if (!supportedWindowsProgramExtension(ext)) continue;
 
-                return fs.realpathAlloc(b.allocator, b.fmt("{s}{s}", .{ full_path, ext })) catch |err| switch (err) {
+                return Io.Dir.realPathFileAbsoluteAlloc(
+                    io,
+                    b.fmt("{s}{s}", .{ full_path, ext }),
+                    arena,
+                ) catch |err| switch (err) {
                     error.OutOfMemory => @panic("OOM"),
                     else => continue,
                 };
@@ -1839,7 +1847,7 @@ pub fn runAllowFail(
     child.env_map = &b.graph.env_map;
 
     try Step.handleVerbose2(b, null, child.env_map, argv);
-    try child.spawn();
+    try child.spawn(io);
 
     var stdout_reader = child.stdout.?.readerStreaming(io, &.{});
     const stdout = stdout_reader.interface.allocRemaining(b.allocator, .limited(max_output_size)) catch {
@@ -1847,7 +1855,7 @@ pub fn runAllowFail(
     };
     errdefer b.allocator.free(stdout);
 
-    const term = try child.wait();
+    const term = try child.wait(io);
     switch (term) {
         .Exited => |code| {
             if (code != 0) {
@@ -2091,7 +2099,7 @@ pub fn dependencyFromBuildZig(
     }
 
     const full_path = b.pathFromRoot("build.zig.zon");
-    debug.panic("'{}' is not a build.zig struct of a dependency in '{s}'", .{ build_zig, full_path });
+    std.debug.panic("'{}' is not a build.zig struct of a dependency in '{s}'", .{ build_zig, full_path });
 }
 
 fn userValuesAreSame(lhs: UserValue, rhs: UserValue) bool {
@@ -2185,6 +2193,7 @@ fn dependencyInner(
     pkg_deps: AvailableDeps,
     args: anytype,
 ) *Dependency {
+    const io = b.graph.io;
     const user_input_options = userInputOptionsFromArgs(b.allocator, args);
     if (b.graph.dependency_cache.getContext(.{
         .build_root_string = build_root_string,
@@ -2194,7 +2203,7 @@ fn dependencyInner(
 
     const build_root: std.Build.Cache.Directory = .{
         .path = build_root_string,
-        .handle = fs.cwd().openDir(build_root_string, .{}) catch |err| {
+        .handle = Io.Dir.cwd().openDir(io, build_root_string, .{}) catch |err| {
             std.debug.print("unable to open '{s}': {s}\n", .{
                 build_root_string, @errorName(err),
             });
@@ -2239,7 +2248,7 @@ pub const GeneratedFile = struct {
     /// This value must be set in the `fn make()` of the `step` and must not be `null` afterwards.
     path: ?[]const u8 = null,
 
-    /// Deprecated, see `getPath2`.
+    /// Deprecated, see `getPath3`.
     pub fn getPath(gen: GeneratedFile) []const u8 {
         return gen.step.owner.pathFromCwd(gen.path orelse std.debug.panic(
             "getPath() was called on a GeneratedFile that wasn't built yet. Is there a missing Step dependency on step '{s}'?",
@@ -2247,11 +2256,19 @@ pub const GeneratedFile = struct {
         ));
     }
 
+    /// Deprecated, see `getPath3`.
     pub fn getPath2(gen: GeneratedFile, src_builder: *Build, asking_step: ?*Step) []const u8 {
+        return getPath3(gen, src_builder, asking_step) catch |err| switch (err) {
+            error.Canceled => std.process.exit(1),
+        };
+    }
+
+    pub fn getPath3(gen: GeneratedFile, src_builder: *Build, asking_step: ?*Step) Io.Cancelable![]const u8 {
         return gen.path orelse {
-            const w, const ttyconf = debug.lockStderrWriter(&.{});
-            dumpBadGetPathHelp(gen.step, w, ttyconf, src_builder, asking_step) catch {};
-            debug.unlockStderrWriter();
+            const graph = gen.step.owner.graph;
+            const io = graph.io;
+            const stderr = try io.lockStderr(&.{}, graph.stderr_mode);
+            dumpBadGetPathHelp(gen.step, stderr.terminal(), src_builder, asking_step) catch {};
             @panic("misconfigured build script");
         };
     }
@@ -2426,22 +2443,29 @@ pub const LazyPath = union(enum) {
         }
     }
 
-    /// Deprecated, see `getPath3`.
+    /// Deprecated, see `getPath4`.
     pub fn getPath(lazy_path: LazyPath, src_builder: *Build) []const u8 {
         return getPath2(lazy_path, src_builder, null);
     }
 
-    /// Deprecated, see `getPath3`.
+    /// Deprecated, see `getPath4`.
     pub fn getPath2(lazy_path: LazyPath, src_builder: *Build, asking_step: ?*Step) []const u8 {
         const p = getPath3(lazy_path, src_builder, asking_step);
         return src_builder.pathResolve(&.{ p.root_dir.path orelse ".", p.sub_path });
+    }
+
+    /// Deprecated, see `getPath4`.
+    pub fn getPath3(lazy_path: LazyPath, src_builder: *Build, asking_step: ?*Step) Cache.Path {
+        return getPath4(lazy_path, src_builder, asking_step) catch |err| switch (err) {
+            error.Canceled => std.process.exit(1),
+        };
     }
 
     /// Intended to be used during the make phase only.
     ///
     /// `asking_step` is only used for debugging purposes; it's the step being
     /// run that is asking for the path.
-    pub fn getPath3(lazy_path: LazyPath, src_builder: *Build, asking_step: ?*Step) Cache.Path {
+    pub fn getPath4(lazy_path: LazyPath, src_builder: *Build, asking_step: ?*Step) Io.Cancelable!Cache.Path {
         switch (lazy_path) {
             .src_path => |sp| return .{
                 .root_dir = sp.owner.build_root,
@@ -2455,12 +2479,15 @@ pub const LazyPath = union(enum) {
                 // TODO make gen.file.path not be absolute and use that as the
                 // basis for not traversing up too many directories.
 
+                const graph = src_builder.graph;
+
                 var file_path: Cache.Path = .{
                     .root_dir = Cache.Directory.cwd(),
                     .sub_path = gen.file.path orelse {
-                        const w, const ttyconf = debug.lockStderrWriter(&.{});
-                        dumpBadGetPathHelp(gen.file.step, w, ttyconf, src_builder, asking_step) catch {};
-                        debug.unlockStderrWriter();
+                        const io = graph.io;
+                        const stderr = try io.lockStderr(&.{}, graph.stderr_mode);
+                        dumpBadGetPathHelp(gen.file.step, stderr.terminal(), src_builder, asking_step) catch {};
+                        io.unlockStderr();
                         @panic("misconfigured build script");
                     },
                 };
@@ -2550,40 +2577,36 @@ fn dumpBadDirnameHelp(
     comptime msg: []const u8,
     args: anytype,
 ) anyerror!void {
-    const w, const tty_config = debug.lockStderrWriter(&.{});
-    defer debug.unlockStderrWriter();
+    const stderr = std.debug.lockStderr(&.{}).terminal();
+    defer std.debug.unlockStderr();
+    const w = stderr.writer;
 
     try w.print(msg, args);
 
     if (fail_step) |s| {
-        tty_config.setColor(w, .red) catch {};
+        stderr.setColor(.red) catch {};
         try w.writeAll("    The step was created by this stack trace:\n");
-        tty_config.setColor(w, .reset) catch {};
+        stderr.setColor(.reset) catch {};
 
-        s.dump(w, tty_config);
+        s.dump(stderr);
     }
 
     if (asking_step) |as| {
-        tty_config.setColor(w, .red) catch {};
+        stderr.setColor(.red) catch {};
         try w.print("    The step '{s}' that is missing a dependency on the above step was created by this stack trace:\n", .{as.name});
-        tty_config.setColor(w, .reset) catch {};
+        stderr.setColor(.reset) catch {};
 
-        as.dump(w, tty_config);
+        as.dump(stderr);
     }
 
-    tty_config.setColor(w, .red) catch {};
-    try w.writeAll("    Hope that helps. Proceeding to panic.\n");
-    tty_config.setColor(w, .reset) catch {};
+    stderr.setColor(.red) catch {};
+    try w.writeAll("    Proceeding to panic.\n");
+    stderr.setColor(.reset) catch {};
 }
 
 /// In this function the stderr mutex has already been locked.
-pub fn dumpBadGetPathHelp(
-    s: *Step,
-    w: *std.Io.Writer,
-    tty_config: std.Io.tty.Config,
-    src_builder: *Build,
-    asking_step: ?*Step,
-) anyerror!void {
+pub fn dumpBadGetPathHelp(s: *Step, t: Io.Terminal, src_builder: *Build, asking_step: ?*Step) anyerror!void {
+    const w = t.writer;
     try w.print(
         \\getPath() was called on a GeneratedFile that wasn't built yet.
         \\  source package path: {s}
@@ -2594,21 +2617,21 @@ pub fn dumpBadGetPathHelp(
         s.name,
     });
 
-    tty_config.setColor(w, .red) catch {};
+    t.setColor(.red) catch {};
     try w.writeAll("    The step was created by this stack trace:\n");
-    tty_config.setColor(w, .reset) catch {};
+    t.setColor(.reset) catch {};
 
-    s.dump(w, tty_config);
+    s.dump(t);
     if (asking_step) |as| {
-        tty_config.setColor(w, .red) catch {};
+        t.setColor(.red) catch {};
         try w.print("    The step '{s}' that is missing a dependency on the above step was created by this stack trace:\n", .{as.name});
-        tty_config.setColor(w, .reset) catch {};
+        t.setColor(.reset) catch {};
 
-        as.dump(w, tty_config);
+        as.dump(t);
     }
-    tty_config.setColor(w, .red) catch {};
-    try w.writeAll("    Hope that helps. Proceeding to panic.\n");
-    tty_config.setColor(w, .reset) catch {};
+    t.setColor(.red) catch {};
+    try w.writeAll("    Proceeding to panic.\n");
+    t.setColor(.reset) catch {};
 }
 
 pub const InstallDir = union(enum) {
@@ -2634,13 +2657,12 @@ pub const InstallDir = union(enum) {
 /// source of API breakage in the future, so keep that in mind when using this
 /// function.
 pub fn makeTempPath(b: *Build) []const u8 {
+    const io = b.graph.io;
     const rand_int = std.crypto.random.int(u64);
     const tmp_dir_sub_path = "tmp" ++ fs.path.sep_str ++ std.fmt.hex(rand_int);
     const result_path = b.cache_root.join(b.allocator, &.{tmp_dir_sub_path}) catch @panic("OOM");
-    b.cache_root.handle.makePath(tmp_dir_sub_path) catch |err| {
-        std.debug.print("unable to make tmp path '{s}': {s}\n", .{
-            result_path, @errorName(err),
-        });
+    b.cache_root.handle.createDirPath(io, tmp_dir_sub_path) catch |err| {
+        std.debug.print("unable to make tmp path '{s}': {t}\n", .{ result_path, err });
     };
     return result_path;
 }

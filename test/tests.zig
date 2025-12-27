@@ -187,29 +187,30 @@ const test_targets = blk: {
             .link_libc = true,
         },
 
-        .{
-            .target = .{
-                .cpu_arch = .aarch64,
-                .os_tag = .linux,
-                .abi = .none,
-            },
-            .use_llvm = false,
-            .use_lld = false,
-            .optimize_mode = .ReleaseFast,
-            .strip = true,
-        },
-        .{
-            .target = .{
-                .cpu_arch = .aarch64,
-                .cpu_model = .{ .explicit = &std.Target.aarch64.cpu.neoverse_n1 },
-                .os_tag = .linux,
-                .abi = .none,
-            },
-            .use_llvm = false,
-            .use_lld = false,
-            .optimize_mode = .ReleaseFast,
-            .strip = true,
-        },
+        // Disabled due to https://codeberg.org/ziglang/zig/pulls/30232#issuecomment-9203351
+        //.{
+        //    .target = .{
+        //        .cpu_arch = .aarch64,
+        //        .os_tag = .linux,
+        //        .abi = .none,
+        //    },
+        //    .use_llvm = false,
+        //    .use_lld = false,
+        //    .optimize_mode = .ReleaseFast,
+        //    .strip = true,
+        //},
+        //.{
+        //    .target = .{
+        //        .cpu_arch = .aarch64,
+        //        .cpu_model = .{ .explicit = &std.Target.aarch64.cpu.neoverse_n1 },
+        //        .os_tag = .linux,
+        //        .abi = .none,
+        //    },
+        //    .use_llvm = false,
+        //    .use_lld = false,
+        //    .optimize_mode = .ReleaseFast,
+        //    .strip = true,
+        //},
 
         .{
             .target = .{
@@ -1204,17 +1205,18 @@ const test_targets = blk: {
             },
         },
 
-        .{
-            .target = .{
-                .cpu_arch = .aarch64,
-                .os_tag = .macos,
-                .abi = .none,
-            },
-            .use_llvm = false,
-            .use_lld = false,
-            .optimize_mode = .ReleaseFast,
-            .strip = true,
-        },
+        // Disabled due to https://codeberg.org/ziglang/zig/pulls/30232#issuecomment-9203351
+        //.{
+        //    .target = .{
+        //        .cpu_arch = .aarch64,
+        //        .os_tag = .macos,
+        //        .abi = .none,
+        //    },
+        //    .use_llvm = false,
+        //    .use_lld = false,
+        //    .optimize_mode = .ReleaseFast,
+        //    .strip = true,
+        //},
 
         .{
             .target = .{
@@ -2024,6 +2026,7 @@ pub fn addLinkTests(
 pub fn addCliTests(b: *std.Build) *Step {
     const step = b.step("test-cli", "Test the command line interface");
     const s = std.fs.path.sep_str;
+    const io = b.graph.io;
 
     {
         // Test `zig init`.
@@ -2132,14 +2135,14 @@ pub fn addCliTests(b: *std.Build) *Step {
         const tmp_path = b.makeTempPath();
         const unformatted_code = "    // no reason for indent";
 
-        var dir = std.fs.cwd().openDir(tmp_path, .{}) catch @panic("unhandled");
-        defer dir.close();
-        dir.writeFile(.{ .sub_path = "fmt1.zig", .data = unformatted_code }) catch @panic("unhandled");
-        dir.writeFile(.{ .sub_path = "fmt2.zig", .data = unformatted_code }) catch @panic("unhandled");
-        dir.makeDir("subdir") catch @panic("unhandled");
-        var subdir = dir.openDir("subdir", .{}) catch @panic("unhandled");
-        defer subdir.close();
-        subdir.writeFile(.{ .sub_path = "fmt3.zig", .data = unformatted_code }) catch @panic("unhandled");
+        var dir = std.Io.Dir.cwd().openDir(io, tmp_path, .{}) catch @panic("unhandled");
+        defer dir.close(io);
+        dir.writeFile(io, .{ .sub_path = "fmt1.zig", .data = unformatted_code }) catch @panic("unhandled");
+        dir.writeFile(io, .{ .sub_path = "fmt2.zig", .data = unformatted_code }) catch @panic("unhandled");
+        dir.createDir(io, "subdir", .default_dir) catch @panic("unhandled");
+        var subdir = dir.openDir(io, "subdir", .{}) catch @panic("unhandled");
+        defer subdir.close(io);
+        subdir.writeFile(io, .{ .sub_path = "fmt3.zig", .data = unformatted_code }) catch @panic("unhandled");
 
         // Test zig fmt affecting only the appropriate files.
         const run1 = b.addSystemCommand(&.{ b.graph.zig_exe, "fmt", "fmt1.zig" });
@@ -2629,11 +2632,12 @@ pub fn addCases(
 ) !void {
     const arena = b.allocator;
     const gpa = b.allocator;
+    const io = b.graph.io;
 
-    var cases = @import("src/Cases.zig").init(gpa, arena);
+    var cases = @import("src/Cases.zig").init(gpa, arena, io);
 
-    var dir = try b.build_root.handle.openDir("test/cases", .{ .iterate = true });
-    defer dir.close();
+    var dir = try b.build_root.handle.openDir(io, "test/cases", .{ .iterate = true });
+    defer dir.close(io);
 
     cases.addFromDir(dir, b);
     try @import("cases.zig").addCases(&cases, build_options, b);
@@ -2678,7 +2682,9 @@ pub fn addDebuggerTests(b: *std.Build, options: DebuggerContext.Options) ?*Step 
     return step;
 }
 
-pub fn addIncrementalTests(b: *std.Build, test_step: *Step) !void {
+pub fn addIncrementalTests(b: *std.Build, test_step: *Step, test_filters: []const []const u8) !void {
+    const io = b.graph.io;
+
     const incr_check = b.addExecutable(.{
         .name = "incr-check",
         .root_module = b.createModule(.{
@@ -2688,12 +2694,17 @@ pub fn addIncrementalTests(b: *std.Build, test_step: *Step) !void {
         }),
     });
 
-    var dir = try b.build_root.handle.openDir("test/incremental", .{ .iterate = true });
-    defer dir.close();
+    var dir = try b.build_root.handle.openDir(io, "test/incremental", .{ .iterate = true });
+    defer dir.close(io);
 
     var it = try dir.walk(b.graph.arena);
-    while (try it.next()) |entry| {
+    while (try it.next(io)) |entry| {
         if (entry.kind != .file) continue;
+        if (std.mem.endsWith(u8, entry.basename, ".swp")) continue;
+
+        for (test_filters) |test_filter| {
+            if (std.mem.indexOf(u8, entry.path, test_filter)) |_| break;
+        } else if (test_filters.len > 0) continue;
 
         const run = b.addRunArtifact(incr_check);
         run.setName(b.fmt("incr-check '{s}'", .{entry.basename}));
@@ -2701,6 +2712,11 @@ pub fn addIncrementalTests(b: *std.Build, test_step: *Step) !void {
         run.addArg(b.graph.zig_exe);
         run.addFileArg(b.path("test/incremental/").path(b, entry.path));
         run.addArgs(&.{ "--zig-lib-dir", b.fmt("{f}", .{b.graph.zig_lib_directory}) });
+
+        if (b.enable_qemu) run.addArg("-fqemu");
+        if (b.enable_wine) run.addArg("-fwine");
+        if (b.enable_wasmtime) run.addArg("-fwasmtime");
+        if (b.enable_darling) run.addArg("-fdarling");
 
         run.addCheck(.{ .expect_term = .{ .Exited = 0 } });
 

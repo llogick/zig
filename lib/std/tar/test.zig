@@ -424,6 +424,7 @@ test "insufficient buffer in Header name filed" {
 }
 
 test "should not overwrite existing file" {
+    const io = testing.io;
     // Starting from this folder structure:
     // $ tree root
     //    root
@@ -469,17 +470,18 @@ test "should not overwrite existing file" {
     defer root.cleanup();
     try testing.expectError(
         error.PathAlreadyExists,
-        tar.pipeToFileSystem(root.dir, &r, .{ .mode_mode = .ignore, .strip_components = 1 }),
+        tar.pipeToFileSystem(io, root.dir, &r, .{ .mode_mode = .ignore, .strip_components = 1 }),
     );
 
     // Unpack with strip_components = 0 should pass
     r = .fixed(data);
     var root2 = std.testing.tmpDir(.{});
     defer root2.cleanup();
-    try tar.pipeToFileSystem(root2.dir, &r, .{ .mode_mode = .ignore, .strip_components = 0 });
+    try tar.pipeToFileSystem(io, root2.dir, &r, .{ .mode_mode = .ignore, .strip_components = 0 });
 }
 
 test "case sensitivity" {
+    const io = testing.io;
     // Mimicking issue #18089, this tar contains, same file name in two case
     // sensitive name version. Should fail on case insensitive file systems.
     //
@@ -495,13 +497,13 @@ test "case sensitivity" {
     var root = std.testing.tmpDir(.{});
     defer root.cleanup();
 
-    tar.pipeToFileSystem(root.dir, &r, .{ .mode_mode = .ignore, .strip_components = 1 }) catch |err| {
+    tar.pipeToFileSystem(io, root.dir, &r, .{ .mode_mode = .ignore, .strip_components = 1 }) catch |err| {
         // on case insensitive fs we fail on overwrite existing file
         try testing.expectEqual(error.PathAlreadyExists, err);
         return;
     };
 
     // on case sensitive os both files are created
-    try testing.expect((try root.dir.statFile("alacritty/darkermatrix.yml")).kind == .file);
-    try testing.expect((try root.dir.statFile("alacritty/Darkermatrix.yml")).kind == .file);
+    try testing.expect((try root.dir.statFile(io, "alacritty/darkermatrix.yml", .{})).kind == .file);
+    try testing.expect((try root.dir.statFile(io, "alacritty/Darkermatrix.yml", .{})).kind == .file);
 }

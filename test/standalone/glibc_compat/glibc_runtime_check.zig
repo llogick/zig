@@ -28,10 +28,10 @@ extern "c" fn stat(noalias path: [*:0]const u8, noalias buf: [*]const u8) c_int;
 
 // PR #17034 - fstat moved between libc_nonshared and libc
 fn checkStat() !void {
-    const cwdFd = std.fs.cwd().fd;
+    const cwd_fd = std.Io.Dir.cwd().handle;
 
     var buf: [256]u8 = @splat(0);
-    var result = fstatat(cwdFd, "a_file_that_definitely_does_not_exist", &buf, 0);
+    var result = fstatat(cwd_fd, "a_file_that_definitely_does_not_exist", &buf, 0);
     assert(result == -1);
     assert(std.posix.errno(result) == .NOENT);
 

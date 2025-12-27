@@ -1,10 +1,12 @@
 // zig run -O ReleaseFast --zig-lib-dir ../.. benchmark.zig
 
-const std = @import("std");
 const builtin = @import("builtin");
+
+const std = @import("std");
+const Io = std.Io;
 const mem = std.mem;
 const time = std.time;
-const Timer = time.Timer;
+const Timer = std.time.Timer;
 const crypto = std.crypto;
 
 const KiB = 1024;
@@ -504,7 +506,7 @@ fn mode(comptime x: comptime_int) comptime_int {
 pub fn main() !void {
     // Size of buffer is about size of printed message.
     var stdout_buffer: [0x100]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    var stdout_writer = Io.File.stdout().writer(&stdout_buffer);
     const stdout = &stdout_writer.interface;
 
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -554,7 +556,7 @@ pub fn main() !void {
         }
     }
 
-    var io_threaded = std.Io.Threaded.init(arena_allocator);
+    var io_threaded = std.Io.Threaded.init(arena_allocator, .{});
     defer io_threaded.deinit();
     const io = io_threaded.io();
 

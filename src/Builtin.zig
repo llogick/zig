@@ -313,8 +313,9 @@ pub fn updateFileOnDisk(file: *File, comp: *Compilation) !void {
     assert(file.source != null);
 
     const root_dir, const sub_path = file.path.openInfo(comp.dirs);
+    const io = comp.io;
 
-    if (root_dir.statFile(sub_path)) |stat| {
+    if (root_dir.statFile(io, sub_path, .{})) |stat| {
         if (stat.size != file.source.?.len) {
             std.log.warn(
                 "the cached file '{f}' had the wrong size. Expected {d}, found {d}. " ++
@@ -342,7 +343,7 @@ pub fn updateFileOnDisk(file: *File, comp: *Compilation) !void {
     }
 
     // `make_path` matters because the dir hasn't actually been created yet.
-    var af = try root_dir.atomicFile(sub_path, .{ .make_path = true, .write_buffer = &.{} });
+    var af = try root_dir.atomicFile(io, sub_path, .{ .make_path = true, .write_buffer = &.{} });
     defer af.deinit();
     try af.file_writer.interface.writeAll(file.source.?);
     af.finish() catch |err| switch (err) {

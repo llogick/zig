@@ -1,35 +1,38 @@
 const std = @import("std");
+const Io = std.Io;
 const fs = std.fs;
 const mem = std.mem;
 const meta = std.meta;
 const fatal = std.process.fatal;
 const Allocator = std.mem.Allocator;
 const Target = std.Target;
-const target = @import("target.zig");
 const assert = std.debug.assert;
+
 const glibc = @import("libs/glibc.zig");
 const introspect = @import("introspect.zig");
+const target = @import("target.zig");
 
 pub fn cmdTargets(
     allocator: Allocator,
+    io: Io,
     args: []const []const u8,
     out: *std.Io.Writer,
     native_target: *const Target,
 ) !void {
     _ = args;
-    var zig_lib_directory = introspect.findZigLibDir(allocator) catch |err| {
-        fatal("unable to find zig installation directory: {s}\n", .{@errorName(err)});
-    };
-    defer zig_lib_directory.handle.close();
+    var zig_lib_directory = introspect.findZigLibDir(allocator, io) catch |err|
+        fatal("unable to find zig installation directory: {t}", .{err});
+    defer zig_lib_directory.handle.close(io);
     defer allocator.free(zig_lib_directory.path.?);
 
     const abilists_contents = zig_lib_directory.handle.readFileAlloc(
+        io,
         glibc.abilists_path,
         allocator,
         .limited(glibc.abilists_max_size),
     ) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
-        else => fatal("unable to read " ++ glibc.abilists_path ++ ": {s}", .{@errorName(err)}),
+        else => fatal("unable to read " ++ glibc.abilists_path ++ ": {t}", .{err}),
     };
     defer allocator.free(abilists_contents);
 
@@ -48,9 +51,7 @@ pub fn cmdTargets(
         {
             var libc_obj = try root_obj.beginTupleField("libc", .{});
             for (std.zig.target.available_libcs) |libc| {
-                const tmp = try std.fmt.allocPrint(allocator, "{s}-{s}-{s}", .{
-                    @tagName(libc.arch), @tagName(libc.os), @tagName(libc.abi),
-                });
+                const tmp = try std.fmt.allocPrint(allocator, "{t}-{t}-{t}", .{ libc.arch, libc.os, libc.abi });
                 defer allocator.free(tmp);
                 try libc_obj.field(tmp, .{});
             }

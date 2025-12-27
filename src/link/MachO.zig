@@ -219,10 +219,12 @@ pub fn createEmpty(
     };
     errdefer self.base.destroy();
 
-    self.base.file = try emit.root_dir.handle.createFile(emit.sub_path, .{
+    const io = comp.io;
+
+    self.base.file = try emit.root_dir.handle.createFile(io, emit.sub_path, .{
         .truncate = true,
         .read = true,
-        .mode = link.File.determineMode(output_mode, link_mode),
+        .permissions = link.File.determinePermissions(output_mode, link_mode),
     });
 
     // Append null file
@@ -267,14 +269,16 @@ pub fn open(
 }
 
 pub fn deinit(self: *MachO) void {
-    const gpa = self.base.comp.gpa;
+    const comp = self.base.comp;
+    const gpa = comp.gpa;
+    const io = comp.io;
 
     if (self.d_sym) |*d_sym| {
         d_sym.deinit();
     }
 
     for (self.file_handles.items) |handle| {
-        handle.close();
+        handle.close(io);
     }
     self.file_handles.deinit(gpa);
 
@@ -343,7 +347,8 @@ pub fn flush(
 
     const comp = self.base.comp;
     const gpa = comp.gpa;
-    const diags = &self.base.comp.link_diags;
+    const io = comp.io;
+    const diags = &comp.link_diags;
 
     const sub_prog_node = prog_node.start("MachO Flush", 0);
     defer sub_prog_node.end();
@@ -376,26 +381,26 @@ pub fn flush(
     // in this set.
     try positionals.ensureUnusedCapacity(comp.c_object_table.keys().len);
     for (comp.c_object_table.keys()) |key| {
-        positionals.appendAssumeCapacity(try link.openObjectInput(diags, key.status.success.object_path));
+        positionals.appendAssumeCapacity(try link.openObjectInput(io, diags, key.status.success.object_path));
     }
 
-    if (zcu_obj_path) |path| try positionals.append(try link.openObjectInput(diags, path));
+    if (zcu_obj_path) |path| try positionals.append(try link.openObjectInput(io, diags, path));
 
     if (comp.config.any_sanitize_thread) {
-        try positionals.append(try link.openObjectInput(diags, comp.tsan_lib.?.full_object_path));
+        try positionals.append(try link.openObjectInput(io, diags, comp.tsan_lib.?.full_object_path));
     }
 
     if (comp.config.any_fuzz) {
-        try positionals.append(try link.openArchiveInput(diags, comp.fuzzer_lib.?.full_object_path, false, false));
+        try positionals.append(try link.openArchiveInput(io, diags, comp.fuzzer_lib.?.full_object_path, false, false));
     }
 
     if (comp.ubsan_rt_lib) |crt_file| {
         const path = crt_file.full_object_path;
-        self.classifyInputFile(try link.openArchiveInput(diags, path, false, false)) catch |err|
+        self.classifyInputFile(try link.openArchiveInput(io, diags, path, false, false)) catch |err|
             diags.addParseError(path, "failed to parse archive: {s}", .{@errorName(err)});
     } else if (comp.ubsan_rt_obj) |crt_file| {
         const path = crt_file.full_object_path;
-        self.classifyInputFile(try link.openObjectInput(diags, path)) catch |err|
+        self.classifyInputFile(try link.openObjectInput(io, diags, path)) catch |err|
             diags.addParseError(path, "failed to parse archive: {s}", .{@errorName(err)});
     }
 
@@ -430,7 +435,7 @@ pub fn flush(
     if (comp.config.link_libc and is_exe_or_dyn_lib) {
         if (comp.zigc_static_lib) |zigc| {
             const path = zigc.full_object_path;
-            self.classifyInputFile(try link.openArchiveInput(diags, path, false, false)) catch |err|
+            self.classifyInputFile(try link.openArchiveInput(io, diags, path, false, false)) catch |err|
                 diags.addParseError(path, "failed to parse archive: {s}", .{@errorName(err)});
         }
     }
@@ -453,12 +458,12 @@ pub fn flush(
     for (system_libs.items) |lib| {
         switch (Compilation.classifyFileExt(lib.path.sub_path)) {
             .shared_library => {
-                const dso_input = try link.openDsoInput(diags, lib.path, lib.needed, lib.weak, lib.reexport);
+                const dso_input = try link.openDsoInput(io, diags, lib.path, lib.needed, lib.weak, lib.reexport);
                 self.classifyInputFile(dso_input) catch |err|
                     diags.addParseError(lib.path, "failed to parse input file: {s}", .{@errorName(err)});
             },
             .static_library => {
-                const archive_input = try link.openArchiveInput(diags, lib.path, lib.must_link, lib.hidden);
+                const archive_input = try link.openArchiveInput(io, diags, lib.path, lib.must_link, lib.hidden);
                 self.classifyInputFile(archive_input) catch |err|
                     diags.addParseError(lib.path, "failed to parse input file: {s}", .{@errorName(err)});
             },
@@ -469,11 +474,11 @@ pub fn flush(
     // Finally, link against compiler_rt.
     if (comp.compiler_rt_lib) |crt_file| {
         const path = crt_file.full_object_path;
-        self.classifyInputFile(try link.openArchiveInput(diags, path, false, false)) catch |err|
+        self.classifyInputFile(try link.openArchiveInput(io, diags, path, false, false)) catch |err|
             diags.addParseError(path, "failed to parse archive: {s}", .{@errorName(err)});
     } else if (comp.compiler_rt_obj) |crt_file| {
         const path = crt_file.full_object_path;
-        self.classifyInputFile(try link.openObjectInput(diags, path)) catch |err|
+        self.classifyInputFile(try link.openObjectInput(io, diags, path)) catch |err|
             diags.addParseError(path, "failed to parse archive: {s}", .{@errorName(err)});
     }
 
@@ -564,7 +569,7 @@ pub fn flush(
     self.writeLinkeditSectionsToFile() catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.LinkFailure => return error.LinkFailure,
-        else => |e| return diags.fail("failed to write linkedit sections to file: {s}", .{@errorName(e)}),
+        else => |e| return diags.fail("failed to write linkedit sections to file: {t}", .{e}),
     };
 
     var codesig: ?CodeSignature = if (self.requiresCodeSig()) blk: {
@@ -575,8 +580,8 @@ pub fn flush(
         // where the code signature goes into.
         var codesig = CodeSignature.init(self.getPageSize());
         codesig.code_directory.ident = fs.path.basename(self.base.emit.sub_path);
-        if (self.entitlements) |path| codesig.addEntitlements(gpa, path) catch |err|
-            return diags.fail("failed to add entitlements from {s}: {s}", .{ path, @errorName(err) });
+        if (self.entitlements) |path| codesig.addEntitlements(gpa, io, path) catch |err|
+            return diags.fail("failed to add entitlements from {s}: {t}", .{ path, err });
         try self.writeCodeSignaturePadding(&codesig);
         break :blk codesig;
     } else null;
@@ -612,15 +617,17 @@ pub fn flush(
             else => |e| return diags.fail("failed to write code signature: {s}", .{@errorName(e)}),
         };
         const emit = self.base.emit;
-        invalidateKernelCache(emit.root_dir.handle, emit.sub_path) catch |err| switch (err) {
-            else => |e| return diags.fail("failed to invalidate kernel cache: {s}", .{@errorName(e)}),
+        invalidateKernelCache(io, emit.root_dir.handle, emit.sub_path) catch |err| switch (err) {
+            else => |e| return diags.fail("failed to invalidate kernel cache: {t}", .{e}),
         };
     }
 }
 
 /// --verbose-link output
 fn dumpArgv(self: *MachO, comp: *Compilation) !void {
-    const gpa = self.base.comp.gpa;
+    const gpa = comp.gpa;
+    const io = comp.io;
+
     var arena_allocator = std.heap.ArenaAllocator.init(gpa);
     defer arena_allocator.deinit();
     const arena = arena_allocator.allocator();
@@ -815,7 +822,7 @@ fn dumpArgv(self: *MachO, comp: *Compilation) !void {
         if (comp.ubsan_rt_obj) |obj| try argv.append(try obj.full_object_path.toString(arena));
     }
 
-    Compilation.dump_argv(argv.items);
+    try Compilation.dumpArgv(io, argv.items);
 }
 
 /// TODO delete this, libsystem must be resolved when setting up the compilation pipeline
@@ -825,7 +832,8 @@ pub fn resolveLibSystem(
     comp: *Compilation,
     out_libs: anytype,
 ) !void {
-    const diags = &self.base.comp.link_diags;
+    const io = comp.io;
+    const diags = &comp.link_diags;
 
     var test_path = std.array_list.Managed(u8).init(arena);
     var checked_paths = std.array_list.Managed([]const u8).init(arena);
@@ -834,16 +842,16 @@ pub fn resolveLibSystem(
         if (self.sdk_layout) |sdk_layout| switch (sdk_layout) {
             .sdk => {
                 const dir = try fs.path.join(arena, &.{ comp.sysroot.?, "usr", "lib" });
-                if (try accessLibPath(arena, &test_path, &checked_paths, dir, "System")) break :success;
+                if (try accessLibPath(arena, io, &test_path, &checked_paths, dir, "System")) break :success;
             },
             .vendored => {
                 const dir = try comp.dirs.zig_lib.join(arena, &.{ "libc", "darwin" });
-                if (try accessLibPath(arena, &test_path, &checked_paths, dir, "System")) break :success;
+                if (try accessLibPath(arena, io, &test_path, &checked_paths, dir, "System")) break :success;
             },
         };
 
         for (self.lib_directories) |directory| {
-            if (try accessLibPath(arena, &test_path, &checked_paths, directory.path orelse ".", "System")) break :success;
+            if (try accessLibPath(arena, io, &test_path, &checked_paths, directory.path orelse ".", "System")) break :success;
         }
 
         diags.addMissingLibraryError(checked_paths.items, "unable to find libSystem system library", .{});
@@ -861,6 +869,9 @@ pub fn classifyInputFile(self: *MachO, input: link.Input) !void {
     const tracy = trace(@src());
     defer tracy.end();
 
+    const comp = self.base.comp;
+    const io = comp.io;
+
     const path, const file = input.pathAndFile().?;
     // TODO don't classify now, it's too late. The input file has already been classified
     log.debug("classifying input file {f}", .{path});
@@ -871,7 +882,7 @@ pub fn classifyInputFile(self: *MachO, input: link.Input) !void {
     const fat_arch: ?fat.Arch = try self.parseFatFile(file, path);
     const offset = if (fat_arch) |fa| fa.offset else 0;
 
-    if (readMachHeader(file, offset) catch null) |h| blk: {
+    if (readMachHeader(io, file, offset) catch null) |h| blk: {
         if (h.magic != macho.MH_MAGIC_64) break :blk;
         switch (h.filetype) {
             macho.MH_OBJECT => try self.addObject(path, fh, offset),
@@ -880,7 +891,7 @@ pub fn classifyInputFile(self: *MachO, input: link.Input) !void {
         }
         return;
     }
-    if (readArMagic(file, offset, &buffer) catch null) |ar_magic| blk: {
+    if (readArMagic(io, file, offset, &buffer) catch null) |ar_magic| blk: {
         if (!mem.eql(u8, ar_magic, Archive.ARMAG)) break :blk;
         try self.addArchive(input.archive, fh, fat_arch);
         return;
@@ -888,12 +899,14 @@ pub fn classifyInputFile(self: *MachO, input: link.Input) !void {
     _ = try self.addTbd(.fromLinkInput(input), true, fh);
 }
 
-fn parseFatFile(self: *MachO, file: std.fs.File, path: Path) !?fat.Arch {
-    const diags = &self.base.comp.link_diags;
-    const fat_h = fat.readFatHeader(file) catch return null;
+fn parseFatFile(self: *MachO, file: Io.File, path: Path) !?fat.Arch {
+    const comp = self.base.comp;
+    const io = comp.io;
+    const diags = &comp.link_diags;
+    const fat_h = fat.readFatHeader(io, file) catch return null;
     if (fat_h.magic != macho.FAT_MAGIC and fat_h.magic != macho.FAT_MAGIC_64) return null;
     var fat_archs_buffer: [2]fat.Arch = undefined;
-    const fat_archs = try fat.parseArchs(file, fat_h, &fat_archs_buffer);
+    const fat_archs = try fat.parseArchs(io, file, fat_h, &fat_archs_buffer);
     const cpu_arch = self.getTarget().cpu.arch;
     for (fat_archs) |arch| {
         if (arch.tag == cpu_arch) return arch;
@@ -901,16 +914,16 @@ fn parseFatFile(self: *MachO, file: std.fs.File, path: Path) !?fat.Arch {
     return diags.failParse(path, "missing arch in universal file: expected {s}", .{@tagName(cpu_arch)});
 }
 
-pub fn readMachHeader(file: std.fs.File, offset: usize) !macho.mach_header_64 {
+pub fn readMachHeader(io: Io, file: Io.File, offset: usize) !macho.mach_header_64 {
     var buffer: [@sizeOf(macho.mach_header_64)]u8 = undefined;
-    const nread = try file.preadAll(&buffer, offset);
+    const nread = try file.readPositionalAll(io, &buffer, offset);
     if (nread != buffer.len) return error.InputOutput;
     const hdr = @as(*align(1) const macho.mach_header_64, @ptrCast(&buffer)).*;
     return hdr;
 }
 
-pub fn readArMagic(file: std.fs.File, offset: usize, buffer: *[Archive.SARMAG]u8) ![]const u8 {
-    const nread = try file.preadAll(buffer, offset);
+pub fn readArMagic(io: Io, file: Io.File, offset: usize, buffer: *[Archive.SARMAG]u8) ![]const u8 {
+    const nread = try file.readPositionalAll(io, buffer, offset);
     if (nread != buffer.len) return error.InputOutput;
     return buffer[0..Archive.SARMAG];
 }
@@ -921,6 +934,7 @@ fn addObject(self: *MachO, path: Path, handle_index: File.HandleIndex, offset: u
 
     const comp = self.base.comp;
     const gpa = comp.gpa;
+    const io = comp.io;
 
     const abs_path = try std.fs.path.resolvePosix(gpa, &.{
         comp.dirs.cwd,
@@ -930,7 +944,7 @@ fn addObject(self: *MachO, path: Path, handle_index: File.HandleIndex, offset: u
     errdefer gpa.free(abs_path);
 
     const file = self.getFileHandle(handle_index);
-    const stat = try file.stat();
+    const stat = try file.stat(io);
     const mtime = stat.mtime.toSeconds();
     const index: File.Index = @intCast(try self.files.addOne(gpa));
     self.files.set(index, .{ .object = .{
@@ -1069,6 +1083,7 @@ fn isHoisted(self: *MachO, install_name: []const u8) bool {
 /// TODO delete this, libraries must be instead resolved when instantiating the compilation pipeline
 fn accessLibPath(
     arena: Allocator,
+    io: Io,
     test_path: *std.array_list.Managed(u8),
     checked_paths: *std.array_list.Managed([]const u8),
     search_dir: []const u8,
@@ -1080,7 +1095,7 @@ fn accessLibPath(
         test_path.clearRetainingCapacity();
         try test_path.print("{s}" ++ sep ++ "lib{s}{s}", .{ search_dir, name, ext });
         try checked_paths.append(try arena.dupe(u8, test_path.items));
-        fs.cwd().access(test_path.items, .{}) catch |err| switch (err) {
+        Io.Dir.cwd().access(io, test_path.items, .{}) catch |err| switch (err) {
             error.FileNotFound => continue,
             else => |e| return e,
         };
@@ -1092,6 +1107,7 @@ fn accessLibPath(
 
 fn accessFrameworkPath(
     arena: Allocator,
+    io: Io,
     test_path: *std.array_list.Managed(u8),
     checked_paths: *std.array_list.Managed([]const u8),
     search_dir: []const u8,
@@ -1108,7 +1124,7 @@ fn accessFrameworkPath(
             ext,
         });
         try checked_paths.append(try arena.dupe(u8, test_path.items));
-        fs.cwd().access(test_path.items, .{}) catch |err| switch (err) {
+        Io.Dir.cwd().access(io, test_path.items, .{}) catch |err| switch (err) {
             error.FileNotFound => continue,
             else => |e| return e,
         };
@@ -1124,7 +1140,9 @@ fn parseDependentDylibs(self: *MachO) !void {
 
     if (self.dylibs.items.len == 0) return;
 
-    const gpa = self.base.comp.gpa;
+    const comp = self.base.comp;
+    const gpa = comp.gpa;
+    const io = comp.io;
     const framework_dirs = self.framework_dirs;
 
     // TODO delete this, directories must instead be resolved by the frontend
@@ -1165,14 +1183,14 @@ fn parseDependentDylibs(self: *MachO) !void {
                     // Framework
                     for (framework_dirs) |dir| {
                         test_path.clearRetainingCapacity();
-                        if (try accessFrameworkPath(arena, &test_path, &checked_paths, dir, stem)) break :full_path test_path.items;
+                        if (try accessFrameworkPath(arena, io, &test_path, &checked_paths, dir, stem)) break :full_path test_path.items;
                     }
 
                     // Library
                     const lib_name = eatPrefix(stem, "lib") orelse stem;
                     for (lib_directories) |lib_directory| {
                         test_path.clearRetainingCapacity();
-                        if (try accessLibPath(arena, &test_path, &checked_paths, lib_directory.path orelse ".", lib_name)) break :full_path test_path.items;
+                        if (try accessLibPath(arena, io, &test_path, &checked_paths, lib_directory.path orelse ".", lib_name)) break :full_path test_path.items;
                     }
                 }
 
@@ -1181,13 +1199,13 @@ fn parseDependentDylibs(self: *MachO) !void {
                     const path = if (existing_ext.len > 0) id.name[0 .. id.name.len - existing_ext.len] else id.name;
                     for (&[_][]const u8{ ".tbd", ".dylib", "" }) |ext| {
                         test_path.clearRetainingCapacity();
-                        if (self.base.comp.sysroot) |root| {
+                        if (comp.sysroot) |root| {
                             try test_path.print("{s}" ++ fs.path.sep_str ++ "{s}{s}", .{ root, path, ext });
                         } else {
                             try test_path.print("{s}{s}", .{ path, ext });
                         }
                         try checked_paths.append(try arena.dupe(u8, test_path.items));
-                        fs.cwd().access(test_path.items, .{}) catch |err| switch (err) {
+                        Io.Dir.cwd().access(io, test_path.items, .{}) catch |err| switch (err) {
                             error.FileNotFound => continue,
                             else => |e| return e,
                         };
@@ -1202,7 +1220,8 @@ fn parseDependentDylibs(self: *MachO) !void {
                         const rel_path = try fs.path.join(arena, &.{ prefix, path });
                         try checked_paths.append(rel_path);
                         var buffer: [fs.max_path_bytes]u8 = undefined;
-                        const full_path = fs.realpath(rel_path, &buffer) catch continue;
+                        // TODO don't use realpath
+                        const full_path = buffer[0 .. Io.Dir.realPathFileAbsolute(io, rel_path, &buffer) catch continue];
                         break :full_path try arena.dupe(u8, full_path);
                     }
                 } else if (eatPrefix(id.name, "@loader_path/")) |_| {
@@ -1215,8 +1234,9 @@ fn parseDependentDylibs(self: *MachO) !void {
 
                 try checked_paths.append(try arena.dupe(u8, id.name));
                 var buffer: [fs.max_path_bytes]u8 = undefined;
-                if (fs.realpath(id.name, &buffer)) |full_path| {
-                    break :full_path try arena.dupe(u8, full_path);
+                // TODO don't use realpath
+                if (Io.Dir.realPathFileAbsolute(io, id.name, &buffer)) |full_path_n| {
+                    break :full_path try arena.dupe(u8, buffer[0..full_path_n]);
                 } else |_| {
                     try self.reportMissingDependencyError(
                         self.getFile(dylib_index).?.dylib.getUmbrella(self).index,
@@ -1233,12 +1253,12 @@ fn parseDependentDylibs(self: *MachO) !void {
                 .path = Path.initCwd(full_path),
                 .weak = is_weak,
             };
-            const file = try lib.path.root_dir.handle.openFile(lib.path.sub_path, .{});
+            const file = try lib.path.root_dir.handle.openFile(io, lib.path.sub_path, .{});
             const fh = try self.addFileHandle(file);
             const fat_arch = try self.parseFatFile(file, lib.path);
             const offset = if (fat_arch) |fa| fa.offset else 0;
             const file_index = file_index: {
-                if (readMachHeader(file, offset) catch null) |h| blk: {
+                if (readMachHeader(io, file, offset) catch null) |h| blk: {
                     if (h.magic != macho.MH_MAGIC_64) break :blk;
                     switch (h.filetype) {
                         macho.MH_DYLIB => break :file_index try self.addDylib(lib, false, fh, offset),
@@ -3147,7 +3167,9 @@ fn detectAllocCollision(self: *MachO, start: u64, size: u64) !?u64 {
         }
     }
 
-    if (at_end) try self.base.file.?.setEndPos(end);
+    const comp = self.base.comp;
+    const io = comp.io;
+    if (at_end) try self.base.file.?.setLength(io, end);
     return null;
 }
 
@@ -3232,21 +3254,36 @@ pub fn findFreeSpaceVirtual(self: *MachO, object_size: u64, min_alignment: u32) 
 }
 
 pub fn copyRangeAll(self: *MachO, old_offset: u64, new_offset: u64, size: u64) !void {
-    const file = self.base.file.?;
-    const amt = try file.copyRangeAll(old_offset, file, new_offset, size);
-    if (amt != size) return error.InputOutput;
+    return self.base.copyRangeAll(old_offset, new_offset, size);
 }
 
-/// Like File.copyRangeAll but also ensures the source region is zeroed out after copy.
+/// Like copyRangeAll but also ensures the source region is zeroed out after copy.
 /// This is so that we guarantee zeroed out regions for mapping of zerofill sections by the loader.
 fn copyRangeAllZeroOut(self: *MachO, old_offset: u64, new_offset: u64, size: u64) !void {
-    const gpa = self.base.comp.gpa;
-    try self.copyRangeAll(old_offset, new_offset, size);
+    const comp = self.base.comp;
+    const io = comp.io;
+    const file = self.base.file.?;
+    var write_buffer: [2048]u8 = undefined;
+    var file_reader = file.reader(io, &.{});
+    file_reader.pos = old_offset;
+    var file_writer = file.writer(io, &write_buffer);
+    file_writer.pos = new_offset;
     const size_u = math.cast(usize, size) orelse return error.Overflow;
-    const zeroes = try gpa.alloc(u8, size_u); // TODO no need to allocate here.
-    defer gpa.free(zeroes);
-    @memset(zeroes, 0);
-    try self.base.file.?.pwriteAll(zeroes, old_offset);
+    const n = file_writer.interface.sendFileAll(&file_reader, .limited(size_u)) catch |err| switch (err) {
+        error.ReadFailed => return file_reader.err.?,
+        error.WriteFailed => return file_writer.err.?,
+    };
+    assert(n == size_u);
+    file_writer.seekTo(old_offset) catch |err| switch (err) {
+        error.WriteFailed => return file_writer.err.?,
+        else => |e| return e,
+    };
+    file_writer.interface.splatByteAll(0, size_u) catch |err| switch (err) {
+        error.WriteFailed => return file_writer.err.?,
+    };
+    file_writer.interface.flush() catch |err| switch (err) {
+        error.WriteFailed => return file_writer.err.?,
+    };
 }
 
 const InitMetadataOptions = struct {
@@ -3257,8 +3294,10 @@ const InitMetadataOptions = struct {
 };
 
 pub fn closeDebugInfo(self: *MachO) bool {
+    const comp = self.base.comp;
+    const io = comp.io;
     const d_sym = &(self.d_sym orelse return false);
-    d_sym.file.?.close();
+    d_sym.file.?.close(io);
     d_sym.file = null;
     return true;
 }
@@ -3269,7 +3308,9 @@ pub fn reopenDebugInfo(self: *MachO) !void {
     assert(!self.base.comp.config.use_llvm);
     assert(self.base.comp.config.debug_format == .dwarf);
 
-    const gpa = self.base.comp.gpa;
+    const comp = self.base.comp;
+    const io = comp.io;
+    const gpa = comp.gpa;
     const sep = fs.path.sep_str;
     const d_sym_path = try std.fmt.allocPrint(
         gpa,
@@ -3278,10 +3319,10 @@ pub fn reopenDebugInfo(self: *MachO) !void {
     );
     defer gpa.free(d_sym_path);
 
-    var d_sym_bundle = try self.base.emit.root_dir.handle.makeOpenPath(d_sym_path, .{});
-    defer d_sym_bundle.close();
+    var d_sym_bundle = try self.base.emit.root_dir.handle.createDirPathOpen(io, d_sym_path, .{});
+    defer d_sym_bundle.close(io);
 
-    self.d_sym.?.file = try d_sym_bundle.createFile(fs.path.basename(self.base.emit.sub_path), .{
+    self.d_sym.?.file = try d_sym_bundle.createFile(io, fs.path.basename(self.base.emit.sub_path), .{
         .truncate = false,
         .read = true,
     });
@@ -3289,6 +3330,10 @@ pub fn reopenDebugInfo(self: *MachO) !void {
 
 // TODO: move to ZigObject
 fn initMetadata(self: *MachO, options: InitMetadataOptions) !void {
+    const comp = self.base.comp;
+    const gpa = comp.gpa;
+    const io = comp.io;
+
     if (!self.base.isRelocatable()) {
         const base_vmaddr = blk: {
             const pagezero_size = self.pagezero_size orelse default_pagezero_size;
@@ -3343,7 +3388,11 @@ fn initMetadata(self: *MachO, options: InitMetadataOptions) !void {
         if (options.zo.dwarf) |*dwarf| {
             // Create dSYM bundle.
             log.debug("creating {s}.dSYM bundle", .{options.emit.sub_path});
-            self.d_sym = .{ .allocator = self.base.comp.gpa, .file = null };
+            self.d_sym = .{
+                .io = io,
+                .allocator = gpa,
+                .file = null,
+            };
             try self.reopenDebugInfo();
             try self.d_sym.?.initMetadata(self);
             try dwarf.initMetadata();
@@ -3463,6 +3512,9 @@ fn growSectionNonRelocatable(self: *MachO, sect_index: u8, needed_size: u64) !vo
     const seg_id = self.sections.items(.segment_id)[sect_index];
     const seg = &self.segments.items[seg_id];
 
+    const comp = self.base.comp;
+    const io = comp.io;
+
     if (!sect.isZerofill()) {
         const allocated_size = self.allocatedSize(sect.offset);
         if (needed_size > allocated_size) {
@@ -3484,7 +3536,7 @@ fn growSectionNonRelocatable(self: *MachO, sect_index: u8, needed_size: u64) !vo
 
             sect.offset = @intCast(new_offset);
         } else if (sect.offset + allocated_size == std.math.maxInt(u64)) {
-            try self.base.file.?.setEndPos(sect.offset + needed_size);
+            try self.base.file.?.setLength(io, sect.offset + needed_size);
         }
         seg.filesize = needed_size;
     }
@@ -3506,6 +3558,8 @@ fn growSectionNonRelocatable(self: *MachO, sect_index: u8, needed_size: u64) !vo
 }
 
 fn growSectionRelocatable(self: *MachO, sect_index: u8, needed_size: u64) !void {
+    const comp = self.base.comp;
+    const io = comp.io;
     const sect = &self.sections.items(.header)[sect_index];
 
     if (!sect.isZerofill()) {
@@ -3533,7 +3587,7 @@ fn growSectionRelocatable(self: *MachO, sect_index: u8, needed_size: u64) !void 
             sect.offset = @intCast(new_offset);
             sect.addr = new_addr;
         } else if (sect.offset + allocated_size == std.math.maxInt(u64)) {
-            try self.base.file.?.setEndPos(sect.offset + needed_size);
+            try self.base.file.?.setLength(io, sect.offset + needed_size);
         }
     }
     sect.size = needed_size;
@@ -3567,11 +3621,11 @@ pub fn getTarget(self: *const MachO) *const std.Target {
 /// into a new inode, remove the original file, and rename the copy to match
 /// the original file. This is super messy, but there doesn't seem any other
 /// way to please the XNU.
-pub fn invalidateKernelCache(dir: fs.Dir, sub_path: []const u8) !void {
+pub fn invalidateKernelCache(io: Io, dir: Io.Dir, sub_path: []const u8) !void {
     const tracy = trace(@src());
     defer tracy.end();
     if (builtin.target.os.tag.isDarwin() and builtin.target.cpu.arch == .aarch64) {
-        try dir.copyFile(sub_path, dir, sub_path, .{});
+        try dir.copyFile(sub_path, dir, sub_path, io, .{});
     }
 }
 
@@ -3762,7 +3816,7 @@ pub fn getInternalObject(self: *MachO) ?*InternalObject {
     return self.getFile(index).?.internal;
 }
 
-pub fn addFileHandle(self: *MachO, file: fs.File) !File.HandleIndex {
+pub fn addFileHandle(self: *MachO, file: Io.File) !File.HandleIndex {
     const gpa = self.base.comp.gpa;
     const index: File.HandleIndex = @intCast(self.file_handles.items.len);
     const fh = try self.file_handles.addOne(gpa);
@@ -4333,11 +4387,13 @@ fn inferSdkVersion(comp: *Compilation, sdk_layout: SdkLayout) ?std.SemanticVersi
     defer arena_allocator.deinit();
     const arena = arena_allocator.allocator();
 
+    const io = comp.io;
+
     const sdk_dir = switch (sdk_layout) {
         .sdk => comp.sysroot.?,
         .vendored => fs.path.join(arena, &.{ comp.dirs.zig_lib.path.?, "libc", "darwin" }) catch return null,
     };
-    if (readSdkVersionFromSettings(arena, sdk_dir)) |ver| {
+    if (readSdkVersionFromSettings(arena, io, sdk_dir)) |ver| {
         return parseSdkVersion(ver);
     } else |_| {
         // Read from settings should always succeed when vendored.
@@ -4360,9 +4416,9 @@ fn inferSdkVersion(comp: *Compilation, sdk_layout: SdkLayout) ?std.SemanticVersi
 // Official Apple SDKs ship with a `SDKSettings.json` located at the top of SDK fs layout.
 // Use property `MinimalDisplayName` to determine version.
 // The file/property is also available with vendored libc.
-fn readSdkVersionFromSettings(arena: Allocator, dir: []const u8) ![]const u8 {
+fn readSdkVersionFromSettings(arena: Allocator, io: Io, dir: []const u8) ![]const u8 {
     const sdk_path = try fs.path.join(arena, &.{ dir, "SDKSettings.json" });
-    const contents = try fs.cwd().readFileAlloc(sdk_path, arena, .limited(std.math.maxInt(u16)));
+    const contents = try Io.Dir.cwd().readFileAlloc(io, sdk_path, arena, .limited(std.math.maxInt(u16)));
     const parsed = try std.json.parseFromSlice(std.json.Value, arena, contents, .{});
     if (parsed.value.object.get("MinimalDisplayName")) |ver| return ver.string;
     return error.SdkVersionFailure;
@@ -5324,18 +5380,18 @@ fn isReachable(atom: *const Atom, rel: Relocation, macho_file: *MachO) bool {
 
 pub fn pwriteAll(macho_file: *MachO, bytes: []const u8, offset: u64) error{LinkFailure}!void {
     const comp = macho_file.base.comp;
+    const io = comp.io;
     const diags = &comp.link_diags;
-    macho_file.base.file.?.pwriteAll(bytes, offset) catch |err| {
-        return diags.fail("failed to write: {s}", .{@errorName(err)});
-    };
+    macho_file.base.file.?.writePositionalAll(io, bytes, offset) catch |err|
+        return diags.fail("failed to write: {t}", .{err});
 }
 
-pub fn setEndPos(macho_file: *MachO, length: u64) error{LinkFailure}!void {
+pub fn setLength(macho_file: *MachO, length: u64) error{LinkFailure}!void {
     const comp = macho_file.base.comp;
+    const io = comp.io;
     const diags = &comp.link_diags;
-    macho_file.base.file.?.setEndPos(length) catch |err| {
-        return diags.fail("failed to set file end pos: {s}", .{@errorName(err)});
-    };
+    macho_file.base.file.?.setLength(io, length) catch |err|
+        return diags.fail("failed to set file end pos: {t}", .{err});
 }
 
 pub fn cast(macho_file: *MachO, comptime T: type, x: anytype) error{LinkFailure}!T {
@@ -5367,10 +5423,11 @@ const max_distance = (1 << (jump_bits - 1));
 const max_allowed_distance = max_distance - 0x500_000;
 
 const MachO = @This();
-
-const std = @import("std");
 const build_options = @import("build_options");
 const builtin = @import("builtin");
+
+const std = @import("std");
+const Io = std.Io;
 const assert = std.debug.assert;
 const fs = std.fs;
 const log = std.log.scoped(.link);
@@ -5380,6 +5437,11 @@ const math = std.math;
 const mem = std.mem;
 const meta = std.meta;
 const Writer = std.Io.Writer;
+const AtomicBool = std.atomic.Value(bool);
+const Cache = std.Build.Cache;
+const Hash = std.hash.Wyhash;
+const Md5 = std.crypto.hash.Md5;
+const Allocator = std.mem.Allocator;
 
 const aarch64 = codegen.aarch64.encoding;
 const bind = @import("MachO/dyld_info/bind.zig");
@@ -5397,11 +5459,8 @@ const trace = @import("../tracy.zig").trace;
 const synthetic = @import("MachO/synthetic.zig");
 
 const Alignment = Atom.Alignment;
-const Allocator = mem.Allocator;
 const Archive = @import("MachO/Archive.zig");
-const AtomicBool = std.atomic.Value(bool);
 const Bind = bind.Bind;
-const Cache = std.Build.Cache;
 const CodeSignature = @import("MachO/CodeSignature.zig");
 const Compilation = @import("../Compilation.zig");
 const DataInCode = synthetic.DataInCode;
@@ -5411,14 +5470,12 @@ const ExportTrie = @import("MachO/dyld_info/Trie.zig");
 const Path = Cache.Path;
 const File = @import("MachO/file.zig").File;
 const GotSection = synthetic.GotSection;
-const Hash = std.hash.Wyhash;
 const Indsymtab = synthetic.Indsymtab;
 const InternalObject = @import("MachO/InternalObject.zig");
 const ObjcStubsSection = synthetic.ObjcStubsSection;
 const Object = @import("MachO/Object.zig");
 const LazyBind = bind.LazyBind;
 const LaSymbolPtrSection = synthetic.LaSymbolPtrSection;
-const Md5 = std.crypto.hash.Md5;
 const Zcu = @import("../Zcu.zig");
 const InternPool = @import("../InternPool.zig");
 const Rebase = @import("MachO/dyld_info/Rebase.zig");

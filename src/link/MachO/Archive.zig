@@ -6,6 +6,7 @@ pub fn deinit(self: *Archive, allocator: Allocator) void {
 
 pub fn unpack(self: *Archive, macho_file: *MachO, path: Path, handle_index: File.HandleIndex, fat_arch: ?fat.Arch) !void {
     const comp = macho_file.base.comp;
+    const io = comp.io;
     const gpa = comp.gpa;
     const diags = &comp.link_diags;
 
@@ -14,7 +15,7 @@ pub fn unpack(self: *Archive, macho_file: *MachO, path: Path, handle_index: File
 
     const handle = macho_file.getFileHandle(handle_index);
     const offset = if (fat_arch) |ar| ar.offset else 0;
-    const end_pos = if (fat_arch) |ar| offset + ar.size else (try handle.stat()).size;
+    const end_pos = if (fat_arch) |ar| offset + ar.size else (try handle.stat(io)).size;
 
     var pos: usize = offset + SARMAG;
     while (true) {
@@ -23,7 +24,7 @@ pub fn unpack(self: *Archive, macho_file: *MachO, path: Path, handle_index: File
 
         var hdr_buffer: [@sizeOf(ar_hdr)]u8 = undefined;
         {
-            const amt = try handle.preadAll(&hdr_buffer, pos);
+            const amt = try handle.readPositionalAll(io, &hdr_buffer, pos);
             if (amt != @sizeOf(ar_hdr)) return error.InputOutput;
         }
         const hdr = @as(*align(1) const ar_hdr, @ptrCast(&hdr_buffer)).*;
@@ -41,7 +42,7 @@ pub fn unpack(self: *Archive, macho_file: *MachO, path: Path, handle_index: File
             if (try hdr.nameLength()) |len| {
                 hdr_size -= len;
                 const buf = try arena.allocator().alloc(u8, len);
-                const amt = try handle.preadAll(buf, pos);
+                const amt = try handle.readPositionalAll(io, buf, pos);
                 if (amt != len) return error.InputOutput;
                 pos += len;
                 const actual_len = mem.indexOfScalar(u8, buf, @as(u8, 0)) orelse len;

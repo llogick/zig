@@ -250,7 +250,7 @@ pub const kinfo_file = extern struct {
     /// Reserved for future cap_rights
     _cap_spare: u64,
     /// Path to file, if any.
-    path: [PATH_MAX - 1:0]u8,
+    path: [PATH_MAX]u8,
 
     comptime {
         assert(@sizeOf(@This()) == KINFO_FILE_SIZE);

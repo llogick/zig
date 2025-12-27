@@ -939,6 +939,58 @@ uint32_t wasi_snapshot_preview1_path_remove_directory(uint32_t fd, uint32_t path
     return wasi_errno_success;
 }
 
+uint32_t wasi_snapshot_preview1_path_symlink(uint32_t old_path, uint32_t old_path_len, uint32_t fd, uint32_t new_path, uint32_t new_path_len) {
+    uint8_t *const m = *wasm_memory;
+    const char *old_path_ptr = (const char *)&m[old_path];
+    const char *new_path_ptr = (const char *)&m[new_path];
+#if LOG_TRACE
+    fprintf(stderr, "wasi_snapshot_preview1_path_symlink(\"%.*s\", %u, \"%.*s\")\n", (int)old_path_len, old_path_ptr, fd, (int)new_path_len, new_path_ptr);
+#endif
+    (void)old_path_ptr;
+    (void)old_path_len;
+    (void)fd;
+    (void)new_path_ptr;
+    (void)new_path_len;
+    panic("unimplemented: path_symlink");
+    return wasi_errno_success;
+}
+
+uint32_t wasi_snapshot_preview1_path_readlink(uint32_t fd, uint32_t path, uint32_t path_len, uint32_t buf, uint32_t buf_len, uint32_t out_len) {
+    uint8_t *const m = *wasm_memory;
+    const char *path_ptr = (const char *)&m[path];
+    char *buf_ptr = (char *)&m[buf];
+    uint32_t *out_len_ptr = (uint32_t *)&m[out_len];
+#if LOG_TRACE
+    fprintf(stderr, "wasi_snapshot_preview1_path_readlink(%u, \"%.*s\", 0x%X, %u, 0x%X)\n", fd, (int)path_len, path_ptr, buf, buf_len, out_len);
+#endif
+    (void)fd;
+    (void)path_ptr;
+    (void)path_len;
+    (void)buf_ptr;
+    (void)buf_len;
+    (void)out_len_ptr;
+    panic("unimplemented: path_readlink");
+    return wasi_errno_success;
+}
+
+uint32_t wasi_snapshot_preview1_path_link(uint32_t old_fd, uint32_t old_flags, uint32_t old_path, uint32_t old_path_len, uint32_t new_fd, uint32_t new_path, uint32_t new_path_len) {
+    uint8_t *const m = *wasm_memory;
+    const char *old_path_ptr = (const char *)&m[old_path];
+    const char *new_path_ptr = (const char *)&m[new_path];
+#if LOG_TRACE
+    fprintf(stderr, "wasi_snapshot_preview1_path_link(%u, 0x%X, \"%.*s\", %u, \"%.*s\")\n", old_fd, old_flags, (int)old_path_len, old_path_ptr, new_fd, (int)new_path_len, new_path_ptr);
+#endif
+    (void)old_fd;
+    (void)old_flags;
+    (void)old_path_ptr;
+    (void)old_path_len;
+    (void)new_fd;
+    (void)new_path_ptr;
+    (void)new_path_len;
+    panic("unimplemented: path_link");
+    return wasi_errno_success;
+}
+
 uint32_t wasi_snapshot_preview1_path_unlink_file(uint32_t fd, uint32_t path, uint32_t path_len) {
     uint8_t *const m = *wasm_memory;
     const char *path_ptr = (const char *)&m[path];
@@ -1035,6 +1087,15 @@ uint32_t wasi_snapshot_preview1_fd_seek(uint32_t fd, uint64_t in_offset, uint32_
     long res_offset = ftell(fds[fd].stream);
     if (res_offset < 0) return wasi_errno_io;
     store64_align3(res_filesize_ptr, res_offset);
+    return wasi_errno_success;
+}
+
+uint32_t wasi_snapshot_preview1_fd_sync(uint32_t fd) {
+#if LOG_TRACE
+    fprintf(stderr, "wasi_snapshot_preview1_fd_sync(%u)\n", fd);
+#endif
+    (void)fd;
+    panic("unimplemented: fd_sync");
     return wasi_errno_success;
 }
 

@@ -57,7 +57,9 @@ fn parseBinary(self: *Dylib, macho_file: *MachO) !void {
     const tracy = trace(@src());
     defer tracy.end();
 
-    const gpa = macho_file.base.comp.gpa;
+    const comp = macho_file.base.comp;
+    const io = comp.io;
+    const gpa = comp.gpa;
     const file = macho_file.getFileHandle(self.file_handle);
     const offset = self.offset;
 
@@ -65,7 +67,7 @@ fn parseBinary(self: *Dylib, macho_file: *MachO) !void {
 
     var header_buffer: [@sizeOf(macho.mach_header_64)]u8 = undefined;
     {
-        const amt = try file.preadAll(&header_buffer, offset);
+        const amt = try file.readPositionalAll(io, &header_buffer, offset);
         if (amt != @sizeOf(macho.mach_header_64)) return error.InputOutput;
     }
     const header = @as(*align(1) const macho.mach_header_64, @ptrCast(&header_buffer)).*;
@@ -86,7 +88,7 @@ fn parseBinary(self: *Dylib, macho_file: *MachO) !void {
     const lc_buffer = try gpa.alloc(u8, header.sizeofcmds);
     defer gpa.free(lc_buffer);
     {
-        const amt = try file.preadAll(lc_buffer, offset + @sizeOf(macho.mach_header_64));
+        const amt = try file.readPositionalAll(io, lc_buffer, offset + @sizeOf(macho.mach_header_64));
         if (amt != lc_buffer.len) return error.InputOutput;
     }
 
@@ -103,7 +105,7 @@ fn parseBinary(self: *Dylib, macho_file: *MachO) !void {
             const dyld_cmd = cmd.cast(macho.dyld_info_command).?;
             const data = try gpa.alloc(u8, dyld_cmd.export_size);
             defer gpa.free(data);
-            const amt = try file.preadAll(data, dyld_cmd.export_off + offset);
+            const amt = try file.readPositionalAll(io, data, dyld_cmd.export_off + offset);
             if (amt != data.len) return error.InputOutput;
             try self.parseTrie(data, macho_file);
         },
@@ -111,7 +113,7 @@ fn parseBinary(self: *Dylib, macho_file: *MachO) !void {
             const ld_cmd = cmd.cast(macho.linkedit_data_command).?;
             const data = try gpa.alloc(u8, ld_cmd.datasize);
             defer gpa.free(data);
-            const amt = try file.preadAll(data, ld_cmd.dataoff + offset);
+            const amt = try file.readPositionalAll(io, data, ld_cmd.dataoff + offset);
             if (amt != data.len) return error.InputOutput;
             try self.parseTrie(data, macho_file);
         },
@@ -238,13 +240,15 @@ fn parseTbd(self: *Dylib, macho_file: *MachO) !void {
     const tracy = trace(@src());
     defer tracy.end();
 
-    const gpa = macho_file.base.comp.gpa;
+    const comp = macho_file.base.comp;
+    const gpa = comp.gpa;
+    const io = comp.io;
 
     log.debug("parsing dylib from stub: {f}", .{self.path});
 
     const file = macho_file.getFileHandle(self.file_handle);
-    var lib_stub = LibStub.loadFromFile(gpa, file) catch |err| {
-        try macho_file.reportParseError2(self.index, "failed to parse TBD file: {s}", .{@errorName(err)});
+    var lib_stub = LibStub.loadFromFile(gpa, io, file) catch |err| {
+        try macho_file.reportParseError2(self.index, "failed to parse TBD file: {t}", .{err});
         return error.MalformedTbd;
     };
     defer lib_stub.deinit();

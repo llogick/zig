@@ -444,10 +444,10 @@ inline fn getAArch64CpuFeature(comptime feat_reg: []const u8) u64 {
 }
 
 pub fn detectNativeCpuAndFeatures(io: Io) ?Target.Cpu {
-    var file = fs.openFileAbsolute("/proc/cpuinfo", .{}) catch |err| switch (err) {
+    var file = Io.Dir.openFileAbsolute(io, "/proc/cpuinfo", .{}) catch |err| switch (err) {
         else => return null,
     };
-    defer file.close();
+    defer file.close(io);
 
     var buffer: [4096]u8 = undefined; // "flags" lines can get pretty long.
     var file_reader = file.reader(io, &buffer);

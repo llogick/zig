@@ -8,8 +8,9 @@
 const std = @import("std");
 const message: []const u8 = @import("message.zon");
 pub fn main() !void {
-    try std.fs.File.stdout().writeAll(message);
+    try std.Io.File.stdout().writeStreamingAll(io, message);
 }
+const io = std.Io.Threaded.global_single_threaded.ioBasic();
 #file=message.zon
 "Hello, World!\n"
 #expect_stdout="Hello, World!\n"
@@ -29,8 +30,9 @@ pub fn main() !void {
 const std = @import("std");
 const message: []const u8 = @import("message.zon");
 pub fn main() !void {
-    try std.fs.File.stdout().writeAll("a hardcoded string\n");
+    try std.Io.File.stdout().writeStreamingAll(io, "a hardcoded string\n");
 }
+const io = std.Io.Threaded.global_single_threaded.ioBasic();
 #expect_error=message.zon:1:1: error: unable to load 'message.zon': FileNotFound
 #expect_error=main.zig:2:37: note: file imported here
 
@@ -44,6 +46,7 @@ pub fn main() !void {
 const std = @import("std");
 const message: []const u8 = @import("message.zon");
 pub fn main() !void {
-    try std.fs.File.stdout().writeAll(message);
+    try std.Io.File.stdout().writeStreamingAll(io, message);
 }
+const io = std.Io.Threaded.global_single_threaded.ioBasic();
 #expect_stdout="We're back, World!\n"

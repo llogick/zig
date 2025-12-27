@@ -215,6 +215,10 @@ pub const FILE = struct {
         AccessFlags: ACCESS_MASK,
     };
 
+    /// This is not separated into RENAME_INFORMATION and RENAME_INFORMATION_EX because
+    /// the only difference is the `Flags` type (BOOLEAN before _EX, ULONG in the _EX),
+    /// which doesn't affect the struct layout--the offset of RootDirectory is the same
+    /// regardless.
     pub const RENAME_INFORMATION = extern struct {
         Flags: FLAGS,
         RootDirectory: ?HANDLE,
@@ -2310,17 +2314,15 @@ pub const OpenFileOptions = struct {
     sa: ?*SECURITY_ATTRIBUTES = null,
     share_access: FILE.SHARE = .VALID_FLAGS,
     creation: FILE.CREATE_DISPOSITION,
-    /// If true, tries to open path as a directory.
-    /// Defaults to false.
-    filter: Filter = .file_only,
+    filter: Filter = .non_directory_only,
     /// If false, tries to open path as a reparse point without dereferencing it.
     /// Defaults to true.
     follow_symlinks: bool = true,
 
     pub const Filter = enum {
         /// Causes `OpenFile` to return `error.IsDir` if the opened handle would be a directory.
-        file_only,
-        /// Causes `OpenFile` to return `error.NotDir` if the opened handle would be a file.
+        non_directory_only,
+        /// Causes `OpenFile` to return `error.NotDir` if the opened handle is not a directory.
         dir_only,
         /// `OpenFile` does not discriminate between opening files and directories.
         any,
@@ -2328,10 +2330,10 @@ pub const OpenFileOptions = struct {
 };
 
 pub fn OpenFile(sub_path_w: []const u16, options: OpenFileOptions) OpenError!HANDLE {
-    if (mem.eql(u16, sub_path_w, &[_]u16{'.'}) and options.filter == .file_only) {
+    if (mem.eql(u16, sub_path_w, &[_]u16{'.'}) and options.filter == .non_directory_only) {
         return error.IsDir;
     }
-    if (mem.eql(u16, sub_path_w, &[_]u16{ '.', '.' }) and options.filter == .file_only) {
+    if (mem.eql(u16, sub_path_w, &[_]u16{ '.', '.' }) and options.filter == .non_directory_only) {
         return error.IsDir;
     }
 
@@ -2366,7 +2368,7 @@ pub fn OpenFile(sub_path_w: []const u16, options: OpenFileOptions) OpenError!HAN
             options.creation,
             .{
                 .DIRECTORY_FILE = options.filter == .dir_only,
-                .NON_DIRECTORY_FILE = options.filter == .file_only,
+                .NON_DIRECTORY_FILE = options.filter == .non_directory_only,
                 .IO = if (options.follow_symlinks) .SYNCHRONOUS_NONALERT else .ASYNCHRONOUS,
                 .OPEN_REPARSE_POINT = !options.follow_symlinks,
             },
@@ -2828,149 +2830,6 @@ pub fn CloseHandle(hObject: HANDLE) void {
     assert(ntdll.NtClose(hObject) == .SUCCESS);
 }
 
-pub const ReadFileError = error{
-    BrokenPipe,
-    /// The specified network name is no longer available.
-    ConnectionResetByPeer,
-    Canceled,
-    /// Unable to read file due to lock.
-    LockViolation,
-    /// Known to be possible when:
-    /// - Unable to read from disconnected virtual com port (Windows)
-    AccessDenied,
-    NotOpenForReading,
-    Unexpected,
-};
-
-/// If buffer's length exceeds what a Windows DWORD integer can hold, it will be broken into
-/// multiple non-atomic reads.
-pub fn ReadFile(in_hFile: HANDLE, buffer: []u8, offset: ?u64) ReadFileError!usize {
-    while (true) {
-        const want_read_count: DWORD = @min(@as(DWORD, maxInt(DWORD)), buffer.len);
-        var amt_read: DWORD = undefined;
-        var overlapped_data: OVERLAPPED = undefined;
-        const overlapped: ?*OVERLAPPED = if (offset) |off| blk: {
-            overlapped_data = .{
-                .Internal = 0,
-                .InternalHigh = 0,
-                .DUMMYUNIONNAME = .{
-                    .DUMMYSTRUCTNAME = .{
-                        .Offset = @as(u32, @truncate(off)),
-                        .OffsetHigh = @as(u32, @truncate(off >> 32)),
-                    },
-                },
-                .hEvent = null,
-            };
-            break :blk &overlapped_data;
-        } else null;
-        if (kernel32.ReadFile(in_hFile, buffer.ptr, want_read_count, &amt_read, overlapped) == 0) {
-            switch (GetLastError()) {
-                .IO_PENDING => unreachable,
-                .OPERATION_ABORTED => continue,
-                .BROKEN_PIPE => return 0,
-                .HANDLE_EOF => return 0,
-                .NETNAME_DELETED => return error.ConnectionResetByPeer,
-                .LOCK_VIOLATION => return error.LockViolation,
-                .ACCESS_DENIED => return error.AccessDenied,
-                .INVALID_HANDLE => return error.NotOpenForReading,
-                else => |err| return unexpectedError(err),
-            }
-        }
-        return amt_read;
-    }
-}
-
-pub const WriteFileError = error{
-    SystemResources,
-    Canceled,
-    BrokenPipe,
-    NotOpenForWriting,
-    /// The process cannot access the file because another process has locked
-    /// a portion of the file.
-    LockViolation,
-    /// The specified network name is no longer available.
-    ConnectionResetByPeer,
-    /// Known to be possible when:
-    /// - Unable to write to disconnected virtual com port (Windows)
-    AccessDenied,
-    Unexpected,
-};
-
-pub fn WriteFile(
-    handle: HANDLE,
-    bytes: []const u8,
-    offset: ?u64,
-) WriteFileError!usize {
-    var bytes_written: DWORD = undefined;
-    var overlapped_data: OVERLAPPED = undefined;
-    const overlapped: ?*OVERLAPPED = if (offset) |off| blk: {
-        overlapped_data = .{
-            .Internal = 0,
-            .InternalHigh = 0,
-            .DUMMYUNIONNAME = .{
-                .DUMMYSTRUCTNAME = .{
-                    .Offset = @truncate(off),
-                    .OffsetHigh = @truncate(off >> 32),
-                },
-            },
-            .hEvent = null,
-        };
-        break :blk &overlapped_data;
-    } else null;
-    const adjusted_len = math.cast(u32, bytes.len) orelse maxInt(u32);
-    if (kernel32.WriteFile(handle, bytes.ptr, adjusted_len, &bytes_written, overlapped) == 0) {
-        switch (GetLastError()) {
-            .INVALID_USER_BUFFER => return error.SystemResources,
-            .NOT_ENOUGH_MEMORY => return error.SystemResources,
-            .OPERATION_ABORTED => return error.Canceled,
-            .NOT_ENOUGH_QUOTA => return error.SystemResources,
-            .IO_PENDING => unreachable,
-            .NO_DATA => return error.BrokenPipe,
-            .INVALID_HANDLE => return error.NotOpenForWriting,
-            .LOCK_VIOLATION => return error.LockViolation,
-            .NETNAME_DELETED => return error.ConnectionResetByPeer,
-            .ACCESS_DENIED => return error.AccessDenied,
-            .WORKING_SET_QUOTA => return error.SystemResources,
-            else => |err| return unexpectedError(err),
-        }
-    }
-    return bytes_written;
-}
-
-pub const SetCurrentDirectoryError = error{
-    NameTooLong,
-    FileNotFound,
-    NotDir,
-    AccessDenied,
-    NoDevice,
-    BadPathName,
-    Unexpected,
-};
-
-pub fn SetCurrentDirectory(path_name: []const u16) SetCurrentDirectoryError!void {
-    const path_len_bytes = math.cast(u16, path_name.len * 2) orelse return error.NameTooLong;
-
-    var nt_name: UNICODE_STRING = .{
-        .Length = path_len_bytes,
-        .MaximumLength = path_len_bytes,
-        .Buffer = @constCast(path_name.ptr),
-    };
-
-    const rc = ntdll.RtlSetCurrentDirectory_U(&nt_name);
-    switch (rc) {
-        .SUCCESS => {},
-        .OBJECT_NAME_INVALID => return error.BadPathName,
-        .OBJECT_NAME_NOT_FOUND => return error.FileNotFound,
-        .OBJECT_PATH_NOT_FOUND => return error.FileNotFound,
-        .NO_MEDIA_IN_DEVICE => return error.NoDevice,
-        .INVALID_PARAMETER => unreachable,
-        .ACCESS_DENIED => return error.AccessDenied,
-        .OBJECT_PATH_SYNTAX_BAD => unreachable,
-        .NOT_A_DIRECTORY => return error.NotDir,
-        else => return unexpectedStatus(rc),
-    }
-}
-
 pub const GetCurrentDirectoryError = error{
     NameTooLong,
     Unexpected,
@@ -3040,7 +2899,7 @@ pub fn CreateSymbolicLink(
         },
         .dir = dir,
         .creation = .CREATE,
-        .filter = if (is_directory) .dir_only else .file_only,
+        .filter = if (is_directory) .dir_only else .non_directory_only,
     }) catch |err| switch (err) {
         error.IsDir => return error.PathAlreadyExists,
         error.NotDir => return error.Unexpected,
@@ -3584,7 +3443,7 @@ test QueryObjectName {
     //any file will do; canonicalization works on NTFS junctions and symlinks, hardlinks remain separate paths.
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const handle = tmp.dir.fd;
+    const handle = tmp.dir.handle;
     var out_buffer: [PATH_MAX_WIDE]u16 = undefined;
 
     const result_path = try QueryObjectName(handle, &out_buffer);
@@ -3597,7 +3456,6 @@ test QueryObjectName {
 
 pub const GetFinalPathNameByHandleError = error{
     AccessDenied,
-    BadPathName,
     FileNotFound,
     NameTooLong,
     /// The volume does not contain a recognized file system. File system
@@ -3622,6 +3480,8 @@ pub const GetFinalPathNameByHandleFormat = struct {
 /// NT or DOS volume name (e.g., `\Device\HarddiskVolume0\foo.txt` versus `C:\foo.txt`).
 /// If DOS volume name format is selected, note that this function does *not* prepend
 /// `\\?\` prefix to the resultant path.
+///
+/// TODO move this function into std.Io.Threaded and add cancelation checks
 pub fn GetFinalPathNameByHandle(
     hFile: HANDLE,
     fmt: GetFinalPathNameByHandleFormat,
@@ -3701,6 +3561,7 @@ pub fn GetFinalPathNameByHandle(
                 error.WouldBlock => return error.Unexpected,
                 error.NetworkNotFound => return error.Unexpected,
                 error.AntivirusInterference => return error.Unexpected,
+                error.BadPathName => return error.Unexpected,
                 else => |e| return e,
             };
             defer CloseHandle(mgmt_handle);
@@ -3746,9 +3607,7 @@ pub fn GetFinalPathNameByHandle(
                     const total_len = drive_letter.len + file_name_u16.len;
 
                     // Validate that DOS does not contain any spurious nul bytes.
-                    if (mem.findScalar(u16, out_buffer[0..total_len], 0)) |_| {
-                        return error.BadPathName;
-                    }
+                    assert(mem.findScalar(u16, out_buffer[0..total_len], 0) == null);
 
                     return out_buffer[0..total_len];
                 } else if (mountmgrIsVolumeName(symlink)) {
@@ -3798,9 +3657,7 @@ pub fn GetFinalPathNameByHandle(
                     const total_len = volume_path.len + file_name_u16.len;
 
                     // Validate that DOS does not contain any spurious nul bytes.
-                    if (mem.findScalar(u16, out_buffer[0..total_len], 0)) |_| {
-                        return error.BadPathName;
-                    }
+                    assert(mem.findScalar(u16, out_buffer[0..total_len], 0) == null);
 
                     return out_buffer[0..total_len];
                 }
@@ -3847,7 +3704,7 @@ test GetFinalPathNameByHandle {
     //any file will do
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const handle = tmp.dir.fd;
+    const handle = tmp.dir.handle;
     var buffer: [PATH_MAX_WIDE]u16 = undefined;
 
     //check with sufficient size
@@ -4248,80 +4105,6 @@ pub fn InitOnceExecuteOnce(InitOnce: *INIT_ONCE, InitFn: INIT_ONCE_FN, Parameter
     assert(kernel32.InitOnceExecuteOnce(InitOnce, InitFn, Parameter, Context) != 0);
 }
 
-pub const SetFileTimeError = error{Unexpected};
-
-pub fn SetFileTime(
-    hFile: HANDLE,
-    lpCreationTime: ?*const FILETIME,
-    lpLastAccessTime: ?*const FILETIME,
-    lpLastWriteTime: ?*const FILETIME,
-) SetFileTimeError!void {
-    const rc = kernel32.SetFileTime(hFile, lpCreationTime, lpLastAccessTime, lpLastWriteTime);
-    if (rc == 0) {
-        switch (GetLastError()) {
-            else => |err| return unexpectedError(err),
-        }
-    }
-}
-
-pub const LockFileError = error{
-    SystemResources,
-    WouldBlock,
-} || UnexpectedError;
-
-pub fn LockFile(
-    FileHandle: HANDLE,
-    Event: ?HANDLE,
-    ApcRoutine: ?*const IO_APC_ROUTINE,
-    ApcContext: ?*anyopaque,
-    IoStatusBlock: *IO_STATUS_BLOCK,
-    ByteOffset: *const LARGE_INTEGER,
-    Length: *const LARGE_INTEGER,
-    Key: ?*ULONG,
-    FailImmediately: BOOLEAN,
-    ExclusiveLock: BOOLEAN,
-) !void {
-    const rc = ntdll.NtLockFile(
-        FileHandle,
-        Event,
-        ApcRoutine,
-        ApcContext,
-        IoStatusBlock,
-        ByteOffset,
-        Length,
-        Key,
-        FailImmediately,
-        ExclusiveLock,
-    );
-    switch (rc) {
-        .SUCCESS => return,
-        .INSUFFICIENT_RESOURCES => return error.SystemResources,
-        .LOCK_NOT_GRANTED => return error.WouldBlock,
-        .ACCESS_VIOLATION => unreachable, // bad io_status_block pointer
-        else => return unexpectedStatus(rc),
-    }
-}
-
-pub const UnlockFileError = error{
-    RangeNotLocked,
-} || UnexpectedError;
-
-pub fn UnlockFile(
-    FileHandle: HANDLE,
-    IoStatusBlock: *IO_STATUS_BLOCK,
-    ByteOffset: *const LARGE_INTEGER,
-    Length: *const LARGE_INTEGER,
-    Key: ULONG,
-) !void {
-    const rc = ntdll.NtUnlockFile(FileHandle, IoStatusBlock, ByteOffset, Length, Key);
-    switch (rc) {
-        .SUCCESS => return,
-        .RANGE_NOT_LOCKED => return error.RangeNotLocked,
-        .ACCESS_VIOLATION => unreachable, // bad io_status_block pointer
-        else => return unexpectedStatus(rc),
-    }
-}
-
 /// This is a workaround for the C backend until zig has the ability to put
 /// C code in inline assembly.
 extern fn zig_thumb_windows_teb() callconv(.c) *anyopaque;
@@ -4713,8 +4496,8 @@ pub fn wToPrefixedFileW(dir: ?HANDLE, path: [:0]const u16) Wtf16ToPrefixedFileWE
                 break :path_to_get path;
             }
             // We can also skip GetFinalPathNameByHandle if the handle matches
-            // the handle returned by fs.cwd()
-            if (dir.? == std.fs.cwd().fd) {
+            // the handle returned by Io.Dir.cwd()
+            if (dir.? == Io.Dir.cwd().handle) {
                 break :path_to_get path;
             }
             // At this point, we know we have a relative path that had too many

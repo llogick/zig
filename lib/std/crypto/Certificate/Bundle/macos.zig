@@ -6,7 +6,7 @@ const mem = std.mem;
 const Allocator = std.mem.Allocator;
 const Bundle = @import("../Bundle.zig");
 
-pub const RescanMacError = Allocator.Error || fs.File.OpenError || fs.File.ReadError || fs.File.SeekError || Bundle.ParseCertError || error{EndOfStream};
+pub const RescanMacError = Allocator.Error || Io.File.OpenError || Io.File.Reader.Error || Io.File.SeekError || Bundle.ParseCertError || error{EndOfStream};
 
 pub fn rescanMac(cb: *Bundle, gpa: Allocator, io: Io, now: Io.Timestamp) RescanMacError!void {
     cb.bytes.clearRetainingCapacity();
@@ -17,9 +17,8 @@ pub fn rescanMac(cb: *Bundle, gpa: Allocator, io: Io, now: Io.Timestamp) RescanM
         "/Library/Keychains/System.keychain",
     };
 
-    _ = io; // TODO migrate file system to use std.Io
     for (keychain_paths) |keychain_path| {
-        const bytes = std.fs.cwd().readFileAlloc(keychain_path, gpa, .limited(std.math.maxInt(u32))) catch |err| switch (err) {
+        const bytes = Io.Dir.cwd().readFileAlloc(io, keychain_path, gpa, .limited(std.math.maxInt(u32))) catch |err| switch (err) {
             error.StreamTooLong => return error.FileTooBig,
             else => |e| return e,
         };

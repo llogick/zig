@@ -1,6 +1,8 @@
-const std = @import("std");
 const builtin = @import("builtin");
-const fs = std.fs;
+
+const std = @import("std");
+const Io = std.Io;
+const Dir = std.Io.Dir;
 const process = std.process;
 const Progress = std.Progress;
 const print = std.debug.print;
@@ -8,7 +10,6 @@ const mem = std.mem;
 const testing = std.testing;
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
-const getExternalExecutor = std.zig.system.getExternalExecutor;
 const fatal = std.process.fatal;
 const Writer = std.Io.Writer;
 
@@ -38,7 +39,7 @@ pub fn main() !void {
 
     const gpa = arena;
 
-    var threaded: std.Io.Threaded = .init(gpa);
+    var threaded: std.Io.Threaded = .init(gpa, .{});
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -49,7 +50,7 @@ pub fn main() !void {
     while (args_it.next()) |arg| {
         if (mem.startsWith(u8, arg, "-")) {
             if (mem.eql(u8, arg, "-h") or mem.eql(u8, arg, "--help")) {
-                try fs.File.stdout().writeAll(usage);
+                try Io.File.stdout().writeStreamingAll(io, usage);
                 process.exit(0);
             } else if (mem.eql(u8, arg, "--code-dir")) {
                 if (args_it.next()) |param| {
@@ -72,16 +73,16 @@ pub fn main() !void {
     const output_path = opt_output orelse fatal("missing output file", .{});
     const code_dir_path = opt_code_dir orelse fatal("missing --code-dir argument", .{});
 
-    var in_file = try fs.cwd().openFile(input_path, .{});
-    defer in_file.close();
+    var in_file = try Dir.cwd().openFile(io, input_path, .{});
+    defer in_file.close(io);
 
-    var out_file = try fs.cwd().createFile(output_path, .{});
-    defer out_file.close();
+    var out_file = try Dir.cwd().createFile(io, output_path, .{});
+    defer out_file.close(io);
     var out_file_buffer: [4096]u8 = undefined;
-    var out_file_writer = out_file.writer(&out_file_buffer);
+    var out_file_writer = out_file.writer(io, &out_file_buffer);
 
-    var code_dir = try fs.cwd().openDir(code_dir_path, .{});
-    defer code_dir.close();
+    var code_dir = try Dir.cwd().openDir(io, code_dir_path, .{});
+    defer code_dir.close(io);
 
     var in_file_reader = in_file.reader(io, &.{});
     const input_file_bytes = try in_file_reader.interface.allocRemaining(arena, .limited(max_doc_file_size));
@@ -89,7 +90,7 @@ pub fn main() !void {
     var tokenizer = Tokenizer.init(input_path, input_file_bytes);
     var toc = try genToc(arena, &tokenizer);
 
-    try genHtml(arena, &tokenizer, &toc, code_dir, &out_file_writer.interface);
+    try genHtml(arena, io, &tokenizer, &toc, code_dir, &out_file_writer.interface);
     try out_file_writer.end();
 }
 
@@ -988,9 +989,10 @@ fn printShell(out: *Writer, shell_content: []const u8, escape: bool) !void {
 
 fn genHtml(
     allocator: Allocator,
+    io: Io,
     tokenizer: *Tokenizer,
     toc: *Toc,
-    code_dir: std.fs.Dir,
+    code_dir: Dir,
     out: *Writer,
 ) !void {
     for (toc.nodes) |node| {
@@ -1042,11 +1044,11 @@ fn genHtml(
             },
             .Code => |code| {
                 const out_basename = try std.fmt.allocPrint(allocator, "{s}.out", .{
-                    fs.path.stem(code.name),
+                    Dir.path.stem(code.name),
                 });
                 defer allocator.free(out_basename);
 
-                const contents = code_dir.readFileAlloc(out_basename, allocator, .limited(std.math.maxInt(u32))) catch |err| {
+                const contents = code_dir.readFileAlloc(io, out_basename, allocator, .limited(std.math.maxInt(u32))) catch |err| {
                     return parseError(tokenizer, code.token, "unable to open '{s}': {t}", .{ out_basename, err });
                 };
                 defer allocator.free(contents);

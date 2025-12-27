@@ -15,7 +15,7 @@
 //!
 //! For an example implementation of the `logFn` function, see `defaultLog`,
 //! which is the default implementation. It outputs to stderr, using color if
-//! the detected `std.Io.tty.Config` supports it. Its output looks like this:
+//! supported. Its output looks like this:
 //! ```
 //! error: this is an error
 //! error(scope): this is an error with a non-default scope
@@ -80,6 +80,14 @@ pub fn logEnabled(comptime level: Level, comptime scope: @EnumLiteral()) bool {
     return @intFromEnum(level) <= @intFromEnum(std.options.log_level);
 }
 
+pub const terminalMode = std.options.logTerminalMode;
+
+pub fn defaultTerminalMode() std.Io.Terminal.Mode {
+    const stderr = std.debug.lockStderr(&.{}).terminal();
+    std.debug.unlockStderr();
+    return stderr.mode;
+}
+
 /// The default implementation for the log function. Custom log functions may
 /// forward log messages to this function.
 ///
@@ -92,25 +100,33 @@ pub fn defaultLog(
     args: anytype,
 ) void {
     var buffer: [64]u8 = undefined;
-    const stderr, const ttyconf = std.debug.lockStderrWriter(&buffer);
-    defer std.debug.unlockStderrWriter();
-    ttyconf.setColor(stderr, switch (level) {
+    const stderr = std.debug.lockStderr(&buffer).terminal();
+    defer std.debug.unlockStderr();
+    return defaultLogFileTerminal(level, scope, format, args, stderr) catch {};
+}
+
+pub fn defaultLogFileTerminal(
+    comptime level: Level,
+    comptime scope: @EnumLiteral(),
+    comptime format: []const u8,
+    args: anytype,
+    t: std.Io.Terminal,
+) std.Io.Writer.Error!void {
+    t.setColor(switch (level) {
         .err => .red,
         .warn => .yellow,
         .info => .green,
         .debug => .magenta,
     }) catch {};
-    ttyconf.setColor(stderr, .bold) catch {};
-    stderr.writeAll(level.asText()) catch return;
-    ttyconf.setColor(stderr, .reset) catch {};
-    ttyconf.setColor(stderr, .dim) catch {};
-    ttyconf.setColor(stderr, .bold) catch {};
-    if (scope != .default) {
-        stderr.print("({s})", .{@tagName(scope)}) catch return;
-    }
-    stderr.writeAll(": ") catch return;
-    ttyconf.setColor(stderr, .reset) catch {};
-    stderr.print(format ++ "\n", args) catch return;
+    t.setColor(.bold) catch {};
+    try t.writer.writeAll(level.asText());
+    t.setColor(.reset) catch {};
+    t.setColor(.dim) catch {};
+    t.setColor(.bold) catch {};
+    if (scope != .default) try t.writer.print("({t})", .{scope});
+    try t.writer.writeAll(": ");
+    t.setColor(.reset) catch {};
+    try t.writer.print(format ++ "\n", args);
 }
 
 /// Returns a scoped logging namespace that logs all messages using the scope

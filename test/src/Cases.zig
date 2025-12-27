@@ -1,6 +1,8 @@
 const Cases = @This();
 const builtin = @import("builtin");
+
 const std = @import("std");
+const Io = std.Io;
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const getExternalExecutor = std.zig.system.getExternalExecutor;
@@ -8,6 +10,7 @@ const ArrayList = std.ArrayList;
 
 gpa: Allocator,
 arena: Allocator,
+io: Io,
 cases: std.array_list.Managed(Case),
 
 pub const IncrementalCase = struct {
@@ -313,7 +316,7 @@ pub fn addCompile(
 /// Each file should include a test manifest as a contiguous block of comments at
 /// the end of the file. The first line should be the test type, followed by a set of
 /// key-value config values, followed by a blank line, then the expected output.
-pub fn addFromDir(ctx: *Cases, dir: std.fs.Dir, b: *std.Build) void {
+pub fn addFromDir(ctx: *Cases, dir: Io.Dir, b: *std.Build) void {
     var current_file: []const u8 = "none";
     ctx.addFromDirInner(dir, &current_file, b) catch |err| {
         std.debug.panicExtra(
@@ -326,16 +329,17 @@ pub fn addFromDir(ctx: *Cases, dir: std.fs.Dir, b: *std.Build) void {
 
 fn addFromDirInner(
     ctx: *Cases,
-    iterable_dir: std.fs.Dir,
+    iterable_dir: Io.Dir,
     /// This is kept up to date with the currently being processed file so
     /// that if any errors occur the caller knows it happened during this file.
     current_file: *[]const u8,
     b: *std.Build,
 ) !void {
+    const io = ctx.io;
     var it = try iterable_dir.walk(ctx.arena);
     var filenames: ArrayList([]const u8) = .empty;
 
-    while (try it.next()) |entry| {
+    while (try it.next(io)) |entry| {
         if (entry.kind != .file) continue;
 
         // Ignore stuff such as .swp files
@@ -347,7 +351,7 @@ fn addFromDirInner(
         current_file.* = filename;
 
         const max_file_size = 10 * 1024 * 1024;
-        const src = try iterable_dir.readFileAllocOptions(filename, ctx.arena, .limited(max_file_size), .@"1", 0);
+        const src = try iterable_dir.readFileAllocOptions(io, filename, ctx.arena, .limited(max_file_size), .@"1", 0);
 
         // Parse the manifest
         var manifest = try TestManifest.parse(ctx.arena, src);
@@ -376,6 +380,12 @@ fn addFromDirInner(
                     // Other backends don't support new liveness format
                     continue;
                 }
+
+                if (backend == .selfhosted and target.cpu.arch == .aarch64) {
+                    // https://codeberg.org/ziglang/zig/pulls/30232#issuecomment-9182045
+                    continue;
+                }
+
                 if (backend == .selfhosted and target.os.tag == .macos and
                     target.cpu.arch == .x86_64 and builtin.cpu.arch == .aarch64)
                 {
@@ -427,9 +437,10 @@ fn addFromDirInner(
     }
 }
 
-pub fn init(gpa: Allocator, arena: Allocator) Cases {
+pub fn init(gpa: Allocator, arena: Allocator, io: Io) Cases {
     return .{
         .gpa = gpa,
+        .io = io,
         .cases = .init(gpa),
         .arena = arena,
     };
@@ -457,6 +468,7 @@ pub fn lowerToBuildSteps(
     parent_step: *std.Build.Step,
     options: CaseTestOptions,
 ) void {
+    const io = self.io;
     const host = b.resolveTargetQuery(.{});
     const cases_dir_path = b.build_root.join(b.allocator, &.{ "test", "cases" }) catch @panic("OOM");
 
@@ -591,7 +603,7 @@ pub fn lowerToBuildSteps(
             },
             .Execution => |expected_stdout| no_exec: {
                 const run = if (case.target.result.ofmt == .c) run_step: {
-                    if (getExternalExecutor(&host.result, &case.target.result, .{ .link_libc = true }) != .native) {
+                    if (getExternalExecutor(io, &host.result, &case.target.result, .{ .link_libc = true }) != .native) {
                         // We wouldn't be able to run the compiled C code.
                         break :no_exec;
                     }

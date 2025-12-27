@@ -5,14 +5,16 @@
 #file=main.zig
 const std = @import("std");
 pub fn main() !void {
-    try std.fs.File.stdout().writeAll("foo\n");
+    try std.Io.File.stdout().writeStreamingAll(io, "foo\n");
 }
+const io = std.Io.Threaded.global_single_threaded.ioBasic();
 #expect_stdout="foo\n"
 #update=change line number
 #file=main.zig
 const std = @import("std");
 
 pub fn main() !void {
-    try std.fs.File.stdout().writeAll("foo\n");
+    try std.Io.File.stdout().writeStreamingAll(io, "foo\n");
 }
+const io = std.Io.Threaded.global_single_threaded.ioBasic();
 #expect_stdout="foo\n"

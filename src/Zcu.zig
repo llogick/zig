@@ -1076,11 +1076,11 @@ pub const File = struct {
 
         var f = f: {
             const dir, const sub_path = file.path.openInfo(zcu.comp.dirs);
-            break :f try dir.openFile(sub_path, .{});
+            break :f try dir.openFile(io, sub_path, .{});
         };
-        defer f.close();
+        defer f.close(io);
 
-        const stat = f.stat() catch |err| switch (err) {
+        const stat = f.stat(io) catch |err| switch (err) {
             error.Streaming => {
                 // Since `file.stat` is populated, this was previously a file stream; since it is
                 // now not a file stream, it must have changed.
@@ -1200,7 +1200,7 @@ pub const EmbedFile = struct {
     /// `.none` means the file was not loaded, so `stat` is undefined.
     val: InternPool.Index,
     /// If this is `null` and `val` is `.none`, the file has never been loaded.
-    err: ?(std.fs.File.OpenError || std.fs.File.StatError || std.fs.File.ReadError || error{UnexpectedEof}),
+    err: ?(Io.File.OpenError || Io.File.StatError || Io.File.Reader.Error || error{UnexpectedEof}),
     stat: Cache.File.Stat,
 
     pub const Index = enum(u32) {
@@ -2813,8 +2813,8 @@ pub fn init(zcu: *Zcu, gpa: Allocator, io: Io, thread_count: usize) !void {
 
 pub fn deinit(zcu: *Zcu) void {
     const comp = zcu.comp;
-    const gpa = comp.gpa;
     const io = comp.io;
+    const gpa = zcu.gpa;
     {
         const pt: Zcu.PerThread = .activate(zcu, .main);
         defer pt.deactivate();
@@ -2835,8 +2835,8 @@ pub fn deinit(zcu: *Zcu) void {
         }
         zcu.embed_table.deinit(gpa);
 
-        zcu.local_zir_cache.handle.close();
-        zcu.global_zir_cache.handle.close();
+        zcu.local_zir_cache.handle.close(io);
+        zcu.global_zir_cache.handle.close(io);
 
         for (zcu.failed_analysis.values()) |value| value.destroy(gpa);
         for (zcu.failed_codegen.values()) |value| value.destroy(gpa);
@@ -2900,7 +2900,7 @@ pub fn deinit(zcu: *Zcu) void {
 
         if (zcu.resolved_references) |*r| r.deinit(gpa);
 
-        if (zcu.comp.debugIncremental()) {
+        if (comp.debugIncremental()) {
             zcu.incremental_debug_state.deinit(gpa);
         }
     }
@@ -2927,7 +2927,7 @@ comptime {
     }
 }
 
-pub fn loadZirCache(gpa: Allocator, io: Io, cache_file: std.fs.File) !Zir {
+pub fn loadZirCache(gpa: Allocator, io: Io, cache_file: Io.File) !Zir {
     var buffer: [2000]u8 = undefined;
     var file_reader = cache_file.reader(io, &buffer);
     return result: {
@@ -2986,7 +2986,12 @@ pub fn loadZirCacheBody(gpa: Allocator, header: Zir.Header, cache_br: *Io.Reader
     return zir;
 }
 
-pub fn saveZirCache(gpa: Allocator, cache_file: std.fs.File, stat: std.fs.File.Stat, zir: Zir) (std.fs.File.WriteError || Allocator.Error)!void {
+pub fn saveZirCache(
+    gpa: Allocator,
+    cache_file_writer: *Io.File.Writer,
+    stat: Io.File.Stat,
+    zir: Zir,
+) (Io.File.Writer.Error || Allocator.Error)!void {
     const safety_buffer = if (data_has_safety_tag)
         try gpa.alloc([8]u8, zir.instructions.len)
     else
@@ -3020,13 +3025,12 @@ pub fn saveZirCache(gpa: Allocator, cache_file: std.fs.File, stat: std.fs.File.S
         zir.string_bytes,
         @ptrCast(zir.extra),
     };
-    var cache_fw = cache_file.writer(&.{});
-    cache_fw.interface.writeVecAll(&vecs) catch |err| switch (err) {
-        error.WriteFailed => return cache_fw.err.?,
+    cache_file_writer.interface.writeVecAll(&vecs) catch |err| switch (err) {
+        error.WriteFailed => return cache_file_writer.err.?,
     };
 }
 
-pub fn saveZoirCache(cache_file: std.fs.File, stat: std.fs.File.Stat, zoir: Zoir) std.fs.File.WriteError!void {
+pub fn saveZoirCache(cache_file_writer: *Io.File.Writer, stat: Io.File.Stat, zoir: Zoir) Io.File.Writer.Error!void {
     const header: Zoir.Header = .{
         .nodes_len = @intCast(zoir.nodes.len),
         .extra_len = @intCast(zoir.extra.len),
@@ -3050,9 +3054,8 @@ pub fn saveZoirCache(cache_file: std.fs.File, stat: std.fs.File.Stat, zoir: Zoir
         @ptrCast(zoir.compile_errors),
         @ptrCast(zoir.error_notes),
     };
-    var cache_fw = cache_file.writer(&.{});
-    cache_fw.interface.writeVecAll(&vecs) catch |err| switch (err) {
-        error.WriteFailed => return cache_fw.err.?,
+    cache_file_writer.interface.writeVecAll(&vecs) catch |err| switch (err) {
+        error.WriteFailed => return cache_file_writer.err.?,
     };
 }
 

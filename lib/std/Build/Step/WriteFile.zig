@@ -206,9 +206,9 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
         }
     }
 
-    const open_dir_cache = try arena.alloc(fs.Dir, write_file.directories.items.len);
+    const open_dir_cache = try arena.alloc(Io.Dir, write_file.directories.items.len);
     var open_dirs_count: usize = 0;
-    defer closeDirs(open_dir_cache[0..open_dirs_count]);
+    defer Io.Dir.closeMany(io, open_dir_cache[0..open_dirs_count]);
 
     for (write_file.directories.items, open_dir_cache) |dir, *open_dir_cache_elem| {
         man.hash.addBytes(dir.sub_path);
@@ -218,7 +218,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
         const need_derived_inputs = try step.addDirectoryWatchInput(dir.source);
         const src_dir_path = dir.source.getPath3(b, step);
 
-        var src_dir = src_dir_path.root_dir.handle.openDir(src_dir_path.subPathOrDot(), .{ .iterate = true }) catch |err| {
+        var src_dir = src_dir_path.root_dir.handle.openDir(io, src_dir_path.subPathOrDot(), .{ .iterate = true }) catch |err| {
             return step.fail("unable to open source directory '{f}': {s}", .{
                 src_dir_path, @errorName(err),
             });
@@ -228,7 +228,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
 
         var it = try src_dir.walk(gpa);
         defer it.deinit();
-        while (try it.next()) |entry| {
+        while (try it.next(io)) |entry| {
             if (!dir.options.pathIncluded(entry.path)) continue;
 
             switch (entry.kind) {
@@ -259,16 +259,13 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
 
     write_file.generated_directory.path = try b.cache_root.join(arena, &.{ "o", &digest });
 
-    var cache_dir = b.cache_root.handle.makeOpenPath(cache_path, .{}) catch |err| {
-        return step.fail("unable to make path '{f}{s}': {s}", .{
-            b.cache_root, cache_path, @errorName(err),
-        });
-    };
-    defer cache_dir.close();
+    var cache_dir = b.cache_root.handle.createDirPathOpen(io, cache_path, .{}) catch |err|
+        return step.fail("unable to make path '{f}{s}': {t}", .{ b.cache_root, cache_path, err });
+    defer cache_dir.close(io);
 
     for (write_file.files.items) |file| {
         if (fs.path.dirname(file.sub_path)) |dirname| {
-            cache_dir.makePath(dirname) catch |err| {
+            cache_dir.createDirPath(io, dirname) catch |err| {
                 return step.fail("unable to make path '{f}{s}{c}{s}': {t}", .{
                     b.cache_root, cache_path, fs.path.sep, dirname, err,
                 });
@@ -276,7 +273,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
         }
         switch (file.contents) {
             .bytes => |bytes| {
-                cache_dir.writeFile(.{ .sub_path = file.sub_path, .data = bytes }) catch |err| {
+                cache_dir.writeFile(io, .{ .sub_path = file.sub_path, .data = bytes }) catch |err| {
                     return step.fail("unable to write file '{f}{s}{c}{s}': {t}", .{
                         b.cache_root, cache_path, fs.path.sep, file.sub_path, err,
                     });
@@ -284,7 +281,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
             },
             .copy => |file_source| {
                 const source_path = file_source.getPath2(b, step);
-                const prev_status = Io.Dir.updateFile(.cwd(), io, source_path, cache_dir.adaptToNewApi(), file.sub_path, .{}) catch |err| {
+                const prev_status = Io.Dir.updateFile(.cwd(), io, source_path, cache_dir, file.sub_path, .{}) catch |err| {
                     return step.fail("unable to update file from '{s}' to '{f}{s}{c}{s}': {t}", .{
                         source_path, b.cache_root, cache_path, fs.path.sep, file.sub_path, err,
                     });
@@ -303,7 +300,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
         const dest_dirname = dir.sub_path;
 
         if (dest_dirname.len != 0) {
-            cache_dir.makePath(dest_dirname) catch |err| {
+            cache_dir.createDirPath(io, dest_dirname) catch |err| {
                 return step.fail("unable to make path '{f}{s}{c}{s}': {s}", .{
                     b.cache_root, cache_path, fs.path.sep, dest_dirname, @errorName(err),
                 });
@@ -312,19 +309,19 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
 
         var it = try already_open_dir.walk(gpa);
         defer it.deinit();
-        while (try it.next()) |entry| {
+        while (try it.next(io)) |entry| {
             if (!dir.options.pathIncluded(entry.path)) continue;
 
             const src_entry_path = try src_dir_path.join(arena, entry.path);
             const dest_path = b.pathJoin(&.{ dest_dirname, entry.path });
             switch (entry.kind) {
-                .directory => try cache_dir.makePath(dest_path),
+                .directory => try cache_dir.createDirPath(io, dest_path),
                 .file => {
                     const prev_status = Io.Dir.updateFile(
-                        src_entry_path.root_dir.handle.adaptToNewApi(),
+                        src_entry_path.root_dir.handle,
                         io,
                         src_entry_path.sub_path,
-                        cache_dir.adaptToNewApi(),
+                        cache_dir,
                         dest_path,
                         .{},
                     ) catch |err| {
@@ -340,8 +337,4 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
     }
 
     try step.writeManifest(&man);
-}
-
-fn closeDirs(dirs: []fs.Dir) void {
-    for (dirs) |*d| d.close();
 }

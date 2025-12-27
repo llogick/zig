@@ -1,4 +1,5 @@
 const std = @import("std");
+const Io = std.Io;
 const mem = std.mem;
 const Allocator = mem.Allocator;
 const assert = std.debug.assert;
@@ -211,7 +212,7 @@ fn checkIdentifierCodepointWarnings(p: *Parser, codepoint: u21, loc: Source.Loca
 
     const prev_total = p.diagnostics.total;
     var sf = std.heap.stackFallback(1024, p.comp.gpa);
-    var allocating: std.Io.Writer.Allocating = .init(sf.get());
+    var allocating: Io.Writer.Allocating = .init(sf.get());
     defer allocating.deinit();
 
     if (!char_info.isC99IdChar(codepoint)) {
@@ -425,7 +426,7 @@ pub fn err(p: *Parser, tok_i: TokenIndex, diagnostic: Diagnostic, args: anytype)
     if (p.diagnostics.effectiveKind(diagnostic) == .off) return;
 
     var sf = std.heap.stackFallback(1024, p.comp.gpa);
-    var allocating: std.Io.Writer.Allocating = .init(sf.get());
+    var allocating: Io.Writer.Allocating = .init(sf.get());
     defer allocating.deinit();
 
     p.formatArgs(&allocating.writer, diagnostic.fmt, args) catch return error.OutOfMemory;
@@ -447,7 +448,7 @@ pub fn err(p: *Parser, tok_i: TokenIndex, diagnostic: Diagnostic, args: anytype)
     }, p.pp.expansionSlice(tok_i), true);
 }
 
-fn formatArgs(p: *Parser, w: *std.Io.Writer, fmt: []const u8, args: anytype) !void {
+fn formatArgs(p: *Parser, w: *Io.Writer, fmt: []const u8, args: anytype) !void {
     var i: usize = 0;
     inline for (std.meta.fields(@TypeOf(args))) |arg_info| {
         const arg = @field(args, arg_info.name);
@@ -476,13 +477,13 @@ fn formatArgs(p: *Parser, w: *std.Io.Writer, fmt: []const u8, args: anytype) !vo
     try w.writeAll(fmt[i..]);
 }
 
-fn formatTokenId(w: *std.Io.Writer, fmt: []const u8, tok_id: Tree.Token.Id) !usize {
+fn formatTokenId(w: *Io.Writer, fmt: []const u8, tok_id: Tree.Token.Id) !usize {
     const i = Diagnostics.templateIndex(w, fmt, "{tok_id}");
     try w.writeAll(tok_id.symbol());
     return i;
 }
 
-fn formatQualType(p: *Parser, w: *std.Io.Writer, fmt: []const u8, qt: QualType) !usize {
+fn formatQualType(p: *Parser, w: *Io.Writer, fmt: []const u8, qt: QualType) !usize {
     const i = Diagnostics.templateIndex(w, fmt, "{qt}");
     try w.writeByte('\'');
     try qt.print(p.comp, w);
@@ -501,7 +502,7 @@ fn formatQualType(p: *Parser, w: *std.Io.Writer, fmt: []const u8, qt: QualType) 
     return i;
 }
 
-fn formatResult(p: *Parser, w: *std.Io.Writer, fmt: []const u8, res: Result) !usize {
+fn formatResult(p: *Parser, w: *Io.Writer, fmt: []const u8, res: Result) !usize {
     const i = Diagnostics.templateIndex(w, fmt, "{value}");
     switch (res.val.opt_ref) {
         .none => try w.writeAll("(none)"),
@@ -524,7 +525,7 @@ const Normalized = struct {
         return .{ .str = str };
     }
 
-    pub fn format(ctx: Normalized, w: *std.Io.Writer, fmt: []const u8) !usize {
+    pub fn format(ctx: Normalized, w: *Io.Writer, fmt: []const u8) !usize {
         const i = Diagnostics.templateIndex(w, fmt, "{normalized}");
         var it: std.unicode.Utf8Iterator = .{
             .bytes = ctx.str,
@@ -558,7 +559,7 @@ const Codepoint = struct {
         return .{ .codepoint = codepoint };
     }
 
-    pub fn format(ctx: Codepoint, w: *std.Io.Writer, fmt: []const u8) !usize {
+    pub fn format(ctx: Codepoint, w: *Io.Writer, fmt: []const u8) !usize {
         const i = Diagnostics.templateIndex(w, fmt, "{codepoint}");
         try w.print("{X:0>4}", .{ctx.codepoint});
         return i;
@@ -572,7 +573,7 @@ const Escaped = struct {
         return .{ .str = str };
     }
 
-    pub fn format(ctx: Escaped, w: *std.Io.Writer, fmt: []const u8) !usize {
+    pub fn format(ctx: Escaped, w: *Io.Writer, fmt: []const u8) !usize {
         const i = Diagnostics.templateIndex(w, fmt, "{s}");
         try std.zig.stringEscape(ctx.str, w);
         return i;
@@ -1453,7 +1454,7 @@ fn decl(p: *Parser) Error!bool {
     return true;
 }
 
-fn staticAssertMessage(p: *Parser, cond_node: Node.Index, maybe_message: ?Result, allocating: *std.Io.Writer.Allocating) !?[]const u8 {
+fn staticAssertMessage(p: *Parser, cond_node: Node.Index, maybe_message: ?Result, allocating: *Io.Writer.Allocating) !?[]const u8 {
     const w = &allocating.writer;
 
     const cond = cond_node.get(&p.tree);
@@ -1526,7 +1527,7 @@ fn staticAssert(p: *Parser) Error!bool {
     } else {
         if (!res.val.toBool(p.comp)) {
             var sf = std.heap.stackFallback(1024, gpa);
-            var allocating: std.Io.Writer.Allocating = .init(sf.get());
+            var allocating: Io.Writer.Allocating = .init(sf.get());
             defer allocating.deinit();
 
             if (p.staticAssertMessage(res_node, str, &allocating) catch return error.OutOfMemory) |message| {
@@ -9719,7 +9720,7 @@ fn primaryExpr(p: *Parser) Error!?Result {
                 qt = some.qt;
             } else if (p.func.qt) |func_qt| {
                 var sf = std.heap.stackFallback(1024, gpa);
-                var allocating: std.Io.Writer.Allocating = .init(sf.get());
+                var allocating: Io.Writer.Allocating = .init(sf.get());
                 defer allocating.deinit();
 
                 func_qt.printNamed(p.tokSlice(p.func.name), p.comp, &allocating.writer) catch return error.OutOfMemory;
@@ -10608,7 +10609,7 @@ test "Node locations" {
     const arena = arena_state.allocator();
 
     var diagnostics: Diagnostics = .{ .output = .ignore };
-    var comp = Compilation.init(std.testing.allocator, arena, std.testing.io, &diagnostics, std.fs.cwd());
+    var comp = Compilation.init(std.testing.allocator, arena, std.testing.io, &diagnostics, Io.Dir.cwd());
     defer comp.deinit();
 
     const file = try comp.addSourceFromBuffer("file.c",

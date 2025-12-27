@@ -20,6 +20,7 @@ const native_endian = builtin.cpu.arch.endian();
 const build_options = @import("build_options");
 
 const std = @import("std");
+const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const Cache = std.Build.Cache;
 const Path = Cache.Path;
@@ -428,7 +429,11 @@ pub const OutputFunctionIndex = enum(u32) {
 
     pub fn fromSymbolName(wasm: *const Wasm, name: String) OutputFunctionIndex {
         if (wasm.flush_buffer.function_imports.getIndex(name)) |i| return @enumFromInt(i);
-        return fromFunctionIndex(wasm, FunctionIndex.fromSymbolName(wasm, name).?);
+        return fromFunctionIndex(wasm, FunctionIndex.fromSymbolName(wasm, name) orelse {
+            if (std.debug.runtime_safety) {
+                std.debug.panic("function index for symbol not found: {s}", .{name.slice(wasm)});
+            } else unreachable;
+        });
     }
 };
 
@@ -2996,16 +3001,18 @@ pub fn createEmpty(
         .named => |name| (try wasm.internString(name)).toOptional(),
     };
 
-    wasm.base.file = try emit.root_dir.handle.createFile(emit.sub_path, .{
+    const io = comp.io;
+
+    wasm.base.file = try emit.root_dir.handle.createFile(io, emit.sub_path, .{
         .truncate = true,
         .read = true,
-        .mode = if (fs.has_executable_bit)
+        .permissions = if (Io.File.Permissions.has_executable_bit)
             if (target.os.tag == .wasi and output_mode == .Exe)
-                fs.File.default_mode | 0b001_000_000
+                .executable_file
             else
-                fs.File.default_mode
+                .default_file
         else
-            0,
+            .default_file,
     });
     wasm.name = emit.sub_path;
 
@@ -3013,14 +3020,16 @@ pub fn createEmpty(
 }
 
 fn openParseObjectReportingFailure(wasm: *Wasm, path: Path) void {
-    const diags = &wasm.base.comp.link_diags;
-    const obj = link.openObject(path, false, false) catch |err| {
-        switch (diags.failParse(path, "failed to open object: {s}", .{@errorName(err)})) {
+    const comp = wasm.base.comp;
+    const io = comp.io;
+    const diags = &comp.link_diags;
+    const obj = link.openObject(io, path, false, false) catch |err| {
+        switch (diags.failParse(path, "failed to open object: {t}", .{err})) {
             error.LinkFailure => return,
         }
     };
     wasm.parseObject(obj) catch |err| {
-        switch (diags.failParse(path, "failed to parse object: {s}", .{@errorName(err)})) {
+        switch (diags.failParse(path, "failed to parse object: {t}", .{err})) {
             error.LinkFailure => return,
         }
     };
@@ -3032,7 +3041,7 @@ fn parseObject(wasm: *Wasm, obj: link.Input.Object) !void {
     const io = wasm.base.comp.io;
     const gc_sections = wasm.base.gc_sections;
 
-    defer obj.file.close();
+    defer obj.file.close(io);
 
     var file_reader = obj.file.reader(io, &.{});
 
@@ -3060,7 +3069,7 @@ fn parseArchive(wasm: *Wasm, obj: link.Input.Object) !void {
     const io = wasm.base.comp.io;
     const gc_sections = wasm.base.gc_sections;
 
-    defer obj.file.close();
+    defer obj.file.close(io);
 
     var file_reader = obj.file.reader(io, &.{});
 
@@ -3529,7 +3538,10 @@ pub fn markFunctionImport(
     import: *FunctionImport,
     func_index: FunctionImport.Index,
 ) link.File.FlushError!void {
-    if (import.flags.alive) return;
+    // import.flags.alive might be already true from a previous update. In such
+    // case, we must still run the logic in this function, in case the item
+    // being marked was reverted by the `flush` logic that resets the hash
+    // table watermarks.
     import.flags.alive = true;
 
     const comp = wasm.base.comp;
@@ -3549,8 +3561,9 @@ pub fn markFunctionImport(
         } else {
             try wasm.function_imports.put(gpa, name, .fromObject(func_index, wasm));
         }
-    } else {
-        try markFunction(wasm, import.resolution.unpack(wasm).object_function, import.flags.exported);
+    } else switch (import.resolution.unpack(wasm)) {
+        .object_function => try markFunction(wasm, import.resolution.unpack(wasm).object_function, import.flags.exported),
+        else => return,
     }
 }
 
@@ -3589,7 +3602,10 @@ fn markGlobalImport(
     import: *GlobalImport,
     global_index: GlobalImport.Index,
 ) link.File.FlushError!void {
-    if (import.flags.alive) return;
+    // import.flags.alive might be already true from a previous update. In such
+    // case, we must still run the logic in this function, in case the item
+    // being marked was reverted by the `flush` logic that resets the hash
+    // table watermarks.
     import.flags.alive = true;
 
     const comp = wasm.base.comp;
@@ -3619,8 +3635,9 @@ fn markGlobalImport(
         } else {
             try wasm.global_imports.put(gpa, name, .fromObject(global_index, wasm));
         }
-    } else {
-        try markGlobal(wasm, import.resolution.unpack(wasm).object_global, import.flags.exported);
+    } else switch (import.resolution.unpack(wasm)) {
+        .object_global => try markGlobal(wasm, import.resolution.unpack(wasm).object_global, import.flags.exported),
+        else => return,
     }
 }
 
@@ -3823,8 +3840,9 @@ pub fn flush(
     const comp = wasm.base.comp;
     const diags = &comp.link_diags;
     const gpa = comp.gpa;
+    const io = comp.io;
 
-    if (comp.verbose_link) Compilation.dump_argv(wasm.dump_argv_list.items);
+    if (comp.verbose_link) try Compilation.dumpArgv(io, wasm.dump_argv_list.items);
 
     if (wasm.base.zcu_object_basename) |raw| {
         const zcu_obj_path: Path = try comp.resolveEmitPathFlush(arena, .temp, raw);
@@ -4037,7 +4055,7 @@ pub fn tagNameSymbolIndex(wasm: *Wasm, ip_index: InternPool.Index) Allocator.Err
     const comp = wasm.base.comp;
     assert(comp.config.output_mode == .Obj);
     const gpa = comp.gpa;
-    const name = try wasm.internStringFmt("__zig_tag_name_{d}", .{@intFromEnum(ip_index)});
+    const name = try wasm.internStringFmt("__zig_tag_name_{d}", .{ip_index});
     const gop = try wasm.symbol_table.getOrPut(gpa, name);
     gop.value_ptr.* = {};
     return @enumFromInt(gop.index);

@@ -122,7 +122,7 @@ const Os = switch (builtin.os.tag) {
             }) catch return error.NameTooLong;
             const stack_ptr: *std.os.linux.file_handle = @ptrCast(&file_handle_buffer);
             stack_ptr.handle_bytes = file_handle_buffer.len - @sizeOf(std.os.linux.file_handle);
-            try posix.name_to_handle_at(path.root_dir.handle.fd, adjusted_path, stack_ptr, mount_id, std.os.linux.AT.HANDLE_FID);
+            try posix.name_to_handle_at(path.root_dir.handle.handle, adjusted_path, stack_ptr, mount_id, std.os.linux.AT.HANDLE_FID);
             const stack_lfh: FileHandle = .{ .handle = stack_ptr };
             return stack_lfh.clone(gpa);
         }
@@ -222,7 +222,7 @@ const Os = switch (builtin.os.tag) {
                                 posix.fanotify_mark(fan_fd, .{
                                     .ADD = true,
                                     .ONLYDIR = true,
-                                }, fan_mask, path.root_dir.handle.fd, path.subPathOrDot()) catch |err| {
+                                }, fan_mask, path.root_dir.handle.handle, path.subPathOrDot()) catch |err| {
                                     fatal("unable to watch {f}: {s}", .{ path, @errorName(err) });
                                 };
                             }
@@ -275,7 +275,7 @@ const Os = switch (builtin.os.tag) {
                     posix.fanotify_mark(fan_fd, .{
                         .REMOVE = true,
                         .ONLYDIR = true,
-                    }, fan_mask, path.root_dir.handle.fd, path.subPathOrDot()) catch |err| switch (err) {
+                    }, fan_mask, path.root_dir.handle.handle, path.subPathOrDot()) catch |err| switch (err) {
                         error.FileNotFound => {}, // Expected, harmless.
                         else => |e| std.log.warn("unable to unwatch '{f}': {s}", .{ path, @errorName(e) }),
                     };
@@ -350,10 +350,10 @@ const Os = switch (builtin.os.tag) {
             }
 
             fn init(gpa: Allocator, path: Cache.Path) !*@This() {
-                // The following code is a drawn out NtCreateFile call. (mostly adapted from std.fs.Dir.makeOpenDirAccessMaskW)
+                // The following code is a drawn out NtCreateFile call. (mostly adapted from Io.Dir.makeOpenDirAccessMaskW)
                 // It's necessary in order to get the specific flags that are required when calling ReadDirectoryChangesW.
                 var dir_handle: windows.HANDLE = undefined;
-                const root_fd = path.root_dir.handle.fd;
+                const root_fd = path.root_dir.handle.handle;
                 const sub_path = path.subPathOrDot();
                 const sub_path_w = try windows.sliceToPrefixedFileW(root_fd, sub_path);
                 const path_len_bytes = std.math.cast(u16, sub_path_w.len * 2) orelse return error.NameTooLong;
@@ -681,10 +681,10 @@ const Os = switch (builtin.os.tag) {
                         if (!gop.found_existing) {
                             const skip_open_dir = path.sub_path.len == 0;
                             const dir_fd = if (skip_open_dir)
-                                path.root_dir.handle.fd
+                                path.root_dir.handle.handle
                             else
-                                posix.openat(path.root_dir.handle.fd, path.sub_path, dir_open_flags, 0) catch |err| {
-                                    fatal("failed to open directory {f}: {s}", .{ path, @errorName(err) });
+                                posix.openat(path.root_dir.handle.handle, path.sub_path, dir_open_flags, 0) catch |err| {
+                                    fatal("failed to open directory {f}: {t}", .{ path, err });
                                 };
                             // Empirically the dir has to stay open or else no events are triggered.
                             errdefer if (!skip_open_dir) posix.close(dir_fd);
@@ -750,7 +750,7 @@ const Os = switch (builtin.os.tag) {
                     // to access that data via the dir_fd field.
                     const path = w.dir_table.keys()[i];
                     const dir_fd = if (path.sub_path.len == 0)
-                        path.root_dir.handle.fd
+                        path.root_dir.handle.handle
                     else
                         handles.items(.dir_fd)[i];
                     assert(dir_fd != -1);
@@ -761,7 +761,7 @@ const Os = switch (builtin.os.tag) {
                     const last_dir_fd = fd: {
                         const last_path = w.dir_table.keys()[handles.len - 1];
                         const last_dir_fd = if (last_path.sub_path.len == 0)
-                            last_path.root_dir.handle.fd
+                            last_path.root_dir.handle.handle
                         else
                             handles.items(.dir_fd)[handles.len - 1];
                         assert(last_dir_fd != -1);

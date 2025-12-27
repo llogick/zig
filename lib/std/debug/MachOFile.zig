@@ -27,13 +27,13 @@ pub fn deinit(mf: *MachOFile, gpa: Allocator) void {
     posix.munmap(mf.mapped_memory);
 }
 
-pub fn load(gpa: Allocator, path: []const u8, arch: std.Target.Cpu.Arch) Error!MachOFile {
+pub fn load(gpa: Allocator, io: Io, path: []const u8, arch: std.Target.Cpu.Arch) Error!MachOFile {
     switch (arch) {
         .x86_64, .aarch64 => {},
         else => unreachable,
     }
 
-    const all_mapped_memory = try mapDebugInfoFile(path);
+    const all_mapped_memory = try mapDebugInfoFile(io, path);
     errdefer posix.munmap(all_mapped_memory);
 
     // In most cases, the file we just mapped is a Mach-O binary. However, it could be a "universal
@@ -239,7 +239,7 @@ pub fn load(gpa: Allocator, path: []const u8, arch: std.Target.Cpu.Arch) Error!M
         .text_vmaddr = text_vmaddr,
     };
 }
-pub fn getDwarfForAddress(mf: *MachOFile, gpa: Allocator, vaddr: u64) !struct { *Dwarf, u64 } {
+pub fn getDwarfForAddress(mf: *MachOFile, gpa: Allocator, io: Io, vaddr: u64) !struct { *Dwarf, u64 } {
     const symbol = Symbol.find(mf.symbols, vaddr) orelse return error.MissingDebugInfo;
 
     if (symbol.ofile == Symbol.unknown_ofile) return error.MissingDebugInfo;
@@ -254,7 +254,7 @@ pub fn getDwarfForAddress(mf: *MachOFile, gpa: Allocator, vaddr: u64) !struct { 
     const gop = try mf.ofiles.getOrPut(gpa, symbol.ofile);
     if (!gop.found_existing) {
         const name = mem.sliceTo(mf.strings[symbol.ofile..], 0);
-        gop.value_ptr.* = loadOFile(gpa, name);
+        gop.value_ptr.* = loadOFile(gpa, io, name);
     }
     const of = &(gop.value_ptr.* catch |err| return err);
 
@@ -356,7 +356,7 @@ test {
     _ = Symbol;
 }
 
-fn loadOFile(gpa: Allocator, o_file_name: []const u8) !OFile {
+fn loadOFile(gpa: Allocator, io: Io, o_file_name: []const u8) !OFile {
     const all_mapped_memory, const mapped_ofile = map: {
         const open_paren = paren: {
             if (std.mem.endsWith(u8, o_file_name, ")")) {
@@ -365,7 +365,7 @@ fn loadOFile(gpa: Allocator, o_file_name: []const u8) !OFile {
                 }
             }
             // Not an archive, just a normal path to a .o file
-            const m = try mapDebugInfoFile(o_file_name);
+            const m = try mapDebugInfoFile(io, o_file_name);
             break :map .{ m, m };
         };
 
@@ -373,7 +373,7 @@ fn loadOFile(gpa: Allocator, o_file_name: []const u8) !OFile {
 
         const archive_path = o_file_name[0..open_paren];
         const target_name_in_archive = o_file_name[open_paren + 1 .. o_file_name.len - 1];
-        const mapped_archive = try mapDebugInfoFile(archive_path);
+        const mapped_archive = try mapDebugInfoFile(io, archive_path);
         errdefer posix.munmap(mapped_archive);
 
         var ar_reader: Io.Reader = .fixed(mapped_archive);
@@ -511,16 +511,16 @@ fn loadOFile(gpa: Allocator, o_file_name: []const u8) !OFile {
 }
 
 /// Uses `mmap` to map the file at `path` into memory.
-fn mapDebugInfoFile(path: []const u8) ![]align(std.heap.page_size_min) const u8 {
-    const file = std.fs.cwd().openFile(path, .{}) catch |err| switch (err) {
+fn mapDebugInfoFile(io: Io, path: []const u8) ![]align(std.heap.page_size_min) const u8 {
+    const file = Io.Dir.cwd().openFile(io, path, .{}) catch |err| switch (err) {
         error.FileNotFound => return error.MissingDebugInfo,
         else => return error.ReadFailed,
     };
-    defer file.close();
+    defer file.close(io);
 
     const file_len = std.math.cast(
         usize,
-        file.getEndPos() catch return error.ReadFailed,
+        file.length(io) catch return error.ReadFailed,
     ) orelse return error.ReadFailed;
 
     return posix.mmap(

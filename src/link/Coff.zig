@@ -1,3 +1,23 @@
+const Coff = @This();
+
+const builtin = @import("builtin");
+const native_endian = builtin.cpu.arch.endian();
+
+const std = @import("std");
+const Io = std.Io;
+const assert = std.debug.assert;
+const log = std.log.scoped(.link);
+
+const codegen = @import("../codegen.zig");
+const Compilation = @import("../Compilation.zig");
+const InternPool = @import("../InternPool.zig");
+const link = @import("../link.zig");
+const MappedFile = @import("MappedFile.zig");
+const target_util = @import("../target.zig");
+const Type = @import("../Type.zig");
+const Value = @import("../Value.zig");
+const Zcu = @import("../Zcu.zig");
+
 base: link.File,
 mf: MappedFile,
 nodes: std.MultiArrayList(Node),
@@ -631,12 +651,14 @@ fn create(
         else => return error.UnsupportedCOFFArchitecture,
     };
 
+    const io = comp.io;
+
     const coff = try arena.create(Coff);
-    const file = try path.root_dir.handle.adaptToNewApi().createFile(comp.io, path.sub_path, .{
+    const file = try path.root_dir.handle.createFile(io, path.sub_path, .{
         .read = true,
-        .mode = link.File.determineMode(comp.config.output_mode, comp.config.link_mode),
+        .permissions = link.File.determinePermissions(comp.config.output_mode, comp.config.link_mode),
     });
-    errdefer file.close(comp.io);
+    errdefer file.close(io);
     coff.* = .{
         .base = .{
             .tag = .coff2,
@@ -644,14 +666,14 @@ fn create(
             .comp = comp,
             .emit = path,
 
-            .file = .adaptFromNewApi(file),
+            .file = file,
             .gc_sections = false,
             .print_gc_sections = false,
             .build_id = .none,
             .allow_shlib_undefined = false,
             .stack_size = 0,
         },
-        .mf = try .init(file, comp.gpa),
+        .mf = try .init(file, comp.gpa, io),
         .nodes = .empty,
         .import_table = .{
             .ni = .none,
@@ -1727,22 +1749,20 @@ pub fn flush(
     const comp = coff.base.comp;
     if (comp.compiler_rt_dyn_lib) |crt_file| {
         const gpa = comp.gpa;
+        const io = comp.io;
         const compiler_rt_sub_path = try std.fs.path.join(gpa, &.{
             std.fs.path.dirname(coff.base.emit.sub_path) orelse "",
             std.fs.path.basename(crt_file.full_object_path.sub_path),
         });
         defer gpa.free(compiler_rt_sub_path);
-        crt_file.full_object_path.root_dir.handle.copyFile(
+        std.Io.Dir.copyFile(
+            crt_file.full_object_path.root_dir.handle,
             crt_file.full_object_path.sub_path,
             coff.base.emit.root_dir.handle,
             compiler_rt_sub_path,
+            io,
             .{},
-        ) catch |err| switch (err) {
-            else => |e| return comp.link_diags.fail("Copy '{s}' failed: {s}", .{
-                compiler_rt_sub_path,
-                @errorName(e),
-            }),
-        };
+        ) catch |err| return comp.link_diags.fail("copy '{s}' failed: {t}", .{ compiler_rt_sub_path, err });
     }
 }
 
@@ -2358,10 +2378,16 @@ pub fn deleteExport(coff: *Coff, exported: Zcu.Exported, name: InternPool.NullTe
     _ = name;
 }
 
-pub fn dump(coff: *Coff, tid: Zcu.PerThread.Id) void {
-    const w, _ = std.debug.lockStderrWriter(&.{});
-    defer std.debug.unlockStderrWriter();
-    coff.printNode(tid, w, .root, 0) catch {};
+pub fn dump(coff: *Coff, tid: Zcu.PerThread.Id) Io.Cancelable!void {
+    const comp = coff.base.comp;
+    const io = comp.io;
+    var buffer: [512]u8 = undefined;
+    const stderr = try io.lockStderr(&buffer, null);
+    defer io.unlockStderr();
+    const w = &stderr.file_writer.interface;
+    coff.printNode(tid, w, .root, 0) catch |err| switch (err) {
+        error.WriteFailed => return stderr.err.?,
+    };
 }
 
 pub fn printNode(
@@ -2459,19 +2485,3 @@ pub fn printNode(
         }
     }
 }
-
-const assert = std.debug.assert;
-const builtin = @import("builtin");
-const codegen = @import("../codegen.zig");
-const Compilation = @import("../Compilation.zig");
-const Coff = @This();
-const InternPool = @import("../InternPool.zig");
-const link = @import("../link.zig");
-const log = std.log.scoped(.link);
-const MappedFile = @import("MappedFile.zig");
-const native_endian = builtin.cpu.arch.endian();
-const std = @import("std");
-const target_util = @import("../target.zig");
-const Type = @import("../Type.zig");
-const Value = @import("../Value.zig");
-const Zcu = @import("../Zcu.zig");

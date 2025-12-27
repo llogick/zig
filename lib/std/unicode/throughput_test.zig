@@ -1,8 +1,8 @@
 const std = @import("std");
+const Io = std.Io;
 const time = std.time;
 const unicode = std.unicode;
-
-const Timer = time.Timer;
+const Timer = std.time.Timer;
 
 const N = 1_000_000;
 
@@ -41,7 +41,7 @@ fn benchmarkCodepointCount(buf: []const u8) !ResultCount {
 pub fn main() !void {
     // Size of buffer is about size of printed message.
     var stdout_buffer: [0x100]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    var stdout_writer = Io.File.stdout().writer(&stdout_buffer);
     const stdout = &stdout_writer.interface;
 
     try stdout.print("short ASCII strings\n", .{});

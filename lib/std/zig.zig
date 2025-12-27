@@ -46,23 +46,16 @@ pub const SrcHasher = std.crypto.hash.Blake3;
 pub const SrcHash = [16]u8;
 
 pub const Color = enum {
-    /// Determine whether stderr is a terminal or not automatically.
+    /// Auto-detect whether stream supports terminal colors.
     auto,
-    /// Assume stderr is not a terminal.
+    /// Force-enable colors.
     off,
-    /// Assume stderr is a terminal.
+    /// Suppress colors.
     on,
 
-    pub fn getTtyConf(color: Color, detected: Io.tty.Config) Io.tty.Config {
+    pub fn terminalMode(color: Color) ?Io.Terminal.Mode {
         return switch (color) {
-            .auto => detected,
-            .on => .escape_codes,
-            .off => .no_color,
-        };
-    }
-    pub fn detectTtyConf(color: Color) Io.tty.Config {
-        return switch (color) {
-            .auto => .detect(.stderr()),
+            .auto => null,
             .on => .escape_codes,
             .off => .no_color,
         };
@@ -639,7 +632,7 @@ pub fn readSourceFileToEndAlloc(gpa: Allocator, file_reader: *Io.File.Reader) ![
     return buffer.toOwnedSliceSentinel(gpa, 0);
 }
 
-pub fn printAstErrorsToStderr(gpa: Allocator, tree: Ast, path: []const u8, color: Color) !void {
+pub fn printAstErrorsToStderr(gpa: Allocator, io: Io, tree: Ast, path: []const u8, color: Color) !void {
     var wip_errors: std.zig.ErrorBundle.Wip = undefined;
     try wip_errors.init(gpa);
     defer wip_errors.deinit();
@@ -648,7 +641,7 @@ pub fn printAstErrorsToStderr(gpa: Allocator, tree: Ast, path: []const u8, color
 
     var error_bundle = try wip_errors.toOwnedBundle("");
     defer error_bundle.deinit(gpa);
-    error_bundle.renderToStdErr(.{}, color);
+    return error_bundle.renderToStderr(io, .{}, color);
 }
 
 pub fn putAstErrorsIntoBundle(

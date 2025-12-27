@@ -3,7 +3,7 @@ const ObjCopy = @This();
 
 const Allocator = std.mem.Allocator;
 const ArenaAllocator = std.heap.ArenaAllocator;
-const File = std.fs.File;
+const File = std.Io.File;
 const InstallDir = std.Build.InstallDir;
 const Step = std.Build.Step;
 const elf = std.elf;
@@ -143,6 +143,7 @@ pub fn getOutputSeparatedDebug(objcopy: *const ObjCopy) ?std.Build.LazyPath {
 fn make(step: *Step, options: Step.MakeOptions) !void {
     const prog_node = options.progress_node;
     const b = step.owner;
+    const io = b.graph.io;
     const objcopy: *ObjCopy = @fieldParentPtr("step", step);
     try step.singleUnchangingWatchInput(objcopy.input_file);
 
@@ -176,7 +177,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
     const cache_path = "o" ++ fs.path.sep_str ++ digest;
     const full_dest_path = try b.cache_root.join(b.allocator, &.{ cache_path, objcopy.basename });
     const full_dest_path_debug = try b.cache_root.join(b.allocator, &.{ cache_path, b.fmt("{s}.debug", .{objcopy.basename}) });
-    b.cache_root.handle.makePath(cache_path) catch |err| {
+    b.cache_root.handle.createDirPath(io, cache_path) catch |err| {
         return step.fail("unable to make path {s}: {s}", .{ cache_path, @errorName(err) });
     };
 

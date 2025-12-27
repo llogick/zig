@@ -1,7 +1,8 @@
 const std = @import("std");
+const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const mem = std.mem;
-const path = std.fs.path;
+const path = std.Io.Dir.path;
 const assert = std.debug.assert;
 const log = std.log.scoped(.mingw);
 
@@ -241,7 +242,7 @@ pub fn buildImportLib(comp: *Compilation, lib_name: []const u8) !void {
     defer arena_allocator.deinit();
     const arena = arena_allocator.allocator();
 
-    const def_file_path = findDef(arena, comp.getTarget(), comp.dirs.zig_lib, lib_name) catch |err| switch (err) {
+    const def_file_path = findDef(arena, io, comp.getTarget(), comp.dirs.zig_lib, lib_name) catch |err| switch (err) {
         error.FileNotFound => {
             log.debug("no {s}.def file available to make a DLL import {s}.lib", .{ lib_name, lib_name });
             // In this case we will end up putting foo.lib onto the linker line and letting the linker
@@ -257,12 +258,12 @@ pub fn buildImportLib(comp: *Compilation, lib_name: []const u8) !void {
     var cache: Cache = .{
         .gpa = gpa,
         .io = io,
-        .manifest_dir = try comp.dirs.global_cache.handle.makeOpenPath("h", .{}),
+        .manifest_dir = try comp.dirs.global_cache.handle.createDirPathOpen(io, "h", .{}),
     };
-    cache.addPrefix(.{ .path = null, .handle = std.fs.cwd() });
+    cache.addPrefix(.{ .path = null, .handle = Io.Dir.cwd() });
     cache.addPrefix(comp.dirs.zig_lib);
     cache.addPrefix(comp.dirs.global_cache);
-    defer cache.manifest_dir.close();
+    defer cache.manifest_dir.close(io);
 
     cache.hash.addBytes(build_options.version);
     cache.hash.addOptionalBytes(comp.dirs.zig_lib.path);
@@ -296,26 +297,32 @@ pub fn buildImportLib(comp: *Compilation, lib_name: []const u8) !void {
 
     const digest = man.final();
     const o_sub_path = try std.fs.path.join(arena, &[_][]const u8{ "o", &digest });
-    var o_dir = try comp.dirs.global_cache.handle.makeOpenPath(o_sub_path, .{});
-    defer o_dir.close();
+    var o_dir = try comp.dirs.global_cache.handle.createDirPathOpen(io, o_sub_path, .{});
+    defer o_dir.close(io);
 
     const aro = @import("aro");
     var diagnostics: aro.Diagnostics = .{
         .output = .{ .to_list = .{ .arena = .init(gpa) } },
     };
     defer diagnostics.deinit();
-    var aro_comp = aro.Compilation.init(gpa, arena, io, &diagnostics, std.fs.cwd());
+    var aro_comp = aro.Compilation.init(gpa, arena, io, &diagnostics, Io.Dir.cwd());
     defer aro_comp.deinit();
 
     aro_comp.target = .fromZigTarget(target.*);
 
     const include_dir = try comp.dirs.zig_lib.join(arena, &.{ "libc", "mingw", "def-include" });
 
-    if (comp.verbose_cc) print: {
-        var stderr, _ = std.debug.lockStderrWriter(&.{});
-        defer std.debug.unlockStderrWriter();
-        nosuspend stderr.print("def file: {s}\n", .{def_file_path}) catch break :print;
-        nosuspend stderr.print("include dir: {s}\n", .{include_dir}) catch break :print;
+    if (comp.verbose_cc) {
+        var buffer: [256]u8 = undefined;
+        const stderr = try io.lockStderr(&buffer, null);
+        defer io.unlockStderr();
+        const w = &stderr.file_writer.interface;
+        w.print("def file: {s}\n", .{def_file_path}) catch |err| switch (err) {
+            error.WriteFailed => return stderr.file_writer.err.?,
+        };
+        w.print("include dir: {s}\n", .{include_dir}) catch |err| switch (err) {
+            error.WriteFailed => return stderr.file_writer.err.?,
+        };
     }
 
     try aro_comp.search_path.append(gpa, .{ .path = include_dir, .kind = .normal });
@@ -332,18 +339,21 @@ pub fn buildImportLib(comp: *Compilation, lib_name: []const u8) !void {
 
     if (aro_comp.diagnostics.output.to_list.messages.items.len != 0) {
         var buffer: [64]u8 = undefined;
-        const w, const ttyconf = std.debug.lockStderrWriter(&buffer);
-        defer std.debug.unlockStderrWriter();
+        const stderr = try io.lockStderr(&buffer, null);
+        defer io.unlockStderr();
         for (aro_comp.diagnostics.output.to_list.messages.items) |msg| {
             if (msg.kind == .@"fatal error" or msg.kind == .@"error") {
-                msg.write(w, ttyconf, true) catch {};
+                msg.write(stderr.terminal(), true) catch |err| switch (err) {
+                    error.WriteFailed => return stderr.file_writer.err.?,
+                    error.Unexpected => |e| return e,
+                };
                 return error.AroPreprocessorFailed;
             }
         }
     }
 
     const members = members: {
-        var aw: std.Io.Writer.Allocating = .init(gpa);
+        var aw: Io.Writer.Allocating = .init(gpa);
         errdefer aw.deinit();
         try pp.prettyPrintTokens(&aw.writer, .result_only);
 
@@ -356,8 +366,9 @@ pub fn buildImportLib(comp: *Compilation, lib_name: []const u8) !void {
             error.OutOfMemory => |e| return e,
             error.ParseError => {
                 var buffer: [64]u8 = undefined;
-                const w, _ = std.debug.lockStderrWriter(&buffer);
-                defer std.debug.unlockStderrWriter();
+                const stderr = try io.lockStderr(&buffer, null);
+                defer io.unlockStderr();
+                const w = &stderr.file_writer.interface;
                 try w.writeAll("error: ");
                 try def_diagnostics.writeMsg(w, input);
                 try w.writeByte('\n');
@@ -376,10 +387,10 @@ pub fn buildImportLib(comp: *Compilation, lib_name: []const u8) !void {
     errdefer gpa.free(lib_final_path);
 
     {
-        const lib_final_file = try o_dir.createFile(final_lib_basename, .{ .truncate = true });
-        defer lib_final_file.close();
+        const lib_final_file = try o_dir.createFile(io, final_lib_basename, .{ .truncate = true });
+        defer lib_final_file.close(io);
         var buffer: [1024]u8 = undefined;
-        var file_writer = lib_final_file.writer(&buffer);
+        var file_writer = lib_final_file.writer(io, &buffer);
         try implib.writeCoffArchive(gpa, &file_writer.interface, members);
         try file_writer.interface.flush();
     }
@@ -401,11 +412,12 @@ pub fn buildImportLib(comp: *Compilation, lib_name: []const u8) !void {
 
 pub fn libExists(
     allocator: Allocator,
+    io: Io,
     target: *const std.Target,
     zig_lib_directory: Cache.Directory,
     lib_name: []const u8,
 ) !bool {
-    const s = findDef(allocator, target, zig_lib_directory, lib_name) catch |err| switch (err) {
+    const s = findDef(allocator, io, target, zig_lib_directory, lib_name) catch |err| switch (err) {
         error.FileNotFound => return false,
         else => |e| return e,
     };
@@ -417,6 +429,7 @@ pub fn libExists(
 /// see if a .def file exists.
 fn findDef(
     allocator: Allocator,
+    io: Io,
     target: *const std.Target,
     zig_lib_directory: Cache.Directory,
     lib_name: []const u8,
@@ -442,7 +455,7 @@ fn findDef(
         } else {
             try override_path.print(fmt_path, .{ lib_path, lib_name });
         }
-        if (std.fs.cwd().access(override_path.items, .{})) |_| {
+        if (Io.Dir.cwd().access(io, override_path.items, .{})) |_| {
             return override_path.toOwnedSlice();
         } else |err| switch (err) {
             error.FileNotFound => {},
@@ -459,7 +472,7 @@ fn findDef(
         } else {
             try override_path.print(fmt_path, .{lib_name});
         }
-        if (std.fs.cwd().access(override_path.items, .{})) |_| {
+        if (Io.Dir.cwd().access(io, override_path.items, .{})) |_| {
             return override_path.toOwnedSlice();
         } else |err| switch (err) {
             error.FileNotFound => {},
@@ -476,7 +489,7 @@ fn findDef(
         } else {
             try override_path.print(fmt_path, .{lib_name});
         }
-        if (std.fs.cwd().access(override_path.items, .{})) |_| {
+        if (Io.Dir.cwd().access(io, override_path.items, .{})) |_| {
             return override_path.toOwnedSlice();
         } else |err| switch (err) {
             error.FileNotFound => {},

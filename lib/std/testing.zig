@@ -1,5 +1,7 @@
-const std = @import("std.zig");
 const builtin = @import("builtin");
+
+const std = @import("std.zig");
+const Io = std.Io;
 const assert = std.debug.assert;
 const math = std.math;
 
@@ -28,8 +30,8 @@ pub var allocator_instance: std.heap.GeneralPurposeAllocator(.{
     break :b .init;
 };
 
-pub var io_instance: std.Io.Threaded = undefined;
-pub const io = io_instance.io();
+pub var io_instance: Io.Threaded = undefined;
+pub const io = if (builtin.is_test) io_instance.io() else @compileError("not testing");
 
 /// TODO https://github.com/ziglang/zig/issues/5738
 pub var log_level = std.log.Level.warn;
@@ -352,11 +354,10 @@ test expectApproxEqRel {
     }
 }
 
-/// This function is intended to be used only in tests. When the two slices are not
-/// equal, prints diagnostics to stderr to show exactly how they are not equal (with
-/// the differences highlighted in red), then returns a test failure error.
-/// The colorized output is optional and controlled by the return of `std.Io.tty.Config.detect`.
-/// If your inputs are UTF-8 encoded strings, consider calling `expectEqualStrings` instead.
+/// This function is intended to be used only in tests. When the two slices are
+/// not equal, prints diagnostics to stderr to show exactly how they are not
+/// equal (with the differences highlighted in red), then returns a test
+/// failure error.
 pub fn expectEqualSlices(comptime T: type, expected: []const T, actual: []const T) !void {
     const diff_index: usize = diff_index: {
         const shortest = @min(expected.len, actual.len);
@@ -367,9 +368,11 @@ pub fn expectEqualSlices(comptime T: type, expected: []const T, actual: []const 
         break :diff_index if (expected.len == actual.len) return else shortest;
     };
     if (!backend_can_print) return error.TestExpectedEqual;
-    const stderr_w, const ttyconf = std.debug.lockStderrWriter(&.{});
-    defer std.debug.unlockStderrWriter();
-    failEqualSlices(T, expected, actual, diff_index, stderr_w, ttyconf) catch {};
+    // Intentionally using the debug Io instance rather than the testing Io instance.
+    const stderr = std.debug.lockStderr(&.{});
+    defer std.debug.unlockStderr();
+    const w = &stderr.file_writer.interface;
+    failEqualSlices(T, expected, actual, diff_index, w, stderr.terminal_mode) catch {};
     return error.TestExpectedEqual;
 }
 
@@ -378,8 +381,8 @@ fn failEqualSlices(
     expected: []const T,
     actual: []const T,
     diff_index: usize,
-    w: *std.Io.Writer,
-    ttyconf: std.Io.tty.Config,
+    w: *Io.Writer,
+    terminal_mode: Io.Terminal.Mode,
 ) !void {
     try w.print("slices differ. first difference occurs at index {d} (0x{X})\n", .{ diff_index, diff_index });
 
@@ -402,12 +405,12 @@ fn failEqualSlices(
     var differ = if (T == u8) BytesDiffer{
         .expected = expected_window,
         .actual = actual_window,
-        .ttyconf = ttyconf,
+        .terminal_mode = terminal_mode,
     } else SliceDiffer(T){
         .start_index = window_start,
         .expected = expected_window,
         .actual = actual_window,
-        .ttyconf = ttyconf,
+        .terminal_mode = terminal_mode,
     };
 
     // Print indexes as hex for slices of u8 since it's more likely to be binary data where
@@ -464,21 +467,22 @@ fn SliceDiffer(comptime T: type) type {
         start_index: usize,
         expected: []const T,
         actual: []const T,
-        ttyconf: std.Io.tty.Config,
+        terminal_mode: Io.Terminal.Mode,
 
         const Self = @This();
 
-        pub fn write(self: Self, writer: *std.Io.Writer) !void {
+        pub fn write(self: Self, writer: *Io.Writer) !void {
+            const t: Io.Terminal = .{ .writer = writer, .mode = self.terminal_mode };
             for (self.expected, 0..) |value, i| {
                 const full_index = self.start_index + i;
                 const diff = if (i < self.actual.len) !std.meta.eql(self.actual[i], value) else true;
-                if (diff) try self.ttyconf.setColor(writer, .red);
+                if (diff) try t.setColor(.red);
                 if (@typeInfo(T) == .pointer) {
                     try writer.print("[{}]{*}: {any}\n", .{ full_index, value, value });
                 } else {
                     try writer.print("[{}]: {any}\n", .{ full_index, value });
                 }
-                if (diff) try self.ttyconf.setColor(writer, .reset);
+                if (diff) try t.setColor(.reset);
             }
         }
     };
@@ -487,9 +491,9 @@ fn SliceDiffer(comptime T: type) type {
 const BytesDiffer = struct {
     expected: []const u8,
     actual: []const u8,
-    ttyconf: std.Io.tty.Config,
+    terminal_mode: Io.Terminal.Mode,
 
-    pub fn write(self: BytesDiffer, writer: *std.Io.Writer) !void {
+    pub fn write(self: BytesDiffer, writer: *Io.Writer) !void {
         var expected_iterator = std.mem.window(u8, self.expected, 16, 16);
         var row: usize = 0;
         while (expected_iterator.next()) |chunk| {
@@ -514,7 +518,7 @@ const BytesDiffer = struct {
                     try self.writeDiff(writer, "{c}", .{byte}, diff);
                 } else {
                     // TODO: remove this `if` when https://github.com/ziglang/zig/issues/7600 is fixed
-                    if (self.ttyconf == .windows_api) {
+                    if (self.terminal_mode == .windows_api) {
                         try self.writeDiff(writer, ".", .{}, diff);
                         continue;
                     }
@@ -535,10 +539,14 @@ const BytesDiffer = struct {
         }
     }
 
-    fn writeDiff(self: BytesDiffer, writer: *std.Io.Writer, comptime fmt: []const u8, args: anytype, diff: bool) !void {
-        if (diff) try self.ttyconf.setColor(writer, .red);
+    fn terminal(self: *const BytesDiffer, writer: *Io.Writer) Io.Terminal {
+        return .{ .writer = writer, .mode = self.terminal_mode };
+    }
+
+    fn writeDiff(self: BytesDiffer, writer: *Io.Writer, comptime fmt: []const u8, args: anytype, diff: bool) !void {
+        if (diff) try self.terminal(writer).setColor(.red);
         try writer.print(fmt, args);
-        if (diff) try self.ttyconf.setColor(writer, .reset);
+        if (diff) try self.terminal(writer).setColor(.reset);
     }
 };
 
@@ -605,34 +613,35 @@ pub fn expect(ok: bool) !void {
 }
 
 pub const TmpDir = struct {
-    dir: std.fs.Dir,
-    parent_dir: std.fs.Dir,
+    dir: Io.Dir,
+    parent_dir: Io.Dir,
     sub_path: [sub_path_len]u8,
 
     const random_bytes_count = 12;
     const sub_path_len = std.fs.base64_encoder.calcSize(random_bytes_count);
 
     pub fn cleanup(self: *TmpDir) void {
-        self.dir.close();
-        self.parent_dir.deleteTree(&self.sub_path) catch {};
-        self.parent_dir.close();
+        self.dir.close(io);
+        self.parent_dir.deleteTree(io, &self.sub_path) catch {};
+        self.parent_dir.close(io);
         self.* = undefined;
     }
 };
 
-pub fn tmpDir(opts: std.fs.Dir.OpenOptions) TmpDir {
+pub fn tmpDir(opts: Io.Dir.OpenOptions) TmpDir {
+    comptime assert(builtin.is_test);
     var random_bytes: [TmpDir.random_bytes_count]u8 = undefined;
     std.crypto.random.bytes(&random_bytes);
     var sub_path: [TmpDir.sub_path_len]u8 = undefined;
     _ = std.fs.base64_encoder.encode(&sub_path, &random_bytes);
 
-    const cwd = std.fs.cwd();
-    var cache_dir = cwd.makeOpenPath(".zig-cache", .{}) catch
+    const cwd = Io.Dir.cwd();
+    var cache_dir = cwd.createDirPathOpen(io, ".zig-cache", .{}) catch
         @panic("unable to make tmp dir for testing: unable to make and open .zig-cache dir");
-    defer cache_dir.close();
-    const parent_dir = cache_dir.makeOpenPath("tmp", .{}) catch
+    defer cache_dir.close(io);
+    const parent_dir = cache_dir.createDirPathOpen(io, "tmp", .{}) catch
         @panic("unable to make tmp dir for testing: unable to make and open .zig-cache/tmp dir");
-    const dir = parent_dir.makeOpenPath(&sub_path, opts) catch
+    const dir = parent_dir.createDirPathOpen(io, &sub_path, .{ .open_options = opts }) catch
         @panic("unable to make tmp dir for testing: unable to make and open the tmp dir");
 
     return .{
@@ -929,7 +938,7 @@ test "expectEqualDeep primitive type" {
             a,
             b,
 
-            pub fn format(self: @This(), writer: *std.Io.Writer) !void {
+            pub fn format(self: @This(), writer: *Io.Writer) !void {
                 try writer.writeAll(@tagName(self));
             }
         };
@@ -1146,9 +1155,10 @@ pub fn checkAllAllocationFailures(backing_allocator: std.mem.Allocator, comptime
         break :x failing_allocator_inst.alloc_index;
     };
 
-    var fail_index: usize = 0;
-    while (fail_index < needed_alloc_count) : (fail_index += 1) {
-        var failing_allocator_inst = std.testing.FailingAllocator.init(backing_allocator, .{ .fail_index = fail_index });
+    for (0..needed_alloc_count) |fail_index| {
+        var failing_allocator_inst = std.testing.FailingAllocator.init(backing_allocator, .{
+            .fail_index = fail_index,
+        });
         args.@"0" = failing_allocator_inst.allocator();
 
         if (@call(.auto, test_fn, args)) |_| {
@@ -1160,7 +1170,6 @@ pub fn checkAllAllocationFailures(backing_allocator: std.mem.Allocator, comptime
         } else |err| switch (err) {
             error.OutOfMemory => {
                 if (failing_allocator_inst.allocated_bytes != failing_allocator_inst.freed_bytes) {
-                    const tty_config: std.Io.tty.Config = .detect(.stderr());
                     print(
                         "\nfail_index: {d}/{d}\nallocated bytes: {d}\nfreed bytes: {d}\nallocations: {d}\ndeallocations: {d}\nallocation that was made to fail: {f}",
                         .{
@@ -1172,7 +1181,6 @@ pub fn checkAllAllocationFailures(backing_allocator: std.mem.Allocator, comptime
                             failing_allocator_inst.deallocations,
                             std.debug.FormatStackTrace{
                                 .stack_trace = failing_allocator_inst.getStackTrace(),
-                                .tty_config = tty_config,
                             },
                         },
                     );
@@ -1220,14 +1228,14 @@ pub inline fn fuzz(
     return @import("root").fuzz(context, testOne, options);
 }
 
-/// A `std.Io.Reader` that writes a predetermined list of buffers during `stream`.
+/// A `Io.Reader` that writes a predetermined list of buffers during `stream`.
 pub const Reader = struct {
     calls: []const Call,
-    interface: std.Io.Reader,
+    interface: Io.Reader,
     next_call_index: usize,
     next_offset: usize,
     /// Further reduces how many bytes are written in each `stream` call.
-    artificial_limit: std.Io.Limit = .unlimited,
+    artificial_limit: Io.Limit = .unlimited,
 
     pub const Call = struct {
         buffer: []const u8,
@@ -1247,7 +1255,7 @@ pub const Reader = struct {
         };
     }
 
-    fn stream(io_r: *std.Io.Reader, w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Reader.StreamError!usize {
+    fn stream(io_r: *Io.Reader, w: *Io.Writer, limit: Io.Limit) Io.Reader.StreamError!usize {
         const r: *Reader = @alignCast(@fieldParentPtr("interface", io_r));
         if (r.calls.len - r.next_call_index == 0) return error.EndOfStream;
         const call = r.calls[r.next_call_index];
@@ -1262,13 +1270,13 @@ pub const Reader = struct {
     }
 };
 
-/// A `std.Io.Reader` that gets its data from another `std.Io.Reader`, and always
+/// A `Io.Reader` that gets its data from another `Io.Reader`, and always
 /// writes to its own buffer (and returns 0) during `stream` and `readVec`.
 pub const ReaderIndirect = struct {
-    in: *std.Io.Reader,
-    interface: std.Io.Reader,
+    in: *Io.Reader,
+    interface: Io.Reader,
 
-    pub fn init(in: *std.Io.Reader, buffer: []u8) ReaderIndirect {
+    pub fn init(in: *Io.Reader, buffer: []u8) ReaderIndirect {
         return .{
             .in = in,
             .interface = .{
@@ -1283,17 +1291,17 @@ pub const ReaderIndirect = struct {
         };
     }
 
-    fn readVec(r: *std.Io.Reader, _: [][]u8) std.Io.Reader.Error!usize {
+    fn readVec(r: *Io.Reader, _: [][]u8) Io.Reader.Error!usize {
         try streamInner(r);
         return 0;
     }
 
-    fn stream(r: *std.Io.Reader, _: *std.Io.Writer, _: std.Io.Limit) std.Io.Reader.StreamError!usize {
+    fn stream(r: *Io.Reader, _: *Io.Writer, _: Io.Limit) Io.Reader.StreamError!usize {
         try streamInner(r);
         return 0;
     }
 
-    fn streamInner(r: *std.Io.Reader) std.Io.Reader.Error!void {
+    fn streamInner(r: *Io.Reader) Io.Reader.Error!void {
         const r_indirect: *ReaderIndirect = @alignCast(@fieldParentPtr("interface", r));
 
         // If there's no room remaining in the buffer at all, make room.
@@ -1301,12 +1309,12 @@ pub const ReaderIndirect = struct {
             try r.rebase(r.buffer.len);
         }
 
-        var writer: std.Io.Writer = .{
+        var writer: Io.Writer = .{
             .buffer = r.buffer,
             .end = r.end,
             .vtable = &.{
-                .drain = std.Io.Writer.unreachableDrain,
-                .rebase = std.Io.Writer.unreachableRebase,
+                .drain = Io.Writer.unreachableDrain,
+                .rebase = Io.Writer.unreachableRebase,
             },
         };
         defer r.end = writer.end;

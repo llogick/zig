@@ -1,19 +1,22 @@
-const std = @import("std");
 const builtin = @import("builtin");
+
+const std = @import("std");
+const Io = std.Io;
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const log = std.log.scoped(.codegen);
 const math = std.math;
 const DW = std.dwarf;
-
 const Builder = std.zig.llvm.Builder;
+
+const build_options = @import("build_options");
 const llvm = if (build_options.have_llvm)
     @import("llvm/bindings.zig")
 else
     @compileError("LLVM unavailable");
+
 const link = @import("../link.zig");
 const Compilation = @import("../Compilation.zig");
-const build_options = @import("build_options");
 const Zcu = @import("../Zcu.zig");
 const InternPool = @import("../InternPool.zig");
 const Package = @import("../Package.zig");
@@ -799,6 +802,7 @@ pub const Object = struct {
     pub fn emit(o: *Object, pt: Zcu.PerThread, options: EmitOptions) error{ LinkFailure, OutOfMemory }!void {
         const zcu = pt.zcu;
         const comp = zcu.comp;
+        const io = comp.io;
         const diags = &comp.link_diags;
 
         {
@@ -961,10 +965,10 @@ pub const Object = struct {
         const context, const module = emit: {
             if (options.pre_ir_path) |path| {
                 if (std.mem.eql(u8, path, "-")) {
-                    o.builder.dump();
+                    o.builder.dump(io);
                 } else {
-                    o.builder.printToFilePath(std.fs.cwd(), path) catch |err| {
-                        log.err("failed printing LLVM module to \"{s}\": {s}", .{ path, @errorName(err) });
+                    o.builder.printToFilePath(io, Io.Dir.cwd(), path) catch |err| {
+                        log.err("failed printing LLVM module to \"{s}\": {t}", .{ path, err });
                     };
                 }
             }
@@ -977,26 +981,26 @@ pub const Object = struct {
             o.builder.clearAndFree();
 
             if (options.pre_bc_path) |path| {
-                var file = std.fs.cwd().createFile(path, .{}) catch |err|
-                    return diags.fail("failed to create '{s}': {s}", .{ path, @errorName(err) });
-                defer file.close();
+                var file = Io.Dir.cwd().createFile(io, path, .{}) catch |err|
+                    return diags.fail("failed to create '{s}': {t}", .{ path, err });
+                defer file.close(io);
 
                 const ptr: [*]const u8 = @ptrCast(bitcode.ptr);
-                file.writeAll(ptr[0..(bitcode.len * 4)]) catch |err|
-                    return diags.fail("failed to write to '{s}': {s}", .{ path, @errorName(err) });
+                file.writeStreamingAll(io, ptr[0..(bitcode.len * 4)]) catch |err|
+                    return diags.fail("failed to write to '{s}': {t}", .{ path, err });
             }
 
             if (options.asm_path == null and options.bin_path == null and
                 options.post_ir_path == null and options.post_bc_path == null) return;
 
             if (options.post_bc_path) |path| {
-                var file = std.fs.cwd().createFile(path, .{}) catch |err|
-                    return diags.fail("failed to create '{s}': {s}", .{ path, @errorName(err) });
-                defer file.close();
+                var file = Io.Dir.cwd().createFile(io, path, .{}) catch |err|
+                    return diags.fail("failed to create '{s}': {t}", .{ path, err });
+                defer file.close(io);
 
                 const ptr: [*]const u8 = @ptrCast(bitcode.ptr);
-                file.writeAll(ptr[0..(bitcode.len * 4)]) catch |err|
-                    return diags.fail("failed to write to '{s}': {s}", .{ path, @errorName(err) });
+                file.writeStreamingAll(io, ptr[0..(bitcode.len * 4)]) catch |err|
+                    return diags.fail("failed to write to '{s}': {t}", .{ path, err });
             }
 
             if (!build_options.have_llvm or !comp.config.use_lib_llvm) {
@@ -2710,7 +2714,7 @@ pub const Object = struct {
     }
 
     fn allocTypeName(o: *Object, pt: Zcu.PerThread, ty: Type) Allocator.Error![:0]const u8 {
-        var aw: std.Io.Writer.Allocating = .init(o.gpa);
+        var aw: Io.Writer.Allocating = .init(o.gpa);
         defer aw.deinit();
         ty.print(&aw.writer, pt, null) catch |err| switch (err) {
             error.WriteFailed => return error.OutOfMemory,

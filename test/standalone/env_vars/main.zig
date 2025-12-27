@@ -3,6 +3,8 @@ const builtin = @import("builtin");
 
 // Note: the environment variables under test are set by the build.zig
 pub fn main() !void {
+    @setEvalBranchQuota(10000);
+
     var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();

@@ -171,6 +171,9 @@ pub fn getAtomData(self: ZigObject, macho_file: *MachO, atom: Atom, buffer: []u8
     const isec = atom.getInputSection(macho_file);
     assert(!isec.isZerofill());
 
+    const comp = macho_file.base.comp;
+    const io = comp.io;
+
     switch (isec.type()) {
         macho.S_THREAD_LOCAL_REGULAR => {
             const tlv = self.tlv_initializers.get(atom.atom_index).?;
@@ -182,7 +185,7 @@ pub fn getAtomData(self: ZigObject, macho_file: *MachO, atom: Atom, buffer: []u8
         else => {
             const sect = macho_file.sections.items(.header)[atom.out_n_sect];
             const file_offset = sect.offset + atom.value;
-            const amt = try macho_file.base.file.?.preadAll(buffer, file_offset);
+            const amt = try macho_file.base.file.?.readPositionalAll(io, buffer, file_offset);
             if (amt != buffer.len) return error.InputOutput;
         },
     }
@@ -290,12 +293,14 @@ pub fn dedupLiterals(self: *ZigObject, lp: MachO.LiteralPool, macho_file: *MachO
 /// We need this so that we can write to an archive.
 /// TODO implement writing ZigObject data directly to a buffer instead.
 pub fn readFileContents(self: *ZigObject, macho_file: *MachO) !void {
-    const diags = &macho_file.base.comp.link_diags;
+    const comp = macho_file.base.comp;
+    const gpa = comp.gpa;
+    const io = comp.io;
+    const diags = &comp.link_diags;
     // Size of the output object file is always the offset + size of the strtab
     const size = macho_file.symtab_cmd.stroff + macho_file.symtab_cmd.strsize;
-    const gpa = macho_file.base.comp.gpa;
     try self.data.resize(gpa, size);
-    const amt = macho_file.base.file.?.preadAll(self.data.items, 0) catch |err|
+    const amt = macho_file.base.file.?.readPositionalAll(io, self.data.items, 0) catch |err|
         return diags.fail("failed to read output file: {s}", .{@errorName(err)});
     if (amt != size)
         return diags.fail("unexpected EOF reading from output file", .{});
@@ -945,6 +950,8 @@ fn updateNavCode(
 ) link.File.UpdateNavError!void {
     const zcu = pt.zcu;
     const gpa = zcu.gpa;
+    const comp = zcu.comp;
+    const io = comp.io;
     const ip = &zcu.intern_pool;
     const nav = ip.getNav(nav_index);
 
@@ -1012,8 +1019,8 @@ fn updateNavCode(
 
     if (!sect.isZerofill()) {
         const file_offset = sect.offset + atom.value;
-        macho_file.base.file.?.pwriteAll(code, file_offset) catch |err|
-            return macho_file.base.cgFail(nav_index, "failed to write output file: {s}", .{@errorName(err)});
+        macho_file.base.file.?.writePositionalAll(io, code, file_offset) catch |err|
+            return macho_file.base.cgFail(nav_index, "failed to write output file: {t}", .{err});
     }
 }
 
@@ -1493,7 +1500,7 @@ fn writeTrampoline(tr_sym: Symbol, target: Symbol, macho_file: *MachO) !void {
         .x86_64 => try x86_64.writeTrampolineCode(source_addr, target_addr, &buf),
         else => @panic("TODO implement write trampoline for this CPU arch"),
     };
-    try macho_file.base.file.?.pwriteAll(out, fileoff);
+    return macho_file.pwriteAll(out, fileoff);
 }
 
 pub fn getOrCreateMetadataForNav(

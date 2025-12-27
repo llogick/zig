@@ -1,3 +1,23 @@
+const Elf = @This();
+
+const builtin = @import("builtin");
+const native_endian = builtin.cpu.arch.endian();
+
+const std = @import("std");
+const Io = std.Io;
+const assert = std.debug.assert;
+const log = std.log.scoped(.link);
+
+const codegen = @import("../codegen.zig");
+const Compilation = @import("../Compilation.zig");
+const InternPool = @import("../InternPool.zig");
+const link = @import("../link.zig");
+const MappedFile = @import("MappedFile.zig");
+const target_util = @import("../target.zig");
+const Type = @import("../Type.zig");
+const Value = @import("../Value.zig");
+const Zcu = @import("../Zcu.zig");
+
 base: link.File,
 options: link.File.OpenOptions,
 mf: MappedFile,
@@ -908,6 +928,7 @@ fn create(
     path: std.Build.Cache.Path,
     options: link.File.OpenOptions,
 ) !*Elf {
+    const io = comp.io;
     const target = &comp.root_mod.resolved_target.result;
     assert(target.ofmt == .elf);
     const class: std.elf.CLASS = switch (target.ptrBitWidth()) {
@@ -953,11 +974,11 @@ fn create(
     };
 
     const elf = try arena.create(Elf);
-    const file = try path.root_dir.handle.adaptToNewApi().createFile(comp.io, path.sub_path, .{
+    const file = try path.root_dir.handle.createFile(io, path.sub_path, .{
         .read = true,
-        .mode = link.File.determineMode(comp.config.output_mode, comp.config.link_mode),
+        .permissions = link.File.determinePermissions(comp.config.output_mode, comp.config.link_mode),
     });
-    errdefer file.close(comp.io);
+    errdefer file.close(io);
     elf.* = .{
         .base = .{
             .tag = .elf2,
@@ -965,7 +986,7 @@ fn create(
             .comp = comp,
             .emit = path,
 
-            .file = .adaptFromNewApi(file),
+            .file = file,
             .gc_sections = false,
             .print_gc_sections = false,
             .build_id = .none,
@@ -973,7 +994,7 @@ fn create(
             .stack_size = 0,
         },
         .options = options,
-        .mf = try .init(file, comp.gpa),
+        .mf = try .init(file, comp.gpa, io),
         .ni = .{
             .tls = .none,
         },
@@ -1973,8 +1994,8 @@ pub fn lazySymbol(elf: *Elf, lazy: link.File.LazySymbol) !Symbol.Index {
     return lazy_gop.value_ptr.*;
 }
 
-pub fn loadInput(elf: *Elf, input: link.Input) (std.fs.File.Reader.SizeError ||
-    std.Io.File.Reader.Error || MappedFile.Error || error{ EndOfStream, BadMagic, LinkFailure })!void {
+pub fn loadInput(elf: *Elf, input: link.Input) (Io.File.Reader.SizeError ||
+    Io.File.Reader.Error || MappedFile.Error || error{ EndOfStream, BadMagic, LinkFailure })!void {
     const io = elf.base.comp.io;
     var buf: [4096]u8 = undefined;
     switch (input) {
@@ -2007,7 +2028,7 @@ pub fn loadInput(elf: *Elf, input: link.Input) (std.fs.File.Reader.SizeError ||
         .dso_exact => |dso_exact| try elf.loadDsoExact(dso_exact.name),
     }
 }
-fn loadArchive(elf: *Elf, path: std.Build.Cache.Path, fr: *std.Io.File.Reader) !void {
+fn loadArchive(elf: *Elf, path: std.Build.Cache.Path, fr: *Io.File.Reader) !void {
     const comp = elf.base.comp;
     const gpa = comp.gpa;
     const diags = &comp.link_diags;
@@ -2067,7 +2088,7 @@ fn loadObject(
     elf: *Elf,
     path: std.Build.Cache.Path,
     member: ?[]const u8,
-    fr: *std.Io.File.Reader,
+    fr: *Io.File.Reader,
     fl: MappedFile.Node.FileLocation,
 ) !void {
     const comp = elf.base.comp;
@@ -2310,7 +2331,7 @@ fn loadObject(
         },
     }
 }
-fn loadDso(elf: *Elf, path: std.Build.Cache.Path, fr: *std.Io.File.Reader) !void {
+fn loadDso(elf: *Elf, path: std.Build.Cache.Path, fr: *Io.File.Reader) !void {
     const comp = elf.base.comp;
     const diags = &comp.link_diags;
     const r = &fr.interface;
@@ -3305,12 +3326,13 @@ fn flushInputSection(elf: *Elf, isi: Node.InputSectionIndex) !void {
     const file_loc = isi.fileLocation(elf);
     if (file_loc.size == 0) return;
     const comp = elf.base.comp;
+    const io = comp.io;
     const gpa = comp.gpa;
     const ii = isi.input(elf);
     const path = ii.path(elf);
-    const file = try path.root_dir.handle.adaptToNewApi().openFile(comp.io, path.sub_path, .{});
-    defer file.close(comp.io);
-    var fr = file.reader(comp.io, &.{});
+    const file = try path.root_dir.handle.openFile(io, path.sub_path, .{});
+    defer file.close(io);
+    var fr = file.reader(io, &.{});
     try fr.seekTo(file_loc.offset);
     var nw: MappedFile.Node.Writer = undefined;
     const si = isi.symbol(elf);
@@ -3707,10 +3729,16 @@ pub fn deleteExport(elf: *Elf, exported: Zcu.Exported, name: InternPool.NullTerm
     _ = name;
 }
 
-pub fn dump(elf: *Elf, tid: Zcu.PerThread.Id) void {
-    const w, _ = std.debug.lockStderrWriter(&.{});
-    defer std.debug.unlockStderrWriter();
-    elf.printNode(tid, w, .root, 0) catch {};
+pub fn dump(elf: *Elf, tid: Zcu.PerThread.Id) Io.Cancelable!void {
+    const comp = elf.base.comp;
+    const io = comp.io;
+    var buffer: [512]u8 = undefined;
+    const stderr = try io.lockStderr(&buffer, null);
+    defer io.lockStderr();
+    const w = &stderr.file_writer.interface;
+    elf.printNode(tid, w, .root, 0) catch |err| switch (err) {
+        error.WriteFailed => return stderr.err.?,
+    };
 }
 
 pub fn printNode(
@@ -3822,19 +3850,3 @@ pub fn printNode(
         try w.writeByte('\n');
     }
 }
-
-const assert = std.debug.assert;
-const builtin = @import("builtin");
-const codegen = @import("../codegen.zig");
-const Compilation = @import("../Compilation.zig");
-const Elf = @This();
-const InternPool = @import("../InternPool.zig");
-const link = @import("../link.zig");
-const log = std.log.scoped(.link);
-const MappedFile = @import("MappedFile.zig");
-const native_endian = builtin.cpu.arch.endian();
-const std = @import("std");
-const target_util = @import("../target.zig");
-const Type = @import("../Type.zig");
-const Value = @import("../Value.zig");
-const Zcu = @import("../Zcu.zig");

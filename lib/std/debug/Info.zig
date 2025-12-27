@@ -5,18 +5,17 @@
 //! Unlike `std.debug.SelfInfo`, this API does not assume the debug information
 //! in question happens to match the host CPU architecture, OS, or other target
 //! properties.
+const Info = @This();
 
 const std = @import("../std.zig");
+const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const Path = std.Build.Cache.Path;
 const assert = std.debug.assert;
 const Coverage = std.debug.Coverage;
 const SourceLocation = std.debug.Coverage.SourceLocation;
-
 const ElfFile = std.debug.ElfFile;
 const MachOFile = std.debug.MachOFile;
-
-const Info = @This();
 
 impl: union(enum) {
     elf: ElfFile,
@@ -25,15 +24,25 @@ impl: union(enum) {
 /// Externally managed, outlives this `Info` instance.
 coverage: *Coverage,
 
-pub const LoadError = std.fs.File.OpenError || ElfFile.LoadError || MachOFile.Error || std.debug.Dwarf.ScanError || error{ MissingDebugInfo, UnsupportedDebugInfo };
+pub const LoadError = error{
+    MissingDebugInfo,
+    UnsupportedDebugInfo,
+} || Io.File.OpenError || ElfFile.LoadError || MachOFile.Error || std.debug.Dwarf.ScanError;
 
-pub fn load(gpa: Allocator, path: Path, coverage: *Coverage, format: std.Target.ObjectFormat, arch: std.Target.Cpu.Arch) LoadError!Info {
+pub fn load(
+    gpa: Allocator,
+    io: Io,
+    path: Path,
+    coverage: *Coverage,
+    format: std.Target.ObjectFormat,
+    arch: std.Target.Cpu.Arch,
+) LoadError!Info {
     switch (format) {
         .elf => {
-            var file = try path.root_dir.handle.openFile(path.sub_path, .{});
-            defer file.close();
+            var file = try path.root_dir.handle.openFile(io, path.sub_path, .{});
+            defer file.close(io);
 
-            var elf_file: ElfFile = try .load(gpa, file, null, &.none);
+            var elf_file: ElfFile = try .load(gpa, io, file, null, &.none);
             errdefer elf_file.deinit(gpa);
 
             if (elf_file.dwarf == null) return error.MissingDebugInfo;
@@ -49,7 +58,7 @@ pub fn load(gpa: Allocator, path: Path, coverage: *Coverage, format: std.Target.
             const path_str = try path.toString(gpa);
             defer gpa.free(path_str);
 
-            var macho_file: MachOFile = try .load(gpa, path_str, arch);
+            var macho_file: MachOFile = try .load(gpa, io, path_str, arch);
             errdefer macho_file.deinit(gpa);
 
             return .{
@@ -76,6 +85,7 @@ pub const ResolveAddressesError = Coverage.ResolveAddressesDwarfError || error{U
 pub fn resolveAddresses(
     info: *Info,
     gpa: Allocator,
+    io: Io,
     /// Asserts the addresses are in ascending order.
     sorted_pc_addrs: []const u64,
     /// Asserts its length equals length of `sorted_pc_addrs`.
@@ -88,7 +98,7 @@ pub fn resolveAddresses(
             // Resolving all of the addresses at once unfortunately isn't so easy in Mach-O binaries
             // due to split debug information. For now, we'll just resolve the addreses one by one.
             for (sorted_pc_addrs, output) |pc_addr, *src_loc| {
-                const dwarf, const dwarf_pc_addr = mf.getDwarfForAddress(gpa, pc_addr) catch |err| switch (err) {
+                const dwarf, const dwarf_pc_addr = mf.getDwarfForAddress(gpa, io, pc_addr) catch |err| switch (err) {
                     error.InvalidMachO, error.InvalidDwarf => return error.InvalidDebugInfo,
                     else => |e| return e,
                 };

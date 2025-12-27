@@ -1,8 +1,9 @@
 const std = @import("std");
+const Io = std.Io;
+const Dir = std.Io.Dir;
 const assert = std.debug.assert;
 const info = std.log.info;
 const fatal = std.process.fatal;
-
 const Allocator = std.mem.Allocator;
 
 var general_purpose_allocator = std.heap.GeneralPurposeAllocator(.{}){};
@@ -20,6 +21,10 @@ pub fn main() anyerror!void {
     defer arena_allocator.deinit();
     const arena = arena_allocator.allocator();
 
+    var threaded: Io.Threaded = .init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
     const args = try std.process.argsAlloc(arena);
     if (args.len == 1) fatal("no command or option specified", .{});
 
@@ -33,10 +38,10 @@ pub fn main() anyerror!void {
 
     if (positionals.items.len != 1) fatal("expected one positional argument: [dir]", .{});
 
-    var dir = try std.fs.cwd().openDir(positionals.items[0], .{ .follow_symlinks = false });
-    defer dir.close();
+    var dir = try Io.Dir.cwd().openDir(io, positionals.items[0], .{ .follow_symlinks = false });
+    defer dir.close(io);
     var paths = std.array_list.Managed([]const u8).init(arena);
-    try findHeaders(arena, dir, "", &paths);
+    try findHeaders(arena, io, dir, "", &paths);
 
     const SortFn = struct {
         pub fn lessThan(ctx: void, lhs: []const u8, rhs: []const u8) bool {
@@ -48,7 +53,7 @@ pub fn main() anyerror!void {
     std.mem.sort([]const u8, paths.items, {}, SortFn.lessThan);
 
     var buffer: [2000]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writerStreaming(&buffer);
+    var stdout_writer = Io.File.stdout().writerStreaming(io, &buffer);
     const w = &stdout_writer.interface;
     try w.writeAll("#define _XOPEN_SOURCE\n");
     for (paths.items) |path| {
@@ -64,23 +69,24 @@ pub fn main() anyerror!void {
 
 fn findHeaders(
     arena: Allocator,
-    dir: std.fs.Dir,
+    io: Io,
+    dir: Dir,
     prefix: []const u8,
     paths: *std.array_list.Managed([]const u8),
 ) anyerror!void {
     var it = dir.iterate();
-    while (try it.next()) |entry| {
+    while (try it.next(io)) |entry| {
         switch (entry.kind) {
             .directory => {
-                const path = try std.fs.path.join(arena, &.{ prefix, entry.name });
-                var subdir = try dir.openDir(entry.name, .{ .follow_symlinks = false });
-                defer subdir.close();
-                try findHeaders(arena, subdir, path, paths);
+                const path = try Io.Dir.path.join(arena, &.{ prefix, entry.name });
+                var subdir = try dir.openDir(io, entry.name, .{ .follow_symlinks = false });
+                defer subdir.close(io);
+                try findHeaders(arena, io, subdir, path, paths);
             },
             .file, .sym_link => {
-                const ext = std.fs.path.extension(entry.name);
+                const ext = Io.Dir.path.extension(entry.name);
                 if (!std.mem.eql(u8, ext, ".h")) continue;
-                const path = try std.fs.path.join(arena, &.{ prefix, entry.name });
+                const path = try Io.Dir.path.join(arena, &.{ prefix, entry.name });
                 try paths.append(path);
             },
             else => {},

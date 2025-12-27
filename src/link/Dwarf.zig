@@ -1,3 +1,24 @@
+const Dwarf = @This();
+
+const std = @import("std");
+const Io = std.Io;
+const Allocator = std.mem.Allocator;
+const DW = std.dwarf;
+const Zir = std.zig.Zir;
+const assert = std.debug.assert;
+const log = std.log.scoped(.dwarf);
+const Writer = std.Io.Writer;
+
+const InternPool = @import("../InternPool.zig");
+const Module = @import("../Package.zig").Module;
+const Type = @import("../Type.zig");
+const Value = @import("../Value.zig");
+const Zcu = @import("../Zcu.zig");
+const codegen = @import("../codegen.zig");
+const dev = @import("../dev.zig");
+const link = @import("../link.zig");
+const target_info = @import("../target.zig");
+
 gpa: Allocator,
 bin_file: *link.File,
 format: DW.Format,
@@ -27,18 +48,18 @@ pub const UpdateError = error{
     EndOfStream,
     Underflow,
     UnexpectedEndOfFile,
+    NonResizable,
 } ||
     codegen.GenerateSymbolError ||
-    std.fs.File.OpenError ||
-    std.fs.File.SetEndPosError ||
-    std.fs.File.CopyRangeError ||
-    std.fs.File.PReadError ||
-    std.fs.File.PWriteError;
+    Io.File.OpenError ||
+    Io.File.LengthError ||
+    Io.File.ReadPositionalError ||
+    Io.File.WritePositionalError;
 
 pub const FlushError = UpdateError;
 
 pub const RelocError =
-    std.fs.File.PWriteError;
+    Io.File.PWriteError;
 
 pub const AddressSize = enum(u8) {
     @"32" = 4,
@@ -135,11 +156,14 @@ const DebugInfo = struct {
 
     fn declAbbrevCode(debug_info: *DebugInfo, unit: Unit.Index, entry: Entry.Index) !AbbrevCode {
         const dwarf: *Dwarf = @fieldParentPtr("debug_info", debug_info);
+        const comp = dwarf.bin_file.comp;
+        const io = comp.io;
         const unit_ptr = debug_info.section.getUnit(unit);
         const entry_ptr = unit_ptr.getEntry(entry);
         if (entry_ptr.len < AbbrevCode.decl_bytes) return .null;
         var abbrev_code_buf: [AbbrevCode.decl_bytes]u8 = undefined;
-        if (try dwarf.getFile().?.preadAll(
+        if (try dwarf.getFile().?.readPositionalAll(
+            io,
             &abbrev_code_buf,
             debug_info.section.off(dwarf) + unit_ptr.off + unit_ptr.header_len + entry_ptr.off,
         ) != abbrev_code_buf.len) return error.InputOutput;
@@ -619,13 +643,10 @@ const Unit = struct {
 
     fn move(unit: *Unit, sec: *Section, dwarf: *Dwarf, new_off: u32) UpdateError!void {
         if (unit.off == new_off) return;
-        const n = try dwarf.getFile().?.copyRangeAll(
-            sec.off(dwarf) + unit.off,
-            dwarf.getFile().?,
-            sec.off(dwarf) + new_off,
-            unit.len,
-        );
-        if (n != unit.len) return error.InputOutput;
+        const comp = dwarf.bin_file.comp;
+        const io = comp.io;
+        const file = dwarf.getFile().?;
+        try link.File.copyRangeAll2(io, file, file, sec.off(dwarf) + unit.off, sec.off(dwarf) + new_off, unit.len);
         unit.off = new_off;
     }
 
@@ -655,10 +676,14 @@ const Unit = struct {
 
     fn replaceHeader(unit: *Unit, sec: *Section, dwarf: *Dwarf, contents: []const u8) UpdateError!void {
         assert(contents.len == unit.header_len);
-        try dwarf.getFile().?.pwriteAll(contents, sec.off(dwarf) + unit.off);
+        const comp = dwarf.bin_file.comp;
+        const io = comp.io;
+        try dwarf.getFile().?.writePositionalAll(io, contents, sec.off(dwarf) + unit.off);
     }
 
     fn writeTrailer(unit: *Unit, sec: *Section, dwarf: *Dwarf) UpdateError!void {
+        const comp = dwarf.bin_file.comp;
+        const io = comp.io;
         const start = unit.off + unit.header_len + if (unit.last.unwrap()) |last_entry| end: {
             const last_entry_ptr = unit.getEntry(last_entry);
             break :end last_entry_ptr.off + last_entry_ptr.len;
@@ -688,7 +713,7 @@ const Unit = struct {
             assert(fw.end == extended_op_bytes + op_len_bytes);
             fw.writeByte(DW.LNE.padding) catch unreachable;
             assert(fw.end >= unit.trailer_len and fw.end <= len);
-            return dwarf.getFile().?.pwriteAll(fw.buffered(), sec.off(dwarf) + start);
+            return dwarf.getFile().?.writePositionalAll(io, fw.buffered(), sec.off(dwarf) + start);
         }
         var trailer_aw: Writer.Allocating = try .initCapacity(dwarf.gpa, len);
         defer trailer_aw.deinit();
@@ -748,7 +773,7 @@ const Unit = struct {
         assert(tw.end == unit.trailer_len);
         tw.splatByteAll(fill_byte, len - unit.trailer_len) catch unreachable;
         assert(tw.end == len);
-        try dwarf.getFile().?.pwriteAll(trailer_aw.written(), sec.off(dwarf) + start);
+        try dwarf.getFile().?.writePositionalAll(io, trailer_aw.written(), sec.off(dwarf) + start);
     }
 
     fn resolveRelocs(unit: *Unit, sec: *Section, dwarf: *Dwarf) RelocError!void {
@@ -834,6 +859,8 @@ const Entry = struct {
         dwarf: *Dwarf,
     ) (UpdateError || Writer.Error)!void {
         assert(entry.len > 0);
+        const comp = dwarf.bin_file.comp;
+        const io = comp.io;
         const start = entry.off + entry.len;
         if (sec == &dwarf.debug_frame.section) {
             const len = if (entry.next.unwrap()) |next_entry|
@@ -843,11 +870,11 @@ const Entry = struct {
             var unit_len_buf: [8]u8 = undefined;
             const unit_len_bytes = unit_len_buf[0..dwarf.sectionOffsetBytes()];
             dwarf.writeInt(unit_len_bytes, len - dwarf.unitLengthBytes());
-            try dwarf.getFile().?.pwriteAll(unit_len_bytes, sec.off(dwarf) + unit.off + unit.header_len + entry.off);
+            try dwarf.getFile().?.writePositionalAll(io, unit_len_bytes, sec.off(dwarf) + unit.off + unit.header_len + entry.off);
             const buf = try dwarf.gpa.alloc(u8, len - entry.len);
             defer dwarf.gpa.free(buf);
             @memset(buf, DW.CFA.nop);
-            try dwarf.getFile().?.pwriteAll(buf, sec.off(dwarf) + unit.off + unit.header_len + start);
+            try dwarf.getFile().?.writePositionalAll(io, buf, sec.off(dwarf) + unit.off + unit.header_len + start);
             return;
         }
         const len = unit.getEntry(entry.next.unwrap() orelse return).off - start;
@@ -906,7 +933,7 @@ const Entry = struct {
             },
         } else assert(!sec.pad_entries_to_ideal and len == 0);
         assert(fw.end <= len);
-        try dwarf.getFile().?.pwriteAll(fw.buffered(), sec.off(dwarf) + unit.off + unit.header_len + start);
+        try dwarf.getFile().?.writePositionalAll(io, fw.buffered(), sec.off(dwarf) + unit.off + unit.header_len + start);
     }
 
     fn resize(
@@ -949,11 +976,13 @@ const Entry = struct {
 
     fn replace(entry_ptr: *Entry, unit: *Unit, sec: *Section, dwarf: *Dwarf, contents: []const u8) UpdateError!void {
         assert(contents.len == entry_ptr.len);
-        try dwarf.getFile().?.pwriteAll(contents, sec.off(dwarf) + unit.off + unit.header_len + entry_ptr.off);
+        const comp = dwarf.bin_file.comp;
+        const io = comp.io;
+        try dwarf.getFile().?.writePositionalAll(io, contents, sec.off(dwarf) + unit.off + unit.header_len + entry_ptr.off);
         if (false) {
             const buf = try dwarf.gpa.alloc(u8, sec.len);
             defer dwarf.gpa.free(buf);
-            _ = try dwarf.getFile().?.preadAll(buf, sec.off(dwarf));
+            _ = try dwarf.getFile().?.readPositionalAll(io, buf, sec.off(dwarf));
             log.info("Section{{ .first = {}, .last = {}, .off = 0x{x}, .len = 0x{x} }}", .{
                 @intFromEnum(sec.first),
                 @intFromEnum(sec.last),
@@ -4682,6 +4711,8 @@ fn updateContainerTypeWriterError(
 }
 
 pub fn updateLineNumber(dwarf: *Dwarf, zcu: *Zcu, zir_index: InternPool.TrackedInst.Index) UpdateError!void {
+    const comp = dwarf.bin_file.comp;
+    const io = comp.io;
     const ip = &zcu.intern_pool;
 
     const inst_info = zir_index.resolveFull(ip).?;
@@ -4701,7 +4732,7 @@ pub fn updateLineNumber(dwarf: *Dwarf, zcu: *Zcu, zir_index: InternPool.TrackedI
 
     const unit = dwarf.debug_info.section.getUnit(dwarf.getUnitIfExists(file.mod.?) orelse return);
     const entry = unit.getEntry(dwarf.decls.get(zir_index) orelse return);
-    try dwarf.getFile().?.pwriteAll(&line_buf, dwarf.debug_info.section.off(dwarf) + unit.off + unit.header_len + entry.off + DebugInfo.declEntryLineOff(dwarf));
+    try dwarf.getFile().?.writePositionalAll(io, &line_buf, dwarf.debug_info.section.off(dwarf) + unit.off + unit.header_len + entry.off + DebugInfo.declEntryLineOff(dwarf));
 }
 
 pub fn freeNav(dwarf: *Dwarf, nav_index: InternPool.Nav.Index) void {
@@ -4738,6 +4769,8 @@ pub fn flush(dwarf: *Dwarf, pt: Zcu.PerThread) FlushError!void {
 fn flushWriterError(dwarf: *Dwarf, pt: Zcu.PerThread) (FlushError || Writer.Error)!void {
     const zcu = pt.zcu;
     const ip = &zcu.intern_pool;
+    const comp = dwarf.bin_file.comp;
+    const io = comp.io;
 
     {
         const type_gop = try dwarf.types.getOrPut(dwarf.gpa, .anyerror_type);
@@ -4957,7 +4990,7 @@ fn flushWriterError(dwarf: *Dwarf, pt: Zcu.PerThread) (FlushError || Writer.Erro
     if (dwarf.debug_str.section.dirty) {
         const contents = dwarf.debug_str.contents.items;
         try dwarf.debug_str.section.resize(dwarf, contents.len);
-        try dwarf.getFile().?.pwriteAll(contents, dwarf.debug_str.section.off(dwarf));
+        try dwarf.getFile().?.writePositionalAll(io, contents, dwarf.debug_str.section.off(dwarf));
         dwarf.debug_str.section.dirty = false;
     }
     if (dwarf.debug_line.section.dirty) {
@@ -5069,7 +5102,7 @@ fn flushWriterError(dwarf: *Dwarf, pt: Zcu.PerThread) (FlushError || Writer.Erro
     if (dwarf.debug_line_str.section.dirty) {
         const contents = dwarf.debug_line_str.contents.items;
         try dwarf.debug_line_str.section.resize(dwarf, contents.len);
-        try dwarf.getFile().?.pwriteAll(contents, dwarf.debug_line_str.section.off(dwarf));
+        try dwarf.getFile().?.writePositionalAll(io, contents, dwarf.debug_line_str.section.off(dwarf));
         dwarf.debug_line_str.section.dirty = false;
     }
     if (dwarf.debug_loclists.section.dirty) {
@@ -6350,7 +6383,7 @@ const AbbrevCode = enum {
     });
 };
 
-fn getFile(dwarf: *Dwarf) ?std.fs.File {
+fn getFile(dwarf: *Dwarf) ?Io.File {
     if (dwarf.bin_file.cast(.macho)) |macho_file| if (macho_file.d_sym) |*d_sym| return d_sym.file;
     return dwarf.bin_file.file;
 }
@@ -6391,9 +6424,11 @@ fn writeInt(dwarf: *Dwarf, buf: []u8, int: u64) void {
 }
 
 fn resolveReloc(dwarf: *Dwarf, source: u64, target: u64, size: u32) RelocError!void {
+    const comp = dwarf.bin_file.comp;
+    const io = comp.io;
     var buf: [8]u8 = undefined;
     dwarf.writeInt(buf[0..size], target);
-    try dwarf.getFile().?.pwriteAll(buf[0..size], source);
+    try dwarf.getFile().?.writePositionalAll(io, buf[0..size], source);
 }
 
 fn unitLengthBytes(dwarf: *Dwarf) u32 {
@@ -6429,21 +6464,3 @@ const force_incremental = false;
 inline fn incremental(dwarf: Dwarf) bool {
     return force_incremental or dwarf.bin_file.comp.config.incremental;
 }
-
-const Allocator = std.mem.Allocator;
-const DW = std.dwarf;
-const Dwarf = @This();
-const InternPool = @import("../InternPool.zig");
-const Module = @import("../Package.zig").Module;
-const Type = @import("../Type.zig");
-const Value = @import("../Value.zig");
-const Zcu = @import("../Zcu.zig");
-const Zir = std.zig.Zir;
-const assert = std.debug.assert;
-const codegen = @import("../codegen.zig");
-const dev = @import("../dev.zig");
-const link = @import("../link.zig");
-const log = std.log.scoped(.dwarf);
-const std = @import("std");
-const target_info = @import("../target.zig");
-const Writer = std.Io.Writer;

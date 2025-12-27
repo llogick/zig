@@ -110,7 +110,7 @@ fn main2() callconv(.c) c_int {
 }
 
 fn _start2() callconv(.withStackAlign(.c, 1)) noreturn {
-    std.posix.exit(callMain());
+    std.process.exit(callMain());
 }
 
 fn spirvMain2() callconv(.kernel) void {
@@ -118,7 +118,7 @@ fn spirvMain2() callconv(.kernel) void {
 }
 
 fn wWinMainCRTStartup2() callconv(.c) noreturn {
-    std.posix.exit(callMain());
+    std.process.exit(callMain());
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -627,7 +627,7 @@ fn posixCallMainAndExit(argc_argv_ptr: [*]usize) callconv(.c) noreturn {
         for (slice) |func| func();
     }
 
-    std.posix.exit(callMainWithArgs(argc, argv, envp));
+    std.process.exit(callMainWithArgs(argc, argv, envp));
 }
 
 fn expandStackSize(phdrs: []elf.Phdr) void {
@@ -669,6 +669,11 @@ inline fn callMainWithArgs(argc: usize, argv: [*][*:0]u8, envp: [][*:0]u8) u8 {
     std.os.argv = argv[0..argc];
     std.os.environ = envp;
 
+    if (std.Options.debug_threaded_io) |t| {
+        if (@sizeOf(std.Io.Threaded.Argv0) != 0) t.argv0.value = argv[0];
+        t.environ = .{ .block = envp };
+    }
+
     std.debug.maybeEnableSegfaultHandler();
 
     return callMain();
@@ -691,6 +696,11 @@ fn main(c_argc: c_int, c_argv: [*][*:0]c_char, c_envp: [*:null]?[*:0]c_char) cal
 
 fn mainWithoutEnv(c_argc: c_int, c_argv: [*][*:0]c_char) callconv(.c) c_int {
     std.os.argv = @as([*][*:0]u8, @ptrCast(c_argv))[0..@intCast(c_argc)];
+
+    if (@sizeOf(std.Io.Threaded.Argv0) != 0) {
+        if (std.Options.debug_threaded_io) |t| t.argv0.value = std.os.argv[0];
+    }
+
     return callMain();
 }
 

@@ -7,15 +7,17 @@
 #file=main.zig
 const std = @import("std");
 var some_enum: enum { first, second } = .first;
+const io = std.Io.Threaded.global_single_threaded.ioBasic();
 pub fn main() !void {
-    try std.fs.File.stdout().writeAll(@tagName(some_enum));
+    try std.Io.File.stdout().writeStreamingAll(io, @tagName(some_enum));
 }
 #expect_stdout="first"
 #update=no change
 #file=main.zig
 const std = @import("std");
 var some_enum: enum { first, second } = .first;
+const io = std.Io.Threaded.global_single_threaded.ioBasic();
 pub fn main() !void {
-    try std.fs.File.stdout().writeAll(@tagName(some_enum));
+    try std.Io.File.stdout().writeStreamingAll(io, @tagName(some_enum));
 }
 #expect_stdout="first"

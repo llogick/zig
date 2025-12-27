@@ -10,10 +10,14 @@ pub fn main() !void {
 
     if (args.len < 3) return error.MissingArgs;
 
+    var threaded: std.Io.Threaded = .init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
     const relative = try std.fs.path.relative(allocator, args[1], args[2]);
     defer allocator.free(relative);
 
-    var stdout_writer = std.fs.File.stdout().writerStreaming(&.{});
+    var stdout_writer = std.Io.File.stdout().writerStreaming(io, &.{});
     const stdout = &stdout_writer.interface;
     try stdout.writeAll(relative);
 }

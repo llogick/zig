@@ -2,10 +2,10 @@ const builtin = @import("builtin");
 
 const std = @import("std");
 const Io = std.Io;
+const Dir = std.Io.Dir;
 const Writer = std.Io.Writer;
 const fatal = std.process.fatal;
 const mem = std.mem;
-const fs = std.fs;
 const process = std.process;
 const Allocator = std.mem.Allocator;
 const testing = std.testing;
@@ -40,7 +40,7 @@ pub fn main() !void {
 
     const gpa = arena;
 
-    var threaded: std.Io.Threaded = .init(gpa);
+    var threaded: std.Io.Threaded = .init(gpa, .{});
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -53,7 +53,7 @@ pub fn main() !void {
     while (args_it.next()) |arg| {
         if (mem.startsWith(u8, arg, "-")) {
             if (mem.eql(u8, arg, "-h") or mem.eql(u8, arg, "--help")) {
-                try std.fs.File.stdout().writeAll(usage);
+                try Io.File.stdout().writeStreamingAll(io, usage);
                 process.exit(0);
             } else if (mem.eql(u8, arg, "-i")) {
                 opt_input = args_it.next() orelse fatal("expected parameter after -i", .{});
@@ -78,37 +78,37 @@ pub fn main() !void {
     const zig_path = opt_zig orelse fatal("missing zig compiler path (--zig)", .{});
     const cache_root = opt_cache_root orelse fatal("missing cache root path (--cache-root)", .{});
 
-    const source_bytes = try fs.cwd().readFileAlloc(input_path, arena, .limited(std.math.maxInt(u32)));
+    const source_bytes = try Dir.cwd().readFileAlloc(io, input_path, arena, .limited(std.math.maxInt(u32)));
     const code = try parseManifest(arena, source_bytes);
     const source = stripManifest(source_bytes);
 
     const tmp_dir_path = try std.fmt.allocPrint(arena, "{s}/tmp/{x}", .{
         cache_root, std.crypto.random.int(u64),
     });
-    fs.cwd().makePath(tmp_dir_path) catch |err|
-        fatal("unable to create tmp dir '{s}': {s}", .{ tmp_dir_path, @errorName(err) });
-    defer fs.cwd().deleteTree(tmp_dir_path) catch |err| std.log.err("unable to delete '{s}': {s}", .{
-        tmp_dir_path, @errorName(err),
+    Dir.cwd().createDirPath(io, tmp_dir_path) catch |err|
+        fatal("unable to create tmp dir '{s}': {t}", .{ tmp_dir_path, err });
+    defer Dir.cwd().deleteTree(io, tmp_dir_path) catch |err| std.log.err("unable to delete '{s}': {t}", .{
+        tmp_dir_path, err,
     });
 
-    var out_file = try fs.cwd().createFile(output_path, .{});
-    defer out_file.close();
+    var out_file = try Dir.cwd().createFile(io, output_path, .{});
+    defer out_file.close(io);
     var out_file_buffer: [4096]u8 = undefined;
-    var out_file_writer = out_file.writer(&out_file_buffer);
+    var out_file_writer = out_file.writer(io, &out_file_buffer);
 
     const out = &out_file_writer.interface;
 
-    try printSourceBlock(arena, out, source, fs.path.basename(input_path));
+    try printSourceBlock(arena, out, source, Dir.path.basename(input_path));
     try printOutput(
         arena,
         io,
         out,
         code,
         tmp_dir_path,
-        try std.fs.path.relative(arena, tmp_dir_path, zig_path),
-        try std.fs.path.relative(arena, tmp_dir_path, input_path),
+        try Dir.path.relative(arena, tmp_dir_path, zig_path),
+        try Dir.path.relative(arena, tmp_dir_path, input_path),
         if (opt_zig_lib_dir) |zig_lib_dir|
-            try std.fs.path.relative(arena, tmp_dir_path, zig_lib_dir)
+            try Dir.path.relative(arena, tmp_dir_path, zig_lib_dir)
         else
             null,
     );
@@ -141,7 +141,7 @@ fn printOutput(
     defer shell_buffer.deinit();
     const shell_out = &shell_buffer.writer;
 
-    const code_name = std.fs.path.stem(input_path);
+    const code_name = Dir.path.stem(input_path);
 
     switch (code.id) {
         .exe => |expected_outcome| code_block: {
@@ -201,8 +201,7 @@ fn printOutput(
             try shell_out.print("\n", .{});
 
             if (expected_outcome == .build_fail) {
-                const result = try process.Child.run(.{
-                    .allocator = arena,
+                const result = try process.Child.run(arena, io, .{
                     .argv = build_args.items,
                     .cwd = tmp_dir_path,
                     .env_map = &env_map,
@@ -227,7 +226,7 @@ fn printOutput(
                 try shell_out.writeAll(colored_stderr);
                 break :code_block;
             }
-            const exec_result = run(arena, &env_map, tmp_dir_path, build_args.items) catch
+            const exec_result = run(arena, io, &env_map, tmp_dir_path, build_args.items) catch
                 fatal("example failed to compile", .{});
 
             if (code.verbose_cimport) {
@@ -258,8 +257,7 @@ fn printOutput(
             var exited_with_signal = false;
 
             const result = if (expected_outcome == .fail) blk: {
-                const result = try process.Child.run(.{
-                    .allocator = arena,
+                const result = try process.Child.run(arena, io, .{
                     .argv = run_args,
                     .env_map = &env_map,
                     .cwd = tmp_dir_path,
@@ -278,7 +276,7 @@ fn printOutput(
                 }
                 break :blk result;
             } else blk: {
-                break :blk run(arena, &env_map, tmp_dir_path, run_args) catch
+                break :blk run(arena, io, &env_map, tmp_dir_path, run_args) catch
                     fatal("example crashed", .{});
             };
 
@@ -327,7 +325,7 @@ fn printOutput(
                     .arch_os_abi = triple,
                 });
                 const target = try std.zig.system.resolveTargetQuery(io, target_query);
-                switch (getExternalExecutor(&host, &target, .{
+                switch (getExternalExecutor(io, &host, &target, .{
                     .link_libc = code.link_libc,
                 })) {
                     .native => {},
@@ -347,7 +345,7 @@ fn printOutput(
                 }
             }
 
-            const result = run(arena, &env_map, tmp_dir_path, test_args.items) catch
+            const result = run(arena, io, &env_map, tmp_dir_path, test_args.items) catch
                 fatal("test failed", .{});
             const escaped_stderr = try escapeHtml(arena, result.stderr);
             const escaped_stdout = try escapeHtml(arena, result.stdout);
@@ -378,8 +376,7 @@ fn printOutput(
                 try test_args.append("-lc");
                 try shell_out.print("-lc ", .{});
             }
-            const result = try process.Child.run(.{
-                .allocator = arena,
+            const result = try process.Child.run(arena, io, .{
                 .argv = test_args.items,
                 .env_map = &env_map,
                 .cwd = tmp_dir_path,
@@ -435,8 +432,7 @@ fn printOutput(
                 },
             }
 
-            const result = try process.Child.run(.{
-                .allocator = arena,
+            const result = try process.Child.run(arena, io, .{
                 .argv = test_args.items,
                 .env_map = &env_map,
                 .cwd = tmp_dir_path,
@@ -512,8 +508,7 @@ fn printOutput(
             }
 
             if (maybe_error_match) |error_match| {
-                const result = try process.Child.run(.{
-                    .allocator = arena,
+                const result = try process.Child.run(arena, io, .{
                     .argv = build_args.items,
                     .env_map = &env_map,
                     .cwd = tmp_dir_path,
@@ -541,7 +536,7 @@ fn printOutput(
                 const colored_stderr = try termColor(arena, escaped_stderr);
                 try shell_out.print("\n{s} ", .{colored_stderr});
             } else {
-                _ = run(arena, &env_map, tmp_dir_path, build_args.items) catch fatal("example failed to compile", .{});
+                _ = run(arena, io, &env_map, tmp_dir_path, build_args.items) catch fatal("example failed to compile", .{});
             }
             try shell_out.writeAll("\n");
         },
@@ -600,7 +595,7 @@ fn printOutput(
                 try test_args.append(option);
                 try shell_out.print("{s} ", .{option});
             }
-            const result = run(arena, &env_map, tmp_dir_path, test_args.items) catch fatal("test failed", .{});
+            const result = run(arena, io, &env_map, tmp_dir_path, test_args.items) catch fatal("test failed", .{});
             const escaped_stderr = try escapeHtml(arena, result.stderr);
             const escaped_stdout = try escapeHtml(arena, result.stdout);
             try shell_out.print("\n{s}{s}\n", .{ escaped_stderr, escaped_stdout });
@@ -1132,12 +1127,12 @@ fn in(slice: []const u8, number: u8) bool {
 
 fn run(
     allocator: Allocator,
+    io: Io,
     env_map: *process.EnvMap,
     cwd: []const u8,
     args: []const []const u8,
 ) !process.Child.RunResult {
-    const result = try process.Child.run(.{
-        .allocator = allocator,
+    const result = try process.Child.run(allocator, io, .{
         .argv = args,
         .env_map = env_map,
         .cwd = cwd,

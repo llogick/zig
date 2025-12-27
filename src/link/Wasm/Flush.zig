@@ -108,6 +108,7 @@ pub fn deinit(f: *Flush, gpa: Allocator) void {
 
 pub fn finish(f: *Flush, wasm: *Wasm) !void {
     const comp = wasm.base.comp;
+    const io = comp.io;
     const shared_memory = comp.config.shared_memory;
     const diags = &comp.link_diags;
     const gpa = comp.gpa;
@@ -127,17 +128,20 @@ pub fn finish(f: *Flush, wasm: *Wasm) !void {
     if (comp.zcu) |zcu| {
         const ip: *const InternPool = &zcu.intern_pool; // No mutations allowed!
 
+        log.debug("total MIR instructions: {d}", .{wasm.mir_instructions.len});
+
         // Detect any intrinsics that were called; they need to have dependencies on the symbols marked.
         // Likewise detect `@tagName` calls so those functions can be included in the output and synthesized.
         for (wasm.mir_instructions.items(.tag), wasm.mir_instructions.items(.data)) |tag, *data| switch (tag) {
             .call_intrinsic => {
                 const symbol_name = try wasm.internString(@tagName(data.intrinsic));
                 const i: Wasm.FunctionImport.Index = @enumFromInt(wasm.object_function_imports.getIndex(symbol_name) orelse {
-                    return diags.fail("missing compiler runtime intrinsic '{s}' (undefined linker symbol)", .{
-                        @tagName(data.intrinsic),
+                    return diags.fail("missing compiler runtime intrinsic '{t}' (undefined linker symbol)", .{
+                        data.intrinsic,
                     });
                 });
                 try wasm.markFunctionImport(symbol_name, i.value(wasm), i);
+                log.debug("markFunctionImport intrinsic {d}={t}", .{ i, data.intrinsic });
             },
             .call_tag_name => {
                 assert(ip.indexToKey(data.ip_index) == .enum_type);
@@ -146,11 +150,10 @@ pub fn finish(f: *Flush, wasm: *Wasm) !void {
                     wasm.tag_name_table_ref_count += 1;
                     const int_tag_ty = Zcu.Type.fromInterned(data.ip_index).intTagType(zcu);
                     gop.value_ptr.* = .{ .tag_name = .{
-                        .symbol_name = try wasm.internStringFmt("__zig_tag_name_{d}", .{@intFromEnum(data.ip_index)}),
+                        .symbol_name = try wasm.internStringFmt("__zig_tag_name_{d}", .{data.ip_index}),
                         .type_index = try wasm.internFunctionType(.auto, &.{int_tag_ty.ip_index}, .slice_const_u8_sentinel_0, target),
                         .table_index = @intCast(wasm.tag_name_offs.items.len),
                     } };
-                    try wasm.functions.put(gpa, .fromZcuFunc(wasm, @enumFromInt(gop.index)), {});
                     const tag_names = ip.loadEnumType(data.ip_index).names;
                     for (tag_names.get(ip)) |tag_name| {
                         const slice = tag_name.toSlice(ip);
@@ -158,6 +161,7 @@ pub fn finish(f: *Flush, wasm: *Wasm) !void {
                         try wasm.tag_name_bytes.appendSlice(gpa, slice[0 .. slice.len + 1]);
                     }
                 }
+                try wasm.functions.put(gpa, .fromZcuFunc(wasm, @enumFromInt(gop.index)), {});
             },
             else => continue,
         };
@@ -1067,7 +1071,7 @@ pub fn finish(f: *Flush, wasm: *Wasm) !void {
     }
 
     // Finally, write the entire binary into the file.
-    var file_writer = wasm.base.file.?.writer(&.{});
+    var file_writer = wasm.base.file.?.writer(io, &.{});
     file_writer.interface.writeAll(binary_bytes.items) catch |err| switch (err) {
         error.WriteFailed => return file_writer.err.?,
     };
