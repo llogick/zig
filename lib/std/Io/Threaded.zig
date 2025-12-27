@@ -235,6 +235,24 @@ const Thread = struct {
         ) orelse return;
     }
 
+    fn endSyscallErrnoBug(thread: *Thread, err: posix.E) Io.UnexpectedError {
+        @branchHint(.cold);
+        thread.endSyscall();
+        return errnoBug(err);
+    }
+
+    fn endSyscallUnexpectedErrno(thread: *Thread, err: posix.E) Io.UnexpectedError {
+        @branchHint(.cold);
+        thread.endSyscall();
+        return posix.unexpectedErrno(err);
+    }
+
+    /// inline to make error return traces slightly shallower.
+    inline fn endSyscallError(thread: *Thread, err: anytype) @TypeOf(err) {
+        thread.endSyscall();
+        return err;
+    }
+
     fn currentSignalId() SignaleeId {
         return if (std.Thread.use_pthreads) std.c.pthread_self() else std.Thread.getCurrentId();
     }
@@ -811,7 +829,6 @@ pub fn io(t: *Threaded) Io {
             .dirSetPermissions = dirSetPermissions,
             .dirSetFilePermissions = dirSetFilePermissions,
             .dirSetTimestamps = dirSetTimestamps,
-            .dirSetTimestampsNow = dirSetTimestampsNow,
             .dirHardLink = dirHardLink,
 
             .fileStat = fileStat,
@@ -833,7 +850,6 @@ pub fn io(t: *Threaded) Io {
             .fileSetOwner = fileSetOwner,
             .fileSetPermissions = fileSetPermissions,
             .fileSetTimestamps = fileSetTimestamps,
-            .fileSetTimestampsNow = fileSetTimestampsNow,
             .fileLock = fileLock,
             .fileTryLock = fileTryLock,
             .fileUnlock = fileUnlock,
@@ -947,7 +963,6 @@ pub fn ioBasic(t: *Threaded) Io {
             .dirSetPermissions = dirSetPermissions,
             .dirSetFilePermissions = dirSetFilePermissions,
             .dirSetTimestamps = dirSetTimestamps,
-            .dirSetTimestampsNow = dirSetTimestampsNow,
             .dirHardLink = dirHardLink,
 
             .fileStat = fileStat,
@@ -969,7 +984,6 @@ pub fn ioBasic(t: *Threaded) Io {
             .fileSetOwner = fileSetOwner,
             .fileSetPermissions = fileSetPermissions,
             .fileSetTimestamps = fileSetTimestamps,
-            .fileSetTimestampsNow = fileSetTimestampsNow,
             .fileLock = fileLock,
             .fileTryLock = fileTryLock,
             .fileUnlock = fileUnlock,
@@ -1920,7 +1934,7 @@ fn dirStatFileLinux(
     try current_thread.beginSyscall();
     while (true) {
         var statx = std.mem.zeroes(linux.Statx);
-        switch (sys.errno(sys.statx(dir.handle, sub_path_posix, flags, linux_statx_mask, &statx))) {
+        switch (sys.errno(sys.statx(dir.handle, sub_path_posix, flags, linux_statx_request, &statx))) {
             .SUCCESS => {
                 current_thread.endSyscall();
                 return statFromLinux(&statx);
@@ -2155,7 +2169,7 @@ fn fileStatLinux(userdata: ?*anyopaque, file: File) File.StatError!File.Stat {
     try current_thread.beginSyscall();
     while (true) {
         var statx = std.mem.zeroes(linux.Statx);
-        switch (sys.errno(sys.statx(file.handle, "", linux.AT.EMPTY_PATH, linux_statx_mask, &statx))) {
+        switch (sys.errno(sys.statx(file.handle, "", linux.AT.EMPTY_PATH, linux_statx_request, &statx))) {
             .SUCCESS => {
                 current_thread.endSyscall();
                 return statFromLinux(&statx);
@@ -5977,8 +5991,6 @@ fn dirSetTimestamps(
     userdata: ?*anyopaque,
     dir: Dir,
     sub_path: []const u8,
-    last_accessed: Io.Timestamp,
-    last_modified: Io.Timestamp,
     options: Dir.SetTimestampsOptions,
 ) Dir.SetTimestampsError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
@@ -5992,9 +6004,13 @@ fn dirSetTimestamps(
         @panic("TODO implement dirSetTimestamps wasi");
     }
 
-    const times: [2]posix.timespec = .{
-        timestampToPosix(last_accessed.nanoseconds),
-        timestampToPosix(last_modified.nanoseconds),
+    var times_buffer: [2]posix.timespec = undefined;
+    const times = if (options.modify_timestamp == .now and options.access_timestamp == .now) null else p: {
+        times_buffer = .{
+            setTimestampToPosix(options.access_timestamp),
+            setTimestampToPosix(options.modify_timestamp),
+        };
+        break :p &times_buffer;
     };
 
     const flags: u32 = if (!options.follow_symlinks) posix.AT.SYMLINK_NOFOLLOW else 0;
@@ -6003,80 +6019,26 @@ fn dirSetTimestamps(
     const sub_path_posix = try pathToPosix(sub_path, &path_buffer);
 
     try current_thread.beginSyscall();
-    while (true) {
-        switch (posix.errno(posix.system.utimensat(dir.handle, sub_path_posix, &times, flags))) {
-            .SUCCESS => return current_thread.endSyscall(),
-            .INTR => {
-                try current_thread.checkCancel();
-                continue;
-            },
-            else => |e| {
-                current_thread.endSyscall();
-                switch (e) {
-                    .ACCES => return error.AccessDenied,
-                    .PERM => return error.PermissionDenied,
-                    .BADF => |err| return errnoBug(err), // always a race condition
-                    .FAULT => |err| return errnoBug(err),
-                    .INVAL => |err| return errnoBug(err),
-                    .ROFS => return error.ReadOnlyFileSystem,
-                    else => |err| return posix.unexpectedErrno(err),
-                }
-            },
-        }
-    }
-}
-
-fn dirSetTimestampsNow(
-    userdata: ?*anyopaque,
-    dir: Dir,
-    sub_path: []const u8,
-    options: Dir.SetTimestampsOptions,
-) Dir.SetTimestampsError!void {
-    const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
-
-    if (is_windows) {
-        @panic("TODO implement dirSetTimestampsNow windows");
-    }
-
-    if (native_os == .wasi and !builtin.link_libc) {
-        @panic("TODO implement dirSetTimestampsNow wasi");
-    }
-
-    const flags: u32 = if (!options.follow_symlinks) posix.AT.SYMLINK_NOFOLLOW else 0;
-
-    var path_buffer: [posix.PATH_MAX]u8 = undefined;
-    const sub_path_posix = try pathToPosix(sub_path, &path_buffer);
-
-    try current_thread.beginSyscall();
-    while (true) {
-        switch (posix.errno(posix.system.utimensat(dir.handle, sub_path_posix, null, flags))) {
-            .SUCCESS => return current_thread.endSyscall(),
-            .INTR => {
-                try current_thread.checkCancel();
-                continue;
-            },
-            else => |e| {
-                current_thread.endSyscall();
-                switch (e) {
-                    .ACCES => return error.AccessDenied,
-                    .PERM => return error.PermissionDenied,
-                    .BADF => |err| return errnoBug(err), // always a race condition
-                    .FAULT => |err| return errnoBug(err),
-                    .INVAL => |err| return errnoBug(err),
-                    .ROFS => return error.ReadOnlyFileSystem,
-                    else => |err| return posix.unexpectedErrno(err),
-                }
-            },
-        }
-    }
+    while (true) switch (posix.errno(posix.system.utimensat(dir.handle, sub_path_posix, times, flags))) {
+        .SUCCESS => return current_thread.endSyscall(),
+        .INTR => {
+            try current_thread.checkCancel();
+            continue;
+        },
+        .BADF => |err| return current_thread.endSyscallErrnoBug(err), // always a race condition
+        .FAULT => |err| return current_thread.endSyscallErrnoBug(err),
+        .INVAL => |err| return current_thread.endSyscallErrnoBug(err),
+        .ACCES => return current_thread.endSyscallError(error.AccessDenied),
+        .PERM => return current_thread.endSyscallError(error.PermissionDenied),
+        .ROFS => return current_thread.endSyscallError(error.ReadOnlyFileSystem),
+        else => |err| return current_thread.endSyscallUnexpectedErrno(err),
+    };
 }
 
 fn fileSetTimestamps(
     userdata: ?*anyopaque,
     file: File,
-    last_accessed: Io.Timestamp,
-    last_modified: Io.Timestamp,
+    options: File.SetTimestampsOptions,
 ) File.SetTimestampsError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread = Thread.getCurrent(t);
@@ -6084,11 +6046,34 @@ fn fileSetTimestamps(
     if (is_windows) {
         try current_thread.checkCancel();
 
-        const atime_ft = windows.nanoSecondsToFileTime(last_accessed);
-        const mtime_ft = windows.nanoSecondsToFileTime(last_modified);
+        var access_time_buffer: windows.FILETIME = undefined;
+        var modify_time_buffer: windows.FILETIME = undefined;
+        var system_time_buffer: windows.LARGE_INTEGER = undefined;
+
+        if (options.access_timestamp == .now or options.modify_timestamp == .now) {
+            system_time_buffer = windows.ntdll.RtlGetSystemTimePrecise();
+        }
+
+        const access_ptr = switch (options.access_timestamp) {
+            .unchanged => null,
+            .now => @panic("TODO do SystemTimeToFileTime logic here"),
+            .new => |ts| p: {
+                access_time_buffer = windows.nanoSecondsToFileTime(ts);
+                break :p &access_time_buffer;
+            },
+        };
+
+        const modify_ptr = switch (options.modify_timestamp) {
+            .unchanged => null,
+            .now => @panic("TODO do SystemTimeToFileTime logic here"),
+            .new => |ts| p: {
+                modify_time_buffer = windows.nanoSecondsToFileTime(ts);
+                break :p &modify_time_buffer;
+            },
+        };
 
         // https://github.com/ziglang/zig/issues/1840
-        const rc = windows.kernel32.SetFileTime(file.handle, null, &atime_ft, &mtime_ft);
+        const rc = windows.kernel32.SetFileTime(file.handle, null, access_ptr, modify_ptr);
         if (rc == 0) {
             switch (windows.GetLastError()) {
                 else => |err| return windows.unexpectedError(err),
@@ -6097,123 +6082,70 @@ fn fileSetTimestamps(
         return;
     }
 
-    const times: [2]posix.timespec = .{
-        timestampToPosix(last_accessed.nanoseconds),
-        timestampToPosix(last_modified.nanoseconds),
+    if (native_os == .wasi and !builtin.link_libc) {
+        var atime: std.os.wasi.timestamp_t = 0;
+        var mtime: std.os.wasi.timestamp_t = 0;
+        var flags: std.os.wasi.fstflags_t = .{};
+
+        switch (options.access_timestamp) {
+            .unchanged => {},
+            .now => flags.ATIM_NOW = true,
+            .new => |ts| {
+                atime = timestampToPosix(ts.nanoseconds).toTimestamp();
+                flags.ATIM = true;
+            },
+        }
+
+        switch (options.modify_timestamp) {
+            .unchanged => {},
+            .now => flags.MTIM_NOW = true,
+            .new => |ts| {
+                mtime = timestampToPosix(ts.nanoseconds).toTimestamp();
+                flags.MTIM = true;
+            },
+        }
+
+        try current_thread.beginSyscall();
+        while (true) switch (std.os.wasi.fd_filestat_set_times(file.handle, atime, mtime, flags)) {
+            .SUCCESS => return current_thread.endSyscall(),
+            .INTR => {
+                try current_thread.checkCancel();
+                continue;
+            },
+            .BADF => |err| return current_thread.endSyscallErrnoBug(err), // File descriptor use-after-free.
+            .FAULT => |err| return current_thread.endSyscallErrnoBug(err),
+            .INVAL => |err| return current_thread.endSyscallErrnoBug(err),
+            .ACCES => return current_thread.endSyscallError(error.AccessDenied),
+            .PERM => return current_thread.endSyscallError(error.PermissionDenied),
+            .ROFS => return current_thread.endSyscallError(error.ReadOnlyFileSystem),
+            else => |err| return current_thread.endSyscallUnexpectedErrno(err),
+        };
+    }
+
+    var times_buffer: [2]posix.timespec = undefined;
+    const times = if (options.modify_timestamp == .now and options.access_timestamp == .now) null else p: {
+        times_buffer = .{
+            setTimestampToPosix(options.access_timestamp),
+            setTimestampToPosix(options.modify_timestamp),
+        };
+        break :p &times_buffer;
     };
 
-    if (native_os == .wasi and !builtin.link_libc) {
-        const atim = times[0].toTimestamp();
-        const mtim = times[1].toTimestamp();
-        try current_thread.beginSyscall();
-        while (true) {
-            switch (std.os.wasi.fd_filestat_set_times(file.handle, atim, mtim, .{
-                .ATIM = true,
-                .MTIM = true,
-            })) {
-                .SUCCESS => return current_thread.endSyscall(),
-                .INTR => {
-                    try current_thread.checkCancel();
-                    continue;
-                },
-                else => |e| {
-                    current_thread.endSyscall();
-                    switch (e) {
-                        .ACCES => return error.AccessDenied,
-                        .PERM => return error.PermissionDenied,
-                        .BADF => |err| return errnoBug(err), // File descriptor use-after-free.
-                        .FAULT => |err| return errnoBug(err),
-                        .INVAL => |err| return errnoBug(err),
-                        .ROFS => return error.ReadOnlyFileSystem,
-                        else => |err| return posix.unexpectedErrno(err),
-                    }
-                },
-            }
-        }
-    }
-
     try current_thread.beginSyscall();
-    while (true) {
-        switch (posix.errno(posix.system.futimens(file.handle, &times))) {
-            .SUCCESS => return current_thread.endSyscall(),
-            .INTR => {
-                try current_thread.checkCancel();
-                continue;
-            },
-            else => |e| {
-                current_thread.endSyscall();
-                switch (e) {
-                    .ACCES => return error.AccessDenied,
-                    .PERM => return error.PermissionDenied,
-                    .BADF => |err| return errnoBug(err), // always a race condition
-                    .FAULT => |err| return errnoBug(err),
-                    .INVAL => |err| return errnoBug(err),
-                    .ROFS => return error.ReadOnlyFileSystem,
-                    else => |err| return posix.unexpectedErrno(err),
-                }
-            },
-        }
-    }
-}
-
-fn fileSetTimestampsNow(userdata: ?*anyopaque, file: File) File.SetTimestampsError!void {
-    const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
-
-    if (is_windows) {
-        @panic("TODO implement fileSetTimestampsNow windows");
-    }
-
-    if (native_os == .wasi and !builtin.link_libc) {
-        try current_thread.beginSyscall();
-        while (true) {
-            switch (std.os.wasi.fd_filestat_set_times(file.handle, 0, 0, .{
-                .ATIM_NOW = true,
-                .MTIM_NOW = true,
-            })) {
-                .SUCCESS => return current_thread.endSyscall(),
-                .INTR => {
-                    try current_thread.checkCancel();
-                    continue;
-                },
-                else => |e| {
-                    current_thread.endSyscall();
-                    switch (e) {
-                        .ACCES => return error.AccessDenied,
-                        .PERM => return error.PermissionDenied,
-                        .BADF => |err| return errnoBug(err), // always a race condition
-                        .FAULT => |err| return errnoBug(err),
-                        .INVAL => |err| return errnoBug(err),
-                        .ROFS => return error.ReadOnlyFileSystem,
-                        else => |err| return posix.unexpectedErrno(err),
-                    }
-                },
-            }
-        }
-    }
-
-    try current_thread.beginSyscall();
-    while (true) {
-        switch (posix.errno(posix.system.futimens(file.handle, null))) {
-            .SUCCESS => return current_thread.endSyscall(),
-            .INTR => {
-                try current_thread.checkCancel();
-                continue;
-            },
-            else => |e| {
-                current_thread.endSyscall();
-                switch (e) {
-                    .ACCES => return error.AccessDenied,
-                    .PERM => return error.PermissionDenied,
-                    .BADF => |err| return errnoBug(err), // always a race condition
-                    .FAULT => |err| return errnoBug(err),
-                    .INVAL => |err| return errnoBug(err),
-                    .ROFS => return error.ReadOnlyFileSystem,
-                    else => |err| return posix.unexpectedErrno(err),
-                }
-            },
-        }
-    }
+    while (true) switch (posix.errno(posix.system.futimens(file.handle, times))) {
+        .SUCCESS => return current_thread.endSyscall(),
+        .INTR => {
+            try current_thread.checkCancel();
+            continue;
+        },
+        .BADF => |err| return current_thread.endSyscallErrnoBug(err), // always a race condition
+        .FAULT => |err| return current_thread.endSyscallErrnoBug(err),
+        .INVAL => |err| return current_thread.endSyscallErrnoBug(err),
+        .ACCES => return current_thread.endSyscallError(error.AccessDenied),
+        .PERM => return current_thread.endSyscallError(error.PermissionDenied),
+        .ROFS => return current_thread.endSyscallError(error.ReadOnlyFileSystem),
+        else => |err| return current_thread.endSyscallUnexpectedErrno(err),
+    };
 }
 
 const windows_lock_range_off: windows.LARGE_INTEGER = 0;
@@ -11169,7 +11101,7 @@ fn clockToWasi(clock: Io.Clock) std.os.wasi.clockid_t {
     };
 }
 
-const linux_statx_mask: std.os.linux.STATX = .{
+const linux_statx_request: std.os.linux.STATX = .{
     .TYPE = true,
     .MODE = true,
     .ATIME = true,
@@ -11180,14 +11112,22 @@ const linux_statx_mask: std.os.linux.STATX = .{
     .NLINK = true,
 };
 
+const linux_statx_check: std.os.linux.STATX = .{
+    .TYPE = true,
+    .MODE = true,
+    .ATIME = false,
+    .MTIME = true,
+    .CTIME = true,
+    .INO = true,
+    .SIZE = true,
+    .NLINK = true,
+};
+
 fn statFromLinux(stx: *const std.os.linux.Statx) Io.UnexpectedError!File.Stat {
     const actual_mask_int: u32 = @bitCast(stx.mask);
-    const wanted_mask_int: u32 = @bitCast(linux_statx_mask);
+    const wanted_mask_int: u32 = @bitCast(linux_statx_check);
     if ((actual_mask_int | wanted_mask_int) != actual_mask_int) return error.Unexpected;
 
-    const atime = stx.atime;
-    const mtime = stx.mtime;
-    const ctime = stx.ctime;
     return .{
         .inode = stx.ino,
         .nlink = stx.nlink,
@@ -11203,9 +11143,11 @@ fn statFromLinux(stx: *const std.os.linux.Statx) Io.UnexpectedError!File.Stat {
             std.os.linux.S.IFSOCK => .unix_domain_socket,
             else => .unknown,
         },
-        .atime = .{ .nanoseconds = @intCast(@as(i128, atime.sec) * std.time.ns_per_s + atime.nsec) },
-        .mtime = .{ .nanoseconds = @intCast(@as(i128, mtime.sec) * std.time.ns_per_s + mtime.nsec) },
-        .ctime = .{ .nanoseconds = @intCast(@as(i128, ctime.sec) * std.time.ns_per_s + ctime.nsec) },
+        .atime = if (!stx.mask.ATIME) null else .{
+            .nanoseconds = @intCast(@as(i128, stx.atime.sec) * std.time.ns_per_s + stx.atime.nsec),
+        },
+        .mtime = .{ .nanoseconds = @intCast(@as(i128, stx.mtime.sec) * std.time.ns_per_s + stx.mtime.nsec) },
+        .ctime = .{ .nanoseconds = @intCast(@as(i128, stx.ctime.sec) * std.time.ns_per_s + stx.ctime.nsec) },
     };
 }
 
@@ -11280,6 +11222,14 @@ fn timestampToPosix(nanoseconds: i96) posix.timespec {
     return .{
         .sec = @intCast(@divFloor(nanoseconds, std.time.ns_per_s)),
         .nsec = @intCast(@mod(nanoseconds, std.time.ns_per_s)),
+    };
+}
+
+fn setTimestampToPosix(set_ts: File.SetTimestamp) posix.timespec {
+    return switch (set_ts) {
+        .unchanged => .OMIT,
+        .now => .NOW,
+        .new => |t| timestampToPosix(t.nanoseconds),
     };
 }
 

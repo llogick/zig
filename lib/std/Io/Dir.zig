@@ -615,7 +615,10 @@ pub fn updateFile(
         error.WriteFailed => return atomic_file.file_writer.err.?,
     };
     try atomic_file.flush();
-    try atomic_file.file_writer.file.setTimestamps(io, src_stat.atime, src_stat.mtime);
+    try atomic_file.file_writer.file.setTimestamps(io, .{
+        .access_timestamp = .init(src_stat.atime),
+        .modify_timestamp = .init(src_stat.mtime),
+    });
     try atomic_file.renameIntoPlace();
     return .stale;
 }
@@ -1825,6 +1828,8 @@ pub const SetTimestampsError = File.SetTimestampsError || PathNameError;
 
 pub const SetTimestampsOptions = struct {
     follow_symlinks: bool = true,
+    access_timestamp: File.SetTimestamp = .unchanged,
+    modify_timestamp: File.SetTimestamp = .unchanged,
 };
 
 /// The granularity that ultimately is stored depends on the combination of
@@ -1834,18 +1839,29 @@ pub fn setTimestamps(
     dir: Dir,
     io: Io,
     sub_path: []const u8,
-    last_accessed: Io.Timestamp,
-    last_modified: Io.Timestamp,
     options: SetTimestampsOptions,
 ) SetTimestampsError!void {
-    return io.vtable.dirSetTimestamps(io.userdata, dir, sub_path, last_accessed, last_modified, options);
+    return io.vtable.dirSetTimestamps(io.userdata, dir, sub_path, options);
 }
+
+pub const SetTimestampsNowOptions = struct {
+    follow_symlinks: bool = true,
+};
 
 /// Sets the accessed and modification timestamps of the provided path to the
 /// current wall clock time.
 ///
 /// The granularity that ultimately is stored depends on the combination of
 /// operating system and file system.
-pub fn setTimestampsNow(dir: Dir, io: Io, sub_path: []const u8, options: SetTimestampsOptions) SetTimestampsError!void {
-    return io.vtable.fileSetTimestampsNow(io.userdata, dir, sub_path, options);
+pub fn setTimestampsNow(
+    dir: Dir,
+    io: Io,
+    sub_path: []const u8,
+    options: SetTimestampsNowOptions,
+) SetTimestampsError!void {
+    return io.vtable.fileSetTimestamps(io.userdata, dir, sub_path, .{
+        .follow_symlinks = options.follow_symlinks,
+        .access_timestamp = .now,
+        .modify_timestamp = .now,
+    });
 }

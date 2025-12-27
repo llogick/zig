@@ -8417,12 +8417,36 @@ pub const timezone = extern struct {
 pub const kernel_timespec = extern struct {
     sec: i64,
     nsec: i64,
+
+    /// For use with `utimensat` and `futimens`.
+    pub const NOW: timespec = .{
+        .sec = 0,
+        .nsec = 0x3fffffff,
+    };
+
+    /// For use with `utimensat` and `futimens`.
+    pub const OMIT: timespec = .{
+        .sec = 0,
+        .nsec = 0x3ffffffe,
+    };
 };
 
 // https://github.com/ziglang/zig/issues/4726#issuecomment-2190337877
 pub const timespec = if (native_arch == .hexagon or native_arch == .riscv32) kernel_timespec else extern struct {
     sec: isize,
     nsec: isize,
+
+    /// For use with `utimensat` and `futimens`.
+    pub const NOW: timespec = .{
+        .sec = 0,
+        .nsec = 0x3fffffff,
+    };
+
+    /// For use with `utimensat` and `futimens`.
+    pub const OMIT: timespec = .{
+        .sec = 0,
+        .nsec = 0x3ffffffe,
+    };
 };
 
 pub const XDP = struct {
