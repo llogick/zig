@@ -900,6 +900,7 @@ pub fn io(k: *Kqueue) Io {
             .netConnectIp = netConnectIp,
             .netConnectUnix = netConnectUnix,
             .netClose = netClose,
+            .netShutdown = netShutdown,
             .netRead = netRead,
             .netWrite = netWrite,
             .netSend = netSend,
@@ -1549,12 +1550,22 @@ fn netWrite(userdata: ?*anyopaque, dest: net.Socket.Handle, header: []const u8, 
     _ = splat;
     @panic("TODO");
 }
+
 fn netClose(userdata: ?*anyopaque, handle: net.Socket.Handle) void {
     const k: *Kqueue = @ptrCast(@alignCast(userdata));
     _ = k;
     _ = handle;
     @panic("TODO");
 }
+
+fn netShutdown(userdata: ?*anyopaque, handle: net.Socket.Handle, how: net.ShutdownHow) net.ShutdownError!void {
+    const k: *Kqueue = @ptrCast(@alignCast(userdata));
+    _ = k;
+    _ = handle;
+    _ = how;
+    @panic("TODO");
+}
+
 fn netInterfaceNameResolve(
     userdata: ?*anyopaque,
     name: *const net.Interface.Name,
@@ -1564,12 +1575,14 @@ fn netInterfaceNameResolve(
     _ = name;
     @panic("TODO");
 }
+
 fn netInterfaceName(userdata: ?*anyopaque, interface: net.Interface) net.Interface.NameError!net.Interface.Name {
     const k: *Kqueue = @ptrCast(@alignCast(userdata));
     _ = k;
     _ = interface;
     @panic("TODO");
 }
+
 fn netLookup(
     userdata: ?*anyopaque,
     host_name: net.HostName,

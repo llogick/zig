@@ -891,6 +891,10 @@ pub fn io(t: *Threaded) Io {
                 else => netConnectUnixPosix,
             },
             .netClose = netClose,
+            .netShutdown = switch (native_os) {
+                .windows => netShutdownWindows,
+                else => netShutdownPosix,
+            },
             .netRead = switch (native_os) {
                 .windows => netReadWindows,
                 else => netReadPosix,
@@ -1007,6 +1011,7 @@ pub fn ioBasic(t: *Threaded) Io {
             .netConnectIp = netConnectIpUnavailable,
             .netConnectUnix = netConnectUnixUnavailable,
             .netClose = netCloseUnavailable,
+            .netShutdown = netShutdownUnavailable,
             .netRead = netReadUnavailable,
             .netWrite = netWriteUnavailable,
             .netWriteFile = netWriteFileUnavailable,
@@ -10388,6 +10393,89 @@ fn netCloseUnavailable(userdata: ?*anyopaque, handles: []const net.Socket.Handle
     _ = userdata;
     _ = handles;
     unreachable; // How you gonna close something that was impossible to open?
+}
+
+fn netShutdownPosix(userdata: ?*anyopaque, handle: net.Socket.Handle, how: net.ShutdownHow) net.ShutdownError!void {
+    if (!have_networking) return error.NetworkDown;
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+
+    const posix_how: i32 = switch (how) {
+        .recv => posix.SHUT.RD,
+        .send => posix.SHUT.WR,
+        .both => posix.SHUT.RDWR,
+    };
+
+    try current_thread.beginSyscall();
+    while (true) {
+        switch (posix.errno(posix.system.shutdown(handle, posix_how))) {
+            .SUCCESS => {
+                current_thread.endSyscall();
+                return;
+            },
+            .INTR => {
+                try current_thread.checkCancel();
+                continue;
+            },
+            else => |e| {
+                current_thread.endSyscall();
+                switch (e) {
+                    .BADF, .NOTSOCK, .INVAL => |err| return errnoBug(err),
+                    .NOTCONN => return error.SocketUnconnected,
+                    .NOBUFS => return error.SystemResources,
+                    else => |err| return posix.unexpectedErrno(err),
+                }
+            },
+        }
+    }
+}
+
+fn netShutdownWindows(userdata: ?*anyopaque, handle: net.Socket.Handle, how: net.ShutdownHow) net.ShutdownError!void {
+    if (!have_networking) return error.NetworkDown;
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const current_thread = Thread.getCurrent(t);
+
+    const wsa_how: i32 = switch (how) {
+        .recv => ws2_32.SD_RECEIVE,
+        .send => ws2_32.SD_SEND,
+        .both => ws2_32.SD_BOTH,
+    };
+
+    try current_thread.beginSyscall();
+    while (true) {
+        const rc = ws2_32.shutdown(handle, wsa_how);
+        if (rc != ws2_32.SOCKET_ERROR) {
+            current_thread.endSyscall();
+            return;
+        }
+        switch (ws2_32.WSAGetLastError()) {
+            .EINTR => {
+                try current_thread.checkCancel();
+                continue;
+            },
+            .NOTINITIALISED => {
+                try initializeWsa(t);
+                try current_thread.checkCancel();
+                continue;
+            },
+            else => |e| {
+                current_thread.endSyscall();
+                switch (e) {
+                    .ECANCELLED, .E_CANCELLED, .OPERATION_ABORTED => return error.Canceled,
+                    .ECONNABORTED => return error.ConnectionAborted,
+                    .ECONNRESET => return error.ConnectionResetByPeer,
+                    .ENETDOWN => return error.NetworkDown,
+                    .ENOTCONN => return error.SocketUnconnected,
+                    .EINVAL, .ENOTSOCK => |err| return wsaErrorBug(err),
+                    else => |err| return windows.unexpectedWSAError(err),
+                }
+            },
+        }
+    }
+}
+
+fn netShutdownUnavailable(_: ?*anyopaque, _: net.Socket.Handle, _: net.ShutdownHow) net.ShutdownError!void {
+    unreachable; // How you gonna shutdown something that was impossible to open?
 }
 
 fn netInterfaceNameResolve(

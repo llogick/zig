@@ -954,6 +954,16 @@ pub const SendFlags = packed struct(u8) {
     _: u3 = 0,
 };
 
+pub const ShutdownHow = enum { recv, send, both };
+
+pub const ShutdownError = error{
+    ConnectionAborted,
+    ConnectionResetByPeer,
+    NetworkDown,
+    SocketUnconnected,
+    SystemResources,
+} || Io.UnexpectedError || Io.Cancelable;
+
 pub const Interface = struct {
     /// Value 0 indicates `none`.
     index: u32,
@@ -1189,6 +1199,10 @@ pub const Stream = struct {
 
     pub fn close(s: *const Stream, io: Io) void {
         io.vtable.netClose(io.userdata, (&s.socket.handle)[0..1]);
+    }
+
+    pub fn shutdown(s: *const Stream, io: Io, how: ShutdownHow) ShutdownError!void {
+        return io.vtable.netShutdown(io.userdata, s.socket.handle, how);
     }
 
     pub const Reader = struct {

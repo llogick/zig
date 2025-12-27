@@ -346,6 +346,8 @@ test "non-blocking tcp server" {
     const len = try socket_file.read(&buf);
     const msg = buf[0..len];
     try testing.expect(mem.eql(u8, msg, "hello from server\n"));
+
+    try stream.shutdown(io, .both);
 }
 
 test "decompress compressed DNS name" {
