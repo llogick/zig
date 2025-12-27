@@ -6083,13 +6083,30 @@ fn fileSetTimestamps(
     }
 
     if (native_os == .wasi and !builtin.link_libc) {
-        const atim = timestampToPosix(options.access_timestamp.nanoseconds).toTimestamp();
-        const mtim = timestampToPosix(options.modify_timestamp.nanoseconds).toTimestamp();
+        var atime: std.os.wasi.timestamp_t = 0;
+        var mtime: std.os.wasi.timestamp_t = 0;
+        var flags: std.os.wasi.fstflags_t = .{};
+
+        switch (options.access_timestamp) {
+            .unchanged => {},
+            .now => flags.ATIM_NOW = true,
+            .new => |ts| {
+                atime = timestampToPosix(ts.nanoseconds).toTimestamp();
+                flags.ATIM = true;
+            },
+        }
+
+        switch (options.modify_timestamp) {
+            .unchanged => {},
+            .now => flags.MTIM_NOW = true,
+            .new => |ts| {
+                mtime = timestampToPosix(ts.nanoseconds).toTimestamp();
+                flags.MTIM = true;
+            },
+        }
+
         try current_thread.beginSyscall();
-        while (true) switch (std.os.wasi.fd_filestat_set_times(file.handle, atim, mtim, .{
-            .ATIM = true,
-            .MTIM = true,
-        })) {
+        while (true) switch (std.os.wasi.fd_filestat_set_times(file.handle, atime, mtime, flags)) {
             .SUCCESS => return current_thread.endSyscall(),
             .INTR => {
                 try current_thread.checkCancel();
@@ -6098,9 +6115,9 @@ fn fileSetTimestamps(
             .BADF => |err| return current_thread.endSyscallErrnoBug(err), // File descriptor use-after-free.
             .FAULT => |err| return current_thread.endSyscallErrnoBug(err),
             .INVAL => |err| return current_thread.endSyscallErrnoBug(err),
-            .ACCES => return current_thread.endSyscallErrnoBug(error.AccessDenied),
-            .PERM => return current_thread.endSyscallErrnoBug(error.PermissionDenied),
-            .ROFS => return current_thread.endSyscallErrnoBug(error.ReadOnlyFileSystem),
+            .ACCES => return current_thread.endSyscallError(error.AccessDenied),
+            .PERM => return current_thread.endSyscallError(error.PermissionDenied),
+            .ROFS => return current_thread.endSyscallError(error.ReadOnlyFileSystem),
             else => |err| return current_thread.endSyscallUnexpectedErrno(err),
         };
     }
