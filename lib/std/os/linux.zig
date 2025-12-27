@@ -8417,6 +8417,18 @@ pub const timezone = extern struct {
 pub const kernel_timespec = extern struct {
     sec: i64,
     nsec: i64,
+
+    /// For use with `utimensat` and `futimens`.
+    pub const NOW: timespec = .{
+        .sec = 0,
+        .nsec = 0x3fffffff,
+    };
+
+    /// For use with `utimensat` and `futimens`.
+    pub const OMIT: timespec = .{
+        .sec = 0,
+        .nsec = 0x3ffffffe,
+    };
 };
 
 // https://github.com/ziglang/zig/issues/4726#issuecomment-2190337877
