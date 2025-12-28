@@ -373,8 +373,8 @@ pub const Walker = struct {
     /// Leaves the current directory, continuing walking one level up.
     /// If the current entry is a directory entry, then the "current directory"
     /// is the directory pertaining to the current entry.
-    pub fn leave(self: *Walker) void {
-        self.inner.leave();
+    pub fn leave(self: *Walker, io: Io) void {
+        self.inner.leave(io);
     }
 };
 
