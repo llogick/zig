@@ -198,7 +198,7 @@ pub fn main() anyerror!void {
     return mainArgs(gpa, arena, args);
 }
 
-fn mainArgs(gpa: Allocator, arena: Allocator, args: []const []const u8) !void {
+fn mainArgs(gpa: Allocator, arena: Allocator, args: []const [:0]const u8) !void {
     const tr = tracy.trace(@src());
     defer tr.end();
 
@@ -241,7 +241,9 @@ fn mainArgs(gpa: Allocator, arena: Allocator, args: []const []const u8) !void {
         }
     }
 
-    var threaded: Io.Threaded = .init(gpa, .{});
+    var threaded: Io.Threaded = .init(gpa, .{
+        .argv0 = if (@hasField(Io.Threaded.Argv0, "value")) .{ .value = args[0] } else .{},
+    });
     defer threaded.deinit();
     threaded_impl_ptr = &threaded;
     threaded.stack_size = thread_stack_size;

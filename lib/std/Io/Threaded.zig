@@ -7209,7 +7209,7 @@ fn processExecutablePath(userdata: ?*anyopaque, out_buffer: []u8) std.process.Ex
         .openbsd, .haiku => {
             // The best we can do on these operating systems is check based on
             // the first process argument.
-            const argv0 = t.argv0.value orelse return error.OperationUnsupported;
+            const argv0 = std.mem.span(t.argv0.value orelse return error.OperationUnsupported);
             if (std.mem.findScalar(u8, argv0, '/') != null) {
                 // argv[0] is a path (relative or absolute): use realpath(3) directly
                 const current_thread = Thread.getCurrent(t);
@@ -12153,7 +12153,7 @@ fn scanEnviron(t: *Threaded) void {
 
             var end_i: usize = line_i;
             while (line[end_i] != 0) : (end_i += 1) {}
-            const value = line[line_i + 1 .. end_i];
+            const value = line[line_i + 1 .. end_i :0];
 
             if (std.mem.eql(u8, key, "NO_COLOR")) {
                 t.environ.exist.NO_COLOR = true;
@@ -12171,7 +12171,7 @@ fn scanEnviron(t: *Threaded) void {
 
             var end_i: usize = line_i;
             while (line[end_i] != 0) : (end_i += 1) {}
-            const value = line[line_i + 1 .. end_i];
+            const value = line[line_i + 1 .. end_i :0];
 
             if (std.mem.eql(u8, key, "NO_COLOR")) {
                 t.environ.exist.NO_COLOR = true;
