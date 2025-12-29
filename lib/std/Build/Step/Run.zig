@@ -8,7 +8,7 @@ const Step = std.Build.Step;
 const Dir = std.Io.Dir;
 const mem = std.mem;
 const process = std.process;
-const EnvMap = std.process.EnvMap;
+const EnvMap = std.process.Environ.Map;
 const assert = std.debug.assert;
 const Path = std.Build.Cache.Path;
 
@@ -581,23 +581,24 @@ pub fn getEnvMap(run: *Run) *EnvMap {
 }
 
 fn getEnvMapInternal(run: *Run) *EnvMap {
-    const arena = run.step.owner.allocator;
+    const graph = run.step.owner.graph;
+    const arena = graph.arena;
     return run.env_map orelse {
-        const env_map = arena.create(EnvMap) catch @panic("OOM");
-        env_map.* = process.getEnvMap(arena) catch @panic("unhandled error");
-        run.env_map = env_map;
-        return env_map;
+        const cloned_map = arena.create(EnvMap) catch @panic("OOM");
+        cloned_map.* = graph.env_map.clone(arena) catch @panic("OOM");
+        run.env_map = cloned_map;
+        return cloned_map;
     };
 }
 
 pub fn setEnvironmentVariable(run: *Run, key: []const u8, value: []const u8) void {
-    const b = run.step.owner;
     const env_map = run.getEnvMap();
-    env_map.put(b.dupe(key), b.dupe(value)) catch @panic("unhandled error");
+    // This data structure already dupes keys and values.
+    env_map.put(key, value) catch @panic("OOM");
 }
 
 pub fn removeEnvironmentVariable(run: *Run, key: []const u8) void {
-    run.getEnvMap().remove(key);
+    _ = run.getEnvMap().swapRemove(key);
 }
 
 /// Adds a check for exact stderr match. Does not add any other checks.
@@ -1563,11 +1564,10 @@ fn spawnChildAndCollect(
         assert(run.stdio == .zig_test);
     }
 
-    var child = std.process.Child.init(argv, arena);
+    var child = std.process.Child.init(arena, argv, .{ .map = env_map });
     if (run.cwd) |lazy_cwd| {
         child.cwd = lazy_cwd.getPath2(b, &run.step);
     }
-    child.env_map = env_map;
     child.request_resource_usage_statistics = true;
 
     child.stdin_behavior = switch (run.stdio) {
@@ -1597,7 +1597,10 @@ fn spawnChildAndCollect(
 
     // If an error occurs, it's caused by this command:
     assert(run.step.result_failed_command == null);
-    run.step.result_failed_command = try Step.allocPrintCmd(options.gpa, child.cwd, argv);
+    run.step.result_failed_command = try Step.allocPrintCmd(options.gpa, child.cwd, .{
+        .child = env_map,
+        .parent = &graph.env_map,
+    }, argv);
 
     if (run.stdio == .zig_test) {
         var timer = try std.time.Timer.start();
@@ -1627,11 +1630,11 @@ fn setColorEnvironmentVariables(run: *Run, env_map: *EnvMap, terminal_mode: Io.T
         .manual => {},
         .enable => {
             try env_map.put("CLICOLOR_FORCE", "1");
-            env_map.remove("NO_COLOR");
+            _ = env_map.swapRemove("NO_COLOR");
         },
         .disable => {
             try env_map.put("NO_COLOR", "1");
-            env_map.remove("CLICOLOR_FORCE");
+            _ = env_map.swapRemove("CLICOLOR_FORCE");
         },
         .inherit => switch (terminal_mode) {
             .no_color, .windows_api => continue :color .disable,

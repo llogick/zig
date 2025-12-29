@@ -2232,3 +2232,9 @@ pub fn tryLockStderr(io: Io, buffer: []u8, terminal_mode: ?Terminal.Mode) Cancel
 pub fn unlockStderr(io: Io) void {
     return io.vtable.unlockStderr(io.userdata);
 }
+
+pub fn environ(io: Io, name: []const u8) ?[]const u8 {
+    _ = io;
+    _ = name;
+    if (true) @panic("TODO");
+}

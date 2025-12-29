@@ -13,11 +13,16 @@ const windows = std.os.windows;
 const linux = std.os.linux;
 const posix = std.posix;
 const mem = std.mem;
-const EnvMap = std.process.EnvMap;
 const maxInt = std.math.maxInt;
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
+
+/// Tells whether spawning child processes is supported.
+pub const can_spawn = switch (native_os) {
+    .wasi, .ios, .tvos, .visionos, .watchos => false,
+    else => true,
+};
 
 pub const Id = switch (native_os) {
     .windows => windows.HANDLE,
@@ -54,9 +59,8 @@ term: ?(SpawnError!Term),
 
 argv: []const []const u8,
 
-/// Leave as null to use the current env map using the supplied allocator.
-/// Required if unable to access the current env map (e.g. building a library on
-/// some platforms).
+parent_environ: process.Environ,
+/// `null` means to use `parent_environ` also for the spawned process.
 env_map: ?*const EnvMap,
 
 stdin_behavior: StdIo,
@@ -229,15 +233,15 @@ pub const StdIo = enum {
 };
 
 /// First argument in argv is the executable.
-pub fn init(argv: []const []const u8, allocator: Allocator) Child {
+pub fn init(gpa: Allocator, argv: []const []const u8, environ: Environ) Child {
     return .{
-        .allocator = allocator,
+        .allocator = gpa,
         .argv = argv,
+        .environ = environ,
         .id = undefined,
         .thread_handle = undefined,
         .err_pipe = if (native_os == .windows) {} else null,
         .term = null,
-        .env_map = null,
         .cwd = null,
         .uid = if (native_os == .windows or native_os == .wasi) {} else null,
         .gid = if (native_os == .windows or native_os == .wasi) {} else null,
@@ -435,41 +439,38 @@ pub const RunError = posix.GetCwdError || posix.ReadError || SpawnError || posix
 
 /// Spawns a child process, waits for it, collecting stdout and stderr, and then returns.
 /// If it succeeds, the caller owns result.stdout and result.stderr memory.
-pub fn run(allocator: Allocator, io: Io, args: struct {
+pub fn run(gpa: Allocator, io: Io, args: struct {
     argv: []const []const u8,
+    environ: Environ,
     cwd: ?[]const u8 = null,
     cwd_dir: ?Io.Dir = null,
-    /// Required if unable to access the current env map (e.g. building a
-    /// library on some platforms).
-    env_map: ?*const EnvMap = null,
     max_output_bytes: usize = 50 * 1024,
     expand_arg0: Arg0Expand = .no_expand,
     progress_node: std.Progress.Node = std.Progress.Node.none,
 }) RunError!RunResult {
-    var child = Child.init(args.argv, allocator);
+    var child = Child.init(gpa, args.argv, args.environ);
     child.stdin_behavior = .Ignore;
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = .Pipe;
     child.cwd = args.cwd;
     child.cwd_dir = args.cwd_dir;
-    child.env_map = args.env_map;
     child.expand_arg0 = args.expand_arg0;
     child.progress_node = args.progress_node;
 
     var stdout: ArrayList(u8) = .empty;
-    defer stdout.deinit(allocator);
+    defer stdout.deinit(gpa);
     var stderr: ArrayList(u8) = .empty;
-    defer stderr.deinit(allocator);
+    defer stderr.deinit(gpa);
 
     try child.spawn(io);
     errdefer {
         _ = child.kill(io) catch {};
     }
-    try child.collectOutput(allocator, &stdout, &stderr, args.max_output_bytes);
+    try child.collectOutput(gpa, &stdout, &stderr, args.max_output_bytes);
 
     return .{
-        .stdout = try stdout.toOwnedSlice(allocator),
-        .stderr = try stderr.toOwnedSlice(allocator),
+        .stdout = try stdout.toOwnedSlice(gpa),
+        .stderr = try stderr.toOwnedSlice(gpa),
         .term = try child.wait(io),
     };
 }
@@ -643,23 +644,16 @@ fn spawnPosix(self: *Child, io: Io) SpawnError!void {
 
     const envp: [*:null]const ?[*:0]const u8 = m: {
         const prog_fd: i32 = if (prog_pipe[1] == -1) -1 else prog_fileno;
-        if (self.env_map) |env_map| {
-            break :m (try process.createEnvironFromMap(arena, env_map, .{
+        switch (self.environ) {
+            .empty => break :m (try process.Environ.createBlock(.{ .block = &.{} }, arena, .{
                 .zig_progress_fd = prog_fd,
-            })).ptr;
-        } else if (builtin.link_libc) {
-            break :m (try process.createEnvironFromExisting(arena, std.c.environ, .{
+            })).ptr,
+            .inherit => |b| break :m (try b.createBlock(arena, .{
                 .zig_progress_fd = prog_fd,
-            })).ptr;
-        } else if (builtin.output_mode == .Exe) {
-            // Then we have Zig start code and this works.
-            // TODO type-safety for null-termination of `os.environ`.
-            break :m (try process.createEnvironFromExisting(arena, @ptrCast(std.os.environ.ptr), .{
+            })).ptr,
+            .map => |m| break :m (try m.createBlock(arena, .{
                 .zig_progress_fd = prog_fd,
-            })).ptr;
-        } else {
-            // TODO come up with a solution for this.
-            @panic("missing std lib enhancement: std.process.Child implementation has no way to collect the environment variables to forward to the child process");
+            })).ptr,
         }
     };
 
@@ -701,9 +695,15 @@ fn spawnPosix(self: *Child, io: Io) SpawnError!void {
             posix.kill(posix.getpid(), .STOP) catch |err| forkChildErrReport(io, err_pipe[1], err);
         }
 
+        const parent_PATH: ?[]const u8 = switch(self.environ) {
+            .empty => null,
+            .inherit => 
+            .map => |m| m.get("PATH"),
+        };
+
         const err = switch (self.expand_arg0) {
-            .expand => posix.execvpeZ_expandArg0(.expand, argv_buf.ptr[0].?, argv_buf.ptr, envp),
-            .no_expand => posix.execvpeZ_expandArg0(.no_expand, argv_buf.ptr[0].?, argv_buf.ptr, envp),
+            .expand => posix.execvpeZ_expandArg0(.expand, argv_buf.ptr[0].?, argv_buf.ptr, envp, parent_PATH),
+            .no_expand => posix.execvpeZ_expandArg0(.no_expand, argv_buf.ptr[0].?, argv_buf.ptr, envp, parent_PATH),
         };
         forkChildErrReport(io, err_pipe[1], err);
     }

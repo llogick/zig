@@ -524,7 +524,10 @@ fn WinStartup() callconv(.withStackAlign(.c, 1)) noreturn {
 
     std.debug.maybeEnableSegfaultHandler();
 
-    std.os.windows.ntdll.RtlExitUserProcess(callMain());
+    std.os.windows.ntdll.RtlExitUserProcess(callMain(
+        std.os.windows.peb().ProcessParameters.CommandLine,
+        std.os.windows.peb().ProcessParameters.Environment,
+    ));
 }
 
 fn wWinMainCRTStartup() callconv(.withStackAlign(.c, 1)) noreturn {
@@ -666,17 +669,12 @@ fn expandStackSize(phdrs: []elf.Phdr) void {
 }
 
 inline fn callMainWithArgs(argc: usize, argv: [*][*:0]u8, envp: [][*:0]u8) u8 {
-    std.os.argv = argv[0..argc];
-    std.os.environ = envp;
-
     if (std.Options.debug_threaded_io) |t| {
         if (@sizeOf(std.Io.Threaded.Argv0) != 0) t.argv0.value = argv[0];
         t.environ = .{ .block = envp };
     }
-
     std.debug.maybeEnableSegfaultHandler();
-
-    return callMain();
+    return callMain(argv[0..argc], envp);
 }
 
 fn main(c_argc: c_int, c_argv: [*][*:0]c_char, c_envp: [*:null]?[*:0]c_char) callconv(.c) c_int {
@@ -695,62 +693,94 @@ fn main(c_argc: c_int, c_argv: [*][*:0]c_char, c_envp: [*:null]?[*:0]c_char) cal
 }
 
 fn mainWithoutEnv(c_argc: c_int, c_argv: [*][*:0]c_char) callconv(.c) c_int {
-    std.os.argv = @as([*][*:0]u8, @ptrCast(c_argv))[0..@intCast(c_argc)];
-
+    const argv = @as([*][*:0]u8, @ptrCast(c_argv))[0..@intCast(c_argc)];
     if (@sizeOf(std.Io.Threaded.Argv0) != 0) {
-        if (std.Options.debug_threaded_io) |t| t.argv0.value = std.os.argv[0];
+        if (std.Options.debug_threaded_io) |t| t.argv0.value = argv[0];
     }
-
-    return callMain();
+    return callMain(argv, &.{});
 }
 
-// General error message for a malformed return type
+/// General error message for a malformed return type
 const bad_main_ret = "expected return type of main to be 'void', '!void', 'noreturn', 'u8', or '!u8'";
 
-pub inline fn callMain() u8 {
-    const ReturnType = @typeInfo(@TypeOf(root.main)).@"fn".return_type.?;
+const use_debug_allocator = !builtin.link_libc and !native_arch.isWasm() and builtin.mode == .Debug;
+var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 
-    switch (ReturnType) {
-        void => {
-            root.main();
-            return 0;
-        },
-        noreturn, u8 => {
-            return root.main();
-        },
-        else => {
-            if (@typeInfo(ReturnType) != .error_union) @compileError(bad_main_ret);
+inline fn callMain(args: std.process.Args.Vector, environ: std.process.Environ.Block) u8 {
+    const fn_info = @typeInfo(@TypeOf(root.main)).@"fn";
+    if (fn_info.params.len == 0) return wrapMain(root.main());
+    if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
+        .args = .{ .vector = args },
+        .environ = .{ .block = environ },
+    }));
 
-            const result = root.main() catch |err| {
-                switch (builtin.zig_backend) {
-                    .stage2_powerpc,
-                    .stage2_riscv64,
-                    => {
-                        _ = std.posix.write(std.posix.STDERR_FILENO, "error: failed with error\n") catch {};
-                        return 1;
-                    },
-                    else => {},
-                }
-                std.log.err("{s}", .{@errorName(err)});
-                switch (native_os) {
-                    .freestanding, .other => {},
-                    else => if (@errorReturnTrace()) |trace| {
-                        std.debug.dumpStackTrace(trace);
-                    },
-                }
-                return 1;
-            };
+    const gpa = if (builtin.link_libc)
+        std.heap.c_allocator
+    else if (native_arch.isWasm())
+        std.heap.wasm_allocator
+    else if (use_debug_allocator)
+        debug_allocator.allocator()
+    else
+        std.heap.smp_allocator;
 
-            return switch (@TypeOf(result)) {
-                void => 0,
-                u8 => result,
-                else => @compileError(bad_main_ret),
-            };
+    defer if (use_debug_allocator) switch (debug_allocator.deinit()) {
+        .leak => std.process.exit(1),
+        .ok => {},
+    };
+
+    var arena_allocator = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena_allocator.deinit();
+
+    var threaded: std.Io.Threaded = .init(gpa, .{
+        .argv0 = if (@sizeOf(std.Io.Threaded.Argv0) != 0) .{ .value = args[0] } else .{},
+        .environ = environ,
+    });
+    defer threaded.deinit();
+
+    var env_map = environ.getEnvMap(gpa) catch |err|
+        std.process.fatal("failed to parse environment variables: {t}", .{err});
+    defer env_map.deinit();
+
+    return wrapMain(root.main(.{
+        .minimal = .{
+            .args = .{ .vector = args },
+            .environ = .{ .block = environ },
         },
-    }
+        .arena = &arena_allocator,
+        .gpa = gpa,
+        .io = threaded.io(),
+        .env_map = env_map,
+    }));
 }
 
-pub fn call_wWinMain() std.os.windows.INT {
+inline fn wrapMain(result: anytype) u8 {
+    const ReturnType = @TypeOf(result);
+    switch (ReturnType) {
+        void => return 0,
+        noreturn => unreachable,
+        u8 => return result,
+        else => {},
+    }
+    if (@typeInfo(ReturnType) != .error_union) @compileError(bad_main_ret);
+
+    const unwrapped_result = result catch |err| {
+        std.log.err("{t}", .{err});
+        switch (native_os) {
+            .freestanding, .other => {},
+            else => if (@errorReturnTrace()) |trace| std.debug.dumpStackTrace(trace),
+        }
+        return 1;
+    };
+
+    return switch (@TypeOf(unwrapped_result)) {
+        noreturn => unreachable,
+        void => 0,
+        u8 => unwrapped_result,
+        else => @compileError(bad_main_ret),
+    };
+}
+
+fn call_wWinMain() std.os.windows.INT {
     const peb = std.os.windows.peb();
     const MAIN_HINSTANCE = @typeInfo(@TypeOf(root.wWinMain)).@"fn".params[0].type.?;
     const hInstance: MAIN_HINSTANCE = @ptrCast(peb.ImageBaseAddress);

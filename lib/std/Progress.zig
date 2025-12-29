@@ -476,7 +476,7 @@ pub fn start(io: Io, options: Options) Node {
 
     global_progress.io = io;
 
-    if (std.process.parseEnvVarInt("ZIG_PROGRESS", u31, 10)) |ipc_fd| {
+    if (std.process.Environ.parseInt(io, "ZIG_PROGRESS", u31, 10)) |ipc_fd| {
         global_progress.update_worker = io.concurrent(ipcThreadRun, .{
             io,
             @as(Io.File, .{ .handle = switch (@typeInfo(Io.File.Handle)) {

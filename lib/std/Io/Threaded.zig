@@ -72,7 +72,7 @@ pub const Argv0 = switch (native_os) {
 
 pub const Environ = struct {
     /// Unmodified data directly from the OS.
-    block: Block = &.{},
+    block: std.process.Environ.Block = &.{},
     /// Protected by `mutex`. Determines whether the other fields have been
     /// memoized based on `block`.
     initialized: bool = false,
@@ -88,8 +88,6 @@ pub const Environ = struct {
     err: ?Error = null,
 
     pub const Error = Allocator.Error || Io.UnexpectedError;
-
-    pub const Block = []const [*:0]const u8;
 
     pub const Exist = struct {
         NO_COLOR: bool = false,

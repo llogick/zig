@@ -40,7 +40,7 @@ pub const cpu_context = @import("debug/cpu_context.zig");
 /// pub fn deinit(si: *SelfInfo, gpa: Allocator) void;
 ///
 /// /// Returns the symbol and source location of the instruction at `address`.
-/// pub fn getSymbol(si: *SelfInfo, gpa: Allocator, address: usize) SelfInfoError!Symbol;
+/// pub fn getSymbol(si: *SelfInfo, gpa: Allocator, io: Io, address: usize) SelfInfoError!Symbol;
 /// /// Returns a name for the "module" (e.g. shared library or executable image) containing `address`.
 /// pub fn getModuleName(si: *SelfInfo, gpa: Allocator, address: usize) SelfInfoError![]const u8;
 ///

@@ -12,7 +12,7 @@ const StringHashMap = std.StringHashMap;
 const Allocator = std.mem.Allocator;
 const Target = std.Target;
 const process = std.process;
-const EnvMap = std.process.EnvMap;
+const EnvMap = std.process.Environ.Map;
 const File = std.Io.File;
 const Sha256 = std.crypto.hash.sha2.Sha256;
 const ArrayList = std.ArrayList;
@@ -1840,13 +1840,12 @@ pub fn runAllowFail(
     const io = b.graph.io;
 
     const max_output_size = 400 * 1024;
-    var child = std.process.Child.init(argv, b.allocator);
+    var child = std.process.Child.init(b.allocator, argv, .{ .map = &b.graph.env_map });
     child.stdin_behavior = .Ignore;
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = stderr_behavior;
-    child.env_map = &b.graph.env_map;
 
-    try Step.handleVerbose2(b, null, child.env_map, argv);
+    try Step.handleVerbose2(b, null, child.environ.map, argv);
     try child.spawn(io);
 
     var stdout_reader = child.stdout.?.readerStreaming(io, &.{});
@@ -1877,17 +1876,15 @@ pub fn runAllowFail(
 pub fn run(b: *Build, argv: []const []const u8) []u8 {
     if (!process.can_spawn) {
         std.debug.print("unable to spawn the following command: cannot spawn child process\n{s}\n", .{
-            try Step.allocPrintCmd(b.allocator, null, argv),
+            try Step.allocPrintCmd(b.allocator, null, null, argv),
         });
         process.exit(1);
     }
 
     var code: u8 = undefined;
     return b.runAllowFail(argv, &code, .Inherit) catch |err| {
-        const printed_cmd = Step.allocPrintCmd(b.allocator, null, argv) catch @panic("OOM");
-        std.debug.print("unable to spawn the following command: {s}\n{s}\n", .{
-            @errorName(err), printed_cmd,
-        });
+        const printed_cmd = Step.allocPrintCmd(b.allocator, null, null, argv) catch @panic("OOM");
+        std.debug.print("unable to spawn the following command: {t}\n{s}\n", .{ err, printed_cmd });
         process.exit(1);
     };
 }

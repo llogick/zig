@@ -114,9 +114,6 @@ pub const options: Options = if (@hasDecl(root, "std_options")) root.std_options
 pub const Options = struct {
     enable_segfault_handler: bool = debug.default_enable_segfault_handler,
 
-    /// Function used to implement `std.Io.Dir.cwd` for WASI.
-    wasiCwd: fn () os.wasi.fd_t = os.defaultWasiCwd,
-
     /// The current log level.
     log_level: log.Level = log.default_level,
 
@@ -193,6 +190,9 @@ pub const Options = struct {
 
     /// Overrides `std.Io.File.Permissions`.
     pub const FilePermissions: ?type = if (@hasDecl(root, "std_options_FilePermissions")) root.std_options_FilePermissions else null;
+
+    /// Overrides `std.Io.Dir.cwd`.
+    pub const cwd: ?fn () Io.Dir = if (@hasDecl(root, "std_options_cwd")) root.std_options_cwd else null;
 };
 
 // This forces the start.zig file to be imported, and the comptime logic inside that

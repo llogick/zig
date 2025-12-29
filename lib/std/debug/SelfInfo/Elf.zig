@@ -322,11 +322,12 @@ const Module = struct {
         if (mod.loaded_elf == null) mod.loaded_elf = loadElf(mod, gpa, io);
         return if (mod.loaded_elf.?) |*elf| elf else |err| err;
     }
+
     fn loadElf(mod: *Module, gpa: Allocator, io: Io) Error!LoadedElf {
         const load_result = if (mod.name.len > 0) res: {
             var file = Io.Dir.cwd().openFile(io, mod.name, .{}) catch return error.MissingDebugInfo;
             defer file.close(io);
-            break :res std.debug.ElfFile.load(gpa, io, file, mod.build_id, &.native(mod.name));
+            break :res std.debug.ElfFile.load(gpa, io, file, mod.build_id, &.native(mod.name, io));
         } else res: {
             const path = std.process.executablePathAlloc(io, gpa) catch |err| switch (err) {
                 error.OutOfMemory => |e| return e,
@@ -335,7 +336,7 @@ const Module = struct {
             defer gpa.free(path);
             var file = Io.Dir.cwd().openFile(io, path, .{}) catch return error.MissingDebugInfo;
             defer file.close(io);
-            break :res std.debug.ElfFile.load(gpa, io, file, mod.build_id, &.native(path));
+            break :res std.debug.ElfFile.load(gpa, io, file, mod.build_id, &.native(path, io));
         };
 
         var elf_file = load_result catch |err| switch (err) {

@@ -25,7 +25,7 @@ pub fn build(b: *std.Build) void {
 
     const io = b.graph.io;
 
-    if (std.zig.system.darwin.getSdk(b.allocator, io, &target.result)) |sdk| {
+    if (std.zig.system.darwin.getSdk(b.allocator, io, .{ .map = &b.graph.env_map }, &target.result)) |sdk| {
         b.sysroot = sdk;
         exe.root_module.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ sdk, "/usr/include" }) });
         exe.root_module.addSystemFrameworkPath(.{ .cwd_relative = b.pathJoin(&.{ sdk, "/System/Library/Frameworks" }) });

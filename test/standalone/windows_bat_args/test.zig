@@ -130,13 +130,13 @@ fn testExecError(err: anyerror, gpa: Allocator, io: Io, args: []const []const u8
     return std.testing.expectError(err, testExec(gpa, io, args, null));
 }
 
-fn testExec(gpa: Allocator, io: Io, args: []const []const u8, env: ?*std.process.EnvMap) !void {
+fn testExec(gpa: Allocator, io: Io, args: []const []const u8, env: ?*std.process.Environ.Map) !void {
     try testExecBat(gpa, io, "args1.bat", args, env);
     try testExecBat(gpa, io, "args2.bat", args, env);
     try testExecBat(gpa, io, "args3.bat", args, env);
 }
 
-fn testExecBat(gpa: Allocator, io: Io, bat: []const u8, args: []const []const u8, env: ?*std.process.EnvMap) !void {
+fn testExecBat(gpa: Allocator, io: Io, bat: []const u8, args: []const []const u8, env: ?*std.process.Environ.Map) !void {
     const argv = try gpa.alloc([]const u8, 1 + args.len);
     defer gpa.free(argv);
     argv[0] = bat;

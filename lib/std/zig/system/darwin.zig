@@ -35,7 +35,7 @@ pub fn isSdkInstalled(gpa: Allocator, io: Io) bool {
 /// Caller owns the memory.
 /// stderr from xcrun is ignored.
 /// If error.OutOfMemory occurs in Allocator, this function returns null.
-pub fn getSdk(gpa: Allocator, io: Io, target: *const Target) ?[]const u8 {
+pub fn getSdk(gpa: Allocator, io: Io, environ: std.process.Child.Environ, target: *const Target) ?[]const u8 {
     const is_simulator_abi = target.abi == .simulator;
     const sdk = switch (target.os.tag) {
         .driverkit => "driverkit",
@@ -47,7 +47,10 @@ pub fn getSdk(gpa: Allocator, io: Io, target: *const Target) ?[]const u8 {
         else => return null,
     };
     const argv = &[_][]const u8{ "xcrun", "--sdk", sdk, "--show-sdk-path" };
-    const result = std.process.Child.run(gpa, io, .{ .argv = argv }) catch return null;
+    const result = std.process.Child.run(gpa, io, .{
+        .argv = argv,
+        .environ = environ,
+    }) catch return null;
     defer {
         gpa.free(result.stderr);
         gpa.free(result.stdout);

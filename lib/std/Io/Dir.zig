@@ -82,13 +82,14 @@ pub const Entry = struct {
 ///
 /// On POSIX targets, this function is comptime-callable.
 ///
-/// On WASI, the value this returns is application-configurable.
+/// This function is overridable via `std.Options.cwd`.
 pub fn cwd() Dir {
-    return switch (native_os) {
+    const cwdFn = std.Options.cwd orelse return switch (native_os) {
         .windows => .{ .handle = std.os.windows.peb().ProcessParameters.CurrentDirectory.Handle },
-        .wasi => .{ .handle = std.options.wasiCwd() },
+        .wasi => .{ .handle = 3 }, // Expect the first preopen to be current working directory.
         else => .{ .handle = std.posix.AT.FDCWD },
     };
+    return cwdFn();
 }
 
 pub const Reader = struct {

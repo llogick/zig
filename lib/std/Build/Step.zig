@@ -349,18 +349,20 @@ pub fn captureChildProcess(
     progress_node: std.Progress.Node,
     argv: []const []const u8,
 ) !std.process.Child.RunResult {
-    const arena = s.owner.allocator;
-    const io = s.owner.graph.io;
+    const graph = s.owner.graph;
+    const arena = graph.arena;
+    const io = graph.io;
 
     // If an error occurs, it's happened in this command:
     assert(s.result_failed_command == null);
-    s.result_failed_command = try allocPrintCmd(gpa, null, argv);
+    s.result_failed_command = try allocPrintCmd(gpa, null, null, argv);
 
     try handleChildProcUnsupported(s);
     try handleVerbose(s.owner, null, argv);
 
     const result = std.process.Child.run(arena, io, .{
         .argv = argv,
+        .environ = .{ .map = &graph.env_map },
         .progress_node = progress_node,
     }) catch |err| return s.fail("failed to run {s}: {t}", .{ argv[0], err });
 
@@ -406,7 +408,7 @@ pub fn evalZigProcess(
 
     // If an error occurs, it's happened in this command:
     assert(s.result_failed_command == null);
-    s.result_failed_command = try allocPrintCmd(gpa, null, argv);
+    s.result_failed_command = try allocPrintCmd(gpa, null, null, argv);
 
     if (s.getZigProcess()) |zp| update: {
         assert(watch);
@@ -447,8 +449,7 @@ pub fn evalZigProcess(
     try handleChildProcUnsupported(s);
     try handleVerbose(s.owner, null, argv);
 
-    var child = std.process.Child.init(argv, arena);
-    child.env_map = &b.graph.env_map;
+    var child = std.process.Child.init(arena, argv, .{ .map = &b.graph.env_map });
     child.stdin_behavior = .Pipe;
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = .Pipe;
@@ -692,13 +693,17 @@ pub fn handleVerbose(
 pub fn handleVerbose2(
     b: *Build,
     opt_cwd: ?[]const u8,
-    opt_env: ?*const std.process.EnvMap,
+    opt_env: ?*const std.process.Environ.Map,
     argv: []const []const u8,
 ) error{OutOfMemory}!void {
     if (b.verbose) {
+        const graph = b.graph;
         // Intention of verbose is to print all sub-process command lines to
         // stderr before spawning them.
-        const text = try allocPrintCmd2(b.allocator, opt_cwd, opt_env, argv);
+        const text = try allocPrintCmd(b.allocator, opt_cwd, if (opt_env) |env| .{
+            .child = env,
+            .parent = &graph.env_map,
+        } else null, argv);
         std.debug.print("{s}\n", .{text});
     }
 }
@@ -728,15 +733,10 @@ pub fn handleChildProcessTerm(s: *Step, term: std.process.Child.Term) error{ Mak
 pub fn allocPrintCmd(
     gpa: Allocator,
     opt_cwd: ?[]const u8,
-    argv: []const []const u8,
-) Allocator.Error![]u8 {
-    return allocPrintCmd2(gpa, opt_cwd, null, argv);
-}
-
-pub fn allocPrintCmd2(
-    gpa: Allocator,
-    opt_cwd: ?[]const u8,
-    opt_env: ?*const std.process.EnvMap,
+    opt_env: ?struct {
+        child: *const std.process.Environ.Map,
+        parent: *const std.process.Environ.Map,
+    },
     argv: []const []const u8,
 ) Allocator.Error![]u8 {
     const shell = struct {
@@ -779,13 +779,11 @@ pub fn allocPrintCmd2(
     const writer = &aw.writer;
     if (opt_cwd) |cwd| writer.print("cd {s} && ", .{cwd}) catch return error.OutOfMemory;
     if (opt_env) |env| {
-        var process_env_map = std.process.getEnvMap(gpa) catch std.process.EnvMap.init(gpa);
-        defer process_env_map.deinit();
-        var it = env.iterator();
+        var it = env.child.iterator();
         while (it.next()) |entry| {
             const key = entry.key_ptr.*;
             const value = entry.value_ptr.*;
-            if (process_env_map.get(key)) |process_value| {
+            if (env.parent.get(key)) |process_value| {
                 if (std.mem.eql(u8, value, process_value)) continue;
             }
             writer.print("{s}=", .{key}) catch return error.OutOfMemory;

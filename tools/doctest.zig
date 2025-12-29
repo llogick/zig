@@ -1128,7 +1128,7 @@ fn in(slice: []const u8, number: u8) bool {
 fn run(
     allocator: Allocator,
     io: Io,
-    env_map: *process.EnvMap,
+    env_map: *process.Environ.Map,
     cwd: []const u8,
     args: []const []const u8,
 ) !process.Child.RunResult {

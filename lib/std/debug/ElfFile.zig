@@ -66,16 +66,16 @@ pub const DebugInfoSearchPaths = struct {
         .exe_dir = null,
     };
 
-    pub fn native(exe_path: []const u8) DebugInfoSearchPaths {
+    pub fn native(exe_path: []const u8, io: Io) DebugInfoSearchPaths {
         return .{
             .debuginfod_client = p: {
-                if (std.posix.getenv("DEBUGINFOD_CACHE_PATH")) |p| {
+                if (io.environ("DEBUGINFOD_CACHE_PATH")) |p| {
                     break :p .{ p, "" };
                 }
-                if (std.posix.getenv("XDG_CACHE_HOME")) |cache_path| {
+                if (io.environ("XDG_CACHE_HOME")) |cache_path| {
                     break :p .{ cache_path, "/debuginfod_client" };
                 }
-                if (std.posix.getenv("HOME")) |home_path| {
+                if (io.environ("HOME")) |home_path| {
                     break :p .{ home_path, "/.cache/debuginfod_client" };
                 }
                 break :p null;

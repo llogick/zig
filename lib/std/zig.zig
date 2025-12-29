@@ -746,21 +746,12 @@ pub const EnvVar = enum {
     LOCALAPPDATA,
     HOME,
 
-    pub fn isSet(comptime ev: EnvVar) bool {
-        return std.process.hasNonEmptyEnvVarConstant(@tagName(ev));
+    pub fn isSet(ev: EnvVar, map: *const std.process.Environ.Map) bool {
+        return map.contains(@tagName(ev));
     }
 
-    pub fn get(ev: EnvVar, arena: std.mem.Allocator) !?[]u8 {
-        if (std.process.getEnvVarOwned(arena, @tagName(ev))) |value| {
-            return value;
-        } else |err| switch (err) {
-            error.EnvironmentVariableNotFound => return null,
-            else => |e| return e,
-        }
-    }
-
-    pub fn getPosix(comptime ev: EnvVar) ?[:0]const u8 {
-        return std.posix.getenvZ(@tagName(ev));
+    pub fn get(ev: EnvVar, map: *const std.process.Environ.Map) ?[]const u8 {
+        return map.get(@tagName(ev));
     }
 };
 
