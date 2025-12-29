@@ -1751,7 +1751,6 @@ const src_files = [_][]const u8{
     "musl/src/stdlib/strtol.c",
     "musl/src/stdlib/wcstod.c",
     "musl/src/stdlib/wcstol.c",
-    "musl/src/string/bcmp.c",
     "musl/src/string/bcopy.c",
     "musl/src/string/explicit_bzero.c",
     "musl/src/string/index.c",
