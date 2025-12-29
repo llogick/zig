@@ -525,8 +525,8 @@ pub fn start(io: Io, options: Options) Node {
 
             if (switch (global_progress.terminal_mode) {
                 .off => unreachable, // handled a few lines above
-                .ansi_escape_codes => io.concurrent(updateThreadRun, .{io}),
-                .windows_api => if (is_windows) io.concurrent(windowsApiUpdateThreadRun, .{io}) else unreachable,
+                .ansi_escape_codes => io.concurrent(updateTask, .{io}),
+                .windows_api => if (is_windows) io.concurrent(windowsApiUpdateTask, .{io}) else unreachable,
             }) |future| {
                 global_progress.update_worker = future;
             } else |err| {
@@ -561,10 +561,15 @@ fn wait(io: Io, timeout_ns: u64) bool {
     return resize_flag or (global_progress.cols == 0);
 }
 
-fn updateThreadRun(io: Io) void {
+fn updateTask(io: Io) void {
     // Store this data in the thread so that it does not need to be part of the
     // linker data of the main executable.
     var serialized_buffer: Serialized.Buffer = undefined;
+
+    // In this function we bypass the wrapper code inside `Io.lockStderr` /
+    // `Io.tryLockStderr` in order to avoid clearing the terminal twice.
+    // We still want to go through the `Io` instance however in case it uses a
+    // task-switching mutex.
 
     {
         const resize_flag = wait(io, global_progress.initial_delay_ns);
@@ -572,7 +577,7 @@ fn updateThreadRun(io: Io) void {
         maybeUpdateSize(resize_flag);
 
         const buffer, _ = computeRedraw(&serialized_buffer);
-        if (io.tryLockStderr(&.{}, null) catch return) |locked_stderr| {
+        if (io.vtable.tryLockStderr(io.userdata, null) catch return) |locked_stderr| {
             defer io.unlockStderr();
             global_progress.need_clear = true;
             locked_stderr.file_writer.interface.writeAll(buffer) catch return;
@@ -583,7 +588,7 @@ fn updateThreadRun(io: Io) void {
         const resize_flag = wait(io, global_progress.refresh_rate_ns);
 
         if (@atomicLoad(bool, &global_progress.done, .monotonic)) {
-            const stderr = io.lockStderr(&.{}, null) catch return;
+            const stderr = io.vtable.lockStderr(io.userdata, null) catch return;
             defer io.unlockStderr();
             return clearWrittenWithEscapeCodes(stderr.file_writer) catch {};
         }
@@ -591,7 +596,7 @@ fn updateThreadRun(io: Io) void {
         maybeUpdateSize(resize_flag);
 
         const buffer, _ = computeRedraw(&serialized_buffer);
-        if (io.tryLockStderr(&.{}, null) catch return) |locked_stderr| {
+        if (io.vtable.tryLockStderr(io.userdata, null) catch return) |locked_stderr| {
             defer io.unlockStderr();
             global_progress.need_clear = true;
             locked_stderr.file_writer.interface.writeAll(buffer) catch return;
@@ -607,8 +612,13 @@ fn windowsApiWriteMarker() void {
     _ = windows.kernel32.WriteConsoleW(handle, &[_]u16{windows_api_start_marker}, 1, &num_chars_written, null);
 }
 
-fn windowsApiUpdateThreadRun(io: Io) void {
+fn windowsApiUpdateTask(io: Io) void {
     var serialized_buffer: Serialized.Buffer = undefined;
+
+    // In this function we bypass the wrapper code inside `Io.lockStderr` /
+    // `Io.tryLockStderr` in order to avoid clearing the terminal twice.
+    // We still want to go through the `Io` instance however in case it uses a
+    // task-switching mutex.
 
     {
         const resize_flag = wait(io, global_progress.initial_delay_ns);
@@ -616,7 +626,7 @@ fn windowsApiUpdateThreadRun(io: Io) void {
         maybeUpdateSize(resize_flag);
 
         const buffer, const nl_n = computeRedraw(&serialized_buffer);
-        if (io.tryLockStderr(&.{}, null) catch return) |locked_stderr| {
+        if (io.vtable.tryLockStderr(io.userdata, null) catch return) |locked_stderr| {
             defer io.unlockStderr();
             windowsApiWriteMarker();
             global_progress.need_clear = true;
@@ -629,7 +639,7 @@ fn windowsApiUpdateThreadRun(io: Io) void {
         const resize_flag = wait(io, global_progress.refresh_rate_ns);
 
         if (@atomicLoad(bool, &global_progress.done, .monotonic)) {
-            _ = io.lockStderr(&.{}, null) catch return;
+            _ = io.vtable.lockStderr(io.userdata, null) catch return;
             defer io.unlockStderr();
             return clearWrittenWindowsApi() catch {};
         }
@@ -637,7 +647,7 @@ fn windowsApiUpdateThreadRun(io: Io) void {
         maybeUpdateSize(resize_flag);
 
         const buffer, const nl_n = computeRedraw(&serialized_buffer);
-        if (io.tryLockStderr(&.{}, null) catch return) |locked_stderr| {
+        if (io.vtable.tryLockStderr(io.userdata, null) catch return) |locked_stderr| {
             defer io.unlockStderr();
             clearWrittenWindowsApi() catch return;
             windowsApiWriteMarker();

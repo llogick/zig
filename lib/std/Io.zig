@@ -713,8 +713,8 @@ pub const VTable = struct {
 
     processExecutableOpen: *const fn (?*anyopaque, File.OpenFlags) std.process.OpenExecutableError!File,
     processExecutablePath: *const fn (?*anyopaque, buffer: []u8) std.process.ExecutablePathError!usize,
-    lockStderr: *const fn (?*anyopaque, buffer: []u8, ?Terminal.Mode) Cancelable!LockedStderr,
-    tryLockStderr: *const fn (?*anyopaque, buffer: []u8, ?Terminal.Mode) Cancelable!?LockedStderr,
+    lockStderr: *const fn (?*anyopaque, ?Terminal.Mode) Cancelable!LockedStderr,
+    tryLockStderr: *const fn (?*anyopaque, ?Terminal.Mode) Cancelable!?LockedStderr,
     unlockStderr: *const fn (?*anyopaque) void,
     processSetCurrentDir: *const fn (?*anyopaque, Dir) std.process.SetCurrentDirError!void,
 
@@ -2190,6 +2190,23 @@ pub const LockedStderr = struct {
             .mode = ls.terminal_mode,
         };
     }
+
+    pub fn clear(ls: LockedStderr, buffer: []u8) Cancelable!void {
+        const fw = ls.file_writer;
+        std.Progress.clearWrittenWithEscapeCodes(fw) catch |err| switch (err) {
+            error.WriteFailed => switch (fw.err.?) {
+                error.Canceled => |e| return e,
+                else => {},
+            },
+        };
+        fw.interface.flush() catch |err| switch (err) {
+            error.WriteFailed => switch (fw.err.?) {
+                error.Canceled => |e| return e,
+                else => {},
+            },
+        };
+        fw.interface.buffer = buffer;
+    }
 };
 
 /// For doing application-level writes to the standard error stream.
@@ -2200,12 +2217,16 @@ pub const LockedStderr = struct {
 /// See also:
 /// * `tryLockStderr`
 pub fn lockStderr(io: Io, buffer: []u8, terminal_mode: ?Terminal.Mode) Cancelable!LockedStderr {
-    return io.vtable.lockStderr(io.userdata, buffer, terminal_mode);
+    const ls = try io.vtable.lockStderr(io.userdata, terminal_mode);
+    try ls.clear(buffer);
+    return ls;
 }
 
 /// Same as `lockStderr` but non-blocking.
 pub fn tryLockStderr(io: Io, buffer: []u8, terminal_mode: ?Terminal.Mode) Cancelable!?LockedStderr {
-    return io.vtable.tryLockStderr(io.userdata, buffer, terminal_mode);
+    const ls = (try io.vtable.tryLockStderr(io.userdata, buffer, terminal_mode)) orelse return null;
+    try ls.clear(buffer);
+    return ls;
 }
 
 pub fn unlockStderr(io: Io) void {

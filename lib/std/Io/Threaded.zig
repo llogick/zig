@@ -10864,33 +10864,21 @@ fn netLookupFallible(
     return error.OptionUnsupported;
 }
 
-fn lockStderr(
-    userdata: ?*anyopaque,
-    buffer: []u8,
-    terminal_mode: ?Io.Terminal.Mode,
-) Io.Cancelable!Io.LockedStderr {
+fn lockStderr(userdata: ?*anyopaque, terminal_mode: ?Io.Terminal.Mode) Io.Cancelable!Io.LockedStderr {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     // Only global mutex since this is Threaded.
     std.process.stderr_thread_mutex.lock();
-    return initLockedStderr(t, buffer, terminal_mode);
+    return initLockedStderr(t, terminal_mode);
 }
 
-fn tryLockStderr(
-    userdata: ?*anyopaque,
-    buffer: []u8,
-    terminal_mode: ?Io.Terminal.Mode,
-) Io.Cancelable!?Io.LockedStderr {
+fn tryLockStderr(userdata: ?*anyopaque, terminal_mode: ?Io.Terminal.Mode) Io.Cancelable!?Io.LockedStderr {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     // Only global mutex since this is Threaded.
     if (!std.process.stderr_thread_mutex.tryLock()) return null;
-    return try initLockedStderr(t, buffer, terminal_mode);
+    return try initLockedStderr(t, terminal_mode);
 }
 
-fn initLockedStderr(
-    t: *Threaded,
-    buffer: []u8,
-    terminal_mode: ?Io.Terminal.Mode,
-) Io.Cancelable!Io.LockedStderr {
+fn initLockedStderr(t: *Threaded, terminal_mode: ?Io.Terminal.Mode) Io.Cancelable!Io.LockedStderr {
     if (!t.stderr_writer_initialized) {
         const io_t = ioBasic(t);
         if (is_windows) t.stderr_writer.file = .stderr();
@@ -10901,19 +10889,6 @@ fn initLockedStderr(
         const CLICOLOR_FORCE = t.environ.exist.CLICOLOR_FORCE;
         t.stderr_mode = terminal_mode orelse try .detect(io_t, t.stderr_writer.file, NO_COLOR, CLICOLOR_FORCE);
     }
-    std.Progress.clearWrittenWithEscapeCodes(&t.stderr_writer) catch |err| switch (err) {
-        error.WriteFailed => switch (t.stderr_writer.err.?) {
-            error.Canceled => |e| return e,
-            else => {},
-        },
-    };
-    t.stderr_writer.interface.flush() catch |err| switch (err) {
-        error.WriteFailed => switch (t.stderr_writer.err.?) {
-            error.Canceled => |e| return e,
-            else => {},
-        },
-    };
-    t.stderr_writer.interface.buffer = buffer;
     return .{
         .file_writer = &t.stderr_writer,
         .terminal_mode = terminal_mode orelse t.stderr_mode,
