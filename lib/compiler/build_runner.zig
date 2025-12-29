@@ -1537,6 +1537,8 @@ fn printSteps(builder: *std.Build, w: *Writer) !void {
 }
 
 fn printUsage(b: *std.Build, w: *Writer) !void {
+    const arena = b.graph.arena;
+
     try w.print(
         \\Usage: {s} build [steps] [options]
         \\
@@ -1544,6 +1546,54 @@ fn printUsage(b: *std.Build, w: *Writer) !void {
         \\
     , .{b.graph.zig_exe});
     try printSteps(b, w);
+    try w.writeAll(
+        \\
+        \\Project-Specific Options:
+        \\
+    );
+
+    if (b.available_options_list.items.len == 0) {
+        try w.print("  (none)\n", .{});
+    } else {
+        for (b.available_options_list.items) |option| {
+            const name = try fmt.allocPrint(arena, "  -D{s}=[{t}]", .{ option.name, option.type_id });
+            try w.print("{s:<30} {s}\n", .{ name, option.description });
+            if (option.enum_options) |enum_options| {
+                const padding = " " ** 33;
+                try w.writeAll(padding ++ "Supported Values:\n");
+                for (enum_options) |enum_option| {
+                    try w.print(padding ++ "  {s}\n", .{enum_option});
+                }
+            }
+        }
+    }
+
+    try w.writeAll(
+        \\
+        \\System Integration Options:
+        \\  --search-prefix [path]       Add a path to look for binaries, libraries, headers
+        \\  --sysroot [path]             Set the system root directory (usually /)
+        \\  --libc [file]                Provide a file which specifies libc paths
+        \\
+        \\  --system [pkgdir]            Disable package fetching; enable all integrations
+        \\  -fsys=[name]                 Enable a system integration
+        \\  -fno-sys=[name]              Disable a system integration
+        \\
+        \\  Available System Integrations:                Enabled:
+        \\
+    );
+    if (b.graph.system_library_options.entries.len == 0) {
+        try w.writeAll("  (none)                                        -\n");
+    } else {
+        for (b.graph.system_library_options.keys(), b.graph.system_library_options.values()) |k, v| {
+            const status = switch (v) {
+                .declared_enabled => "yes",
+                .declared_disabled => "no",
+                .user_enabled, .user_disabled => unreachable, // already emitted error
+            };
+            try w.print("    {s:<43} {s}\n", .{ k, status });
+        }
+    }
 
     try w.writeAll(
         \\
@@ -1611,59 +1661,6 @@ fn printUsage(b: *std.Build, w: *Writer) !void {
         \\                               compilation time of Zig source code (implies '--webui')
         \\     -fincremental             Enable incremental compilation
         \\  -fno-incremental             Disable incremental compilation
-        \\
-        \\Project-Specific Options:
-        \\
-    );
-
-    const arena = b.graph.arena;
-    if (b.available_options_list.items.len == 0) {
-        try w.print("  (none)\n", .{});
-    } else {
-        for (b.available_options_list.items) |option| {
-            const name = try fmt.allocPrint(arena, "  -D{s}=[{s}]", .{
-                option.name,
-                @tagName(option.type_id),
-            });
-            try w.print("{s:<30} {s}\n", .{ name, option.description });
-            if (option.enum_options) |enum_options| {
-                const padding = " " ** 33;
-                try w.writeAll(padding ++ "Supported Values:\n");
-                for (enum_options) |enum_option| {
-                    try w.print(padding ++ "  {s}\n", .{enum_option});
-                }
-            }
-        }
-    }
-
-    try w.writeAll(
-        \\
-        \\System Integration Options:
-        \\  --search-prefix [path]       Add a path to look for binaries, libraries, headers
-        \\  --sysroot [path]             Set the system root directory (usually /)
-        \\  --libc [file]                Provide a file which specifies libc paths
-        \\
-        \\  --system [pkgdir]            Disable package fetching; enable all integrations
-        \\  -fsys=[name]                 Enable a system integration
-        \\  -fno-sys=[name]              Disable a system integration
-        \\
-        \\  Available System Integrations:                Enabled:
-        \\
-    );
-    if (b.graph.system_library_options.entries.len == 0) {
-        try w.writeAll("  (none)                                        -\n");
-    } else {
-        for (b.graph.system_library_options.keys(), b.graph.system_library_options.values()) |k, v| {
-            const status = switch (v) {
-                .declared_enabled => "yes",
-                .declared_disabled => "no",
-                .user_enabled, .user_disabled => unreachable, // already emitted error
-            };
-            try w.print("    {s:<43} {s}\n", .{ k, status });
-        }
-    }
-
-    try w.writeAll(
         \\
         \\Advanced Options:
         \\  -freference-trace[=num]      How many lines of reference trace should be shown per compile error
