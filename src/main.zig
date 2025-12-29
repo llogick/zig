@@ -1503,6 +1503,7 @@ fn buildOutputType(
                     } else if (mem.eql(u8, arg, "-fno-emit-bin")) {
                         emit_bin = .no;
                     } else if (mem.eql(u8, arg, "-femit-h")) {
+                        fatal("-femit-h is currently broken, see https://github.com/ziglang/zig/issues/9698", .{});
                         emit_h = .yes_default_path;
                     } else if (mem.cutPrefix(u8, arg, "-femit-h=")) |rest| {
                         emit_h = .{ .yes = rest };
