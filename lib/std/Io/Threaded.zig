@@ -390,6 +390,33 @@ const Thread = struct {
                     else => unreachable,
                 };
             },
+            .openbsd => {
+                var tm: std.c.timespec = undefined;
+                var tm_ptr: ?*const std.c.timespec = null;
+                if (timeout_ns) |ns| {
+                    tm_ptr = &tm;
+                    tm = timestampToPosix(ns);
+                }
+                if (thread) |t| try t.beginSyscall();
+                const rc = std.c.futex(
+                    ptr,
+                    std.c.FUTEX.WAIT | std.c.FUTEX.PRIVATE_FLAG,
+                    @as(c_int, @bitCast(expect)),
+                    tm_ptr,
+                    null, // uaddr2 is ignored
+                );
+                if (thread) |t| t.endSyscall();
+                if (is_debug) switch (posix.errno(rc)) {
+                    .SUCCESS => {},
+                    .NOSYS => unreachable, // constant op known good value
+                    .AGAIN => {}, // contents of uaddr != val
+                    .INVAL => unreachable, // invalid timeout
+                    .TIMEDOUT => {}, // timeout
+                    .INTR => {}, // a signal arrived
+                    .CANCELED => {}, // a signal arrived and SA_RESTART was set
+                    else => unreachable,
+                };
+            },
             else => if (std.Thread.use_pthreads) {
                 // TODO integrate the following function being called with robust cancelation.
                 return pthreads_futex.wait(ptr, expect, timeout_ns) catch |err| switch (err) {
@@ -472,6 +499,16 @@ const Thread = struct {
                     .INVAL => unreachable, // arguments should be correct
                     else => unreachable, // deadlock due to operating system bug
                 }
+            },
+            .openbsd => {
+                const rc = std.c.futex(
+                    ptr,
+                    std.c.FUTEX.WAKE | std.c.FUTEX.PRIVATE_FLAG,
+                    @min(max_waiters, std.math.maxInt(c_int)),
+                    null, // timeout is ignored
+                    null, // uaddr2 is ignored
+                );
+                assert(rc >= 0);
             },
             else => if (std.Thread.use_pthreads) {
                 return pthreads_futex.wake(ptr, max_waiters);
