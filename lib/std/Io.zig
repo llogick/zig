@@ -631,7 +631,7 @@ pub const VTable = struct {
         /// Copied and then passed to `start`.
         context: []const u8,
         context_alignment: std.mem.Alignment,
-        start: *const fn (*Group, context: *const anyopaque) void,
+        start: *const fn (*Group, context: *const anyopaque) Cancelable!void,
     ) void,
     /// Thread-safe.
     groupConcurrent: *const fn (
@@ -642,7 +642,7 @@ pub const VTable = struct {
         /// Copied and then passed to `start`.
         context: []const u8,
         context_alignment: std.mem.Alignment,
-        start: *const fn (*Group, context: *const anyopaque) void,
+        start: *const fn (*Group, context: *const anyopaque) Cancelable!void,
     ) ConcurrentError!void,
     groupAwait: *const fn (?*anyopaque, *Group, token: *anyopaque) Cancelable!void,
     groupCancel: *const fn (?*anyopaque, *Group, token: *anyopaque) void,
@@ -1082,10 +1082,10 @@ pub const Group = struct {
     pub fn async(g: *Group, io: Io, function: anytype, args: std.meta.ArgsTuple(@TypeOf(function))) void {
         const Args = @TypeOf(args);
         const TypeErased = struct {
-            fn start(group: *Group, context: *const anyopaque) void {
+            fn start(group: *Group, context: *const anyopaque) Cancelable!void {
                 _ = group;
                 const args_casted: *const Args = @ptrCast(@alignCast(context));
-                @call(.auto, function, args_casted.*);
+                return @call(.auto, function, args_casted.*);
             }
         };
         io.vtable.groupAsync(io.userdata, g, @ptrCast(&args), .of(Args), TypeErased.start);
@@ -1110,10 +1110,10 @@ pub const Group = struct {
     pub fn concurrent(g: *Group, io: Io, function: anytype, args: std.meta.ArgsTuple(@TypeOf(function))) ConcurrentError!void {
         const Args = @TypeOf(args);
         const TypeErased = struct {
-            fn start(group: *Group, context: *const anyopaque) void {
+            fn start(group: *Group, context: *const anyopaque) Cancelable!void {
                 _ = group;
                 const args_casted: *const Args = @ptrCast(@alignCast(context));
-                @call(.auto, function, args_casted.*);
+                return @call(.auto, function, args_casted.*);
             }
         };
         return io.vtable.groupConcurrent(io.userdata, g, @ptrCast(&args), .of(Args), TypeErased.start);
@@ -1265,7 +1265,7 @@ pub fn Select(comptime U: type) type {
         ) void {
             const Args = @TypeOf(args);
             const TypeErased = struct {
-                fn start(group: *Group, context: *const anyopaque) void {
+                fn start(group: *Group, context: *const anyopaque) Cancelable!void {
                     const args_casted: *const Args = @ptrCast(@alignCast(context));
                     const unerased_select: *S = @fieldParentPtr("group", group);
                     const elem = @unionInit(U, @tagName(field), @call(.auto, function, args_casted.*));

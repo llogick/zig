@@ -843,13 +843,13 @@ pub fn relativePathDigest(pkg_root: Cache.Path, cache_root: Cache.Directory) Pac
     return .initPath(pkg_root.sub_path, pkg_root.root_dir.eql(cache_root));
 }
 
-pub fn workerRun(f: *Fetch, prog_name: []const u8) void {
+pub fn workerRun(f: *Fetch, prog_name: []const u8) Io.Cancelable!void {
     const prog_node = f.prog_node.start(prog_name, 0);
     defer prog_node.end();
 
     run(f) catch |err| switch (err) {
         error.OutOfMemory => f.oom_flag = true,
-        error.Canceled => {}, // TODO make groupAsync functions be cancelable and assert proper value was returned
+        error.Canceled => |e| return e,
         error.FetchFailed => {
             // Nothing to do because the errors are already reported in `error_bundle`,
             // and a reference is kept to the `Fetch` task inside `all_fetches`.

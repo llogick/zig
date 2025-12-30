@@ -207,24 +207,45 @@ fn count(a: usize, b: usize, result: *usize) void {
     result.* = sum;
 }
 
-test "Group cancellation" {
+test "Group cancelation" {
     const io = testing.io;
 
     var group: Io.Group = .init;
-    var results: [2]usize = undefined;
+    var results: [4]usize = .{ 0, 0, 0, 0 };
 
+    // TODO when robust cancelation is available, make the sleep timeouts much
+    // longer so that it causes the unit test to be failed if not canceled.
+    // https://codeberg.org/ziglang/zig/issues/30049
     group.async(io, sleep, .{ io, &results[0] });
     group.async(io, sleep, .{ io, &results[1] });
+    group.async(io, sleepUncancelable, .{ io, &results[2] });
+    group.async(io, sleepRecancel, .{ io, &results[3] });
 
     group.cancel(io);
 
-    try testing.expectEqualSlices(usize, &.{ 1, 1 }, &results);
+    try testing.expectEqualSlices(usize, &.{ 1, 1, 1, 1 }, &results);
 }
 
-fn sleep(io: Io, result: *usize) void {
-    // TODO when cancellation race bug is fixed, make this timeout much longer so that
-    // it causes the unit test to be failed if not canceled.
+fn sleep(io: Io, result: *usize) error{Canceled}!void {
+    defer result.* = 1;
+    io.sleep(.fromMilliseconds(1), .awake) catch |err| switch (err) {
+        error.Canceled => |e| return e,
+        else => {},
+    };
+}
+
+fn sleepUncancelable(io: Io, result: *usize) void {
+    const old_prot = io.swapCancelProtection(.blocked);
+    defer _ = io.swapCancelProtection(old_prot);
     io.sleep(.fromMilliseconds(1), .awake) catch {};
+    result.* = 1;
+}
+
+fn sleepRecancel(io: Io, result: *usize) void {
+    io.sleep(.fromMilliseconds(1), .awake) catch |err| switch (err) {
+        error.Canceled => io.recancel(),
+        else => {},
+    };
     result.* = 1;
 }
 

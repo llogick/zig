@@ -1279,7 +1279,7 @@ const GroupClosure = struct {
     group: *Io.Group,
     /// Points to sibling `GroupClosure`. Used for walking the group to cancel all.
     node: std.SinglyLinkedList.Node,
-    func: *const fn (*Io.Group, context: *anyopaque) void,
+    func: *const fn (*Io.Group, context: *anyopaque) Io.Cancelable!void,
     context_alignment: Alignment,
     alloc_len: usize,
 
@@ -1292,7 +1292,7 @@ const GroupClosure = struct {
         current_thread.current_closure = closure;
         current_thread.cancel_protection = .unblocked;
 
-        gc.func(group, gc.contextPointer());
+        assertResult(closure, gc.func(group, gc.contextPointer()));
 
         current_thread.current_closure = null;
         current_thread.cancel_protection = undefined;
@@ -1300,6 +1300,16 @@ const GroupClosure = struct {
         const prev_state = group_state.fetchSub(sync_one_pending, .acq_rel);
         assert((prev_state / sync_one_pending) > 0);
         if (prev_state == (sync_one_pending | sync_is_waiting)) event.set(ioBasic(t));
+    }
+
+    fn assertResult(closure: *Closure, result: Io.Cancelable!void) void {
+        if (result) |_| switch (closure.cancel_status.unpack()) {
+            .none, .requested => {},
+            .acknowledged => unreachable, // task illegally swallowed error.Canceled
+            .signal_id => unreachable,
+        } else |err| switch (err) {
+            error.Canceled => assert(closure.cancel_status == .acknowledged),
+        }
     }
 
     fn contextPointer(gc: *GroupClosure) [*]u8 {
@@ -1314,7 +1324,7 @@ const GroupClosure = struct {
         group: *Io.Group,
         context: []const u8,
         context_alignment: Alignment,
-        func: *const fn (*Io.Group, context: *const anyopaque) void,
+        func: *const fn (*Io.Group, context: *const anyopaque) Io.Cancelable!void,
     ) Allocator.Error!*GroupClosure {
         const max_context_misalignment = context_alignment.toByteUnits() -| @alignOf(GroupClosure);
         const worst_case_context_offset = context_alignment.forward(@sizeOf(GroupClosure) + max_context_misalignment);
@@ -1352,14 +1362,14 @@ fn groupAsync(
     group: *Io.Group,
     context: []const u8,
     context_alignment: Alignment,
-    start: *const fn (*Io.Group, context: *const anyopaque) void,
+    start: *const fn (*Io.Group, context: *const anyopaque) Io.Cancelable!void,
 ) void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    if (builtin.single_threaded) return start(group, context.ptr);
+    if (builtin.single_threaded) return start(group, context.ptr) catch unreachable;
 
     const gpa = t.allocator;
     const gc = GroupClosure.init(gpa, group, context, context_alignment, start) catch
-        return start(group, context.ptr);
+        return t.assertGroupResult(start(group, context.ptr));
 
     t.mutex.lock();
 
@@ -1368,7 +1378,7 @@ fn groupAsync(
     if (busy_count >= @intFromEnum(t.async_limit)) {
         t.mutex.unlock();
         gc.deinit(gpa);
-        return start(group, context.ptr);
+        return t.assertGroupResult(start(group, context.ptr));
     }
 
     t.busy_count = busy_count + 1;
@@ -1381,7 +1391,7 @@ fn groupAsync(
             t.busy_count = busy_count;
             t.mutex.unlock();
             gc.deinit(gpa);
-            return start(group, context.ptr);
+            return t.assertGroupResult(start(group, context.ptr));
         };
         thread.detach();
     }
@@ -1402,12 +1412,18 @@ fn groupAsync(
     t.cond.signal();
 }
 
+fn assertGroupResult(t: *Threaded, result: Io.Cancelable!void) void {
+    const current_thread: *Thread = .getCurrent(t);
+    const current_closure = current_thread.current_closure orelse return;
+    GroupClosure.assertResult(current_closure, result);
+}
+
 fn groupConcurrent(
     userdata: ?*anyopaque,
     group: *Io.Group,
     context: []const u8,
     context_alignment: Alignment,
-    start: *const fn (*Io.Group, context: *const anyopaque) void,
+    start: *const fn (*Io.Group, context: *const anyopaque) Io.Cancelable!void,
 ) Io.ConcurrentError!void {
     if (builtin.single_threaded) return error.ConcurrencyUnavailable;
 
