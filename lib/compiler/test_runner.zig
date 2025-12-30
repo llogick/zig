@@ -66,13 +66,13 @@ pub fn main() void {
     }
 
     if (listen) {
-        return mainServer() catch @panic("internal test runner failure");
+        return mainServer(args) catch @panic("internal test runner failure");
     } else {
-        return mainTerminal();
+        return mainTerminal(args);
     }
 }
 
-fn mainServer() !void {
+fn mainServer(args: []const [:0]const u8) !void {
     @disableInstrumentation();
     var stdin_reader = Io.File.stdin().readerStreaming(runner_threaded_io, &stdin_buffer);
     var stdout_writer = Io.File.stdout().writerStreaming(runner_threaded_io, &stdout_buffer);
@@ -131,7 +131,9 @@ fn mainServer() !void {
 
             .run_test => {
                 testing.allocator_instance = .{};
-                testing.io_instance = .init(testing.allocator, .{});
+                testing.io_instance = .init(testing.allocator, .{
+                    .argv0 = if (@hasField(Io.Threaded.Argv0, "value")) .{ .value = args[0] } else .{},
+                });
                 log_err_count = 0;
                 const index = try server.receiveBody_u32();
                 const test_fn = builtin.test_functions[index];
@@ -215,7 +217,7 @@ fn mainServer() !void {
     }
 }
 
-fn mainTerminal() void {
+fn mainTerminal(args: []const [:0]const u8) void {
     @disableInstrumentation();
     if (builtin.fuzz) @panic("fuzz test requires server");
 
@@ -233,7 +235,9 @@ fn mainTerminal() void {
     var leaks: usize = 0;
     for (test_fn_list, 0..) |test_fn, i| {
         testing.allocator_instance = .{};
-        testing.io_instance = .init(testing.allocator, .{});
+        testing.io_instance = .init(testing.allocator, .{
+            .argv0 = if (@hasField(Io.Threaded.Argv0, "value")) .{ .value = args[0] } else .{},
+        });
         defer {
             testing.io_instance.deinit();
             if (testing.allocator_instance.deinit() == .leak) leaks += 1;
