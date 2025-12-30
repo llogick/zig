@@ -9690,6 +9690,7 @@ pub const NSIG = switch (native_os) {
     .illumos => 75,
     // https://github.com/SerenityOS/serenity/blob/046c23f567a17758d762a33bdf04bacbfd088f9f/Kernel/API/POSIX/signal_numbers.h#L42
     .openbsd, .serenity => 33,
+    .dragonfly => 64,
     else => {},
 };
 

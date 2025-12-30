@@ -364,9 +364,10 @@ test "getrlimit and setrlimit" {
 }
 
 test "sigrtmin/max" {
-    if (native_os == .wasi or native_os == .windows or native_os.isDarwin() or native_os == .openbsd) {
-        return error.SkipZigTest;
-    }
+    if (native_os.isDarwin() or switch (native_os) {
+        .wasi, .windows, .openbsd, .dragonfly => true,
+        else => false,
+    }) return error.SkipZigTest;
 
     try expect(posix.sigrtmin() >= 32);
     try expect(posix.sigrtmin() >= posix.system.sigrtmin());
@@ -397,7 +398,7 @@ fn reserved_signo(i: usize) bool {
     if (!builtin.link_libc) return false;
     const max = if (native_os == .netbsd) 32 else 31;
     if (i > max) return true;
-    if (native_os == .openbsd) return false; // no RT signals
+    if (native_os == .openbsd or native_os == .dragonfly) return false; // no RT signals
     return i < posix.sigrtmin();
 }
 
