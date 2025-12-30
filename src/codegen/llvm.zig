@@ -6432,7 +6432,7 @@ pub const FuncGen = struct {
 
             // Don't worry about the size of the type -- it's irrelevant, because the prong values could be fairly dense.
             // If they are, then we will construct a jump table.
-            const min, const max = self.switchCaseItemRange(switch_br);
+            const min, const max = self.switchCaseItemRange(switch_br) orelse break :jmp_table null;
             const min_int = min.getUnsignedInt(zcu) orelse break :jmp_table null;
             const max_int = max.getUnsignedInt(zcu) orelse break :jmp_table null;
             const table_len = max_int - min_int + 1;
@@ -6595,7 +6595,7 @@ pub const FuncGen = struct {
         }
     }
 
-    fn switchCaseItemRange(self: *FuncGen, switch_br: Air.UnwrappedSwitch) [2]Value {
+    fn switchCaseItemRange(self: *FuncGen, switch_br: Air.UnwrappedSwitch) ?[2]Value {
         const zcu = self.ng.pt.zcu;
         var it = switch_br.iterateCases();
         var min: ?Value = null;
@@ -6618,6 +6618,10 @@ pub const FuncGen = struct {
                 if (low) min = vals[0];
                 if (high) max = vals[1];
             }
+        }
+        if (min == null) {
+            assert(max == null);
+            return null;
         }
         return .{ min.?, max.? };
     }
