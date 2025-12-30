@@ -182,7 +182,7 @@ const Group = struct {
     const Task = struct {
         runnable: Runnable,
         group: *Io.Group,
-        func: *const fn (*Io.Group, context: *const anyopaque) void,
+        func: *const fn (context: *const anyopaque) void,
         context_alignment: Alignment,
         alloc_len: usize,
 
@@ -192,7 +192,7 @@ const Group = struct {
             group: Group,
             context: []const u8,
             context_alignment: Alignment,
-            func: *const fn (*Io.Group, context: *const anyopaque) void,
+            func: *const fn (context: *const anyopaque) void,
         ) Allocator.Error!*Task {
             const max_context_misalignment = context_alignment.toByteUnits() -| @alignOf(Task);
             const worst_case_context_offset = context_alignment.forward(@sizeOf(Task) + max_context_misalignment);
@@ -247,7 +247,7 @@ const Group = struct {
                 }, .monotonic);
             }
 
-            assertGroupResult(task.func(group.ptr, task.contextPointer()));
+            assertGroupResult(task.func(task.contextPointer()));
 
             thread.status.store(.{ .cancelation = .none, .awaitable = .null }, .monotonic);
             const old_status = group.status().fetchSub(.{
@@ -1707,16 +1707,16 @@ fn groupAsync(
     type_erased: *Io.Group,
     context: []const u8,
     context_alignment: Alignment,
-    start: *const fn (*Io.Group, context: *const anyopaque) Io.Cancelable!void,
+    start: *const fn (context: *const anyopaque) Io.Cancelable!void,
 ) void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const g: Group = .{ .ptr = type_erased };
 
-    if (builtin.single_threaded) return start(g.ptr, context.ptr) catch unreachable;
+    if (builtin.single_threaded) return start(context.ptr) catch unreachable;
 
     const gpa = t.allocator;
     const task = Group.Task.create(gpa, g, context, context_alignment, start) catch |err| switch (err) {
-        error.OutOfMemory => return t.assertGroupResult(start(g.ptr, context.ptr)),
+        error.OutOfMemory => return t.assertGroupResult(start(context.ptr)),
     };
 
     t.mutex.lock();
@@ -1726,7 +1726,7 @@ fn groupAsync(
     if (busy_count >= @intFromEnum(t.async_limit)) {
         t.mutex.unlock();
         task.destroy(gpa);
-        return t.assertGroupResult(start(g.ptr, context.ptr));
+        return t.assertGroupResult(start(context.ptr));
     }
 
     t.busy_count = busy_count + 1;
@@ -1739,7 +1739,7 @@ fn groupAsync(
             t.busy_count = busy_count;
             t.mutex.unlock();
             task.destroy(gpa);
-            return t.assertGroupResult(start(g.ptr, context.ptr));
+            return t.assertGroupResult(start(context.ptr));
         };
         thread.detach();
     }
@@ -1782,7 +1782,7 @@ fn groupConcurrent(
     type_erased: *Io.Group,
     context: []const u8,
     context_alignment: Alignment,
-    start: *const fn (*Io.Group, context: *const anyopaque) Io.Cancelable!void,
+    start: *const fn (context: *const anyopaque) Io.Cancelable!void,
 ) Io.ConcurrentError!void {
     if (builtin.single_threaded) return error.ConcurrencyUnavailable;
 
