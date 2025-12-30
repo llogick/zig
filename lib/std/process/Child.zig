@@ -778,6 +778,7 @@ fn spawnWindows(self: *Child, io: Io) SpawnError!void {
             error.WouldBlock => return error.Unexpected, // not possible for "NUL"
             error.NetworkNotFound => return error.Unexpected, // not possible for "NUL"
             error.AntivirusInterference => return error.Unexpected, // not possible for "NUL"
+            error.OperationCanceled => return error.Unexpected, // we're not canceling the operation
             else => |e| return e,
         }
     else
@@ -1129,8 +1130,7 @@ fn windowsCreateProcessPathExt(
         defer dir_buf.shrinkRetainingCapacity(dir_path_len);
         const dir_path_z = dir_buf.items[0 .. dir_buf.items.len - 1 :0];
         const prefixed_path = try windows.wToPrefixedFileW(null, dir_path_z);
-        // TODO eliminate this reference
-        break :dir Io.Threaded.global_single_threaded.dirOpenDirWindows(.cwd(), prefixed_path.span(), .{
+        break :dir Io.Threaded.dirOpenDirWindows(.cwd(), prefixed_path.span(), .{
             .iterate = true,
         }) catch return error.FileNotFound;
     };

@@ -554,3 +554,30 @@ pub extern "ntdll" fn RtlWakeConditionVariable(
 pub extern "ntdll" fn RtlWakeAllConditionVariable(
     ConditionVariable: *CONDITION_VARIABLE,
 ) callconv(.winapi) void;
+
+pub extern "ntdll" fn NtWaitForAlertByThreadId(
+    Address: ?*const anyopaque,
+    Timeout: ?*const LARGE_INTEGER,
+) callconv(.winapi) NTSTATUS;
+pub extern "ntdll" fn NtAlertThreadByThreadId(
+    ThreadId: DWORD,
+) callconv(.winapi) NTSTATUS;
+pub extern "ntdll" fn NtAlertMultipleThreadByThreadId(
+    ThreadIds: [*]const ULONG_PTR,
+    ThreadCount: ULONG,
+    Unknown1: ?*const anyopaque,
+    Unknown2: ?*const anyopaque,
+) callconv(.winapi) NTSTATUS;
+
+pub extern "ntdll" fn NtOpenThread(
+    ThreadHandle: *HANDLE,
+    DesiredAccess: ACCESS_MASK,
+    ObjectAttributes: *const OBJECT_ATTRIBUTES,
+    ClientId: *const windows.CLIENT_ID,
+) callconv(.winapi) NTSTATUS;
+
+pub extern "ntdll" fn NtCancelSynchronousIoFile(
+    ThreadHandle: HANDLE,
+    RequestToCancel: ?*IO_STATUS_BLOCK,
+    IoStatusBlock: *IO_STATUS_BLOCK,
+) callconv(.winapi) NTSTATUS;

@@ -2253,7 +2253,7 @@ pub fn GetProcessHeap() ?*HEAP {
 pub const OBJECT_ATTRIBUTES = extern struct {
     Length: ULONG,
     RootDirectory: ?HANDLE,
-    ObjectName: *UNICODE_STRING,
+    ObjectName: ?*UNICODE_STRING,
     Attributes: ATTRIBUTES,
     SecurityDescriptor: ?*anyopaque,
     SecurityQualityOfService: ?*anyopaque,
@@ -2306,6 +2306,7 @@ pub const OpenError = error{
     NetworkNotFound,
     AntivirusInterference,
     BadPathName,
+    OperationCanceled,
 };
 
 pub const OpenFileOptions = struct {
@@ -2405,6 +2406,7 @@ pub fn OpenFile(sub_path_w: []const u16, options: OpenFileOptions) OpenError!HAN
                 continue;
             },
             .VIRUS_INFECTED, .VIRUS_DELETED => return error.AntivirusInterference,
+            .CANCELLED => return error.OperationCanceled,
             else => return unexpectedStatus(rc),
         }
     }
@@ -2985,6 +2987,7 @@ pub const ReadLinkError = error{
     AntivirusInterference,
     UnsupportedReparsePointType,
     NotLink,
+    OperationCanceled,
 };
 
 /// `sub_path_w` will never be accessed after `out_buffer` has been written to, so it
@@ -3015,6 +3018,7 @@ pub fn ReadLink(dir: ?HANDLE, sub_path_w: []const u16, out_buffer: []u16) ReadLi
     const rc = DeviceIoControl(result_handle, FSCTL.GET_REPARSE_POINT, .{ .out = reparse_buf[0..] });
     switch (rc) {
         .SUCCESS => {},
+        .CANCELLED => return error.OperationCanceled,
         .NOT_A_REPARSE_POINT => return error.NotLink,
         else => return unexpectedStatus(rc),
     }
@@ -3339,71 +3343,6 @@ pub fn GetStdHandle(handle_id: DWORD) GetStdHandleError!HANDLE {
     return handle;
 }
 
-pub const SetFilePointerError = error{
-    Unseekable,
-    Unexpected,
-};
-
-/// The SetFilePointerEx function with the `dwMoveMethod` parameter set to `FILE_BEGIN`.
-pub fn SetFilePointerEx_BEGIN(handle: HANDLE, offset: u64) SetFilePointerError!void {
-    // "The starting point is zero or the beginning of the file. If [FILE_BEGIN]
-    // is specified, then the liDistanceToMove parameter is interpreted as an unsigned value."
-    // https://docs.microsoft.com/en-us/windows/desktop/api/fileapi/nf-fileapi-setfilepointerex
-    const ipos = @as(LARGE_INTEGER, @bitCast(offset));
-    if (kernel32.SetFilePointerEx(handle, ipos, null, FILE_BEGIN) == 0) {
-        switch (GetLastError()) {
-            .INVALID_FUNCTION => return error.Unseekable,
-            .NEGATIVE_SEEK => return error.Unseekable,
-            .INVALID_PARAMETER => unreachable,
-            .INVALID_HANDLE => unreachable,
-            else => |err| return unexpectedError(err),
-        }
-    }
-}
-
-/// The SetFilePointerEx function with the `dwMoveMethod` parameter set to `FILE_CURRENT`.
-pub fn SetFilePointerEx_CURRENT(handle: HANDLE, offset: i64) SetFilePointerError!void {
-    if (kernel32.SetFilePointerEx(handle, offset, null, FILE_CURRENT) == 0) {
-        switch (GetLastError()) {
-            .INVALID_FUNCTION => return error.Unseekable,
-            .NEGATIVE_SEEK => return error.Unseekable,
-            .INVALID_PARAMETER => unreachable,
-            .INVALID_HANDLE => unreachable,
-            else => |err| return unexpectedError(err),
-        }
-    }
-}
-
-/// The SetFilePointerEx function with the `dwMoveMethod` parameter set to `FILE_END`.
-pub fn SetFilePointerEx_END(handle: HANDLE, offset: i64) SetFilePointerError!void {
-    if (kernel32.SetFilePointerEx(handle, offset, null, FILE_END) == 0) {
-        switch (GetLastError()) {
-            .INVALID_FUNCTION => return error.Unseekable,
-            .NEGATIVE_SEEK => return error.Unseekable,
-            .INVALID_PARAMETER => unreachable,
-            .INVALID_HANDLE => unreachable,
-            else => |err| return unexpectedError(err),
-        }
-    }
-}
-
-/// The SetFilePointerEx function with parameters to get the current offset.
-pub fn SetFilePointerEx_CURRENT_get(handle: HANDLE) SetFilePointerError!u64 {
-    var result: LARGE_INTEGER = undefined;
-    if (kernel32.SetFilePointerEx(handle, 0, &result, FILE_CURRENT) == 0) {
-        switch (GetLastError()) {
-            .INVALID_FUNCTION => return error.Unseekable,
-            .NEGATIVE_SEEK => return error.Unseekable,
-            .INVALID_PARAMETER => unreachable,
-            .INVALID_HANDLE => unreachable,
-            else => |err| return unexpectedError(err),
-        }
-    }
-    // Based on the docs for FILE_BEGIN, it seems that the returned signed integer
-    // should be interpreted as an unsigned integer.
-    return @as(u64, @bitCast(result));
-}
-
 pub const QueryObjectNameError = error{
     AccessDenied,
     InvalidHandle,
@@ -3562,6 +3501,7 @@ pub fn GetFinalPathNameByHandle(
                 error.NetworkNotFound => return error.Unexpected,
                 error.AntivirusInterference => return error.Unexpected,
                 error.BadPathName => return error.Unexpected,
+                error.OperationCanceled => @panic("TODO: better integrate cancelation"),
                 else => |e| return e,
             };
             defer CloseHandle(mgmt_handle);
