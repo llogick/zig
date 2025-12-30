@@ -4698,7 +4698,7 @@ fn performAllTheWork(
             });
         }
 
-        astgen_group.wait(io);
+        try astgen_group.await(io);
     }
 
     if (comp.zcu) |zcu| {
@@ -4761,7 +4761,7 @@ fn performAllTheWork(
             // Since we're skipping analysis, there are no ZCU link tasks.
             comp.link_queue.finishZcuQueue(comp);
             // Let other compilation work finish to collect as many errors as possible.
-            misc_group.wait(io);
+            try misc_group.await(io);
             comp.link_queue.wait(io);
             return;
         }
@@ -4850,18 +4850,22 @@ fn performAllTheWork(
     comp.link_queue.finishZcuQueue(comp);
 
     // Main thread work is all done, now just wait for all async work.
-    misc_group.wait(io);
+    try misc_group.await(io);
     comp.link_queue.wait(io);
 }
 
 fn dispatchPrelinkWork(comp: *Compilation, main_progress_node: std.Progress.Node) void {
     const io = comp.io;
 
+    // TODO should this function be cancelable?
+    const prev_cancel_prot = io.swapCancelProtection(.blocked);
+    defer _ = io.swapCancelProtection(prev_cancel_prot);
+
     var prelink_group: Io.Group = .init;
     defer prelink_group.cancel(io);
 
     comp.queuePrelinkTasks(comp.oneshot_prelink_tasks.items) catch |err| switch (err) {
-        error.Canceled => return,
+        error.Canceled => unreachable, // see swapCancelProtection above
     };
     comp.oneshot_prelink_tasks.clearRetainingCapacity();
 
@@ -5055,9 +5059,11 @@ fn dispatchPrelinkWork(comp: *Compilation, main_progress_node: std.Progress.Node
         });
     }
 
-    prelink_group.wait(io);
+    prelink_group.await(io) catch |err| switch (err) {
+        error.Canceled => unreachable, // see swapCancelProtection above
+    };
     comp.link_queue.finishPrelinkQueue(comp) catch |err| switch (err) {
-        error.Canceled => return,
+        error.Canceled => unreachable, // see swapCancelProtection above
     };
 }
 

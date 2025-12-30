@@ -795,7 +795,7 @@ pub fn io(t: *Threaded) Io {
 
             .groupAsync = groupAsync,
             .groupConcurrent = groupConcurrent,
-            .groupWait = groupWait,
+            .groupAwait = groupAwait,
             .groupCancel = groupCancel,
 
             .recancel = recancel,
@@ -933,7 +933,7 @@ pub fn ioBasic(t: *Threaded) Io {
 
             .groupAsync = groupAsync,
             .groupConcurrent = groupConcurrent,
-            .groupWait = groupWait,
+            .groupAwait = groupAwait,
             .groupCancel = groupCancel,
 
             .recancel = recancel,
@@ -1166,6 +1166,7 @@ const AsyncClosure = struct {
             error.Canceled => {
                 ac.closure.requestCancel(t);
                 ac.event.waitUncancelable(ioBasic(t));
+                recancel(t);
             },
         };
         @memcpy(result, ac.resultPointer()[0..result.len]);
@@ -1452,7 +1453,7 @@ fn groupConcurrent(
     t.cond.signal();
 }
 
-fn groupWait(userdata: ?*anyopaque, group: *Io.Group, initial_token: *anyopaque) void {
+fn groupAwait(userdata: ?*anyopaque, group: *Io.Group, initial_token: *anyopaque) Io.Cancelable!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const gpa = t.allocator;
 
@@ -1464,16 +1465,14 @@ fn groupWait(userdata: ?*anyopaque, group: *Io.Group, initial_token: *anyopaque)
     const event: *Io.Event = @ptrCast(&group.context);
     const prev_state = group_state.fetchAdd(GroupClosure.sync_is_waiting, .acquire);
     assert(prev_state & GroupClosure.sync_is_waiting == 0);
-    if ((prev_state / GroupClosure.sync_one_pending) > 0) event.wait(ioBasic(t)) catch |err| switch (err) {
-        error.Canceled => {
-            var it: ?*std.SinglyLinkedList.Node = @ptrCast(@alignCast(group.token.load(.monotonic)));
-            while (it) |node| : (it = node.next) {
-                const gc: *GroupClosure = @fieldParentPtr("node", node);
-                gc.closure.requestCancel(t);
-            }
-            event.waitUncancelable(ioBasic(t));
-        },
-    };
+    {
+        errdefer _ = group_state.fetchSub(GroupClosure.sync_is_waiting, .monotonic);
+        // This event.wait can return error.Canceled, in which case this logic does
+        // *not* propagate cancel requests to each group member. Instead, the user
+        // code will likely do this with a defered call to groupCancel, or,
+        // intentionally not do this.
+        if ((prev_state / GroupClosure.sync_one_pending) > 0) try event.wait(ioBasic(t));
+    }
 
     // Since the group has now finished, it's illegal to add more tasks to it until we return. It's
     // also illegal for us to race with another `await` or `cancel`. Therefore, we must be the only

@@ -748,7 +748,7 @@ fn runStepNames(
         defer step_prog.end();
 
         var group: Io.Group = .init;
-        defer group.wait(io);
+        defer group.cancel(io);
 
         // Here we spawn the initial set of tasks with a nice heuristic -
         // dependency order. Each worker when it finishes a step will then
@@ -760,6 +760,8 @@ fn runStepNames(
 
             group.async(io, workerMakeOneStep, .{ &group, b, step, step_prog, run });
         }
+
+        try group.await(io);
     }
 
     assert(run.memory_blocked_steps.items.len == 0);
@@ -820,7 +822,7 @@ fn runStepNames(
             // * Memory-mapping to share data between the fuzzer and build runner.
             // * COFF/PE support added to `std.debug.Info` (it needs a batching API for resolving
             //   many addresses to source locations).
-            .windows => fatal("--fuzz not yet implemented for {s}", .{@tagName(builtin.os.tag)}),
+            .windows => fatal("--fuzz not yet implemented for {t}", .{builtin.os.tag}),
             else => {},
         }
         if (@bitSizeOf(usize) != 64) {
@@ -843,7 +845,7 @@ fn runStepNames(
             step_stack.keys(),
             parent_prog_node,
             mode,
-        ) catch |err| fatal("failed to start fuzzer: {s}", .{@errorName(err)});
+        ) catch |err| fatal("failed to start fuzzer: {t}", .{err});
         defer f.deinit();
 
         f.start();

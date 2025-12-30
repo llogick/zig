@@ -78,7 +78,7 @@ pub fn init(
     all_steps: []const *Build.Step,
     root_prog_node: std.Progress.Node,
     mode: Mode,
-) Allocator.Error!Fuzz {
+) error{ OutOfMemory, Canceled }!Fuzz {
     const run_steps: []const *Step.Run = steps: {
         var steps: std.ArrayList(*Step.Run) = .empty;
         defer steps.deinit(gpa);
@@ -98,7 +98,7 @@ pub fn init(
         if (steps.items.len == 0) fatal("no fuzz tests found", .{});
         rebuild_node.setEstimatedTotalItems(steps.items.len);
         const run_steps = try gpa.dupe(*Step.Run, steps.items);
-        rebuild_group.wait(io);
+        try rebuild_group.await(io);
         break :steps run_steps;
     };
     errdefer gpa.free(run_steps);
@@ -517,7 +517,7 @@ pub fn waitAndPrintReport(fuzz: *Fuzz) void {
     assert(fuzz.mode == .limit);
     const io = fuzz.io;
 
-    fuzz.group.wait(io);
+    fuzz.group.awaitUncancelable(io);
     fuzz.group = .init;
 
     std.debug.print("======= FUZZING REPORT =======\n", .{});

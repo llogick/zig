@@ -48,7 +48,7 @@ pub fn ParallelHasher(comptime Hasher: type) type {
                     });
                 }
 
-                group.wait(io);
+                try group.await(io);
             }
             for (results) |result| _ = try result;
         }

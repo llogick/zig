@@ -146,6 +146,8 @@ pub const JobQueue = struct {
     pub const UnlazySet = std.AutoArrayHashMapUnmanaged(Package.Hash, void);
 
     pub fn deinit(jq: *JobQueue) void {
+        const io = jq.io;
+        jq.group.cancel(io);
         if (jq.all_fetches.items.len == 0) return;
         const gpa = jq.all_fetches.items[0].arena.child_allocator;
         jq.table.deinit(gpa);
@@ -847,7 +849,7 @@ pub fn workerRun(f: *Fetch, prog_name: []const u8) void {
 
     run(f) catch |err| switch (err) {
         error.OutOfMemory => f.oom_flag = true,
-        error.Canceled => {},
+        error.Canceled => {}, // TODO make groupAsync functions be cancelable and assert proper value was returned
         error.FetchFailed => {
             // Nothing to do because the errors are already reported in `error_bundle`,
             // and a reference is kept to the `Fetch` task inside `all_fetches`.
@@ -1517,12 +1519,12 @@ fn computeHash(f: *Fetch, pkg_path: Cache.Path, filter: Filter) RunError!Compute
         // The final hash will be a hash of each file hashed independently. This
         // allows hashing in parallel.
         var group: Io.Group = .init;
-        defer group.wait(io);
+        defer group.cancel(io);
 
         while (walker.next(io) catch |err| {
             try eb.addRootErrorMessage(.{ .msg = try eb.printString(
-                "unable to walk temporary directory '{f}': {s}",
-                .{ pkg_path, @errorName(err) },
+                "unable to walk temporary directory '{f}': {t}",
+                .{ pkg_path, err },
             ) });
             return error.FetchFailed;
         }) |entry| {
@@ -1552,8 +1554,8 @@ fn computeHash(f: *Fetch, pkg_path: Cache.Path, filter: Filter) RunError!Compute
                 .file => .file,
                 .sym_link => .link,
                 else => return f.fail(f.location_tok, try eb.printString(
-                    "package contains '{s}' which has illegal file type '{s}'",
-                    .{ entry.path, @tagName(entry.kind) },
+                    "package contains '{s}' which has illegal file type '{t}'",
+                    .{ entry.path, entry.kind },
                 )),
             };
 
@@ -1573,6 +1575,8 @@ fn computeHash(f: *Fetch, pkg_path: Cache.Path, filter: Filter) RunError!Compute
             group.async(io, workerHashFile, .{ io, root_dir, hashed_file });
             try all_files.append(hashed_file);
         }
+
+        try group.await(io);
     }
 
     {

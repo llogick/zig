@@ -436,7 +436,7 @@ pub fn Poller(comptime StreamEnum: type) type {
                     // Cancel the pending read into the FIFO.
                     _ = windows.kernel32.CancelIo(handle);
 
-                    // We have to wait for the handle to be signalled, i.e. for the cancellation to complete.
+                    // We have to wait for the handle to be signalled, i.e. for the cancelation to complete.
                     switch (windows.kernel32.WaitForSingleObject(handle, windows.INFINITE)) {
                         windows.WAIT_OBJECT_0 => {},
                         windows.WAIT_FAILED => return windows.unexpectedError(windows.GetLastError()),
@@ -644,7 +644,7 @@ pub const VTable = struct {
         context_alignment: std.mem.Alignment,
         start: *const fn (*Group, context: *const anyopaque) void,
     ) ConcurrentError!void,
-    groupWait: *const fn (?*anyopaque, *Group, token: *anyopaque) void,
+    groupAwait: *const fn (?*anyopaque, *Group, token: *anyopaque) Cancelable!void,
     groupCancel: *const fn (?*anyopaque, *Group, token: *anyopaque) void,
 
     recancel: *const fn (?*anyopaque) void,
@@ -1023,7 +1023,7 @@ pub fn Future(Result: type) type {
         any_future: ?*AnyFuture,
         result: Result,
 
-        /// Equivalent to `await` but places a cancellation request. This causes the task to receive
+        /// Equivalent to `await` but places a cancelation request. This causes the task to receive
         /// `error.Canceled` from its next "cancelation point" (if any). A cancelation point is a
         /// call to a function in `Io` which can return `error.Canceled`.
         ///
@@ -1071,7 +1071,7 @@ pub const Group = struct {
     /// already been called and completed, or it has successfully been assigned
     /// a unit of concurrency.
     ///
-    /// After this is called, `wait` or `cancel` must be called before the
+    /// After this is called, `await` or `cancel` must be called before the
     /// group is deinitialized.
     ///
     /// Threadsafe.
@@ -1092,11 +1092,11 @@ pub const Group = struct {
     }
 
     /// Calls `function` with `args`, such that the function is not guaranteed
-    /// to have returned until `wait` is called, allowing the caller to
+    /// to have returned until `await` is called, allowing the caller to
     /// progress while waiting for any `Io` operations.
     ///
     /// The resource spawned is owned by the group; after this is called,
-    /// `wait` or `cancel` must be called before the group is deinitialized.
+    /// `await` or `cancel` must be called before the group is deinitialized.
     ///
     /// This has stronger guarantee than `async`, placing restrictions on what kind
     /// of `Io` implementations are supported. By calling `async` instead, one
@@ -1120,20 +1120,31 @@ pub const Group = struct {
     }
 
     /// Blocks until all tasks of the group finish. During this time,
-    /// cancellation requests propagate to all members of the group.
+    /// cancelation requests propagate to all members of the group.
     ///
     /// Idempotent. Not threadsafe.
     ///
     /// It is safe to call this function concurrently with `Group.async` or
     /// `Group.concurrent`, provided that the group does not complete until
     /// the call to `Group.async` or `Group.concurrent` returns.
-    pub fn wait(g: *Group, io: Io) void {
+    pub fn await(g: *Group, io: Io) Cancelable!void {
         const token = g.token.load(.acquire) orelse return;
-        io.vtable.groupWait(io.userdata, g, token);
+        try io.vtable.groupAwait(io.userdata, g, token);
         assert(g.token.raw == null);
     }
 
-    /// Equivalent to `wait` but immediately requests cancellation on all
+    /// Equivalent to `await` but temporarily blocks cancelation while waiting.
+    pub fn awaitUncancelable(g: *Group, io: Io) void {
+        const token = g.token.load(.acquire) orelse return;
+        const prev = swapCancelProtection(io, .blocked);
+        defer _ = swapCancelProtection(io, prev);
+        io.vtable.groupAwait(io.userdata, g, token) catch |err| switch (err) {
+            error.Canceled => unreachable,
+        };
+        assert(g.token.raw == null);
+    }
+
+    /// Equivalent to `await` but immediately requests cancelation on all
     /// members of the group.
     ///
     /// For a description of cancelation and cancelation points, see `Future.cancel`.
@@ -1272,7 +1283,7 @@ pub fn Select(comptime U: type) type {
         /// Asserts there is at least one more `outstanding` task.
         ///
         /// Not threadsafe.
-        pub fn wait(s: *S) Cancelable!U {
+        pub fn await(s: *S) Cancelable!U {
             s.outstanding -= 1;
             return s.queue.getOne(s.io) catch |err| switch (err) {
                 error.Canceled => |e| return e,
@@ -1280,7 +1291,7 @@ pub fn Select(comptime U: type) type {
             };
         }
 
-        /// Equivalent to `wait` but requests cancellation on all remaining
+        /// Equivalent to `wait` but requests cancelation on all remaining
         /// tasks owned by the select.
         ///
         /// For a description of cancelation and cancelation points, see `Future.cancel`.

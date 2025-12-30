@@ -1,9 +1,10 @@
-const std = @import("std");
 const builtin = @import("builtin");
+
+const std = @import("std");
 const crypto = std.crypto;
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
-const Thread = std.Thread;
+const assert = std.debug.assert;
 
 const TurboSHAKE128State = crypto.hash.sha3.TurboShake128(0x06);
 const TurboSHAKE256State = crypto.hash.sha3.TurboShake256(0x06);
@@ -598,7 +599,7 @@ inline fn processNLeaves(
     output: []align(@alignOf(u64)) u8,
 ) void {
     const cv_size = Variant.cv_size;
-    comptime std.debug.assert(cv_size % @sizeOf(u64) == 0);
+    comptime assert(cv_size % @sizeOf(u64) == 0);
 
     if (view.tryGetSlice(j, j + N * chunk_size)) |leaf_data| {
         var leaf_cvs: [N * cv_size]u8 = undefined;
@@ -645,7 +646,7 @@ fn processLeafBatch(comptime Variant: type, ctx: LeafBatchContext) void {
         j += chunk_len;
     }
 
-    std.debug.assert(cvs_offset == ctx.output_cvs.len);
+    assert(cvs_offset == ctx.output_cvs.len);
 }
 
 /// Helper to process N leaves in SIMD and absorb CVs into state
@@ -841,7 +842,7 @@ fn ktMultiThreaded(
     total_len: usize,
     output: []u8,
 ) !void {
-    comptime std.debug.assert(bytes_per_batch % (optimal_vector_len * chunk_size) == 0);
+    comptime assert(bytes_per_batch % (optimal_vector_len * chunk_size) == 0);
 
     const cv_size = Variant.cv_size;
     const StateType = Variant.StateType;
@@ -883,6 +884,7 @@ fn ktMultiThreaded(
         var pending_cv_lens: [256]usize = .{0} ** 256;
 
         var select: Select = .init(io, select_buf);
+        defer select.cancel();
         var batches_spawned: usize = 0;
         var next_to_process: usize = 0;
 
@@ -901,7 +903,7 @@ fn ktMultiThreaded(
                 batches_spawned += 1;
             }
 
-            const result = select.wait() catch unreachable;
+            const result = try select.await();
             const batch = result.batch;
             const slot = batch.batch_idx % max_concurrent;
 
@@ -925,7 +927,7 @@ fn ktMultiThreaded(
             }
         }
 
-        select.group.wait(io);
+        assert(select.outstanding == 0);
     }
 
     if (has_partial_leaf) {

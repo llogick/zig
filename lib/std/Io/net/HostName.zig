@@ -289,7 +289,7 @@ pub fn connectMany(
     } else |err| switch (err) {
         error.Canceled => |e| return e,
         error.Closed => {
-            group.wait(io);
+            try group.await(io);
             return lookup_future.await(io);
         },
     }

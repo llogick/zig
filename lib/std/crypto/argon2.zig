@@ -2,9 +2,9 @@
 // https://github.com/golang/crypto/tree/master/argon2
 // https://github.com/P-H-C/phc-winner-argon2
 
-const std = @import("std");
 const builtin = @import("builtin");
 
+const std = @import("std");
 const blake2 = crypto.hash.blake2;
 const crypto = std.crypto;
 const Io = std.Io;
@@ -53,23 +53,24 @@ pub const Mode = enum {
 pub const Params = struct {
     const Self = @This();
 
-    /// A [t]ime cost, which defines the amount of computation realized and therefore the execution
+    /// Time cost, which defines the amount of computation realized and therefore the execution
     /// time, given in number of iterations.
     t: u32,
 
-    /// A [m]emory cost, which defines the memory usage, given in kibibytes.
+    /// Memory cost, which defines the memory usage, given in kibibytes.
     m: u32,
 
-    /// A [p]arallelism degree, which defines the number of parallel threads.
+    /// Parallelism degree, which defines the number of independent tasks,
+    /// to be multiplexed onto threads when possible.
     p: u24,
 
-    /// The [secret] parameter, which is used for keyed hashing. This allows a secret key to be input
+    /// The secret parameter, which is used for keyed hashing. This allows a secret key to be input
     /// at hashing time (from some external location) and be folded into the value of the hash. This
     /// means that even if your salts and hashes are compromised, an attacker cannot brute-force to
     /// find the password without the key.
     secret: ?[]const u8 = null,
 
-    /// The [ad] parameter, which is used to fold any additional data into the hash value. Functionally,
+    /// The ad parameter, which is used to fold any additional data into the hash value. Functionally,
     /// this behaves almost exactly like the secret or salt parameters; the ad parameter is folding
     /// into the value of the hash. However, this parameter is used for different data. The salt
     /// should be a random string stored alongside your password. The secret should be a random key
@@ -209,18 +210,18 @@ fn processBlocks(
     threads: u24,
     mode: Mode,
     io: Io,
-) void {
+) Io.Cancelable!void {
     const lanes = memory / threads;
     const segments = lanes / sync_points;
 
     if (builtin.single_threaded or threads == 1) {
-        processBlocksSt(blocks, time, memory, threads, mode, lanes, segments);
+        processBlocksSync(blocks, time, memory, threads, mode, lanes, segments);
     } else {
-        processBlocksMt(blocks, time, memory, threads, mode, lanes, segments, io);
+        try processBlocksAsync(blocks, time, memory, threads, mode, lanes, segments, io);
     }
 }
 
-fn processBlocksSt(
+fn processBlocksSync(
     blocks: *Blocks,
     time: u32,
     memory: u32,
@@ -241,7 +242,7 @@ fn processBlocksSt(
     }
 }
 
-fn processBlocksMt(
+fn processBlocksAsync(
     blocks: *Blocks,
     time: u32,
     memory: u32,
@@ -250,19 +251,20 @@ fn processBlocksMt(
     lanes: u32,
     segments: u32,
     io: Io,
-) void {
+) Io.Cancelable!void {
     var n: u32 = 0;
     while (n < time) : (n += 1) {
         var slice: u32 = 0;
         while (slice < sync_points) : (slice += 1) {
             var group: Io.Group = .init;
+            defer group.cancel(io);
             var lane: u24 = 0;
             while (lane < threads) : (lane += 1) {
                 group.async(io, processSegment, .{
                     blocks, time, memory, threads, mode, lanes, segments, n, slice, lane,
                 });
             }
-            group.wait(io);
+            try group.await(io);
         }
     }
 }
@@ -503,7 +505,7 @@ pub fn kdf(
     blocks.appendNTimesAssumeCapacity(@splat(0), memory);
 
     initBlocks(&blocks, &h0, memory, params.p);
-    processBlocks(&blocks, params.t, memory, params.p, mode, io);
+    try processBlocks(&blocks, params.t, memory, params.p, mode, io);
     finalize(&blocks, memory, params.p, derived_key);
 }
 

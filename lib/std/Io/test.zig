@@ -194,7 +194,7 @@ test "Group" {
     group.async(io, count, .{ 1, 10, &results[0] });
     group.async(io, count, .{ 20, 30, &results[1] });
 
-    group.wait(io);
+    group.awaitUncancelable(io);
 
     try testing.expectEqualSlices(usize, &.{ 45, 245 }, &results);
 }
@@ -249,7 +249,7 @@ test "Group concurrent" {
         },
     };
 
-    group.wait(io);
+    try group.await(io);
 
     try testing.expectEqualSlices(usize, &.{ 45, 245 }, &results);
 }

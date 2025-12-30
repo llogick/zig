@@ -184,7 +184,7 @@ pub const pwhash = struct {
 
     pub const Error = HasherError || error{AllocatorRequired};
     pub const HasherError = KdfError || phc_format.Error;
-    pub const KdfError = errors.Error || std.mem.Allocator.Error || std.Thread.SpawnError;
+    pub const KdfError = errors.Error || std.mem.Allocator.Error || std.Thread.SpawnError || std.Io.Cancelable;
 
     pub const argon2 = @import("crypto/argon2.zig");
     pub const bcrypt = @import("crypto/bcrypt.zig");

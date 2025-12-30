@@ -1,9 +1,11 @@
-const std = @import("std");
 const builtin = @import("builtin");
+
+const std = @import("std");
 const fmt = std.fmt;
 const mem = std.mem;
 const Io = std.Io;
 const Thread = std.Thread;
+const Allocator = std.mem.Allocator;
 
 const Vec4 = @Vector(4, u32);
 const Vec8 = @Vector(8, u32);
@@ -767,7 +769,7 @@ fn buildMerkleTreeLayerParallel(
     key: [8]u32,
     flags: Flags,
     io: Io,
-) void {
+) Io.Cancelable!void {
     const num_parents = input_cvs.len / 2;
 
     // Process sequentially with SIMD for smaller tree layers to avoid thread overhead
@@ -787,6 +789,7 @@ fn buildMerkleTreeLayerParallel(
     const num_workers = Thread.getCpuCount() catch 1;
     const parents_per_worker = (num_parents + num_workers - 1) / num_workers;
     var group: Io.Group = .init;
+    defer group.cancel(io);
 
     for (0..num_workers) |worker_id| {
         const start_idx = worker_id * parents_per_worker;
@@ -801,7 +804,7 @@ fn buildMerkleTreeLayerParallel(
             .flags = flags,
         }});
     }
-    group.wait(io);
+    try group.await(io);
 }
 
 fn parentOutput(parent_block: []const u8, key: [8]u32, flags: Flags) Output {
@@ -987,7 +990,7 @@ pub const Blake3 = struct {
         d.final(out);
     }
 
-    pub fn hashParallel(b: []const u8, out: []u8, options: Options, allocator: std.mem.Allocator, io: Io) !void {
+    pub fn hashParallel(b: []const u8, out: []u8, options: Options, allocator: Allocator, io: Io) error{ OutOfMemory, Canceled }!void {
         if (b.len < parallel_threshold) {
             return hash(b, out, options);
         }
@@ -1008,6 +1011,7 @@ pub const Blake3 = struct {
         const num_workers = thread_count;
         const chunks_per_worker = (num_full_chunks + num_workers - 1) / num_workers;
         var group: Io.Group = .init;
+        defer group.cancel(io);
 
         for (0..num_workers) |worker_id| {
             const start_chunk = worker_id * chunks_per_worker;
@@ -1022,7 +1026,7 @@ pub const Blake3 = struct {
                 .flags = flags,
             }});
         }
-        group.wait(io);
+        try group.await(io);
 
         // Build Merkle tree in parallel layers using ping-pong buffers
         const max_intermediate_size = (num_full_chunks + 1) / 2;
@@ -1040,7 +1044,7 @@ pub const Blake3 = struct {
             const has_odd = current_level.len % 2 == 1;
             const next_level_size = num_parents + @intFromBool(has_odd);
 
-            buildMerkleTreeLayerParallel(
+            try buildMerkleTreeLayerParallel(
                 current_level[0 .. num_parents * 2],
                 next_level_buf[0..num_parents],
                 key_words,

@@ -5284,7 +5284,7 @@ fn cmdBuild(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) 
                 );
 
                 job_queue.group.async(io, Package.Fetch.workerRun, .{ &fetch, "root" });
-                job_queue.group.wait(io);
+                try job_queue.group.await(io);
 
                 try job_queue.consolidateErrors();
 

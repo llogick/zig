@@ -1951,7 +1951,7 @@ pub fn main() anyerror!void {
         } });
     }
 
-    group.wait(io);
+    try group.await(io);
 }
 
 const Job = struct {
