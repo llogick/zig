@@ -418,12 +418,42 @@ fn getRandomBytesDevURandom(buf: []u8) GetRandomError!void {
     const fd = try openZ("/dev/urandom", .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, 0);
     defer close(fd);
 
-    const st = fstat(fd) catch |err| switch (err) {
-        error.Streaming => return error.NoDevice,
-        else => |e| return e,
-    };
-    if (!S.ISCHR(st.mode)) {
-        return error.NoDevice;
+    switch (native_os) {
+        .linux => {
+            var stx = std.mem.zeroes(linux.Statx);
+            const rc = linux.statx(
+                fd,
+                "",
+                linux.AT.EMPTY_PATH,
+                .{ .TYPE = true },
+                &stx,
+            );
+            switch (errno(rc)) {
+                .SUCCESS => {},
+                .ACCES => unreachable,
+                .BADF => unreachable,
+                .FAULT => unreachable,
+                .INVAL => unreachable,
+                .LOOP => unreachable,
+                .NAMETOOLONG => unreachable,
+                .NOENT => unreachable,
+                .NOMEM => return error.SystemResources,
+                .NOTDIR => unreachable,
+                else => |err| return unexpectedErrno(err),
+            }
+            if (!S.ISCHR(stx.mode)) {
+                return error.NoDevice;
+            }
+        },
+        else => {
+            const st = fstat(fd) catch |err| switch (err) {
+                error.Streaming => return error.NoDevice,
+                else => |e| return e,
+            };
+            if (!S.ISCHR(st.mode)) {
+                return error.NoDevice;
+            }
+        },
     }
 
     var i: usize = 0;
