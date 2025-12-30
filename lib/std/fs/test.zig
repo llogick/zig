@@ -645,6 +645,7 @@ fn contains(entries: *const std.array_list.Managed(Dir.Entry), el: Dir.Entry) bo
 
 test "Dir.realPath smoke test" {
     if (native_os == .wasi) return error.SkipZigTest;
+    if (native_os == .openbsd) return error.SkipZigTest;
 
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {

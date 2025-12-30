@@ -2377,6 +2377,8 @@ pub const S = switch (native_os) {
         pub const IWOTH = 0o002;
         pub const IXOTH = 0o001;
 
+        pub const BLKSIZE = 512;
+
         pub fn ISFIFO(m: u32) bool {
             return m & IFMT == IFIFO;
         }
