@@ -6,9 +6,6 @@ const std = @import("std.zig");
 pub const path = @import("fs/path.zig");
 pub const wasi = @import("fs/wasi.zig");
 
-pub const getAppDataDir = @import("fs/get_app_data_dir.zig").getAppDataDir;
-pub const GetAppDataDirError = @import("fs/get_app_data_dir.zig").GetAppDataDirError;
-
 pub const base64_alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_".*;
 
 /// Base64 encoder, replacing the standard `+/` with `-_` so that it can be used in a file name on any filesystem.
@@ -25,5 +22,4 @@ pub const max_name_bytes = std.Io.Dir.max_name_bytes;
 test {
     _ = path;
     _ = @import("fs/test.zig");
-    _ = @import("fs/get_app_data_dir.zig");
 }

@@ -743,6 +743,7 @@ pub const EnvVar = enum {
     NO_COLOR,
     CLICOLOR_FORCE,
     XDG_CACHE_HOME,
+    LOCALAPPDATA,
     HOME,
 
     pub fn isSet(comptime ev: EnvVar) bool {

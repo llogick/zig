@@ -1,5 +1,4 @@
 const builtin = @import("builtin");
-const build_options = @import("build_options");
 
 const std = @import("std");
 const Io = std.Io;
@@ -7,6 +6,8 @@ const Dir = std.Io.Dir;
 const mem = std.mem;
 const Allocator = std.mem.Allocator;
 const Cache = std.Build.Cache;
+
+const build_options = @import("build_options");
 
 const Compilation = @import("Compilation.zig");
 const Package = @import("Package.zig");
@@ -101,26 +102,35 @@ pub fn findZigLibDirFromSelfExe(
 }
 
 /// Caller owns returned memory.
-pub fn resolveGlobalCacheDir(allocator: Allocator) ![]u8 {
-    if (builtin.os.tag == .wasi)
-        @compileError("on WASI the global cache dir must be resolved with preopens");
+pub fn resolveGlobalCacheDir(gpa: Allocator) ![]u8 {
+    if (try std.zig.EnvVar.ZIG_GLOBAL_CACHE_DIR.get(gpa)) |value| return value;
 
-    if (try std.zig.EnvVar.ZIG_GLOBAL_CACHE_DIR.get(allocator)) |value| return value;
+    const app_name = "zig";
 
-    const appname = "zig";
-
-    if (builtin.os.tag != .windows) {
-        if (std.zig.EnvVar.XDG_CACHE_HOME.getPosix()) |cache_root| {
-            if (cache_root.len > 0) {
-                return Dir.path.join(allocator, &.{ cache_root, appname });
+    switch (builtin.os.tag) {
+        .wasi => @compileError("on WASI the global cache dir must be resolved with preopens"),
+        .windows => {
+            const local_app_data_dir = (std.zig.EnvVar.LOCALAPPDATA.get(gpa) catch |err| switch (err) {
+                error.OutOfMemory => |e| return e,
+                error.InvalidWtf8 => return error.AppDataDirUnavailable,
+            }) orelse return error.AppDataDirUnavailable;
+            defer gpa.free(local_app_data_dir);
+            return Dir.path.join(gpa, &.{ local_app_data_dir, app_name });
+        },
+        else => {
+            if (std.zig.EnvVar.XDG_CACHE_HOME.getPosix()) |cache_root| {
+                if (cache_root.len > 0) {
+                    return Dir.path.join(gpa, &.{ cache_root, app_name });
+                }
             }
-        }
-        if (std.zig.EnvVar.HOME.getPosix()) |home| {
-            return Dir.path.join(allocator, &.{ home, ".cache", appname });
-        }
+            if (std.zig.EnvVar.HOME.getPosix()) |home| {
+                if (home.len > 0) {
+                    return Dir.path.join(gpa, &.{ home, ".cache", app_name });
+                }
+            }
+            return error.AppDataDirUnavailable;
+        },
     }
-
-    return std.fs.getAppDataDir(allocator, appname);
 }
 
 /// Similar to `Dir.path.resolve`, but converts to a cwd-relative path, or, if that would

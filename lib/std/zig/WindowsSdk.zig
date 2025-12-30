@@ -860,7 +860,14 @@ const MsvcLibDir = struct {
 
         // %localappdata%\Microsoft\VisualStudio\
         // %appdata%\Local\Microsoft\VisualStudio\
-        const visualstudio_folder_path = std.fs.getAppDataDir(gpa, "Microsoft\\VisualStudio\\") catch return error.PathNotFound;
+        const local_app_data_path = (std.zig.EnvVar.LOCALAPPDATA.get(gpa) catch |err| switch (err) {
+            error.OutOfMemory => |e| return e,
+            error.InvalidWtf8 => return error.PathNotFound,
+        }) orelse return error.PathNotFound;
+        defer gpa.free(local_app_data_path);
+        const visualstudio_folder_path = try Dir.path.join(gpa, &.{
+            local_app_data_path, "Microsoft\\VisualStudio\\",
+        });
         defer gpa.free(visualstudio_folder_path);
 
         const vs_versions: []const []const u8 = vs_versions: {
