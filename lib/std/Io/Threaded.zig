@@ -39,7 +39,6 @@ cpu_count_error: ?std.Thread.CpuCountError,
 busy_count: usize = 0,
 worker_threads: std.atomic.Value(?*Thread),
 pid: Pid = .unknown,
-robust_cancel: RobustCancel,
 
 wsa: if (is_windows) Wsa else struct {} = .{},
 
@@ -104,8 +103,6 @@ pub const Environ = struct {
         else => struct {},
     };
 };
-
-pub const RobustCancel = enum { enabled, disabled };
 
 pub const Pid = if (native_os == .linux) enum(posix.pid_t) {
     unknown = 0,
@@ -315,7 +312,7 @@ const Group = struct {
         var need_signal: bool = !skip_signals and g.cancelThreads(t);
         var timeout_ns: u64 = 1 << 10;
         while (true) {
-            need_signal = need_signal and g.signalAllCanceledSyscalls(t) and t.robust_cancel == .enabled;
+            need_signal = need_signal and g.signalAllCanceledSyscalls(t);
             Thread.futexWaitUncancelable(&num_completed.raw, 0, if (need_signal) timeout_ns else null);
             switch (num_completed.load(.acquire)) { // acquire task results
                 0 => {},
@@ -469,7 +466,7 @@ const Future = struct {
         var need_signal: bool = thread != null and thread.?.cancelAwaitable(.fromFuture(future));
         var timeout_ns: u64 = 1 << 10;
         while (true) {
-            need_signal = need_signal and thread.?.signalCanceledSyscall(t, .fromFuture(future)) and t.robust_cancel == .enabled;
+            need_signal = need_signal and thread.?.signalCanceledSyscall(t, .fromFuture(future));
             Thread.futexWaitUncancelable(&num_completed.raw, 0, if (need_signal) timeout_ns else null);
             switch (num_completed.load(.acquire)) { // acquire task results
                 0 => {},
@@ -1112,17 +1109,6 @@ pub const InitOptions = struct {
     /// concurrent tasks. After this number, calls to `Io.concurrent` return
     /// `error.ConcurrencyUnavailable`.
     concurrent_limit: Io.Limit = .unlimited,
-    /// When a cancel request is made, blocking syscalls can be unblocked by
-    /// issuing a signal. However, if the signal arrives after the check and before
-    /// the syscall instruction, it is missed.
-    ///
-    /// This option solves the race condition by retrying the signal delivery
-    /// until it is acknowledged, with an exponential backoff.
-    ///
-    /// Unfortunately, trying again until the cancellation request is acknowledged
-    /// has been observed to be relatively slow, and usually strong cancellation
-    /// guarantees are not needed, so this defaults to off.
-    robust_cancel: RobustCancel = .disabled,
     /// Affects the following operations:
     /// * `processExecutablePath` on OpenBSD and Haiku.
     argv0: Argv0 = .{},
@@ -1160,7 +1146,6 @@ pub fn init(
         .have_signal_handler = false,
         .argv0 = options.argv0,
         .environ = options.environ,
-        .robust_cancel = options.robust_cancel,
         .worker_threads = .init(null),
     };
 
@@ -1195,7 +1180,6 @@ pub const init_single_threaded: Threaded = .{
     .old_sig_io = undefined,
     .old_sig_pipe = undefined,
     .have_signal_handler = false,
-    .robust_cancel = .disabled,
     .argv0 = .{},
     .environ = .{},
     .worker_threads = .init(null),
