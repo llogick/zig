@@ -167,6 +167,18 @@ pub const timespec = switch (native_os) {
     .openbsd, .haiku => extern struct {
         sec: time_t,
         nsec: isize,
+
+        /// For use with `utimensat` and `futimens`.
+        pub const NOW: timespec = .{
+            .sec = 0, // ignored
+            .nsec = -2,
+        };
+
+        /// For use with `utimensat` and `futimens`.
+        pub const OMIT: timespec = .{
+            .sec = 0, // ignored
+            .nsec = -1,
+        };
     },
     else => void,
 };
