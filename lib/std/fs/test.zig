@@ -645,6 +645,7 @@ fn contains(entries: *const std.array_list.Managed(Dir.Entry), el: Dir.Entry) bo
 
 test "Dir.realPath smoke test" {
     if (native_os == .wasi) return error.SkipZigTest;
+    if (native_os == .openbsd) return error.SkipZigTest;
 
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {
@@ -820,7 +821,7 @@ test "file operations on directories" {
             try expectError(error.IsDir, ctx.dir.createFile(io, test_dir_name, .{}));
             try expectError(error.IsDir, ctx.dir.deleteFile(io, test_dir_name));
             switch (native_os) {
-                .dragonfly, .netbsd => {
+                .netbsd => {
                     // no error when reading a directory. See https://github.com/ziglang/zig/issues/5732
                     const buf = try ctx.dir.readFileAlloc(io, test_dir_name, testing.allocator, .unlimited);
                     testing.allocator.free(buf);
@@ -1240,6 +1241,7 @@ test "createDirPath, put some files in it, deleteTreeMinStackSize" {
 
 test "createDirPath in a directory that no longer exists" {
     if (native_os == .windows) return error.SkipZigTest; // Windows returns FileBusy if attempting to remove an open dir
+    if (native_os == .dragonfly) return error.SkipZigTest; // DragonflyBSD does not produce error (hammer2 fs)
 
     const io = testing.io;
 

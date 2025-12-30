@@ -167,6 +167,18 @@ pub const timespec = switch (native_os) {
     .openbsd, .haiku => extern struct {
         sec: time_t,
         nsec: isize,
+
+        /// For use with `utimensat` and `futimens`.
+        pub const NOW: timespec = .{
+            .sec = 0, // ignored
+            .nsec = -2,
+        };
+
+        /// For use with `utimensat` and `futimens`.
+        pub const OMIT: timespec = .{
+            .sec = 0, // ignored
+            .nsec = -1,
+        };
     },
     else => void,
 };
@@ -2364,6 +2376,8 @@ pub const S = switch (native_os) {
         pub const IROTH = 0o004;
         pub const IWOTH = 0o002;
         pub const IXOTH = 0o001;
+
+        pub const BLKSIZE = 512;
 
         pub fn ISFIFO(m: u32) bool {
             return m & IFMT == IFIFO;
@@ -9676,6 +9690,7 @@ pub const NSIG = switch (native_os) {
     .illumos => 75,
     // https://github.com/SerenityOS/serenity/blob/046c23f567a17758d762a33bdf04bacbfd088f9f/Kernel/API/POSIX/signal_numbers.h#L42
     .openbsd, .serenity => 33,
+    .dragonfly => 64,
     else => {},
 };
 
