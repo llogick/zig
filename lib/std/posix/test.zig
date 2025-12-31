@@ -140,11 +140,6 @@ test "pipe" {
     posix.close(fds[0]);
 }
 
-test "argsAlloc" {
-    const args = try std.process.argsAlloc(std.testing.allocator);
-    std.process.argsFree(std.testing.allocator, args);
-}
-
 test "memfd_create" {
     const io = testing.io;
 
@@ -473,7 +468,7 @@ test "getpid" {
     if (native_os == .wasi) return error.SkipZigTest;
     if (native_os == .windows) return error.SkipZigTest;
 
-    try expect(posix.getpid() != 0);
+    try expect(posix.system.getpid() != 0);
 }
 
 test "getppid" {

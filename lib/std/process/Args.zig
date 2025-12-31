@@ -6,7 +6,7 @@ const native_os = builtin.os.tag;
 const std = @import("../std.zig");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
-const testing = std.debug.testing;
+const testing = std.testing;
 
 vector: Vector,
 

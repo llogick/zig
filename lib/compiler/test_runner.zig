@@ -29,7 +29,7 @@ const need_simple = switch (builtin.zig_backend) {
     else => false,
 };
 
-pub fn main() void {
+pub fn main(init: std.process.Init.Minimal) void {
     @disableInstrumentation();
 
     if (builtin.cpu.arch.isSpirV()) {
@@ -41,8 +41,7 @@ pub fn main() void {
         return mainSimple() catch @panic("test failure\n");
     }
 
-    const args = std.process.argsAlloc(fba.allocator()) catch
-        @panic("unable to parse command line args");
+    const args = init.args.toSlice(fba.allocator()) catch @panic("unable to parse command line args");
 
     var listen = false;
     var opt_cache_dir: ?[]const u8 = null;

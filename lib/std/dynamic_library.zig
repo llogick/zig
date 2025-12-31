@@ -31,12 +31,20 @@ pub const DynLib = struct {
 
     /// Trusts the file. Malicious file will be able to execute arbitrary code.
     pub fn open(path: []const u8) Error!DynLib {
-        return .{ .inner = try InnerType.open(path) };
+        if (InnerType == ElfDynLib) {
+            return .{ .inner = try InnerType.open(path, null) };
+        } else {
+            return .{ .inner = try InnerType.open(path) };
+        }
     }
 
     /// Trusts the file. Malicious file will be able to execute arbitrary code.
     pub fn openZ(path_c: [*:0]const u8) Error!DynLib {
-        return .{ .inner = try InnerType.openZ(path_c) };
+        if (InnerType == ElfDynLib) {
+            return .{ .inner = try InnerType.openZ(path_c, null) };
+        } else {
+            return .{ .inner = try InnerType.openZ(path_c) };
+        }
     }
 
     /// Trusts the file.
@@ -197,7 +205,7 @@ pub const ElfDynLib = struct {
     // - DT_RPATH of the calling binary is not used as a search path
     // - DT_RUNPATH of the calling binary is not used as a search path
     // - /etc/ld.so.cache is not read
-    fn resolveFromName(io: Io, path_or_name: []const u8) !posix.fd_t {
+    fn resolveFromName(io: Io, path_or_name: []const u8, LD_LIBRARY_PATH: ?[]const u8) !posix.fd_t {
         // If filename contains a slash ("/"), then it is interpreted as a (relative or absolute) pathname
         if (std.mem.findScalarPos(u8, path_or_name, 0, '/')) |_| {
             return posix.open(path_or_name, .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, 0);
@@ -207,7 +215,7 @@ pub const ElfDynLib = struct {
         if (std.os.linux.geteuid() == std.os.linux.getuid() and
             std.os.linux.getegid() == std.os.linux.getgid())
         {
-            if (posix.getenvZ("LD_LIBRARY_PATH")) |ld_library_path| {
+            if (LD_LIBRARY_PATH) |ld_library_path| {
                 if (resolveFromSearchPath(io, ld_library_path, path_or_name, ':')) |fd| {
                     return fd;
                 }
@@ -221,10 +229,10 @@ pub const ElfDynLib = struct {
     }
 
     /// Trusts the file. Malicious file will be able to execute arbitrary code.
-    pub fn open(path: []const u8) Error!ElfDynLib {
+    pub fn open(path: []const u8, LD_LIBRARY_PATH: ?[]const u8) Error!ElfDynLib {
         const io = std.Options.debug_io;
 
-        const fd = try resolveFromName(io, path);
+        const fd = try resolveFromName(io, path, LD_LIBRARY_PATH);
         defer posix.close(fd);
 
         const file: Io.File = .{ .handle = fd };
@@ -371,8 +379,8 @@ pub const ElfDynLib = struct {
     }
 
     /// Trusts the file. Malicious file will be able to execute arbitrary code.
-    pub fn openZ(path_c: [*:0]const u8) Error!ElfDynLib {
-        return open(mem.sliceTo(path_c, 0));
+    pub fn openZ(path_c: [*:0]const u8, LD_LIBRARY_PATH: ?[]const u8) Error!ElfDynLib {
+        return open(mem.sliceTo(path_c, 0), LD_LIBRARY_PATH);
     }
 
     /// Trusts the file
@@ -554,8 +562,8 @@ fn checkver(def_arg: *elf.Verdef, vsym_arg: elf.Versym, vername: []const u8, str
 
 test "ElfDynLib" {
     if (native_os != .linux) return error.SkipZigTest;
-    try testing.expectError(error.FileNotFound, ElfDynLib.open("invalid_so.so"));
-    try testing.expectError(error.FileNotFound, ElfDynLib.openZ("invalid_so.so"));
+    try testing.expectError(error.FileNotFound, ElfDynLib.open("invalid_so.so", null));
+    try testing.expectError(error.FileNotFound, ElfDynLib.openZ("invalid_so.so", null));
 }
 
 /// Separated to avoid referencing `WindowsDynLib`, because its field types may not

@@ -12836,11 +12836,11 @@ fn processSpawnPosix(userdata: ?*anyopaque, options: process.SpawnOptions) proce
     const envp: [*:null]const ?[*:0]const u8 = m: {
         const prog_fd: i32 = if (prog_pipe[1] == -1) -1 else prog_fileno;
         if (options.env_map) |env_map| {
-            break :m (try env_map.createBlock(arena, .{
+            break :m (try env_map.createBlockPosix(arena, .{
                 .zig_progress_fd = prog_fd,
             })).ptr;
         }
-        break :m (try process.Environ.createBlock(.{ .block = t.environ.block }, arena, .{
+        break :m (try process.Environ.createBlockPosix(.{ .block = t.environ.block }, arena, .{
             .zig_progress_fd = prog_fd,
         })).ptr;
     };

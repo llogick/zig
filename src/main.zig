@@ -168,7 +168,7 @@ const use_debug_allocator = build_options.debug_gpa or
         .ReleaseFast, .ReleaseSmall => false,
     });
 
-pub fn main() anyerror!void {
+pub fn main(init: std.process.Init.Minimal) anyerror!void {
     const gpa = gpa: {
         if (use_debug_allocator) break :gpa debug_allocator.allocator();
         if (native_os == .wasi) break :gpa std.heap.wasm_allocator;
@@ -182,26 +182,25 @@ pub fn main() anyerror!void {
     defer arena_instance.deinit();
     const arena = arena_instance.allocator();
 
-    const args = try process.argsAlloc(arena);
+    const args = try init.args.toSlice(arena);
 
     if (args.len > 0) crash_report.zig_argv0 = args[0];
 
+    var env_map = init.environ.createMap(arena) catch |err| fatal("failed to parse environment: {t}", .{err});
+
     if (tracy.enable_allocation) {
         var gpa_tracy = tracy.tracyAllocator(gpa);
-        return mainArgs(gpa_tracy.allocator(), arena, args);
+        return mainArgs(gpa_tracy.allocator(), arena, args, &env_map);
     }
 
     if (native_os == .wasi) {
         wasi_preopens = try fs.wasi.preopensAlloc(arena);
     }
 
-    return mainArgs(gpa, arena, args);
+    return mainArgs(gpa, arena, args, &env_map);
 }
 
-fn mainArgs(gpa: Allocator, arena: Allocator, args: []const [:0]const u8) !void {
-    const tr = tracy.trace(@src());
-    defer tr.end();
-
+fn mainArgs(gpa: Allocator, arena: Allocator, args: []const [:0]const u8, env_map: *process.Environ.Map) !void {
     Compilation.setMainThread();
 
     if (args.len <= 1) {
@@ -209,7 +208,7 @@ fn mainArgs(gpa: Allocator, arena: Allocator, args: []const [:0]const u8) !void 
         fatal("expected command argument", .{});
     }
 
-    if (process.can_execv and std.posix.getenvZ("ZIG_IS_DETECTING_LIBC_PATHS") != null) {
+    if (process.can_replace and std.zig.EnvVar.ZIG_IS_DETECTING_LIBC_PATHS.isSet(env_map)) {
         dev.check(.cc_command);
         // In this case we have accidentally invoked ourselves as "the system C compiler"
         // to figure out where libc is installed. This is essentially infinite recursion
@@ -217,27 +216,28 @@ fn mainArgs(gpa: Allocator, arena: Allocator, args: []const [:0]const u8) !void 
         // Here we ignore the CC environment variable and exec `cc` as a child process.
         // However it's possible Zig is installed as *that* C compiler as well, which is
         // why we have this additional environment variable here to check.
-        var env_map = try process.getEnvMap(arena);
 
-        const inf_loop_env_key = "ZIG_IS_TRYING_TO_NOT_CALL_ITSELF";
-        if (env_map.get(inf_loop_env_key) != null) {
-            fatal("The compilation links against libc, but Zig is unable to provide a libc " ++
-                "for this operating system, and no --libc " ++
-                "parameter was provided, so Zig attempted to invoke the system C compiler " ++
-                "in order to determine where libc is installed. However the system C " ++
-                "compiler is `zig cc`, so no libc installation was found.", .{});
+        const inf_loop_env_key: std.zig.EnvVar = .ZIG_IS_TRYING_TO_NOT_CALL_ITSELF;
+        if (inf_loop_env_key.isSet(env_map)) {
+            fatal("{s}", .{
+                "The compilation links against libc, but Zig is unable to provide a libc " ++
+                    "for this operating system, and no --libc " ++
+                    "parameter was provided, so Zig attempted to invoke the system C compiler " ++
+                    "in order to determine where libc is installed. However the system C " ++
+                    "compiler is `zig cc`, so no libc installation was found.",
+            });
         }
-        try env_map.put(inf_loop_env_key, "1");
+        try env_map.put(@tagName(inf_loop_env_key), "1");
 
         // Some programs such as CMake will strip the `cc` and subsequent args from the
         // CC environment variable. We detect and support this scenario here because of
         // the ZIG_IS_DETECTING_LIBC_PATHS environment variable.
         if (mem.eql(u8, args[1], "cc")) {
-            return process.execve(arena, args[1..], &env_map);
+            return process.replace(.{ .argv = args[1..], .env_map = env_map });
         } else {
             const modified_args = try arena.dupe([]const u8, args);
             modified_args[0] = "cc";
-            return process.execve(arena, modified_args, &env_map);
+            return process.replace(.{ .argv = modified_args, .env_map = env_map });
         }
     }
 
@@ -4431,7 +4431,7 @@ fn runOrTest(
 
     // We do not execve for tests because if the test fails we want to print
     // the error message and invocation below.
-    if (process.can_execv and arg_mode == .run) {
+    if (process.can_replace and arg_mode == .run) {
         // execv releases the locks; no need to destroy the Compilation here.
         _ = try io.lockStderr(&.{}, .no_color);
         const err = process.execve(gpa, argv.items, &env_map);
@@ -5668,7 +5668,7 @@ fn jitCmd(
 
     child_argv.appendSliceAssumeCapacity(args);
 
-    if (process.can_execv and options.capture == null) {
+    if (process.can_replace and options.capture == null) {
         if (EnvVar.ZIG_DEBUG_CMD.isSet()) {
             const cmd = try std.mem.join(arena, " ", child_argv.items);
             std.debug.print("{s}\n", .{cmd});

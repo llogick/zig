@@ -6,15 +6,25 @@ const native_os = builtin.os.tag;
 const std = @import("../std.zig");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
-const testing = std.debug.testing;
+const testing = std.testing;
 const unicode = std.unicode;
 const posix = std.posix;
 const mem = std.mem;
 
+/// Unmodified, unprocessed data provided by the operating system.
+///
+/// On Windows this might point to memory in the PEB.
+///
+/// On WASI without libc, this is void because the environment has to be
+/// queried and heap-allocated at runtime.
 block: Block,
 
 pub const Block = switch (native_os) {
     .windows => []const u16,
+    .wasi => switch (builtin.link_libc) {
+        false => void,
+        true => [:null]const ?[*:0]const u8,
+    },
     else => [:null]const ?[*:0]const u8,
 };
 
@@ -89,11 +99,11 @@ pub const Map = struct {
         self.* = undefined;
     }
 
-    pub fn keys(m: *Map) [][]const u8 {
+    pub fn keys(m: *const Map) [][]const u8 {
         return m.array_hash_map.keys();
     }
 
-    pub fn values(m: *Map) [][]const u8 {
+    pub fn values(m: *const Map) [][]const u8 {
         return m.array_hash_map.values();
     }
 
@@ -214,10 +224,10 @@ pub const Map = struct {
 
     /// Creates a null-delimited environment variable block in the format
     /// expected by POSIX, from a hash map plus options.
-    pub fn createBlock(
+    pub fn createBlockPosix(
         map: *const Map,
         arena: Allocator,
-        options: CreateBlockOptions,
+        options: CreateBlockPosixOptions,
     ) Allocator.Error![:null]?[*:0]u8 {
         const ZigProgressAction = enum { nothing, edit, delete, add };
         const zig_progress_action: ZigProgressAction = a: {
@@ -272,6 +282,46 @@ pub const Map = struct {
 
         assert(i == envp_count);
         return envp_buf;
+    }
+
+    /// Caller must free result.
+    pub fn createBlockWindows(map: *const Map, gpa: Allocator) Allocator.Error![]u16 {
+        // count bytes needed
+        const max_chars_needed = x: {
+            // Only need 2 trailing NUL code units for an empty environment
+            var max_chars_needed: usize = if (map.count() == 0) 2 else 1;
+            var it = map.iterator();
+            while (it.next()) |pair| {
+                // +1 for '='
+                // +1 for null byte
+                max_chars_needed += pair.key_ptr.len + pair.value_ptr.len + 2;
+            }
+            break :x max_chars_needed;
+        };
+        const result = try gpa.alloc(u16, max_chars_needed);
+        errdefer gpa.free(result);
+
+        var it = map.iterator();
+        var i: usize = 0;
+        while (it.next()) |pair| {
+            i += try unicode.wtf8ToWtf16Le(result[i..], pair.key_ptr.*);
+            result[i] = '=';
+            i += 1;
+            i += try unicode.wtf8ToWtf16Le(result[i..], pair.value_ptr.*);
+            result[i] = 0;
+            i += 1;
+        }
+        result[i] = 0;
+        i += 1;
+        // An empty environment is a special case that requires a redundant
+        // NUL terminator. CreateProcess will read the second code unit even
+        // though theoretically the first should be enough to recognize that the
+        // environment is empty (see https://nullprogram.com/blog/2023/08/23/)
+        if (map.count() == 0) {
+            result[i] = 0;
+            i += 1;
+        }
+        return try gpa.realloc(result, i);
     }
 };
 
@@ -380,162 +430,131 @@ pub fn createMap(env: Environ, allocator: Allocator) CreateMapError!Map {
     }
 }
 
-test createMap {
-    var env = try createMap(testing.allocator);
-    defer env.deinit();
-}
-
-pub const GetEnvVarOwnedError = error{
+pub const ContainsError = error{
     OutOfMemory,
-    EnvironmentVariableNotFound,
-
-    /// On Windows, environment variable keys provided by the user must be valid WTF-8.
-    /// https://wtf-8.codeberg.page/
+    /// On Windows, environment variable keys provided by the user must be
+    /// valid [WTF-8](https://wtf-8.codeberg.page/). This error is unreachable
+    /// if the key is statically known to be valid.
     InvalidWtf8,
-};
-
-/// Caller must free returned memory.
-/// On Windows, if `key` is not valid [WTF-8](https://wtf-8.codeberg.page/),
-/// then `error.InvalidWtf8` is returned.
-/// On Windows, the value is encoded as [WTF-8](https://wtf-8.codeberg.page/).
-/// On other platforms, the value is an opaque sequence of bytes with no particular encoding.
-pub fn getEnvVarOwned(allocator: Allocator, key: []const u8) GetEnvVarOwnedError![]u8 {
-    if (native_os == .windows) {
-        const result_w = blk: {
-            var stack_alloc = std.heap.stackFallback(256 * @sizeOf(u16), allocator);
-            const stack_allocator = stack_alloc.get();
-            const key_w = try unicode.wtf8ToWtf16LeAllocZ(stack_allocator, key);
-            defer stack_allocator.free(key_w);
-
-            break :blk getenvW(key_w) orelse return error.EnvironmentVariableNotFound;
-        };
-        // wtf16LeToWtf8Alloc can only fail with OutOfMemory
-        return unicode.wtf16LeToWtf8Alloc(allocator, result_w);
-    } else if (native_os == .wasi and !builtin.link_libc) {
-        var envmap = createMap(allocator) catch return error.OutOfMemory;
-        defer envmap.deinit();
-        const val = envmap.get(key) orelse return error.EnvironmentVariableNotFound;
-        return allocator.dupe(u8, val);
-    } else {
-        const result = posix.getenv(key) orelse return error.EnvironmentVariableNotFound;
-        return allocator.dupe(u8, result);
-    }
-}
-
-/// On Windows, `key` must be valid WTF-8.
-pub inline fn hasEnvVarConstant(comptime key: []const u8) bool {
-    if (native_os == .windows) {
-        const key_w = comptime unicode.wtf8ToWtf16LeStringLiteral(key);
-        return getenvW(key_w) != null;
-    } else if (native_os == .wasi and !builtin.link_libc) {
-        return false;
-    } else {
-        return posix.getenv(key) != null;
-    }
-}
-
-/// On Windows, `key` must be valid WTF-8.
-pub inline fn hasNonEmptyEnvVarConstant(comptime key: []const u8) bool {
-    if (native_os == .windows) {
-        const key_w = comptime unicode.wtf8ToWtf16LeStringLiteral(key);
-        const value = getenvW(key_w) orelse return false;
-        return value.len != 0;
-    } else if (native_os == .wasi and !builtin.link_libc) {
-        return false;
-    } else {
-        const value = posix.getenv(key) orelse return false;
-        return value.len != 0;
-    }
-}
-
-pub const ParseIntError = std.fmt.ParseIntError || error{EnvironmentVariableNotFound};
-
-/// Parses an environment variable as an integer.
-///
-/// On Windows, `key` must be valid WTF-8.
-pub fn parseInt(io: std.Io, key: []const u8, comptime I: type, base: u8) ParseIntError!I {
-    const text = io.environ(key) orelse return error.EnvironmentVariableNotFound;
-    return std.fmt.parseInt(I, text, base);
-}
-
-pub const HasEnvVarError = error{
-    OutOfMemory,
-
-    /// On Windows, environment variable keys provided by the user must be valid WTF-8.
-    /// https://wtf-8.codeberg.page/
-    InvalidWtf8,
+    /// WASI-only. `environ_sizes_get` or `environ_get` failed for an
+    /// unexpected reason.
+    Unexpected,
 };
 
 /// On Windows, if `key` is not valid [WTF-8](https://wtf-8.codeberg.page/),
 /// then `error.InvalidWtf8` is returned.
-pub fn hasEnvVar(allocator: Allocator, key: []const u8) HasEnvVarError!bool {
-    if (native_os == .windows) {
-        var stack_alloc = std.heap.stackFallback(256 * @sizeOf(u16), allocator);
-        const stack_allocator = stack_alloc.get();
-        const key_w = try unicode.wtf8ToWtf16LeAllocZ(stack_allocator, key);
-        defer stack_allocator.free(key_w);
-        return getenvW(key_w) != null;
-    } else if (native_os == .wasi and !builtin.link_libc) {
-        var envmap = createMap(allocator) catch return error.OutOfMemory;
-        defer envmap.deinit();
-        return envmap.getPtr(key) != null;
-    } else {
-        return posix.getenv(key) != null;
-    }
-}
-
-/// On Windows, if `key` is not valid [WTF-8](https://wtf-8.codeberg.page/),
-/// then `error.InvalidWtf8` is returned.
-pub fn hasNonEmptyEnvVar(allocator: Allocator, key: []const u8) HasEnvVarError!bool {
-    if (native_os == .windows) {
-        var stack_alloc = std.heap.stackFallback(256 * @sizeOf(u16), allocator);
-        const stack_allocator = stack_alloc.get();
-        const key_w = try unicode.wtf8ToWtf16LeAllocZ(stack_allocator, key);
-        defer stack_allocator.free(key_w);
-        const value = getenvW(key_w) orelse return false;
-        return value.len != 0;
-    } else if (native_os == .wasi and !builtin.link_libc) {
-        var envmap = createMap(allocator) catch return error.OutOfMemory;
-        defer envmap.deinit();
-        const value = envmap.getPtr(key) orelse return false;
-        return value.len != 0;
-    } else {
-        const value = posix.getenv(key) orelse return false;
-        return value.len != 0;
-    }
-}
-
-/// Windows-only. Get an environment variable with a null-terminated, WTF-16 encoded name.
-/// The returned slice points to memory in the PEB.
-///
-/// This function performs a Unicode-aware case-insensitive lookup using RtlEqualUnicodeString.
 ///
 /// See also:
-/// * `std.posix.getenv`
 /// * `createMap`
-/// * `getEnvVarOwned`
-/// * `hasEnvVarConstant`
-/// * `hasEnvVar`
-pub fn getenvW(key: [*:0]const u16) ?[:0]const u16 {
-    if (native_os != .windows) {
-        @compileError("Windows-only");
+/// * `containsConstant`
+/// * `containsUnempty`
+pub fn contains(environ: Environ, gpa: Allocator, key: []const u8) ContainsError!bool {
+    var map = try createMap(environ, gpa);
+    defer map.deinit();
+    return map.contains(key);
+}
+
+/// On Windows, if `key` is not valid [WTF-8](https://wtf-8.codeberg.page/),
+/// then `error.InvalidWtf8` is returned.
+///
+/// See also:
+/// * `createMap`
+/// * `containsUnemptyConstant`
+/// * `contains`
+pub fn containsUnempty(environ: Environ, gpa: Allocator, key: []const u8) ContainsError!bool {
+    var map = try createMap(environ, gpa);
+    defer map.deinit();
+    const value = map.get(key) orelse return false;
+    return value.len != 0;
+}
+
+/// This function is unavailable on WASI without libc due to the memory
+/// allocation requirement.
+///
+/// On Windows, `key` must be valid [WTF-8](https://wtf-8.codeberg.page/),
+///
+/// See also:
+/// * `contains`
+/// * `containsUnemptyConstant`
+/// * `createMap`
+pub inline fn containsConstant(environ: Environ, comptime key: []const u8) bool {
+    if (native_os == .windows) {
+        const key_w = comptime unicode.wtf8ToWtf16LeStringLiteral(key);
+        return getWindows(environ, key_w) != null;
+    } else {
+        return getPosix(environ, key) != null;
     }
+}
+
+/// This function is unavailable on WASI without libc due to the memory
+/// allocation requirement.
+///
+/// On Windows, `key` must be valid [WTF-8](https://wtf-8.codeberg.page/),
+///
+/// See also:
+/// * `containsUnempty`
+/// * `containsConstant`
+/// * `createMap`
+pub inline fn containsUnemptyConstant(environ: Environ, comptime key: []const u8) bool {
+    if (native_os == .windows) {
+        const key_w = comptime unicode.wtf8ToWtf16LeStringLiteral(key);
+        const value = getWindows(environ, key_w) orelse return false;
+        return value.len != 0;
+    } else {
+        const value = getPosix(environ, key) orelse return false;
+        return value.len != 0;
+    }
+}
+
+/// This function is unavailable on WASI without libc due to the memory
+/// allocation requirement.
+///
+/// See also:
+/// * `getWindows`
+/// * `createMap`
+pub fn getPosix(environ: Environ, key: []const u8) ?[:0]const u8 {
+    if (mem.findScalar(u8, key, '=') != null) return null;
+    for (environ.block) |opt_line| {
+        const line = opt_line.?;
+        var line_i: usize = 0;
+        while (line[line_i] != 0) : (line_i += 1) {
+            if (line_i == key.len) break;
+            if (line[line_i] != key[line_i]) break;
+        }
+        if ((line_i != key.len) or (line[line_i] != '=')) continue;
+
+        return mem.sliceTo(line + line_i + 1, 0);
+    }
+    return null;
+}
+
+/// Windows-only. Get an environment variable with a null-terminated, WTF-16
+/// encoded name.
+///
+/// This function performs a Unicode-aware case-insensitive lookup using
+/// RtlEqualUnicodeString.
+///
+/// See also:
+/// * `createMap`
+/// * `containsConstant`
+/// * `contains`
+pub fn getWindows(environ: Environ, key: [*:0]const u16) ?[:0]const u16 {
+    comptime assert(native_os == .windows);
+
+    // '=' anywhere but the start makes this an invalid environment variable name.
     const key_slice = mem.sliceTo(key, 0);
-    // '=' anywhere but the start makes this an invalid environment variable name
-    if (key_slice.len > 0 and std.mem.findScalar(u16, key_slice[1..], '=') != null) {
-        return null;
-    }
-    const ptr = std.os.windows.peb().ProcessParameters.Environment;
+    if (key_slice.len > 0 and mem.findScalar(u16, key_slice[1..], '=') != null) return null;
+
     var i: usize = 0;
-    while (ptr[i] != 0) {
-        const key_value = mem.sliceTo(ptr[i..], 0);
+    while (environ.block[i] != 0) {
+        const key_value = mem.sliceTo(environ.block[i..], 0);
 
         // There are some special environment variables that start with =,
         // so we need a special case to not treat = as a key/value separator
         // if it's the first character.
         // https://devblogs.microsoft.com/oldnewthing/20100506-00/?p=14133
         const equal_search_start: usize = if (key_value[0] == '=') 1 else 0;
-        const equal_index = std.mem.findScalarPos(u16, key_value, equal_search_start, '=') orelse {
+        const equal_index = mem.findScalarPos(u16, key_value, equal_search_start, '=') orelse {
             // This is enforced by CreateProcess.
             // If violated, CreateProcess will fail with INVALID_PARAMETER.
             unreachable; // must contain a =
@@ -552,25 +571,35 @@ pub fn getenvW(key: [*:0]const u16) ?[:0]const u16 {
     return null;
 }
 
-test getEnvVarOwned {
-    try testing.expectError(
-        error.EnvironmentVariableNotFound,
-        getEnvVarOwned(std.testing.allocator, "BADENV"),
-    );
+pub const GetAllocError = error{
+    OutOfMemory,
+    EnvironmentVariableMissing,
+    /// On Windows, environment variable keys provided by the user must be
+    /// valid [WTF-8](https://wtf-8.codeberg.page/). This error is unreachable
+    /// if the key is statically known to be valid.
+    InvalidWtf8,
+};
+
+/// Caller owns returned memory.
+///
+/// On Windows:
+/// * If `key` is not valid [WTF-8](https://wtf-8.codeberg.page/), then
+///   `error.InvalidWtf8` is returned.
+/// * The returned value is encoded as [WTF-8](https://wtf-8.codeberg.page/).
+///
+/// On other platforms, the value is an opaque sequence of bytes with no
+/// particular encoding.
+///
+/// See also:
+/// * `createMap`
+pub fn getAlloc(environ: Environ, gpa: Allocator, key: []const u8) GetAllocError![]u8 {
+    var map = createMap(environ, gpa) catch return error.OutOfMemory;
+    defer map.deinit();
+    const val = map.get(key) orelse return error.EnvironmentVariableMissing;
+    return gpa.dupe(u8, val);
 }
 
-test hasEnvVarConstant {
-    if (native_os == .wasi and !builtin.link_libc) return error.SkipZigTest;
-
-    try testing.expect(!hasEnvVarConstant("BADENV"));
-}
-
-test hasEnvVar {
-    const has_env = try hasEnvVar(std.testing.allocator, "BADENV");
-    try testing.expect(!has_env);
-}
-
-pub const CreateBlockOptions = struct {
+pub const CreateBlockPosixOptions = struct {
     /// `null` means to leave the `ZIG_PROGRESS` environment variable unmodified.
     /// If non-null, negative means to remove the environment variable, and >= 0
     /// means to provide it with the given integer.
@@ -579,7 +608,11 @@ pub const CreateBlockOptions = struct {
 
 /// Creates a null-delimited environment variable block in the format expected
 /// by POSIX, from a different one.
-pub fn createBlock(existing: Environ, arena: Allocator, options: CreateBlockOptions) Allocator.Error![:null]?[*:0]u8 {
+pub fn createBlockPosix(
+    existing: Environ,
+    arena: Allocator,
+    options: CreateBlockPosixOptions,
+) Allocator.Error![:null]?[*:0]u8 {
     const contains_zig_progress = for (existing.block) |opt_line| {
         if (mem.eql(u8, mem.sliceTo(opt_line.?, '='), "ZIG_PROGRESS")) break true;
     } else false;
@@ -646,7 +679,7 @@ test "Map.createBlock" {
 
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
-    const environ = try envmap.createBlock(arena.allocator(), .{});
+    const environ = try envmap.createBlockPosix(arena.allocator(), .{});
 
     try testing.expectEqual(@as(usize, 5), environ.len);
 
@@ -663,46 +696,6 @@ test "Map.createBlock" {
             try testing.expect(false); // Environment variable not found
         }
     }
-}
-
-/// Caller must free result.
-pub fn createWindowsEnvBlock(allocator: mem.Allocator, env_map: *const Map) ![]u16 {
-    // count bytes needed
-    const max_chars_needed = x: {
-        // Only need 2 trailing NUL code units for an empty environment
-        var max_chars_needed: usize = if (env_map.count() == 0) 2 else 1;
-        var it = env_map.iterator();
-        while (it.next()) |pair| {
-            // +1 for '='
-            // +1 for null byte
-            max_chars_needed += pair.key_ptr.len + pair.value_ptr.len + 2;
-        }
-        break :x max_chars_needed;
-    };
-    const result = try allocator.alloc(u16, max_chars_needed);
-    errdefer allocator.free(result);
-
-    var it = env_map.iterator();
-    var i: usize = 0;
-    while (it.next()) |pair| {
-        i += try unicode.wtf8ToWtf16Le(result[i..], pair.key_ptr.*);
-        result[i] = '=';
-        i += 1;
-        i += try unicode.wtf8ToWtf16Le(result[i..], pair.value_ptr.*);
-        result[i] = 0;
-        i += 1;
-    }
-    result[i] = 0;
-    i += 1;
-    // An empty environment is a special case that requires a redundant
-    // NUL terminator. CreateProcess will read the second code unit even
-    // though theoretically the first should be enough to recognize that the
-    // environment is empty (see https://nullprogram.com/blog/2023/08/23/)
-    if (env_map.count() == 0) {
-        result[i] = 0;
-        i += 1;
-    }
-    return try allocator.realloc(result, i);
 }
 
 test Map {
@@ -733,13 +726,14 @@ test Map {
     var it = env.iterator();
     var count: Map.Size = 0;
     while (it.next()) |entry| {
-        const is_an_expected_name = std.mem.eql(u8, "SOMETHING_NEW", entry.key_ptr.*) or std.mem.eql(u8, "SOMETHING_NEW_AND_LONGER", entry.key_ptr.*);
+        const is_an_expected_name = mem.eql(u8, "SOMETHING_NEW", entry.key_ptr.*) or mem.eql(u8, "SOMETHING_NEW_AND_LONGER", entry.key_ptr.*);
         try testing.expect(is_an_expected_name);
         count += 1;
     }
     try testing.expectEqual(@as(Map.Size, 2), count);
 
-    env.remove("SOMETHING_NEW");
+    try testing.expect(env.swapRemove("SOMETHING_NEW"));
+    try testing.expect(!env.swapRemove("SOMETHING_NEW"));
     try testing.expect(env.get("SOMETHING_NEW") == null);
 
     try testing.expectEqual(@as(Map.Size, 1), env.count());
@@ -751,11 +745,53 @@ test Map {
 
         // and WTF-8 that's not valid UTF-8
         const wtf8_with_surrogate_pair = try unicode.wtf16LeToWtf8Alloc(testing.allocator, &[_]u16{
-            std.mem.nativeToLittle(u16, 0xD83D), // unpaired high surrogate
+            mem.nativeToLittle(u16, 0xD83D), // unpaired high surrogate
         });
         defer testing.allocator.free(wtf8_with_surrogate_pair);
 
         try env.put(wtf8_with_surrogate_pair, wtf8_with_surrogate_pair);
         try testing.expectEqualSlices(u8, wtf8_with_surrogate_pair, env.get(wtf8_with_surrogate_pair).?);
     }
+}
+
+test "convert from Environ to Map and back again" {
+    const gpa = testing.allocator;
+
+    var map: Map = .init(gpa);
+    defer map.deinit();
+    try map.put("FOO", "BAR");
+    try map.put("A", "");
+    try map.put("", "B");
+
+    var arena_allocator = std.heap.ArenaAllocator.init(gpa);
+    defer arena_allocator.deinit();
+    const arena = arena_allocator.allocator();
+
+    const environ: Environ = switch (native_os) {
+        .windows => .{ .block = try map.createBlockWindows(arena) },
+        .wasi => if (!builtin.libc) return error.SkipZigTest,
+        else => .{ .block = try map.createBlockPosix(arena, .{}) },
+    };
+
+    try testing.expectEqual(true, environ.contains(gpa, "FOO"));
+    try testing.expectEqual(false, environ.contains(gpa, "BAR"));
+    try testing.expectEqual(true, environ.contains(gpa, "A"));
+    try testing.expectEqual(true, environ.containsConstant("A"));
+    try testing.expectEqual(false, environ.containsUnempty(gpa, "A"));
+    try testing.expectEqual(false, environ.containsUnemptyConstant("A"));
+    try testing.expectEqual(true, environ.contains(gpa, ""));
+    try testing.expectEqual(false, environ.contains(gpa, "B"));
+
+    try testing.expectError(error.EnvironmentVariableMissing, environ.getAlloc(gpa, "BOGUS"));
+    {
+        const value = try environ.getAlloc(gpa, "FOO");
+        defer gpa.free(value);
+        try testing.expectEqualStrings("BAR", value);
+    }
+
+    var map2 = try environ.createMap(gpa);
+    defer map2.deinit();
+
+    try testing.expectEqualSlices([]const u8, map.keys(), map2.keys());
+    try testing.expectEqualSlices([]const u8, map.values(), map2.values());
 }
