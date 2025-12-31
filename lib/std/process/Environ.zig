@@ -150,7 +150,7 @@ pub const Map = struct {
     }
 
     pub fn contains(m: *const Map, key: []const u8) bool {
-        return m.contains(key);
+        return m.array_hash_map.contains(key);
     }
 
     /// If there is an entry with a matching key, it is deleted from the hash
@@ -579,10 +579,11 @@ pub const CreateBlockOptions = struct {
 /// Creates a null-delimited environment variable block in the format expected
 /// by POSIX, from a different one.
 pub fn createBlock(existing: Environ, arena: Allocator, options: CreateBlockOptions) Allocator.Error![:null]?[*:0]u8 {
+    const existing_block: [*:null]const ?[*:0]const u8 = @ptrCast(existing.block);
     const existing_count, const contains_zig_progress = c: {
         var count: usize = 0;
         var contains = false;
-        while (existing.block[count]) |line| : (count += 1) {
+        while (existing_block[count]) |line| : (count += 1) {
             contains = contains or mem.eql(u8, mem.sliceTo(line, '='), "ZIG_PROGRESS");
         }
         break :c .{ count, contains };
@@ -617,7 +618,7 @@ pub fn createBlock(existing: Environ, arena: Allocator, options: CreateBlockOpti
         i += 1;
     }
 
-    while (existing.block[existing_index]) |line| : (existing_index += 1) {
+    while (existing_block[existing_index]) |line| : (existing_index += 1) {
         if (mem.eql(u8, mem.sliceTo(line, '='), "ZIG_PROGRESS")) switch (zig_progress_action) {
             .add => unreachable,
             .delete => continue,

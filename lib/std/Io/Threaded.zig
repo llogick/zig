@@ -12711,21 +12711,21 @@ fn scanEnviron(t: *Threaded) void {
 fn processReplace(userdata: ?*anyopaque, options: std.process.ReplaceOptions) std.process.ReplaceError {
     _ = userdata;
     _ = options;
-    @panic("TODO");
+    @panic("TODO processReplace");
 }
 
 fn processReplacePath(userdata: ?*anyopaque, dir: Dir, options: std.process.ReplaceOptions) std.process.ReplaceError {
     _ = userdata;
     _ = dir;
     _ = options;
-    @panic("TODO");
+    @panic("TODO processReplacePath");
 }
 
 fn processSpawnPath(userdata: ?*anyopaque, dir: Dir, options: process.SpawnOptions) process.SpawnError!process.Child {
     _ = userdata;
     _ = dir;
     _ = options;
-    @panic("TODO");
+    @panic("TODO processSpawnPath");
 }
 
 const processSpawn = switch (native_os) {

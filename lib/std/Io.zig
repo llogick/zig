@@ -2242,5 +2242,5 @@ pub fn unlockStderr(io: Io) void {
 pub fn environ(io: Io, name: []const u8) ?[]const u8 {
     _ = io;
     _ = name;
-    if (true) @panic("TODO");
+    if (true) @panic("TODO Io.environ");
 }
