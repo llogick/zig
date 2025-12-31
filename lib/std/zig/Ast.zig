@@ -476,7 +476,7 @@ pub fn renderError(tree: Ast, parse_error: Error, w: *Writer) Writer.Error!void 
             });
         },
         .invalid_bit_range => {
-            return w.writeAll("bit range not allowed on slices and arrays");
+            return w.writeAll("bit range only allowed on single item pointers");
         },
         .same_line_doc_comment => {
             return w.writeAll("same line documentation comment");

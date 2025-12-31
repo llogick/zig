@@ -668,7 +668,6 @@ test "zig fmt: pointer-to-many with modifiers" {
     try testCanonical(
         \\const x: [*]u32 = undefined;
         \\const y: [*]allowzero align(8) addrspace(.generic) const volatile u32 = undefined;
-        \\const z: [*]allowzero align(8:4:2) addrspace(.generic) const volatile u32 = undefined;
         \\
     );
 }
@@ -677,7 +676,6 @@ test "zig fmt: sentinel pointer with modifiers" {
     try testCanonical(
         \\const x: [*:42]u32 = undefined;
         \\const y: [*:42]allowzero align(8) addrspace(.generic) const volatile u32 = undefined;
-        \\const y: [*:42]allowzero align(8:4:2) addrspace(.generic) const volatile u32 = undefined;
         \\
     );
 }
@@ -686,7 +684,6 @@ test "zig fmt: c pointer with modifiers" {
     try testCanonical(
         \\const x: [*c]u32 = undefined;
         \\const y: [*c]allowzero align(8) addrspace(.generic) const volatile u32 = undefined;
-        \\const z: [*c]allowzero align(8:4:2) addrspace(.generic) const volatile u32 = undefined;
         \\
     );
 }
@@ -5817,6 +5814,16 @@ test "zig fmt: error for missing sentinel value in sentinel slice" {
 }
 
 test "zig fmt: error for invalid bit range" {
+    try testError(
+        \\var x: [*]align(0:0:0)u8 = bar;
+    , &[_]Error{
+        .invalid_bit_range,
+    });
+    try testError(
+        \\var x: [*c]align(0:0:0)u8 = bar;
+    , &[_]Error{
+        .invalid_bit_range,
+    });
     try testError(
         \\var x: []align(0:0:0)u8 = bar;
     , &[_]Error{
