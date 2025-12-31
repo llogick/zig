@@ -82,6 +82,8 @@ pub const Environ = struct {
     exist: Exist = .{},
     /// Protected by `mutex`. Memoized based on `block`.
     string: String = .{},
+    /// ZIG_PROGRESS
+    zig_progress_handle: std.Progress.ParentFileError!u31 = error.EnvironmentVariableMissing,
     /// Protected by `mutex`. Tracks the problem, if any, that occurred when
     /// trying to scan environment variables.
     ///
@@ -1408,6 +1410,8 @@ pub fn io(t: *Threaded) Io {
             .childWait = childWait, // TODO audit for cancelation and unreachable
             .childKill = childKill, // TODO audit for cancelation and unreachable
 
+            .progressParentFile = progressParentFile,
+
             .now = now,
             .sleep = sleep,
 
@@ -1551,6 +1555,8 @@ pub fn ioBasic(t: *Threaded) Io {
             .processSpawnPath = processSpawnPath,
             .childWait = childWait,
             .childKill = childKill,
+
+            .progressParentFile = progressParentFile,
 
             .now = now,
             .sleep = sleep,
@@ -12685,6 +12691,8 @@ fn scanEnviron(t: *Threaded) void {
                 t.environ.exist.CLICOLOR_FORCE = true;
             } else if (@hasField(Environ.String, "PATH") and std.mem.eql(u8, key, "PATH")) {
                 t.environ.string.PATH = value;
+            } else if (std.mem.eql(u8, key, "ZIG_PROGRESS")) {
+                t.environ.zig_progress_handle = std.fmt.parseInt(u31, value, 10) catch error.UnrecognizedFormat;
             }
         }
     } else {
@@ -12704,6 +12712,8 @@ fn scanEnviron(t: *Threaded) void {
                 t.environ.exist.CLICOLOR_FORCE = true;
             } else if (@hasField(Environ.String, "PATH") and std.mem.eql(u8, key, "PATH")) {
                 t.environ.string.PATH = value;
+            } else if (std.mem.eql(u8, key, "ZIG_PROGRESS")) {
+                t.environ.zig_progress_handle = std.fmt.parseInt(u31, value, 10) catch error.UnrecognizedFormat;
             }
         }
     }
@@ -14342,6 +14352,20 @@ fn windowsMakeAsyncPipe(rd: *?windows.HANDLE, wr: *?windows.HANDLE, sattr: *cons
 }
 
 var pipe_name_counter = std.atomic.Value(u32).init(1);
+
+fn progressParentFile(userdata: ?*anyopaque) std.Progress.ParentFileError!File {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+
+    t.scanEnviron();
+
+    const int = try t.environ.zig_progress_handle;
+
+    return .{ .handle = switch (@typeInfo(Io.File.Handle)) {
+        .int => int,
+        .pointer => @ptrFromInt(int),
+        else => return error.UnsupportedOperation,
+    } };
+}
 
 test {
     _ = @import("Threaded/test.zig");

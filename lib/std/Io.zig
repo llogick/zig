@@ -724,6 +724,8 @@ pub const VTable = struct {
     childWait: *const fn (?*anyopaque, *std.process.Child) std.process.Child.WaitError!std.process.Child.Term,
     childKill: *const fn (?*anyopaque, *std.process.Child) void,
 
+    progressParentFile: *const fn (?*anyopaque) std.Progress.ParentFileError!File,
+
     now: *const fn (?*anyopaque, Clock) Clock.Error!Timestamp,
     sleep: *const fn (?*anyopaque, Timeout) SleepError!void,
 
@@ -2241,6 +2243,5 @@ pub fn unlockStderr(io: Io) void {
 
 pub fn environ(io: Io, name: []const u8) ?[]const u8 {
     _ = io;
-    _ = name;
-    if (true) @panic("TODO Io.environ");
+    std.debug.panic("TODO: environ query: {s}", .{name});
 }

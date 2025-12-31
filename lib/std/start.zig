@@ -733,11 +733,11 @@ inline fn callMain(args: std.process.Args.Vector, environ: std.process.Environ.B
 
     var threaded: std.Io.Threaded = .init(gpa, .{
         .argv0 = if (@sizeOf(std.Io.Threaded.Argv0) != 0) .{ .value = args[0] } else .{},
-        .environ = environ,
+        .environ = .{ .block = environ },
     });
     defer threaded.deinit();
 
-    var env_map = environ.getEnvMap(gpa) catch |err|
+    var env_map = std.process.Environ.createMap(.{ .block = environ }, gpa) catch |err|
         std.process.fatal("failed to parse environment variables: {t}", .{err});
     defer env_map.deinit();
 
@@ -749,7 +749,7 @@ inline fn callMain(args: std.process.Args.Vector, environ: std.process.Environ.B
         .arena = &arena_allocator,
         .gpa = gpa,
         .io = threaded.io(),
-        .env_map = env_map,
+        .env_map = &env_map,
     }));
 }
 
