@@ -1348,7 +1348,13 @@ pub fn futexWake(io: Io, comptime T: type, ptr: *align(@alignOf(u32)) const T, m
     return io.vtable.futexWake(io.userdata, @ptrCast(ptr), max_waiters);
 }
 
-pub const Mutex = struct {
+/// Mutex is a synchronization primitive which enforces atomic access to a
+/// shared region of code known as the "critical section".
+///
+/// Mutex is an extern struct so that it may be used as a field inside another
+/// extern struct. Having a guaranteed memory layout including mutexes is
+/// important for IPC over shared memory (mmap).
+pub const Mutex = extern struct {
     state: std.atomic.Value(State),
 
     pub const init: Mutex = .{ .state = .init(.unlocked) };
