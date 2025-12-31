@@ -572,11 +572,14 @@ fn buildClientWasm(ws: *WebServer, arena: Allocator, optimize: std.builtin.Optim
         "--listen=-",
     });
 
-    var child: std.process.Child = .init(gpa, argv.items, .{ .map = &graph.env_map });
-    child.stdin_behavior = .Pipe;
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    try child.spawn(io);
+    var child = try std.process.spawn(io, .{
+        .argv = argv.items,
+        .env_map = &graph.env_map,
+        .stdin = .pipe,
+        .stdout = .pipe,
+        .stderr = .pipe,
+    });
+    defer child.kill(io);
 
     var poller = Io.poll(gpa, enum { stdout, stderr }, .{
         .stdout = child.stdout.?,
@@ -636,7 +639,7 @@ fn buildClientWasm(ws: *WebServer, arena: Allocator, optimize: std.builtin.Optim
     child.stdin = null;
 
     switch (try child.wait(io)) {
-        .Exited => |code| {
+        .exited => |code| {
             if (code != 0) {
                 log.err(
                     "the following command exited with error code {d}:\n{s}",
@@ -645,7 +648,14 @@ fn buildClientWasm(ws: *WebServer, arena: Allocator, optimize: std.builtin.Optim
                 return error.WasmCompilationFailed;
             }
         },
-        .Signal, .Stopped, .Unknown => {
+        .signal => |sig| {
+            log.err(
+                "the following command terminated with signal {t}:\n{s}",
+                .{ sig, try Build.Step.allocPrintCmd(arena, null, null, argv.items) },
+            );
+            return error.WasmCompilationFailed;
+        },
+        .stopped, .unknown => {
             log.err(
                 "the following command terminated unexpectedly:\n{s}",
                 .{try Build.Step.allocPrintCmd(arena, null, null, argv.items)},

@@ -261,7 +261,7 @@ pub fn build(b: *std.Build) !void {
             "--git-dir", ".git", // affected by the -C argument
             "describe", "--match",    "*.*.*", //
             "--tags",   "--abbrev=9",
-        }, &code, .Ignore) catch {
+        }, &code, .ignore) catch {
             break :v version_string;
         };
         const git_describe = mem.trim(u8, git_describe_untrimmed, " \n\r");

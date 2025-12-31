@@ -17,15 +17,15 @@ pub const macos = @import("darwin/macos.zig");
 ///
 /// If error.OutOfMemory occurs in Allocator, this function returns null.
 pub fn isSdkInstalled(gpa: Allocator, io: Io) bool {
-    const result = std.process.Child.run(gpa, io, .{
+    const result = std.process.run(gpa, io, .{ .spawn_options = .{
         .argv = &.{ "xcode-select", "--print-path" },
-    }) catch return false;
+    } }) catch return false;
     defer {
         gpa.free(result.stderr);
         gpa.free(result.stdout);
     }
     return switch (result.term) {
-        .Exited => |code| if (code == 0) result.stdout.len > 0 else false,
+        .exited => |code| if (code == 0) result.stdout.len > 0 else false,
         else => false,
     };
 }
@@ -35,7 +35,7 @@ pub fn isSdkInstalled(gpa: Allocator, io: Io) bool {
 /// Caller owns the memory.
 /// stderr from xcrun is ignored.
 /// If error.OutOfMemory occurs in Allocator, this function returns null.
-pub fn getSdk(gpa: Allocator, io: Io, environ: std.process.Child.Environ, target: *const Target) ?[]const u8 {
+pub fn getSdk(gpa: Allocator, io: Io, target: *const Target) ?[]const u8 {
     const is_simulator_abi = target.abi == .simulator;
     const sdk = switch (target.os.tag) {
         .driverkit => "driverkit",
@@ -47,16 +47,13 @@ pub fn getSdk(gpa: Allocator, io: Io, environ: std.process.Child.Environ, target
         else => return null,
     };
     const argv = &[_][]const u8{ "xcrun", "--sdk", sdk, "--show-sdk-path" };
-    const result = std.process.Child.run(gpa, io, .{
-        .argv = argv,
-        .environ = environ,
-    }) catch return null;
+    const result = std.process.run(gpa, io, .{ .spawn_options = .{ .argv = argv } }) catch return null;
     defer {
         gpa.free(result.stderr);
         gpa.free(result.stdout);
     }
     switch (result.term) {
-        .Exited => |code| if (code != 0) return null,
+        .exited => |code| if (code != 0) return null,
         else => return null,
     }
     return gpa.dupe(u8, mem.trimEnd(u8, result.stdout, "\r\n")) catch null;

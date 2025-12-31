@@ -190,7 +190,7 @@ pub const RunError = error{
     ExitCodeFailure,
     ProcessTerminated,
     ExecNotSupported,
-} || std.process.Child.SpawnError;
+} || std.process.SpawnError;
 
 pub const PkgConfigError = error{
     PkgConfigCrashed,
@@ -1755,7 +1755,7 @@ pub fn fmt(b: *Build, comptime format: []const u8, args: anytype) []u8 {
 }
 
 fn supportedWindowsProgramExtension(ext: []const u8) bool {
-    inline for (@typeInfo(std.process.Child.WindowsExtension).@"enum".fields) |field| {
+    inline for (@typeInfo(std.process.WindowsExtension).@"enum".fields) |field| {
         if (std.ascii.eqlIgnoreCase(ext, "." ++ field.name)) return true;
     }
     return false;
@@ -1830,23 +1830,26 @@ pub fn runAllowFail(
     b: *Build,
     argv: []const []const u8,
     out_code: *u8,
-    stderr_behavior: std.process.Child.StdIo,
+    stderr_behavior: std.process.SpawnOptions.StdIo,
 ) RunError![]u8 {
     assert(argv.len != 0);
 
     if (!process.can_spawn)
         return error.ExecNotSupported;
 
-    const io = b.graph.io;
+    const graph = b.graph;
+    const io = graph.io;
 
     const max_output_size = 400 * 1024;
-    var child = std.process.Child.init(b.allocator, argv, .{ .map = &b.graph.env_map });
-    child.stdin_behavior = .Ignore;
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = stderr_behavior;
+    try Step.handleVerbose2(b, null, &graph.env_map, argv);
 
-    try Step.handleVerbose2(b, null, child.environ.map, argv);
-    try child.spawn(io);
+    var child = try std.process.spawn(io, .{
+        .argv = argv,
+        .env_map = &graph.env_map,
+        .stdin = .ignore,
+        .stdout = .pipe,
+        .stderr = stderr_behavior,
+    });
 
     var stdout_reader = child.stdout.?.readerStreaming(io, &.{});
     const stdout = stdout_reader.interface.allocRemaining(b.allocator, .limited(max_output_size)) catch {
@@ -1856,14 +1859,18 @@ pub fn runAllowFail(
 
     const term = try child.wait(io);
     switch (term) {
-        .Exited => |code| {
+        .exited => |code| {
             if (code != 0) {
                 out_code.* = @as(u8, @truncate(code));
                 return error.ExitCodeFailure;
             }
             return stdout;
         },
-        .Signal, .Stopped, .Unknown => |code| {
+        .signal => |sig| {
+            out_code.* = @as(u8, @truncate(@intFromEnum(sig)));
+            return error.ProcessTerminated;
+        },
+        .stopped, .unknown => |code| {
             out_code.* = @as(u8, @truncate(code));
             return error.ProcessTerminated;
         },
@@ -1882,7 +1889,7 @@ pub fn run(b: *Build, argv: []const []const u8) []u8 {
     }
 
     var code: u8 = undefined;
-    return b.runAllowFail(argv, &code, .Inherit) catch |err| {
+    return b.runAllowFail(argv, &code, .inherit) catch |err| {
         const printed_cmd = Step.allocPrintCmd(b.allocator, null, null, argv) catch @panic("OOM");
         std.debug.print("unable to spawn the following command: {t}\n{s}\n", .{ err, printed_cmd });
         process.exit(1);

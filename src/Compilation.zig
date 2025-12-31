@@ -6339,15 +6339,15 @@ fn updateCObject(comp: *Compilation, c_object: *CObject, c_obj_prog_node: std.Pr
         if (std.process.can_spawn) {
             var child = std.process.Child.init(argv.items, arena);
             if (comp.clang_passthrough_mode) {
-                child.stdin_behavior = .Inherit;
-                child.stdout_behavior = .Inherit;
-                child.stderr_behavior = .Inherit;
+                child.stdin_behavior = .inherit;
+                child.stdout_behavior = .inherit;
+                child.stderr_behavior = .inherit;
 
                 const term = child.spawnAndWait(io) catch |err| {
                     return comp.failCObj(c_object, "failed to spawn zig clang (passthrough mode) {s}: {s}", .{ argv.items[0], @errorName(err) });
                 };
                 switch (term) {
-                    .Exited => |code| {
+                    .exited => |code| {
                         if (code != 0) {
                             std.process.exit(code);
                         }
@@ -6357,9 +6357,9 @@ fn updateCObject(comp: *Compilation, c_object: *CObject, c_obj_prog_node: std.Pr
                     else => std.process.abort(),
                 }
             } else {
-                child.stdin_behavior = .Ignore;
-                child.stdout_behavior = .Ignore;
-                child.stderr_behavior = .Pipe;
+                child.stdin_behavior = .ignore;
+                child.stdout_behavior = .ignore;
+                child.stderr_behavior = .pipe;
 
                 try child.spawn(io);
 
@@ -6371,7 +6371,7 @@ fn updateCObject(comp: *Compilation, c_object: *CObject, c_obj_prog_node: std.Pr
                 };
 
                 switch (term) {
-                    .Exited => |code| if (code != 0) if (out_diag_path) |diag_file_path| {
+                    .exited => |code| if (code != 0) if (out_diag_path) |diag_file_path| {
                         const bundle = CObject.Diag.Bundle.parse(gpa, io, diag_file_path) catch |err| {
                             log.err("{}: failed to parse clang diagnostics: {s}", .{ err, stderr });
                             return comp.failCObj(c_object, "clang exited with code {d}", .{code});
@@ -6742,9 +6742,9 @@ fn spawnZigRc(
     defer node_name.deinit(arena);
 
     var child = std.process.Child.init(argv, arena);
-    child.stdin_behavior = .Ignore;
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
+    child.stdin_behavior = .ignore;
+    child.stdout_behavior = .pipe;
+    child.stderr_behavior = .pipe;
     child.progress_node = child_progress_node;
 
     child.spawn(io) catch |err| {
@@ -6785,11 +6785,15 @@ fn spawnZigRc(
     };
 
     switch (term) {
-        .Exited => |code| {
+        .exited => |code| {
             if (code != 0) {
                 log.err("zig rc failed with stderr:\n{s}", .{stderr.buffered()});
                 return comp.failWin32Resource(win32_resource, "zig rc exited with code {d}", .{code});
             }
+        },
+        .signal => |sig| {
+            log.err("zig rc signaled {t} with stderr:\n{s}", .{ sig, stderr.buffered() });
+            return comp.failWin32Resource(win32_resource, "zig rc terminated unexpectedly", .{});
         },
         else => {
             log.err("zig rc terminated with stderr:\n{s}", .{stderr.buffered()});

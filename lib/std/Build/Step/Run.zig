@@ -149,7 +149,7 @@ pub const StdIo = union(enum) {
         expect_stderr_match: []const u8,
         expect_stdout_exact: []const u8,
         expect_stdout_match: []const u8,
-        expect_term: std.process.Child.Term,
+        expect_term: process.Child.Term,
     };
 };
 
@@ -618,7 +618,7 @@ pub fn expectStdOutEqual(run: *Run, bytes: []const u8) void {
 }
 
 pub fn expectExitCode(run: *Run, code: u8) void {
-    const new_check: StdIo.Check = .{ .expect_term = .{ .Exited = code } };
+    const new_check: StdIo.Check = .{ .expect_term = .{ .exited = code } };
     run.addCheck(new_check);
 }
 
@@ -1182,40 +1182,40 @@ fn populateGeneratedPaths(
     }
 }
 
-fn formatTerm(term: ?std.process.Child.Term, w: *std.Io.Writer) std.Io.Writer.Error!void {
+fn formatTerm(term: ?process.Child.Term, w: *std.Io.Writer) std.Io.Writer.Error!void {
     if (term) |t| switch (t) {
-        .Exited => |code| try w.print("exited with code {d}", .{code}),
-        .Signal => |sig| try w.print("terminated with signal {d}", .{sig}),
-        .Stopped => |sig| try w.print("stopped with signal {d}", .{sig}),
-        .Unknown => |code| try w.print("terminated for unknown reason with code {d}", .{code}),
+        .exited => |code| try w.print("exited with code {d}", .{code}),
+        .signal => |sig| try w.print("terminated with signal {t}", .{sig}),
+        .stopped => |sig| try w.print("stopped with signal {d}", .{sig}),
+        .unknown => |code| try w.print("terminated for unknown reason with code {d}", .{code}),
     } else {
         try w.writeAll("exited with any code");
     }
 }
-fn fmtTerm(term: ?std.process.Child.Term) std.fmt.Alt(?std.process.Child.Term, formatTerm) {
+fn fmtTerm(term: ?process.Child.Term) std.fmt.Alt(?process.Child.Term, formatTerm) {
     return .{ .data = term };
 }
 
-fn termMatches(expected: ?std.process.Child.Term, actual: std.process.Child.Term) bool {
+fn termMatches(expected: ?process.Child.Term, actual: process.Child.Term) bool {
     return if (expected) |e| switch (e) {
-        .Exited => |expected_code| switch (actual) {
-            .Exited => |actual_code| expected_code == actual_code,
+        .exited => |expected_code| switch (actual) {
+            .exited => |actual_code| expected_code == actual_code,
             else => false,
         },
-        .Signal => |expected_sig| switch (actual) {
-            .Signal => |actual_sig| expected_sig == actual_sig,
+        .signal => |expected_sig| switch (actual) {
+            .signal => |actual_sig| expected_sig == actual_sig,
             else => false,
         },
-        .Stopped => |expected_sig| switch (actual) {
-            .Stopped => |actual_sig| expected_sig == actual_sig,
+        .stopped => |expected_sig| switch (actual) {
+            .stopped => |actual_sig| expected_sig == actual_sig,
             else => false,
         },
-        .Unknown => |expected_code| switch (actual) {
-            .Unknown => |actual_code| expected_code == actual_code,
+        .unknown => |expected_code| switch (actual) {
+            .unknown => |actual_code| expected_code == actual_code,
             else => false,
         },
     } else switch (actual) {
-        .Exited => true,
+        .exited => true,
         else => false,
     };
 }
@@ -1526,8 +1526,8 @@ fn runCommand(
         else => {
             // On failure, report captured stderr like normal standard error output.
             const bad_exit = switch (generic_result.term) {
-                .Exited => |code| code != 0,
-                .Signal, .Stopped, .Unknown => true,
+                .exited => |code| code != 0,
+                .signal, .stopped, .unknown => true,
             };
             if (bad_exit) {
                 if (generic_result.stderr) |bytes| {
@@ -1541,7 +1541,7 @@ fn runCommand(
 }
 
 const EvalGenericResult = struct {
-    term: std.process.Child.Term,
+    term: process.Child.Term,
     stdout: ?[]const u8,
     stderr: ?[]const u8,
 };
@@ -1555,7 +1555,6 @@ fn spawnChildAndCollect(
     fuzz_context: ?FuzzContext,
 ) !?EvalGenericResult {
     const b = run.step.owner;
-    const arena = b.allocator;
     const graph = b.graph;
     const io = graph.io;
 
@@ -1564,53 +1563,52 @@ fn spawnChildAndCollect(
         assert(run.stdio == .zig_test);
     }
 
-    var child = std.process.Child.init(arena, argv, .{ .map = env_map });
-    if (run.cwd) |lazy_cwd| {
-        child.cwd = lazy_cwd.getPath2(b, &run.step);
-    }
-    child.request_resource_usage_statistics = true;
-
-    child.stdin_behavior = switch (run.stdio) {
-        .infer_from_args => if (has_side_effects) .Inherit else .Ignore,
-        .inherit => .Inherit,
-        .check => .Ignore,
-        .zig_test => .Pipe,
-    };
-    child.stdout_behavior = switch (run.stdio) {
-        .infer_from_args => if (has_side_effects) .Inherit else .Ignore,
-        .inherit => .Inherit,
-        .check => |checks| if (checksContainStdout(checks.items)) .Pipe else .Ignore,
-        .zig_test => .Pipe,
-    };
-    child.stderr_behavior = switch (run.stdio) {
-        .infer_from_args => if (has_side_effects) .Inherit else .Pipe,
-        .inherit => .Inherit,
-        .check => .Pipe,
-        .zig_test => .Pipe,
-    };
-    if (run.captured_stdout != null) child.stdout_behavior = .Pipe;
-    if (run.captured_stderr != null) child.stderr_behavior = .Pipe;
-    if (run.stdin != .none) {
-        assert(run.stdio != .inherit);
-        child.stdin_behavior = .Pipe;
-    }
+    const child_cwd = if (run.cwd) |lazy_cwd| lazy_cwd.getPath2(b, &run.step) else null;
 
     // If an error occurs, it's caused by this command:
     assert(run.step.result_failed_command == null);
-    run.step.result_failed_command = try Step.allocPrintCmd(options.gpa, child.cwd, .{
+    run.step.result_failed_command = try Step.allocPrintCmd(options.gpa, child_cwd, .{
         .child = env_map,
         .parent = &graph.env_map,
     }, argv);
 
+    var spawn_options: process.SpawnOptions = .{
+        .argv = argv,
+        .cwd = child_cwd,
+        .env_map = &graph.env_map,
+        .request_resource_usage_statistics = true,
+        .stdin = if (run.stdin != .none) s: {
+            assert(run.stdio != .inherit);
+            break :s .pipe;
+        } else switch (run.stdio) {
+            .infer_from_args => if (has_side_effects) .inherit else .ignore,
+            .inherit => .inherit,
+            .check => .ignore,
+            .zig_test => .pipe,
+        },
+        .stdout = if (run.captured_stdout != null) .pipe else switch (run.stdio) {
+            .infer_from_args => if (has_side_effects) .inherit else .ignore,
+            .inherit => .inherit,
+            .check => |checks| if (checksContainStdout(checks.items)) .pipe else .ignore,
+            .zig_test => .pipe,
+        },
+        .stderr = if (run.captured_stderr != null) .pipe else switch (run.stdio) {
+            .infer_from_args => if (has_side_effects) .inherit else .pipe,
+            .inherit => .inherit,
+            .check => .pipe,
+            .zig_test => .pipe,
+        },
+    };
+
     if (run.stdio == .zig_test) {
         var timer = try std.time.Timer.start();
         defer run.step.result_duration_ns = timer.read();
-        try evalZigTest(run, &child, options, fuzz_context);
+        try evalZigTest(run, spawn_options, options, fuzz_context);
         return null;
     } else {
-        const inherit = child.stdout_behavior == .Inherit or child.stderr_behavior == .Inherit;
+        const inherit = spawn_options.stdout == .inherit or spawn_options.stderr == .inherit;
         if (!run.disable_zig_progress and !inherit) {
-            child.progress_node = options.progress_node;
+            spawn_options.progress_node = options.progress_node;
         }
         const terminal_mode: Io.Terminal.Mode = if (inherit) m: {
             const stderr = try io.lockStderr(&.{}, graph.stderr_mode);
@@ -1619,7 +1617,7 @@ fn spawnChildAndCollect(
         defer if (inherit) io.unlockStderr();
         try setColorEnvironmentVariables(run, env_map, terminal_mode);
         var timer = try std.time.Timer.start();
-        const res = try evalGeneric(run, &child);
+        const res = try evalGeneric(run, spawn_options);
         run.step.result_duration_ns = timer.read();
         return .{ .term = res.term, .stdout = res.stdout, .stderr = res.stderr };
     }
@@ -1658,7 +1656,7 @@ const StdioPollEnum = enum { stdout, stderr };
 
 fn evalZigTest(
     run: *Run,
-    child: *std.process.Child,
+    spawn_options: process.SpawnOptions,
     options: Step.MakeOptions,
     fuzz_context: ?FuzzContext,
 ) !void {
@@ -1682,14 +1680,14 @@ fn evalZigTest(
     var test_metadata: ?TestMetadata = null;
 
     while (true) {
-        try child.spawn(io);
+        var child = try process.spawn(io, spawn_options);
         var poller = std.Io.poll(gpa, StdioPollEnum, .{
             .stdout = child.stdout.?,
             .stderr = child.stderr.?,
         });
         var child_killed = false;
         defer if (!child_killed) {
-            _ = child.kill(io) catch {};
+            child.kill(io);
             poller.deinit();
             run.step.result_peak_rss = @max(
                 run.step.result_peak_rss,
@@ -1697,11 +1695,9 @@ fn evalZigTest(
             );
         };
 
-        try child.waitForSpawn();
-
         switch (try pollZigTest(
             run,
-            child,
+            &child,
             options,
             fuzz_context,
             &poller,
@@ -1763,7 +1759,7 @@ fn evalZigTest(
                 // Report an error if the child terminated uncleanly or if we were still trying to run more tests.
                 run.step.result_stderr = stderr_owned;
                 const tests_done = test_metadata != null and test_metadata.?.next_index == std.math.maxInt(u32);
-                if (!tests_done or !termMatches(.{ .Exited = 0 }, term)) {
+                if (!tests_done or !termMatches(.{ .exited = 0 }, term)) {
                     // The individual unit test results are irrelevant: the test runner itself broke!
                     // Fail immediately without populating `s.test_results`.
                     return run.step.fail("test process unexpectedly {f}", .{fmtTerm(term)});
@@ -1818,7 +1814,7 @@ fn evalZigTest(
 /// * `poll` fails, indicating the child closed stdout and stderr
 fn pollZigTest(
     run: *Run,
-    child: *std.process.Child,
+    child: *process.Child,
     options: Step.MakeOptions,
     fuzz_context: ?FuzzContext,
     poller: *std.Io.Poller(StdioPollEnum),
@@ -2176,15 +2172,13 @@ fn sendRunFuzzTestMessage(
     };
 }
 
-fn evalGeneric(run: *Run, child: *std.process.Child) !EvalGenericResult {
+fn evalGeneric(run: *Run, spawn_options: process.SpawnOptions) !EvalGenericResult {
     const b = run.step.owner;
     const io = b.graph.io;
     const arena = b.allocator;
 
-    try child.spawn(io);
-    errdefer _ = child.kill(io) catch {};
-
-    try child.waitForSpawn();
+    var child = try process.spawn(io, spawn_options);
+    defer child.kill(io);
 
     switch (run.stdin) {
         .bytes => |bytes| {
@@ -2334,10 +2328,10 @@ fn hashStdIo(hh: *std.Build.Cache.HashHelper, stdio: StdIo) void {
                 => |s| hh.addBytes(s),
 
                 .expect_term => |term| {
-                    hh.add(@as(std.meta.Tag(std.process.Child.Term), term));
+                    hh.add(@as(std.meta.Tag(process.Child.Term), term));
                     switch (term) {
-                        .Exited => |x| hh.add(x),
-                        .Signal, .Stopped, .Unknown => |x| hh.add(x),
+                        inline .exited, .signal => |x| hh.add(x),
+                        .stopped, .unknown => |x| hh.add(x),
                     }
                 },
             }

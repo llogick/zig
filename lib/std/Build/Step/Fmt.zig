@@ -69,7 +69,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
 
     const run_result = try step.captureChildProcess(options.gpa, prog_node, argv.items);
     if (fmt.check) switch (run_result.term) {
-        .Exited => |code| if (code != 0 and run_result.stdout.len != 0) {
+        .exited => |code| if (code != 0 and run_result.stdout.len != 0) {
             var it = std.mem.tokenizeScalar(u8, run_result.stdout, '\n');
             while (it.next()) |bad_file_name| {
                 try step.addError("{s}: non-conforming formatting", .{bad_file_name});

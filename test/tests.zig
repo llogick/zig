@@ -2718,7 +2718,7 @@ pub fn addIncrementalTests(b: *std.Build, test_step: *Step, test_filters: []cons
         if (b.enable_wasmtime) run.addArg("-fwasmtime");
         if (b.enable_darling) run.addArg("-fdarling");
 
-        run.addCheck(.{ .expect_term = .{ .Exited = 0 } });
+        run.addCheck(.{ .expect_term = .{ .exited = 0 } });
 
         test_step.dependOn(&run.step);
     }

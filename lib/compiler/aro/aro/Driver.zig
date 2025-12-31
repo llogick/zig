@@ -1256,9 +1256,9 @@ fn invokeAssembler(d: *Driver, tc: *Toolchain, input_path: []const u8, output_pa
 
     var child = std.process.Child.init(&argv, d.comp.gpa);
     // TODO handle better
-    child.stdin_behavior = .Inherit;
-    child.stdout_behavior = .Inherit;
-    child.stderr_behavior = .Inherit;
+    child.stdin_behavior = .inherit;
+    child.stdout_behavior = .inherit;
+    child.stderr_behavior = .inherit;
 
     const term = child.spawnAndWait() catch |er| {
         return d.fatal("unable to spawn linker: {s}", .{errorDescription(er)});
@@ -1508,9 +1508,9 @@ pub fn invokeLinker(d: *Driver, tc: *Toolchain, comptime fast_exit: bool) Compil
     }
     var child = std.process.Child.init(argv.items, d.comp.gpa);
     // TODO handle better
-    child.stdin_behavior = .Inherit;
-    child.stdout_behavior = .Inherit;
-    child.stderr_behavior = .Inherit;
+    child.stdin_behavior = .inherit;
+    child.stdout_behavior = .inherit;
+    child.stderr_behavior = .inherit;
 
     const term = child.spawnAndWait() catch |er| {
         return d.fatal("unable to spawn linker: {s}", .{errorDescription(er)});

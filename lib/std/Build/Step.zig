@@ -348,7 +348,7 @@ pub fn captureChildProcess(
     gpa: Allocator,
     progress_node: std.Progress.Node,
     argv: []const []const u8,
-) !std.process.Child.RunResult {
+) !std.process.RunResult {
     const graph = s.owner.graph;
     const arena = graph.arena;
     const io = graph.io;
@@ -360,11 +360,11 @@ pub fn captureChildProcess(
     try handleChildProcUnsupported(s);
     try handleVerbose(s.owner, null, argv);
 
-    const result = std.process.Child.run(arena, io, .{
+    const result = std.process.run(arena, io, .{ .spawn_options = .{
         .argv = argv,
-        .environ = .{ .map = &graph.env_map },
+        .env_map = &graph.env_map,
         .progress_node = progress_node,
-    }) catch |err| return s.fail("failed to run {s}: {t}", .{ argv[0], err });
+    } }) catch |err| return s.fail("failed to run {s}: {t}", .{ argv[0], err });
 
     if (result.stderr.len > 0) {
         try s.result_error_msgs.append(arena, result.stderr);
@@ -444,19 +444,20 @@ pub fn evalZigProcess(
         return result;
     }
     assert(argv.len != 0);
-    const arena = b.allocator;
 
     try handleChildProcUnsupported(s);
     try handleVerbose(s.owner, null, argv);
 
-    var child = std.process.Child.init(arena, argv, .{ .map = &b.graph.env_map });
-    child.stdin_behavior = .Pipe;
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    child.request_resource_usage_statistics = true;
-    child.progress_node = prog_node;
-
-    child.spawn(io) catch |err| return s.fail("failed to spawn zig compiler {s}: {t}", .{ argv[0], err });
+    var child = std.process.spawn(io, .{
+        .argv = argv,
+        .env_map = &b.graph.env_map,
+        .stdin = .pipe,
+        .stdout = .pipe,
+        .stderr = .pipe,
+        .request_resource_usage_statistics = true,
+        .progress_node = prog_node,
+    }) catch |err| return s.fail("failed to spawn zig compiler {s}: {t}", .{ argv[0], err });
+    defer if (!watch) child.kill(io);
 
     const zp = try gpa.create(ZigProcess);
     zp.* = .{
@@ -465,7 +466,7 @@ pub fn evalZigProcess(
             .stdout = child.stdout.?,
             .stderr = child.stderr.?,
         }),
-        .progress_ipc_fd = if (std.Progress.have_ipc) child.progress_node.getIpcFd() else {},
+        .progress_ipc_fd = if (std.Progress.have_ipc) prog_node.getIpcFd() else {},
     };
     if (watch) s.setZigProcess(zp);
     defer if (!watch) {
@@ -487,7 +488,7 @@ pub fn evalZigProcess(
 
         // Special handling for Compile step that is expecting compile errors.
         if (s.cast(Compile)) |compile| switch (term) {
-            .Exited => {
+            .exited => {
                 // Note that the exit code may be 0 in this case due to the
                 // compiler server protocol.
                 if (compile.expect_errors != null) {
@@ -719,12 +720,15 @@ pub inline fn handleChildProcUnsupported(s: *Step) error{ OutOfMemory, MakeFaile
 pub fn handleChildProcessTerm(s: *Step, term: std.process.Child.Term) error{ MakeFailed, OutOfMemory }!void {
     assert(s.result_failed_command != null);
     switch (term) {
-        .Exited => |code| {
+        .exited => |code| {
             if (code != 0) {
                 return s.fail("process exited with error code {d}", .{code});
             }
         },
-        .Signal, .Stopped, .Unknown => {
+        .signal => |sig| {
+            return s.fail("process terminated with signal {t}", .{sig});
+        },
+        .stopped, .unknown => {
             return s.fail("process terminated unexpectedly", .{});
         },
     }

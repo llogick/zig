@@ -795,77 +795,8 @@ pub fn dup2(old_fd: fd_t, new_fd: fd_t) !void {
     }
 }
 
-pub fn getpid() pid_t {
-    return system.getpid();
-}
-
 pub fn getppid() pid_t {
     return system.getppid();
-}
-
-pub const ExecveError = error{
-    SystemResources,
-    AccessDenied,
-    PermissionDenied,
-    InvalidExe,
-    FileSystem,
-    IsDir,
-    FileNotFound,
-    NotDir,
-    FileBusy,
-    ProcessFdQuotaExceeded,
-    SystemFdQuotaExceeded,
-    NameTooLong,
-} || UnexpectedError;
-
-/// This function ignores PATH environment variable. See `execvpeZ` for that.
-pub fn execveZ(
-    path: [*:0]const u8,
-    child_argv: [*:null]const ?[*:0]const u8,
-    envp: [*:null]const ?[*:0]const u8,
-) ExecveError {
-    switch (errno(system.execve(path, child_argv, envp))) {
-        .SUCCESS => unreachable,
-        .FAULT => unreachable,
-        .@"2BIG" => return error.SystemResources,
-        .MFILE => return error.ProcessFdQuotaExceeded,
-        .NAMETOOLONG => return error.NameTooLong,
-        .NFILE => return error.SystemFdQuotaExceeded,
-        .NOMEM => return error.SystemResources,
-        .ACCES => return error.AccessDenied,
-        .PERM => return error.PermissionDenied,
-        .INVAL => return error.InvalidExe,
-        .NOEXEC => return error.InvalidExe,
-        .IO => return error.FileSystem,
-        .LOOP => return error.FileSystem,
-        .ISDIR => return error.IsDir,
-        .NOENT => return error.FileNotFound,
-        .NOTDIR => return error.NotDir,
-        .TXTBSY => return error.FileBusy,
-        else => |err| switch (native_os) {
-            .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => switch (err) {
-                .BADEXEC => return error.InvalidExe,
-                .BADARCH => return error.InvalidExe,
-                else => return unexpectedErrno(err),
-            },
-            .linux => switch (err) {
-                .LIBBAD => return error.InvalidExe,
-                else => return unexpectedErrno(err),
-            },
-            else => return unexpectedErrno(err),
-        },
-    }
-}
-
-/// This function also uses the PATH environment variable to get the full path to the executable.
-/// If `file` is an absolute path, this is the same as `execveZ`.
-pub fn execvpeZ(
-    file: [*:0]const u8,
-    argv_ptr: [*:null]const ?[*:0]const u8,
-    envp: [*:null]const ?[*:0]const u8,
-    optional_PATH: ?[]const u8,
-) ExecveError {
-    return execvpeZ_expandArg0(.no_expand, file, argv_ptr, envp, optional_PATH);
 }
 
 pub const GetCwdError = error{
@@ -1119,16 +1050,6 @@ pub fn seteuid(uid: uid_t) SetEidError!void {
     }
 }
 
-pub fn setreuid(ruid: uid_t, euid: uid_t) SetIdError!void {
-    switch (errno(system.setreuid(ruid, euid))) {
-        .SUCCESS => return,
-        .AGAIN => return error.ResourceLimitReached,
-        .INVAL => return error.InvalidUserId,
-        .PERM => return error.PermissionDenied,
-        else => |err| return unexpectedErrno(err),
-    }
-}
-
 pub fn setgid(gid: gid_t) SetIdError!void {
     switch (errno(system.setgid(gid))) {
         .SUCCESS => return,
@@ -1154,24 +1075,6 @@ pub fn setregid(rgid: gid_t, egid: gid_t) SetIdError!void {
         .AGAIN => return error.ResourceLimitReached,
         .INVAL => return error.InvalidUserId,
         .PERM => return error.PermissionDenied,
-        else => |err| return unexpectedErrno(err),
-    }
-}
-
-pub const SetPgidError = error{
-    ProcessAlreadyExec,
-    InvalidProcessGroupId,
-    PermissionDenied,
-    ProcessNotFound,
-} || UnexpectedError;
-
-pub fn setpgid(pid: pid_t, pgid: pid_t) SetPgidError!void {
-    switch (errno(system.setpgid(pid, pgid))) {
-        .SUCCESS => return,
-        .ACCES => return error.ProcessAlreadyExec,
-        .INVAL => return error.InvalidProcessGroupId,
-        .PERM => return error.PermissionDenied,
-        .SRCH => return error.ProcessNotFound,
         else => |err| return unexpectedErrno(err),
     }
 }

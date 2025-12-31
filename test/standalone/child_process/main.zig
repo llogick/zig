@@ -26,9 +26,9 @@ pub fn main() !void {
     const io = threaded.io();
 
     var child = std.process.Child.init(&.{ child_path, "hello arg" }, gpa);
-    child.stdin_behavior = .Pipe;
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Inherit;
+    child.stdin_behavior = .pipe;
+    child.stdout_behavior = .pipe;
+    child.stderr_behavior = .inherit;
     try child.spawn(io);
     const child_stdin = child.stdin.?;
     try child_stdin.writeStreamingAll(io, "hello from stdin"); // verified in child

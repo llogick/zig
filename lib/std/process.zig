@@ -259,20 +259,44 @@ pub fn getBaseAddress() usize {
     }
 }
 
-/// Deprecated in favor of `Child.can_spawn`.
-pub const can_spawn = Child.can_spawn;
-/// Deprecated in favor of `can_replace`.
-pub const can_execv = can_replace;
-
 /// Tells whether the target operating system supports replacing the current
-/// process image. If this is `false` then calling `execv` or `replace`
-/// functions will cause compilation to fail.
+/// process image. If this is `false` then calling `replace` or `replaceFile`
+/// functions will return `error.OperationUnsupported`.
 pub const can_replace = switch (native_os) {
     .windows, .haiku, .wasi => false,
     else => true,
 };
 
-pub const ReplaceError = std.posix.ExecveError || error{OutOfMemory};
+/// Tells whether spawning child processes is supported.
+pub const can_spawn = switch (native_os) {
+    .wasi, .ios, .tvos, .visionos, .watchos => false,
+    else => true,
+};
+
+pub const ReplaceError = error{
+    /// The target operating system cannot replace the process image with a new
+    /// one.
+    OperationUnsupported,
+    SystemResources,
+    AccessDenied,
+    PermissionDenied,
+    InvalidExe,
+    FileSystem,
+    IsDir,
+    FileNotFound,
+    NotDir,
+    FileBusy,
+    ProcessFdQuotaExceeded,
+    SystemFdQuotaExceeded,
+} || Io.Dir.PathNameError || Io.Cancelable || Io.UnexpectedError;
+
+pub const ReplaceOptions = struct {
+    argv: []const []const u8,
+    arg0_expand: ArgExpansion = .no_expand,
+    /// Replaces the environment when provided. The PATH value from here is
+    /// never used to resolve `argv[0]`.
+    env_map: ?*const Environ.Map = null,
+};
 
 /// Replaces the current process image with the executed process. If this
 /// function succeeds, it does not return.
@@ -281,25 +305,9 @@ pub const ReplaceError = std.posix.ExecveError || error{OutOfMemory};
 /// is not already a file path (i.e. it contains '/'), it is resolved into a
 /// file path based on PATH from the parent environment.
 ///
-/// This operation is not available on targets for which `can_replace` is
-/// `false`.
-///
-/// This function must allocate memory to add a null terminating bytes on path
-/// and each arg.
-///
-/// Due to the heap allocation, it is illegal to call this function in a fork()
-/// child.
-pub fn replace(io: Io, gpa: Allocator, argv: []const []const u8, env: Environ.Block) ReplaceError {
-    if (!can_replace) @compileError("unsupported operation: replace");
-
-    var arena_allocator = std.heap.ArenaAllocator.init(gpa);
-    defer arena_allocator.deinit();
-    const arena = arena_allocator.allocator();
-
-    const argv_buf = try arena.allocSentinel(?[*:0]const u8, argv.len, null);
-    for (argv, 0..) |arg, i| argv_buf[i] = (try arena.dupeZ(u8, arg)).ptr;
-
-    return posix.execvpeZ_expandArg0(.no_expand, argv_buf.ptr[0].?, argv_buf.ptr, env);
+/// It is illegal to call this function in a fork() child.
+pub fn replace(io: Io, options: ReplaceOptions) ReplaceError {
+    return io.vtable.processReplace(io.userdata, options);
 }
 
 /// Replaces the current process image with the executed process. If this
@@ -309,92 +317,181 @@ pub fn replace(io: Io, gpa: Allocator, argv: []const []const u8, env: Environ.Bl
 /// relative to `dir`. It is *always* treated as a file path, even if it does
 /// not contain '/'.
 ///
-/// This operation is not available on targets for which `can_replace` is
-/// `false`.
-///
-/// This function must allocate memory to add a null terminating bytes on path
-/// and each arg.
-///
-/// Due to the heap allocation, it is illegal to call this
-/// function in a fork() child. For that use case, use the `std.posix`
-/// functions directly.
-pub fn replaceFile(io: Io, gpa: Allocator, argv: []const []const u8, env: Environ.Block) ReplaceError {
-    if (!can_replace) @compileError("unsupported operation: replaceFile");
-
-    var arena_allocator = std.heap.ArenaAllocator.init(gpa);
-    defer arena_allocator.deinit();
-    const arena = arena_allocator.allocator();
-
-    const argv_buf = try arena.allocSentinel(?[*:0]const u8, argv.len, null);
-    for (argv, 0..) |arg, i| argv_buf[i] = (try arena.dupeZ(u8, arg)).ptr;
-
-    return posix.execvpeZ_expandArg0(.no_expand, argv_buf.ptr[0].?, argv_buf.ptr, env);
+/// It is illegal to call this function in a fork() child.
+pub fn replacePath(io: Io, dir: Io.Dir, options: ReplaceOptions) ReplaceError {
+    return io.vtable.processReplacePath(io.userdata, dir, options);
 }
 
-pub const Arg0Expand = enum { expand, no_expand };
+pub const ArgExpansion = enum { expand, no_expand };
 
-/// Replaces the current process image with the executed process. If this
-/// function succeeds, it does not return.
-///
-/// This operation is not available on all targets. `can_execv`
-///
-/// This function also uses the PATH environment variable to get the full path to the executable.
-/// If `file` is an absolute path, this is the same as `execveZ`.
-///
-/// Like `execvpeZ` except if `arg0_expand` is `.expand`, then `argv` is mutable,
-/// and `argv[0]` is expanded to be the same absolute path that is passed to the execve syscall.
-/// If this function returns with an error, `argv[0]` will be restored to the value it was when it was passed in.
-pub fn replace(
-    comptime arg0_expand: Arg0Expand,
-    file: [*:0]const u8,
-    child_argv: switch (arg0_expand) {
-        .expand => [*:null]?[*:0]const u8,
-        .no_expand => [*:null]const ?[*:0]const u8,
-    },
-    envp: [*:null]const ?[*:0]const u8,
-    optional_PATH: ?[]const u8,
-) ExecveError {
-    const file_slice = mem.sliceTo(file, 0);
-    if (mem.findScalar(u8, file_slice, '/') != null) return execveZ(file, child_argv, envp);
+/// File name extensions supported natively by `CreateProcess()` on Windows.
+pub const WindowsExtension = enum { bat, cmd, com, exe };
 
-    const PATH = optional_PATH orelse "/usr/local/bin:/bin/:/usr/bin";
-    // Use of PATH_MAX here is valid as the path_buf will be passed
-    // directly to the operating system in execveZ.
-    var path_buf: [PATH_MAX]u8 = undefined;
-    var it = mem.tokenizeScalar(u8, PATH, ':');
-    var seen_eacces = false;
-    var err: ExecveError = error.FileNotFound;
+pub const SpawnError = error{
+    OutOfMemory,
+    /// POSIX-only. `StdIo.ignore` was selected and opening `/dev/null` returned ENODEV.
+    NoDevice,
+    /// Windows-only. `cwd` or `argv` was provided and it was invalid WTF-8.
+    /// https://wtf-8.codeberg.page/
+    InvalidWtf8,
+    /// Windows-only. `cwd` was provided, but the path did not exist when spawning the child process.
+    CurrentWorkingDirectoryUnlinked,
+    /// Windows-only. NUL (U+0000), LF (U+000A), CR (U+000D) are not allowed
+    /// within arguments when executing a `.bat`/`.cmd` script.
+    /// - NUL/LF signifiies end of arguments, so anything afterwards
+    ///   would be lost after execution.
+    /// - CR is stripped by `cmd.exe`, so any CR codepoints
+    ///   would be lost after execution.
+    InvalidBatchScriptArg,
+    SystemResources,
+    AccessDenied,
+    PermissionDenied,
+    InvalidExe,
+    FileSystem,
+    IsDir,
+    FileNotFound,
+    NotDir,
+    FileBusy,
+    ProcessFdQuotaExceeded,
+    SystemFdQuotaExceeded,
+    ResourceLimitReached,
+    InvalidUserId,
+    InvalidProcessGroupId,
+    SymLinkLoop,
+    InvalidName,
+    /// An attempt was made to change the process group ID of one of the
+    /// children of the calling process and the child had already performed an
+    /// image replacement.
+    ProcessAlreadyExec,
+} || Io.Dir.PathNameError || Io.Cancelable || Io.UnexpectedError;
 
-    // In case of expanding arg0 we must put it back if we return with an error.
-    const prev_arg0 = child_argv[0];
-    defer switch (arg0_expand) {
-        .expand => child_argv[0] = prev_arg0,
-        .no_expand => {},
+pub const SpawnOptions = struct {
+    argv: []const []const u8,
+
+    /// Set to change the current working directory when spawning the child process.
+    cwd: ?[]const u8 = null,
+    /// Set to change the current working directory when spawning the child process.
+    /// This is not yet implemented for Windows. See https://github.com/ziglang/zig/issues/5190
+    /// Once that is done, `cwd` will be deprecated in favor of this field.
+    cwd_dir: ?Io.Dir = null,
+    /// Replaces the child environment when provided. The PATH value from here
+    /// is not used to resolve `argv[0]`; that resolution always uses parent
+    /// environment.
+    env_map: ?*const Environ.Map = null,
+    expand_arg0: ArgExpansion = .no_expand,
+    /// When populated, a pipe will be created for the child process to
+    /// communicate progress back to the parent. The file descriptor of the
+    /// write end of the pipe will be specified in the `ZIG_PROGRESS`
+    /// environment variable inside the child process. The progress reported by
+    /// the child will be attached to this progress node in the parent process.
+    ///
+    /// The child's progress tree will be grafted into the parent's progress tree,
+    /// by substituting this node with the child's root node.
+    progress_node: std.Progress.Node = std.Progress.Node.none,
+
+    stdin: StdIo = .inherit,
+    stdout: StdIo = .inherit,
+    stderr: StdIo = .inherit,
+
+    /// Set to true to obtain rusage information for the child process.
+    /// Depending on the target platform and implementation status, the
+    /// requested statistics may or may not be available. If they are
+    /// available, then the `resource_usage_statistics` field will be populated
+    /// after calling `wait`.
+    /// On Linux and Darwin, this obtains rusage statistics from wait4().
+    request_resource_usage_statistics: bool = false,
+
+    /// Set to change the user id when spawning the child process.
+    uid: ?posix.uid_t = null,
+    /// Set to change the group id when spawning the child process.
+    gid: ?posix.gid_t = null,
+    /// Set to change the process group id when spawning the child process.
+    pgid: ?posix.pid_t = null,
+
+    /// Start child process in suspended state.
+    /// For Posix systems it's started as if SIGSTOP was sent.
+    start_suspended: bool = false,
+    /// Windows-only. Sets the CREATE_NO_WINDOW flag in CreateProcess.
+    create_no_window: bool = false,
+    /// Darwin-only. Disable ASLR for the child process.
+    disable_aslr: bool = false,
+
+    /// Behavior of the child process's standard input, output, and error streams.
+    pub const StdIo = union(enum) {
+        /// Inherit the corresponding stream from the parent process.
+        inherit,
+        /// Pass an already open file from the parent to the child.
+        file: File,
+        /// Pass a null stream to the child process by opening "/dev/null" on POSIX
+        /// and "NUL" on Windows.
+        ignore,
+        /// Create a new pipe for the stream.
+        ///
+        /// The corresponding field (`stdout`, `stderr`, or `stdin`) will be
+        /// assigned a `File` object that can be used to read from or write to the
+        /// pipe.
+        pipe,
+        /// Spawn the child process with the corresponding stream missing. This
+        /// will likely result in the child encountering EBADF if it tries to use
+        /// stdin, stdout, or stderr, or if only one stream is closed, it will
+        /// result in them getting mixed up. Generally, this option is for advanced
+        /// use cases only.
+        close,
     };
+};
 
-    while (it.next()) |search_path| {
-        const path_len = search_path.len + file_slice.len + 1;
-        if (path_buf.len < path_len + 1) return error.NameTooLong;
-        @memcpy(path_buf[0..search_path.len], search_path);
-        path_buf[search_path.len] = '/';
-        @memcpy(path_buf[search_path.len + 1 ..][0..file_slice.len], file_slice);
-        path_buf[path_len] = 0;
-        const full_path = path_buf[0..path_len :0].ptr;
-        switch (arg0_expand) {
-            .expand => child_argv[0] = full_path,
-            .no_expand => {},
-        }
-        err = execveZ(full_path, child_argv, envp);
-        switch (err) {
-            error.AccessDenied => seen_eacces = true,
-            error.FileNotFound, error.NotDir => {},
-            else => |e| return e,
-        }
-    }
-    if (seen_eacces) return error.AccessDenied;
-    return err;
+/// Creates a child process.
+///
+/// `argv[0]` is the name of the program to execute. If it is not already a
+/// file path (i.e. it contains '/'), it is resolved into a file path based on
+/// PATH from the parent environment.
+pub fn spawn(io: Io, options: SpawnOptions) SpawnError!Child {
+    return io.vtable.processSpawn(io.userdata, options);
 }
 
+/// Creates a child process.
+///
+/// `argv[0]` is the file path of the program to execute, relative to `dir`. It
+/// is *always* treated as a file path, even if it does not contain '/'.
+pub fn spawnPath(io: Io, dir: Io.Dir, options: SpawnOptions) SpawnError!Child {
+    return io.vtable.processSpawnPath(io.userdata, dir, options);
+}
+
+pub const RunError = posix.GetCwdError || posix.ReadError || SpawnError || posix.PollError || error{
+    StdoutStreamTooLong,
+    StderrStreamTooLong,
+};
+
+pub const RunOptions = struct {
+    spawn_options: SpawnOptions,
+    max_output_bytes: usize = 50 * 1024,
+};
+
+pub const RunResult = struct {
+    term: Child.Term,
+    stdout: []u8,
+    stderr: []u8,
+};
+
+/// Spawns a child process, waits for it, collecting stdout and stderr, and then returns.
+/// If it succeeds, the caller owns result.stdout and result.stderr memory.
+pub fn run(gpa: Allocator, io: Io, options: RunOptions) RunError!RunResult {
+    var child = try spawn(io, options.spawn_options);
+    defer child.kill(io);
+
+    var stdout: std.ArrayList(u8) = .empty;
+    defer stdout.deinit(gpa);
+    var stderr: std.ArrayList(u8) = .empty;
+    defer stderr.deinit(gpa);
+
+    try child.collectOutput(gpa, &stdout, &stderr, options.max_output_bytes);
+
+    return .{
+        .stdout = try stdout.toOwnedSlice(gpa),
+        .stderr = try stderr.toOwnedSlice(gpa),
+        .term = try child.wait(io),
+    };
+}
 
 pub const TotalSystemMemoryError = error{
     UnknownTotalSystemMemory,

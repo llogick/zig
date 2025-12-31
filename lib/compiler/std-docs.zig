@@ -447,9 +447,9 @@ fn openBrowserTabThread(gpa: Allocator, io: Io, url: []const u8) !void {
         else => "xdg-open",
     };
     var child = std.process.Child.init(&.{ main_exe, url }, gpa);
-    child.stdin_behavior = .Ignore;
-    child.stdout_behavior = .Ignore;
-    child.stderr_behavior = .Ignore;
+    child.stdin_behavior = .ignore;
+    child.stdout_behavior = .ignore;
+    child.stderr_behavior = .ignore;
     try child.spawn(io);
     _ = try child.wait(io);
 }

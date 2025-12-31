@@ -268,15 +268,17 @@ fn findNativeIncludeDirPosix(self: *LibCInstallation, gpa: Allocator, io: Io, ar
         dev_null,
     });
 
-    const run_res = std.process.Child.run(gpa, io, .{
-        .argv = argv.items,
+    const run_res = std.process.run(gpa, io, .{
         .max_output_bytes = 1024 * 1024,
-        .env_map = &env_map,
-        // Some C compilers, such as Clang, are known to rely on argv[0] to find the path
-        // to their own executable, without even bothering to resolve PATH. This results in the message:
-        // error: unable to execute command: Executable "" doesn't exist!
-        // So we use the expandArg0 variant of ChildProcess to give them a helping hand.
-        .expand_arg0 = .expand,
+        .spawn_options = .{
+            .argv = argv.items,
+            .env_map = &env_map,
+            // Some C compilers, such as Clang, are known to rely on argv[0] to find the path
+            // to their own executable, without even bothering to resolve PATH. This results in the message:
+            // error: unable to execute command: Executable "" doesn't exist!
+            // So we use the expandArg0 variant of ChildProcess to give them a helping hand.
+            .expand_arg0 = .expand,
+        },
     }) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => {
@@ -289,7 +291,7 @@ fn findNativeIncludeDirPosix(self: *LibCInstallation, gpa: Allocator, io: Io, ar
         gpa.free(run_res.stderr);
     }
     switch (run_res.term) {
-        .Exited => |code| if (code != 0) {
+        .exited => |code| if (code != 0) {
             printVerboseInvocation(argv.items, null, args.verbose, run_res.stderr);
             return error.CCompilerExitCode;
         },
@@ -585,15 +587,17 @@ fn ccPrintFileName(gpa: Allocator, io: Io, args: CCPrintFileNameOptions) ![:0]u8
     try appendCcExe(&argv, skip_cc_env_var);
     try argv.append(arg1);
 
-    const run_res = std.process.Child.run(gpa, io, .{
-        .argv = argv.items,
+    const run_res = std.process.run(gpa, io, .{
         .max_output_bytes = 1024 * 1024,
-        .env_map = &env_map,
-        // Some C compilers, such as Clang, are known to rely on argv[0] to find the path
-        // to their own executable, without even bothering to resolve PATH. This results in the message:
-        // error: unable to execute command: Executable "" doesn't exist!
-        // So we use the expandArg0 variant of ChildProcess to give them a helping hand.
-        .expand_arg0 = .expand,
+        .spawn_options = .{
+            .argv = argv.items,
+            .env_map = &env_map,
+            // Some C compilers, such as Clang, are known to rely on argv[0] to find the path
+            // to their own executable, without even bothering to resolve PATH. This results in the message:
+            // error: unable to execute command: Executable "" doesn't exist!
+            // So we use the expandArg0 variant of ChildProcess to give them a helping hand.
+            .expand_arg0 = .expand,
+        },
     }) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => return error.UnableToSpawnCCompiler,
@@ -603,7 +607,7 @@ fn ccPrintFileName(gpa: Allocator, io: Io, args: CCPrintFileNameOptions) ![:0]u8
         gpa.free(run_res.stderr);
     }
     switch (run_res.term) {
-        .Exited => |code| if (code != 0) {
+        .exited => |code| if (code != 0) {
             printVerboseInvocation(argv.items, args.search_basename, args.verbose, run_res.stderr);
             return error.CCompilerExitCode;
         },

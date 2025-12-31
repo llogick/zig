@@ -717,6 +717,12 @@ pub const VTable = struct {
     tryLockStderr: *const fn (?*anyopaque, ?Terminal.Mode) Cancelable!?LockedStderr,
     unlockStderr: *const fn (?*anyopaque) void,
     processSetCurrentDir: *const fn (?*anyopaque, Dir) std.process.SetCurrentDirError!void,
+    processReplace: *const fn (?*anyopaque, std.process.ReplaceOptions) std.process.ReplaceError,
+    processReplacePath: *const fn (?*anyopaque, Dir, std.process.ReplaceOptions) std.process.ReplaceError,
+    processSpawn: *const fn (?*anyopaque, std.process.SpawnOptions) std.process.SpawnError!std.process.Child,
+    processSpawnPath: *const fn (?*anyopaque, Dir, std.process.SpawnOptions) std.process.SpawnError!std.process.Child,
+    childWait: *const fn (?*anyopaque, *std.process.Child) std.process.Child.WaitError!std.process.Child.Term,
+    childKill: *const fn (?*anyopaque, *std.process.Child) void,
 
     now: *const fn (?*anyopaque, Clock) Clock.Error!Timestamp,
     sleep: *const fn (?*anyopaque, Timeout) SleepError!void,

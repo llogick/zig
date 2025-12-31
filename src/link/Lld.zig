@@ -1606,15 +1606,15 @@ fn spawnLld(comp: *Compilation, arena: Allocator, argv: []const []const u8) !voi
 
     var child = std.process.Child.init(argv, arena);
     const term = (if (comp.clang_passthrough_mode) term: {
-        child.stdin_behavior = .Inherit;
-        child.stdout_behavior = .Inherit;
-        child.stderr_behavior = .Inherit;
+        child.stdin_behavior = .inherit;
+        child.stdout_behavior = .inherit;
+        child.stderr_behavior = .inherit;
 
         break :term child.spawnAndWait(io);
     } else term: {
-        child.stdin_behavior = .Ignore;
-        child.stdout_behavior = .Ignore;
-        child.stderr_behavior = .Pipe;
+        child.stdin_behavior = .ignore;
+        child.stdout_behavior = .ignore;
+        child.stderr_behavior = .pipe;
 
         child.spawn(io) catch |err| break :term err;
         var stderr_reader = child.stderr.?.readerStreaming(io, &.{});
@@ -1656,15 +1656,15 @@ fn spawnLld(comp: *Compilation, arena: Allocator, argv: []const []const u8) !voi
                     .{try comp.dirs.local_cache.join(arena, &.{rsp_path})},
                 ) }, arena);
                 if (comp.clang_passthrough_mode) {
-                    rsp_child.stdin_behavior = .Inherit;
-                    rsp_child.stdout_behavior = .Inherit;
-                    rsp_child.stderr_behavior = .Inherit;
+                    rsp_child.stdin_behavior = .inherit;
+                    rsp_child.stdout_behavior = .inherit;
+                    rsp_child.stderr_behavior = .inherit;
 
                     break :term rsp_child.spawnAndWait(io) catch |err| break :err err;
                 } else {
-                    rsp_child.stdin_behavior = .Ignore;
-                    rsp_child.stdout_behavior = .Ignore;
-                    rsp_child.stderr_behavior = .Pipe;
+                    rsp_child.stdin_behavior = .ignore;
+                    rsp_child.stdout_behavior = .ignore;
+                    rsp_child.stderr_behavior = .pipe;
 
                     rsp_child.spawn(io) catch |err| break :err err;
                     var stderr_reader = rsp_child.stderr.?.readerStreaming(io, &.{});
@@ -1680,7 +1680,7 @@ fn spawnLld(comp: *Compilation, arena: Allocator, argv: []const []const u8) !voi
 
     const diags = &comp.link_diags;
     switch (term) {
-        .Exited => |code| if (code != 0) {
+        .exited => |code| if (code != 0) {
             if (comp.clang_passthrough_mode) std.process.exit(code);
             diags.lockAndParseLldStderr(argv[1], stderr);
             return error.LinkFailure;

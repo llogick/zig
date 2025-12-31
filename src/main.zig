@@ -4442,9 +4442,9 @@ fn runOrTest(
     } else if (process.can_spawn) {
         var child = std.process.Child.init(argv.items, gpa);
         child.env_map = &env_map;
-        child.stdin_behavior = .Inherit;
-        child.stdout_behavior = .Inherit;
-        child.stderr_behavior = .Inherit;
+        child.stdin_behavior = .inherit;
+        child.stdout_behavior = .inherit;
+        child.stderr_behavior = .inherit;
 
         // Here we release all the locks associated with the Compilation so
         // that whatever this child process wants to do won't deadlock.
@@ -4587,9 +4587,9 @@ fn runOrTestHotSwap(
         else => {
             var child = std.process.Child.init(argv.items, gpa);
 
-            child.stdin_behavior = .Inherit;
-            child.stdout_behavior = .Inherit;
-            child.stderr_behavior = .Inherit;
+            child.stdin_behavior = .inherit;
+            child.stdout_behavior = .inherit;
+            child.stderr_behavior = .inherit;
 
             try child.spawn(io);
 
@@ -5417,9 +5417,9 @@ fn cmdBuild(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) 
 
         if (process.can_spawn) {
             var child = std.process.Child.init(child_argv.items, gpa);
-            child.stdin_behavior = .Inherit;
-            child.stdout_behavior = .Inherit;
-            child.stderr_behavior = .Inherit;
+            child.stdin_behavior = .inherit;
+            child.stdout_behavior = .inherit;
+            child.stderr_behavior = .inherit;
 
             const term = t: {
                 _ = try io.lockStderr(&.{}, .no_color);
@@ -5686,9 +5686,9 @@ fn jitCmd(
     }
 
     var child = std.process.Child.init(child_argv.items, gpa);
-    child.stdin_behavior = .Inherit;
-    child.stdout_behavior = if (options.capture == null) .Inherit else .Pipe;
-    child.stderr_behavior = .Inherit;
+    child.stdin_behavior = .inherit;
+    child.stdout_behavior = if (options.capture == null) .inherit else .pipe;
+    child.stderr_behavior = .inherit;
 
     const term = t: {
         _ = try io.lockStderr(&.{}, .no_color);
