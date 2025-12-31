@@ -12688,7 +12688,8 @@ fn scanEnviron(t: *Threaded) void {
             }
         }
     } else {
-        for (t.environ.block) |line| {
+        for (t.environ.block) |opt_line| {
+            const line = opt_line.?;
             var line_i: usize = 0;
             while (line[line_i] != 0 and line[line_i] != '=') : (line_i += 1) {}
             const key = line[0..line_i];

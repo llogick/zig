@@ -559,7 +559,7 @@ fn posixCallMainAndExit(argc_argv_ptr: [*]usize) callconv(.c) noreturn {
     const envp_optional: [*:null]?[*:0]u8 = @ptrCast(@alignCast(argv + argc + 1));
     var envp_count: usize = 0;
     while (envp_optional[envp_count]) |_| : (envp_count += 1) {}
-    const envp = @as([*][*:0]u8, @ptrCast(envp_optional))[0..envp_count];
+    const envp = envp_optional[0..envp_count :null];
 
     // Find the beginning of the auxiliary vector
     const auxv: [*]elf.Auxv = @ptrCast(@alignCast(envp.ptr + envp_count + 1));
@@ -668,7 +668,7 @@ fn expandStackSize(phdrs: []elf.Phdr) void {
     }
 }
 
-inline fn callMainWithArgs(argc: usize, argv: [*][*:0]u8, envp: [][*:0]u8) u8 {
+inline fn callMainWithArgs(argc: usize, argv: [*][*:0]u8, envp: [:null]?[*:0]u8) u8 {
     if (std.Options.debug_threaded_io) |t| {
         if (@sizeOf(std.Io.Threaded.Argv0) != 0) t.argv0.value = argv[0];
         t.environ = .{ .block = envp };
@@ -680,7 +680,7 @@ inline fn callMainWithArgs(argc: usize, argv: [*][*:0]u8, envp: [][*:0]u8) u8 {
 fn main(c_argc: c_int, c_argv: [*][*:0]c_char, c_envp: [*:null]?[*:0]c_char) callconv(.c) c_int {
     var env_count: usize = 0;
     while (c_envp[env_count] != null) : (env_count += 1) {}
-    const envp = @as([*][*:0]u8, @ptrCast(c_envp))[0..env_count];
+    const envp = c_envp[0..env_count :null];
 
     if (builtin.os.tag == .linux) {
         const at_phdr = std.c.getauxval(elf.AT_PHDR);

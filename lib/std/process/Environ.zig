@@ -15,7 +15,7 @@ block: Block,
 
 pub const Block = switch (native_os) {
     .windows => []const u16,
-    else => []const [*:0]const u8,
+    else => [:null]const ?[*:0]const u8,
 };
 
 pub const Map = struct {
@@ -364,7 +364,8 @@ pub fn createMap(env: Environ, allocator: Allocator) CreateMapError!Map {
         }
         return result;
     } else {
-        for (env.block) |line| {
+        for (env.block) |opt_line| {
+            const line = opt_line.?;
             var line_i: usize = 0;
             while (line[line_i] != 0 and line[line_i] != '=') : (line_i += 1) {}
             const key = line[0..line_i];
@@ -579,15 +580,10 @@ pub const CreateBlockOptions = struct {
 /// Creates a null-delimited environment variable block in the format expected
 /// by POSIX, from a different one.
 pub fn createBlock(existing: Environ, arena: Allocator, options: CreateBlockOptions) Allocator.Error![:null]?[*:0]u8 {
-    const existing_block: [*:null]const ?[*:0]const u8 = @ptrCast(existing.block);
-    const existing_count, const contains_zig_progress = c: {
-        var count: usize = 0;
-        var contains = false;
-        while (existing_block[count]) |line| : (count += 1) {
-            contains = contains or mem.eql(u8, mem.sliceTo(line, '='), "ZIG_PROGRESS");
-        }
-        break :c .{ count, contains };
-    };
+    const contains_zig_progress = for (existing.block) |opt_line| {
+        if (mem.eql(u8, mem.sliceTo(opt_line.?, '='), "ZIG_PROGRESS")) break true;
+    } else false;
+
     const ZigProgressAction = enum { nothing, edit, delete, add };
     const zig_progress_action: ZigProgressAction = a: {
         const fd = options.zig_progress_fd orelse break :a .nothing;
@@ -600,7 +596,7 @@ pub fn createBlock(existing: Environ, arena: Allocator, options: CreateBlockOpti
     };
 
     const envp_count: usize = c: {
-        var count: usize = existing_count;
+        var count: usize = existing.block.len;
         switch (zig_progress_action) {
             .add => count += 1,
             .delete => count -= 1,
@@ -618,7 +614,7 @@ pub fn createBlock(existing: Environ, arena: Allocator, options: CreateBlockOpti
         i += 1;
     }
 
-    while (existing_block[existing_index]) |line| : (existing_index += 1) {
+    while (existing.block[existing_index]) |line| : (existing_index += 1) {
         if (mem.eql(u8, mem.sliceTo(line, '='), "ZIG_PROGRESS")) switch (zig_progress_action) {
             .add => unreachable,
             .delete => continue,
