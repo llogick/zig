@@ -513,11 +513,11 @@ fn addEntryPoint(fuzz: *Fuzz, coverage_id: u64, addr: u64) error{ AlreadyReporte
     try coverage_map.entry_points.append(fuzz.gpa, @intCast(index));
 }
 
-pub fn waitAndPrintReport(fuzz: *Fuzz) void {
+pub fn waitAndPrintReport(fuzz: *Fuzz) Io.Cancelable!void {
     assert(fuzz.mode == .limit);
     const io = fuzz.io;
 
-    fuzz.group.awaitUncancelable(io);
+    try fuzz.group.await(io);
     fuzz.group = .init;
 
     std.debug.print("======= FUZZING REPORT =======\n", .{});

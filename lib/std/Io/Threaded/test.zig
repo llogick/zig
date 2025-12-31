@@ -124,7 +124,7 @@ test "Group.async context alignment" {
     var group: std.Io.Group = .init;
     var result: ByteArray512 = undefined;
     group.async(io, concatByteArraysResultPtr, .{ a, b, &result });
-    group.awaitUncancelable(io);
+    try group.await(io);
     try std.testing.expectEqualSlices(u8, &expected.x, &result.x);
 }
 

@@ -182,7 +182,7 @@ const Group = struct {
     const Task = struct {
         runnable: Runnable,
         group: *Io.Group,
-        func: *const fn (context: *const anyopaque) void,
+        func: *const fn (context: *const anyopaque) Io.Cancelable!void,
         context_alignment: Alignment,
         alloc_len: usize,
 
@@ -192,7 +192,7 @@ const Group = struct {
             group: Group,
             context: []const u8,
             context_alignment: Alignment,
-            func: *const fn (context: *const anyopaque) void,
+            func: *const fn (context: *const anyopaque) Io.Cancelable!void,
         ) Allocator.Error!*Task {
             const max_context_misalignment = context_alignment.toByteUnits() -| @alignOf(Task);
             const worst_case_context_offset = context_alignment.forward(@sizeOf(Task) + max_context_misalignment);
@@ -247,7 +247,20 @@ const Group = struct {
                 }, .monotonic);
             }
 
-            assertGroupResult(task.func(task.contextPointer()));
+            const result = task.func(task.contextPointer());
+            const cancel_acknowledged = switch (thread.status.load(.monotonic).cancelation) {
+                .none, .canceling => false,
+                .canceled => true,
+                .parked => unreachable,
+                .blocked => unreachable,
+                .blocked_windows_dns => unreachable,
+                .blocked_canceling => unreachable,
+            };
+            if (result) {
+                assert(!cancel_acknowledged); // group task acknowledged cancelation but did not return `error.Canceled`
+            } else |err| switch (err) {
+                error.Canceled => assert(cancel_acknowledged), // group task returned `error.Canceled` but was never canceled
+            }
 
             thread.status.store(.{ .cancelation = .none, .awaitable = .null }, .monotonic);
             const old_status = group.status().fetchSub(.{
@@ -348,7 +361,8 @@ const Future = struct {
             pending_awaited = 0b01,
             /// Like `pending`, but the future is being canceled. `Future.awaiter` is populated.
             pending_canceled = 0b11,
-            /// The future has already completed. `thread` is `null`.
+            /// The future has already completed. `thread` is `.null`, unless the future terminated
+            /// with an acknowledged cancel request, in which case `thread` is `.all_ones`.
             done = 0b10,
         },
         /// When the future begins execution, this is atomically updated from `null` to the thread running the
@@ -437,10 +451,18 @@ const Future = struct {
 
         future.func(future.contextPointer(), future.resultPointer());
 
+        const had_acknowledged_cancel = switch (thread.status.load(.monotonic).cancelation) {
+            .none, .canceling => false,
+            .canceled => true,
+            .parked => unreachable,
+            .blocked => unreachable,
+            .blocked_windows_dns => unreachable,
+            .blocked_canceling => unreachable,
+        };
         thread.status.store(.{ .cancelation = .none, .awaitable = .null }, .monotonic);
         const old_status = future.status.swap(.{
             .tag = .done,
-            .thread = .null,
+            .thread = if (had_acknowledged_cancel) .all_ones else .null,
         }, .acq_rel); // acquire `future.awaiter`, release results
         switch (old_status.tag) {
             .pending => {},
@@ -1712,11 +1734,11 @@ fn groupAsync(
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const g: Group = .{ .ptr = type_erased };
 
-    if (builtin.single_threaded) return start(context.ptr) catch unreachable;
+    if (builtin.single_threaded) return groupAsyncEager(start, context.ptr);
 
     const gpa = t.allocator;
     const task = Group.Task.create(gpa, g, context, context_alignment, start) catch |err| switch (err) {
-        error.OutOfMemory => return t.assertGroupResult(start(context.ptr)),
+        error.OutOfMemory => return groupAsyncEager(start, context.ptr),
     };
 
     t.mutex.lock();
@@ -1726,7 +1748,7 @@ fn groupAsync(
     if (busy_count >= @intFromEnum(t.async_limit)) {
         t.mutex.unlock();
         task.destroy(gpa);
-        return t.assertGroupResult(start(context.ptr));
+        return groupAsyncEager(start, context.ptr);
     }
 
     t.busy_count = busy_count + 1;
@@ -1739,7 +1761,7 @@ fn groupAsync(
             t.busy_count = busy_count;
             t.mutex.unlock();
             task.destroy(gpa);
-            return t.assertGroupResult(start(context.ptr));
+            return groupAsyncEager(start, context.ptr);
         };
         thread.detach();
     }
@@ -1757,23 +1779,45 @@ fn groupAsync(
     t.mutex.unlock();
     t.cond.signal();
 }
-
-fn assertGroupResult(result: Io.Cancelable!void) void {
-    const cancel_acknowledged = if (Thread.current) |thread|
-        switch (thread.status.load(.monotonic).cancelation) {
+fn groupAsyncEager(
+    start: *const fn (context: *const anyopaque) Io.Cancelable!void,
+    context: *const anyopaque,
+) void {
+    const pre_acknowledged = if (Thread.current) |thread| ack: {
+        break :ack switch (thread.status.load(.monotonic).cancelation) {
             .none, .canceling => false,
             .canceled => true,
             .parked => unreachable,
             .blocked => unreachable,
             .blocked_windows_dns => unreachable,
             .blocked_canceling => unreachable,
-        }
-    else
-        false;
+        };
+    } else false;
+    const result = start(context);
+    const post_acknowledged = if (Thread.current) |thread| ack: {
+        break :ack switch (thread.status.load(.monotonic).cancelation) {
+            .none, .canceling => false,
+            .canceled => true,
+            .parked => unreachable,
+            .blocked => unreachable,
+            .blocked_windows_dns => unreachable,
+            .blocked_canceling => unreachable,
+        };
+    } else false;
+
     if (result) {
-        assert(!cancel_acknowledged); // group task acknowledged cancelation but did not return `error.Canceled`
+        if (pre_acknowledged) {
+            assert(post_acknowledged); // group task called `recancel` but was not canceled
+        } else {
+            assert(!post_acknowledged); // group task acknowledged cancelation but did not return `error.Canceled`
+        }
     } else |err| switch (err) {
-        error.Canceled => assert(cancel_acknowledged), // group task returned `error.Canceled` but was never canceled
+        // Don't swallow the cancelation: make it visible to the `Group.async` caller.
+        error.Canceled => {
+            assert(!pre_acknowledged); // group task called `recancel` but was not canceled
+            assert(post_acknowledged); // group task returned `error.Canceled` but was never canceled
+            recancelInner();
+        },
     }
 }
 
@@ -1920,6 +1964,9 @@ fn groupCancel(userdata: ?*anyopaque, type_erased: *Io.Group, initial_token: *an
 fn recancel(userdata: ?*anyopaque) void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     _ = t;
+    recancelInner();
+}
+fn recancelInner() void {
     const thread = Thread.current.?; // called `recancel` but was not canceled
     switch (thread.status.fetchXor(.{
         .cancelation = @enumFromInt(0b001),
@@ -1993,7 +2040,16 @@ fn await(
                         future.waitForCancelWithSignaling(t, &num_completed, null);
                     },
                 }
-                recancel(t);
+                // If the future did not acknowledge the cancelation, we need to mark it outstanding
+                // for us. Because `future.status.tag == .done`, the information about whether there
+                // was an acknowledged cancelation is encoded in `future.status.thread`.
+                const final_status = future.status.load(.monotonic);
+                assert(final_status.tag == .done);
+                switch (final_status.thread) {
+                    .null => recancelInner(), // cancelation was not acknowledged, so it's ours
+                    .all_ones => {}, // cancelation was acknowledged, so it was this task's job to propagate it
+                    _ => unreachable,
+                }
             },
         },
         .pending_awaited => unreachable, // `await` raced with `await`
@@ -11669,7 +11725,7 @@ fn unlockStderr(userdata: ?*anyopaque) void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     t.stderr_writer.interface.flush() catch |err| switch (err) {
         error.WriteFailed => switch (t.stderr_writer.err.?) {
-            error.Canceled => recancel(t),
+            error.Canceled => recancelInner(),
             else => {},
         },
     };

@@ -849,7 +849,7 @@ fn runStepNames(
         defer f.deinit();
 
         f.start();
-        f.waitAndPrintReport();
+        try f.waitAndPrintReport();
     }
 
     // Every test has a state

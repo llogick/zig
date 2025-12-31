@@ -1111,7 +1111,9 @@ pub const Group = struct {
     }
 
     /// Blocks until all tasks of the group finish. During this time,
-    /// cancelation requests propagate to all members of the group.
+    /// cancelation requests propagate to all members of the group, and
+    /// will also cause `error.Canceled` to be returned when the group
+    /// does ultimately finish.
     ///
     /// Idempotent. Not threadsafe.
     ///
@@ -1121,17 +1123,6 @@ pub const Group = struct {
     pub fn await(g: *Group, io: Io) Cancelable!void {
         const token = g.token.load(.acquire) orelse return;
         try io.vtable.groupAwait(io.userdata, g, token);
-        assert(g.token.raw == null);
-    }
-
-    /// Equivalent to `await` but temporarily blocks cancelation while waiting.
-    pub fn awaitUncancelable(g: *Group, io: Io) void {
-        const token = g.token.load(.acquire) orelse return;
-        const prev = swapCancelProtection(io, .blocked);
-        defer _ = swapCancelProtection(io, prev);
-        io.vtable.groupAwait(io.userdata, g, token) catch |err| switch (err) {
-            error.Canceled => unreachable,
-        };
         assert(g.token.raw == null);
     }
 

@@ -194,7 +194,7 @@ test "Group" {
     group.async(io, count, .{ 1, 10, &results[0] });
     group.async(io, count, .{ 20, 30, &results[1] });
 
-    group.awaitUncancelable(io);
+    try group.await(io);
 
     try testing.expectEqualSlices(usize, &.{ 45, 245 }, &results);
 }
@@ -544,9 +544,9 @@ test "tasks spawned in group after Group.cancel are canceled" {
             group.concurrent(io, blockUntilCanceled, .{io}) catch {};
             group.async(io, blockUntilCanceled, .{io});
         }
-        fn blockUntilCanceled(io: Io) void {
+        fn blockUntilCanceled(io: Io) Io.Cancelable!void {
             while (true) io.sleep(.fromSeconds(100_000), .awake) catch |err| switch (err) {
-                error.Canceled => return,
+                error.Canceled => |e| return e,
                 error.UnsupportedClock => @panic("unsupported clock"),
                 error.Unexpected => @panic("unexpected"),
             };
