@@ -1725,8 +1725,6 @@ const src_files = [_][]const u8{
     "musl/src/stdlib/imaxdiv.c",
     "musl/src/stdlib/ldiv.c",
     "musl/src/stdlib/lldiv.c",
-    "musl/src/stdlib/qsort.c",
-    "musl/src/stdlib/qsort_nr.c",
     "musl/src/stdlib/strtod.c",
     "musl/src/stdlib/strtol.c",
     "musl/src/stdlib/wcstod.c",
