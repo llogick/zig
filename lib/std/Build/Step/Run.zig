@@ -750,28 +750,30 @@ fn checksContainStderr(checks: []const StdIo.Check) bool {
 /// to make sure the child doesn't see paths relative to a cwd other than its own.
 fn convertPathArg(run: *Run, path: Build.Cache.Path) []const u8 {
     const b = run.step.owner;
-    const path_str = path.toString(b.graph.arena) catch @panic("OOM");
+    const graph = b.graph;
+    const arena = graph.arena;
+
+    const path_str = path.toString(arena) catch @panic("OOM");
     if (Dir.path.isAbsolute(path_str)) {
         // Absolute paths don't need changing.
         return path_str;
     }
     const child_cwd_rel: []const u8 = rel: {
         const child_lazy_cwd = run.cwd orelse break :rel path_str;
-        const child_cwd = child_lazy_cwd.getPath3(b, &run.step).toString(b.graph.arena) catch @panic("OOM");
+        const child_cwd = child_lazy_cwd.getPath3(b, &run.step).toString(arena) catch @panic("OOM");
         // Convert it from relative to *our* cwd, to relative to the *child's* cwd.
-        break :rel Dir.path.relative(b.graph.arena, child_cwd, path_str) catch @panic("OOM");
+        break :rel Dir.path.relative(arena, graph.cache.cwd, &graph.env_map, child_cwd, path_str) catch @panic("OOM");
     };
     // Not every path can be made relative, e.g. if the path and the child cwd are on different
     // disk designators on Windows. In that case, `relative` will return an absolute path which we can
     // just return.
-    if (Dir.path.isAbsolute(child_cwd_rel)) {
-        return child_cwd_rel;
-    }
+    if (Dir.path.isAbsolute(child_cwd_rel)) return child_cwd_rel;
+
     // We're not done yet. In some cases this path must be prefixed with './':
     // * On POSIX, the executable name cannot be a single component like 'foo'
     // * Some executables might treat a leading '-' like a flag, which we must avoid
     // There's no harm in it, so just *always* apply this prefix.
-    return Dir.path.join(b.graph.arena, &.{ ".", child_cwd_rel }) catch @panic("OOM");
+    return Dir.path.join(arena, &.{ ".", child_cwd_rel }) catch @panic("OOM");
 }
 
 const IndexedOutput = struct {

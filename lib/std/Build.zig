@@ -1738,8 +1738,7 @@ pub fn pathFromRoot(b: *Build, sub_path: []const u8) []u8 {
 }
 
 fn pathFromCwd(b: *Build, sub_path: []const u8) []u8 {
-    const cwd = process.getCwdAlloc(b.allocator) catch @panic("OOM");
-    return b.pathResolve(&.{ cwd, sub_path });
+    return b.pathResolve(&.{ b.graph.cache.cwd, sub_path });
 }
 
 pub fn pathJoin(b: *Build, paths: []const []const u8) []u8 {

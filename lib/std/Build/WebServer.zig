@@ -482,8 +482,8 @@ pub fn serveFile(
     });
 }
 pub fn serveTarFile(ws: *WebServer, request: *http.Server.Request, paths: []const Cache.Path) !void {
-    const gpa = ws.gpa;
-    const io = ws.graph.io;
+    const graph = ws.graph;
+    const io = graph.io;
 
     var send_buffer: [0x4000]u8 = undefined;
     var response = try request.respondStreaming(&send_buffer, .{
@@ -494,9 +494,6 @@ pub fn serveTarFile(ws: *WebServer, request: *http.Server.Request, paths: []cons
             },
         },
     });
-
-    var cached_cwd_path: ?[]const u8 = null;
-    defer if (cached_cwd_path) |p| gpa.free(p);
 
     var archiver: std.tar.Writer = .{ .underlying_writer = &response.writer };
 
@@ -516,10 +513,7 @@ pub fn serveTarFile(ws: *WebServer, request: *http.Server.Request, paths: []cons
         // resulting in modules named "" and "src". The compiler needs to tell the build system
         // about the module graph so that the build system can correctly encode this information in
         // the tar file.
-        archiver.prefix = path.root_dir.path orelse cwd: {
-            if (cached_cwd_path == null) cached_cwd_path = try std.process.getCwdAlloc(gpa);
-            break :cwd cached_cwd_path.?;
-        };
+        archiver.prefix = path.root_dir.path orelse graph.cache.cwd;
         try archiver.writeFile(path.sub_path, &file_reader, @intCast(stat.mtime.toSeconds()));
     }
 

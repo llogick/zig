@@ -86,14 +86,14 @@ pub const Argv0 = switch (native_os) {
 
 const Environ = struct {
     /// Unmodified data directly from the OS.
-    block: process.Environ.Block = &.{},
+    process_environ: process.Environ = .empty,
     /// Protected by `mutex`. Determines whether the other fields have been
-    /// memoized based on `block`.
+    /// memoized based on `process_environ`.
     initialized: bool = false,
-    /// Protected by `mutex`. Memoized based on `block`. Tracks whether the
+    /// Protected by `mutex`. Memoized based on `process_environ`. Tracks whether the
     /// environment variables are present, ignoring their value.
     exist: Exist = .{},
-    /// Protected by `mutex`. Memoized based on `block`.
+    /// Protected by `mutex`. Memoized based on `process_environ`.
     string: String = .{},
     /// ZIG_PROGRESS
     zig_progress_handle: std.Progress.ParentFileError!u31 = error.EnvironmentVariableMissing,
@@ -1186,7 +1186,7 @@ pub fn init(
         .have_signal_handler = false,
         .argv0 = options.argv0,
         .worker_threads = .init(null),
-        .environ = .{ .block = options.environ.block },
+        .environ = .{ .process_environ = options.environ },
         .robust_cancel = options.robust_cancel,
     };
 
@@ -12693,7 +12693,7 @@ fn scanEnviron(t: *Threaded) void {
             comptime assert(@sizeOf(Environ.String) == 0);
         }
     } else {
-        for (t.environ.block) |opt_line| {
+        for (t.environ.process_environ.block) |opt_line| {
             const line = opt_line.?;
             var line_i: usize = 0;
             while (line[line_i] != 0 and line[line_i] != '=') : (line_i += 1) {}
@@ -12837,7 +12837,7 @@ fn processSpawnPosix(userdata: ?*anyopaque, options: process.SpawnOptions) proce
                 .zig_progress_fd = prog_fd,
             })).ptr;
         }
-        break :m (try process.Environ.createBlockPosix(.{ .block = t.environ.block }, arena, .{
+        break :m (try process.Environ.createBlockPosix(t.environ.process_environ, arena, .{
             .zig_progress_fd = prog_fd,
         })).ptr;
     };
@@ -12934,6 +12934,7 @@ fn processSpawnPosix(userdata: ?*anyopaque, options: process.SpawnOptions) proce
 
     return .{
         .id = pid,
+        .thread_handle = {},
         .stdin = switch (options.stdin) {
             .pipe => .{ .handle = stdin_pipe[1] },
             else => null,

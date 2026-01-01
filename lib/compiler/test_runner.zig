@@ -38,7 +38,7 @@ pub fn main(init: std.process.Init.Minimal) void {
     }
 
     if (need_simple) {
-        return mainSimple() catch @panic("test failure\n");
+        return mainSimple() catch @panic("test failure");
     }
 
     const args = init.args.toSlice(fba.allocator()) catch @panic("unable to parse command line args");

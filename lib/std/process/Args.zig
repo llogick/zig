@@ -12,6 +12,7 @@ vector: Vector,
 
 pub const Vector = switch (native_os) {
     .windows => []const u16, // WTF-16 encoded
+    .freestanding, .other => void,
     else => []const [*:0]const u8,
 };
 
@@ -57,7 +58,7 @@ pub const Iterator = struct {
     /// Returned slice is pointing to the iterator's internal buffer.
     /// On Windows, the result is encoded as [WTF-8](https://wtf-8.codeberg.page/).
     /// On other platforms, the result is an opaque sequence of bytes with no particular encoding.
-    pub fn next(it: *Iterator) ?([:0]const u8) {
+    pub fn next(it: *Iterator) ?[:0]const u8 {
         return it.inner.next();
     }
 

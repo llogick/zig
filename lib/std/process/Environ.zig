@@ -12,11 +12,6 @@ const posix = std.posix;
 const mem = std.mem;
 
 /// Unmodified, unprocessed data provided by the operating system.
-///
-/// On Windows this might point to memory in the PEB.
-///
-/// On WASI without libc, this is void because the environment has to be
-/// queried and heap-allocated at runtime.
 block: Block,
 
 pub const empty: Environ = .{
@@ -26,12 +21,19 @@ pub const empty: Environ = .{
     },
 };
 
+/// On WASI without libc, this is `void` because the environment has to be
+/// queried and heap-allocated at runtime.
+///
+/// On Windows, the memory pointed at by the PEB changes when the environment
+/// is modified, so a long-lived pointer cannot be used. Therefore, on this
+/// operating system `void` is also used.
 pub const Block = switch (native_os) {
-    .windows => [*:0]const u16,
+    .windows => void,
     .wasi => switch (builtin.link_libc) {
         false => void,
         true => [:null]const ?[*:0]const u8,
     },
+    .freestanding, .other => void,
     else => [:null]const ?[*:0]const u8,
 };
 
@@ -345,7 +347,7 @@ pub fn createMap(env: Environ, allocator: Allocator) CreateMapError!Map {
     errdefer result.deinit();
 
     if (native_os == .windows) {
-        const ptr = env.block;
+        const ptr = std.os.windows.peb().ProcessParameters.Environment;
 
         var i: usize = 0;
         while (ptr[i] != 0) {

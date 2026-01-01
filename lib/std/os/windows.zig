@@ -2927,7 +2927,7 @@ pub fn CreateSymbolicLink(
             // Already an NT path, no need to do anything to it
             break :target_path target_path;
         } else {
-            switch (getWin32PathType(u16, target_path)) {
+            switch (std.fs.path.getWin32PathType(u16, target_path)) {
                 // Rooted paths need to avoid getting put through wToPrefixedFileW
                 // (and they are treated as relative in this context)
                 // Note: It seems that rooted paths in symbolic links are relative to
@@ -4235,7 +4235,7 @@ pub const RemoveDotDirsError = error{TooManyParentDirs};
 ///    2) all repeating back slashes have been collapsed
 ///    3) the path is a relative one (does not start with a back slash)
 pub fn removeDotDirsSanitized(comptime T: type, path: []T) RemoveDotDirsError!usize {
-    std.debug.assert(path.len == 0 or path[0] != '\\');
+    assert(path.len == 0 or path[0] != '\\');
 
     var write_idx: usize = 0;
     var read_idx: usize = 0;
@@ -4251,7 +4251,7 @@ pub fn removeDotDirsSanitized(comptime T: type, path: []T) RemoveDotDirsError!us
             }
             if (after_dot == '.' and (read_idx + 2 == path.len or path[read_idx + 2] == '\\')) {
                 if (write_idx == 0) return error.TooManyParentDirs;
-                std.debug.assert(write_idx >= 2);
+                assert(write_idx >= 2);
                 write_idx -= 1;
                 while (true) {
                     write_idx -= 1;
@@ -4353,7 +4353,7 @@ pub fn wToPrefixedFileW(dir: ?HANDLE, path: [:0]const u16) Wtf16ToPrefixedFileWE
         path_space.data[path_space.len] = 0;
         return path_space;
     } else {
-        const path_type = getWin32PathType(u16, path);
+        const path_type = std.fs.path.getWin32PathType(u16, path);
         var path_space: PathSpace = undefined;
         if (path_type == .local_device) {
             switch (getLocalDevicePathType(u16, path)) {
@@ -4491,134 +4491,13 @@ pub fn wToPrefixedFileW(dir: ?HANDLE, path: [:0]const u16) Wtf16ToPrefixedFileWE
         if (path_type == .unc_absolute) {
             // Now add in the UNC, the `C` should overwrite the first `\` of the
             // FullPathName, ultimately resulting in `\??\UNC\<the rest of the path>`
-            std.debug.assert(path_space.data[path_buf_offset] == '\\');
-            std.debug.assert(path_space.data[path_buf_offset + 1] == '\\');
+            assert(path_space.data[path_buf_offset] == '\\');
+            assert(path_space.data[path_buf_offset + 1] == '\\');
             const unc = [_]u16{ 'U', 'N', 'C' };
             path_space.data[nt_prefix.len..][0..unc.len].* = unc;
         }
         return path_space;
     }
-}
-
-/// Similar to `RTL_PATH_TYPE`, but without the `UNKNOWN` path type.
-pub const Win32PathType = enum {
-    /// `\\server\share\foo`
-    unc_absolute,
-    /// `C:\foo`
-    drive_absolute,
-    /// `C:foo`
-    drive_relative,
-    /// `\foo`
-    rooted,
-    /// `foo`
-    relative,
-    /// `\\.\foo`, `\\?\foo`
-    local_device,
-    /// `\\.`, `\\?`
-    root_local_device,
-};
-
-/// Get the path type of a Win32 namespace path.
-/// Similar to `RtlDetermineDosPathNameType_U`.
-/// If `T` is `u16`, then `path` should be encoded as WTF-16LE.
-pub fn getWin32PathType(comptime T: type, path: []const T) Win32PathType {
-    if (path.len < 1) return .relative;
-
-    const windows_path = std.fs.path.PathType.windows;
-    if (windows_path.isSep(T, path[0])) {
-        // \x
-        if (path.len < 2 or !windows_path.isSep(T, path[1])) return .rooted;
-        // \\. or \\?
-        if (path.len > 2 and (path[2] == mem.nativeToLittle(T, '.') or path[2] == mem.nativeToLittle(T, '?'))) {
-            // exactly \\. or \\? with nothing trailing
-            if (path.len == 3) return .root_local_device;
-            // \\.\x or \\?\x
-            if (windows_path.isSep(T, path[3])) return .local_device;
-        }
-        // \\x
-        return .unc_absolute;
-    } else {
-        // Some choice has to be made about how non-ASCII code points as drive-letters are handled, since
-        // path[0] is a different size for WTF-16 vs WTF-8, leading to a potential mismatch in classification
-        // for a WTF-8 path and its WTF-16 equivalent. For example, `€:\` encoded in WTF-16 is three code
-        // units `<0x20AC>:\` whereas `€:\` encoded as WTF-8 is 6 code units `<0xE2><0x82><0xAC>:\` so
-        // checking path[0], path[1] and path[2] would not behave the same between WTF-8/WTF-16.
-        //
-        // `RtlDetermineDosPathNameType_U` exclusively deals with WTF-16 and considers
-        // `€:\` a drive-absolute path, but code points that take two WTF-16 code units to encode get
-        // classified as a relative path (e.g. with U+20000 as the drive-letter that'd be encoded
-        // in WTF-16 as `<0xD840><0xDC00>:\` and be considered a relative path).
-        //
-        // The choice made here is to emulate the behavior of `RtlDetermineDosPathNameType_U` for both
-        // WTF-16 and WTF-8. This is because, while unlikely and not supported by the Disk Manager GUI,
-        // drive letters are not actually restricted to A-Z. Using `SetVolumeMountPointW` will allow you
-        // to set any byte value as a drive letter, and going through `IOCTL_MOUNTMGR_CREATE_POINT` will
-        // allow you to set any WTF-16 code unit as a drive letter.
-        //
-        // Non-A-Z drive letters don't interact well with most of Windows, but certain things do work, e.g.
-        // `cd /D €:\` will work, filesystem functions still work, etc.
-        //
-        // The unfortunate part of this is that this makes handling WTF-8 more complicated as we can't
-        // just check path[0], path[1], path[2].
-        const colon_i: usize = switch (T) {
-            u8 => i: {
-                const code_point_len = std.unicode.utf8ByteSequenceLength(path[0]) catch return .relative;
-                // Conveniently, 4-byte sequences in WTF-8 have the same starting code point
-                // as 2-code-unit sequences in WTF-16.
-                if (code_point_len > 3) return .relative;
-                break :i code_point_len;
-            },
-            u16 => 1,
-            else => @compileError("unsupported type: " ++ @typeName(T)),
-        };
-        // x
-        if (path.len < colon_i + 1 or path[colon_i] != mem.nativeToLittle(T, ':')) return .relative;
-        // x:\
-        if (path.len > colon_i + 1 and windows_path.isSep(T, path[colon_i + 1])) return .drive_absolute;
-        // x:
-        return .drive_relative;
-    }
-}
-
-test getWin32PathType {
-    try std.testing.expectEqual(.relative, getWin32PathType(u8, ""));
-    try std.testing.expectEqual(.relative, getWin32PathType(u8, "x"));
-    try std.testing.expectEqual(.relative, getWin32PathType(u8, "x\\"));
-
-    try std.testing.expectEqual(.root_local_device, getWin32PathType(u8, "//."));
-    try std.testing.expectEqual(.root_local_device, getWin32PathType(u8, "/\\?"));
-    try std.testing.expectEqual(.root_local_device, getWin32PathType(u8, "\\\\?"));
-
-    try std.testing.expectEqual(.local_device, getWin32PathType(u8, "//./x"));
-    try std.testing.expectEqual(.local_device, getWin32PathType(u8, "/\\?\\x"));
-    try std.testing.expectEqual(.local_device, getWin32PathType(u8, "\\\\?\\x"));
-    // local device paths require a path separator after the root, otherwise it is considered a UNC path
-    try std.testing.expectEqual(.unc_absolute, getWin32PathType(u8, "\\\\?x"));
-    try std.testing.expectEqual(.unc_absolute, getWin32PathType(u8, "//.x"));
-
-    try std.testing.expectEqual(.unc_absolute, getWin32PathType(u8, "//"));
-    try std.testing.expectEqual(.unc_absolute, getWin32PathType(u8, "\\\\x"));
-    try std.testing.expectEqual(.unc_absolute, getWin32PathType(u8, "//x"));
-
-    try std.testing.expectEqual(.rooted, getWin32PathType(u8, "\\x"));
-    try std.testing.expectEqual(.rooted, getWin32PathType(u8, "/"));
-
-    try std.testing.expectEqual(.drive_relative, getWin32PathType(u8, "x:"));
-    try std.testing.expectEqual(.drive_relative, getWin32PathType(u8, "x:abc"));
-    try std.testing.expectEqual(.drive_relative, getWin32PathType(u8, "x:a/b/c"));
-
-    try std.testing.expectEqual(.drive_absolute, getWin32PathType(u8, "x:\\"));
-    try std.testing.expectEqual(.drive_absolute, getWin32PathType(u8, "x:\\abc"));
-    try std.testing.expectEqual(.drive_absolute, getWin32PathType(u8, "x:/a/b/c"));
-
-    // Non-ASCII code point that is encoded as one WTF-16 code unit is considered a valid drive letter
-    try std.testing.expectEqual(.drive_absolute, getWin32PathType(u8, "€:\\"));
-    try std.testing.expectEqual(.drive_absolute, getWin32PathType(u16, std.unicode.wtf8ToWtf16LeStringLiteral("€:\\")));
-    try std.testing.expectEqual(.drive_relative, getWin32PathType(u8, "€:"));
-    try std.testing.expectEqual(.drive_relative, getWin32PathType(u16, std.unicode.wtf8ToWtf16LeStringLiteral("€:")));
-    // But code points that are encoded as two WTF-16 code units are not
-    try std.testing.expectEqual(.relative, getWin32PathType(u8, "\u{10000}:\\"));
-    try std.testing.expectEqual(.relative, getWin32PathType(u16, std.unicode.wtf8ToWtf16LeStringLiteral("\u{10000}:\\")));
 }
 
 /// Returns true if the path starts with `\??\`, which is indicative of an NT path
@@ -4663,7 +4542,7 @@ const LocalDevicePathType = enum {
 /// Asserts `path` is of type `Win32PathType.local_device`.
 fn getLocalDevicePathType(comptime T: type, path: []const T) LocalDevicePathType {
     if (std.debug.runtime_safety) {
-        std.debug.assert(getWin32PathType(T, path) == .local_device);
+        assert(std.fs.path.getWin32PathType(T, path) == .local_device);
     }
 
     const backslash = mem.nativeToLittle(T, '\\');

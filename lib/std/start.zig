@@ -11,117 +11,62 @@ const native_os = builtin.os.tag;
 
 const start_sym_name = if (native_arch.isMIPS()) "__start" else "_start";
 
-// The self-hosted compiler is not fully capable of handling all of this start.zig file.
-// Until then, we have simplified logic here for self-hosted. TODO remove this once
-// self-hosted is capable enough to handle all of the real start.zig logic.
-pub const simplified_logic = switch (builtin.zig_backend) {
-    .stage2_aarch64,
-    .stage2_arm,
-    .stage2_powerpc,
-    .stage2_sparc64,
-    .stage2_spirv,
-    .stage2_x86,
-    => true,
-    else => false,
-};
-
 comptime {
     // No matter what, we import the root file, so that any export, test, comptime
     // decls there get run.
     _ = root;
 
-    if (simplified_logic) {
-        if (builtin.output_mode == .Exe) {
-            if ((builtin.link_libc or builtin.object_format == .c) and @hasDecl(root, "main")) {
-                if (!@typeInfo(@TypeOf(root.main)).@"fn".calling_convention.eql(.c)) {
-                    @export(&main2, .{ .name = "main" });
-                }
-            } else if (builtin.os.tag == .windows) {
-                if (!@hasDecl(root, "wWinMainCRTStartup") and !@hasDecl(root, "mainCRTStartup")) {
-                    @export(&wWinMainCRTStartup2, .{ .name = "wWinMainCRTStartup" });
-                }
-            } else if (builtin.os.tag == .opencl or builtin.os.tag == .vulkan) {
-                if (@hasDecl(root, "main"))
-                    @export(&spirvMain2, .{ .name = "main" });
-            } else {
-                if (!@hasDecl(root, "_start")) {
-                    @export(&_start2, .{ .name = "_start" });
-                }
-            }
+    if (builtin.output_mode == .Lib and builtin.link_mode == .dynamic) {
+        if (native_os == .windows and !@hasDecl(root, "_DllMainCRTStartup")) {
+            @export(&_DllMainCRTStartup, .{ .name = "_DllMainCRTStartup" });
         }
-    } else {
-        if (builtin.output_mode == .Lib and builtin.link_mode == .dynamic) {
-            if (native_os == .windows and !@hasDecl(root, "_DllMainCRTStartup")) {
-                @export(&_DllMainCRTStartup, .{ .name = "_DllMainCRTStartup" });
+    } else if (builtin.output_mode == .Exe or @hasDecl(root, "main")) {
+        if (builtin.link_libc and @hasDecl(root, "main")) {
+            if (native_arch.isWasm()) {
+                @export(&mainWithoutEnv, .{ .name = "__main_argc_argv" });
+            } else if (!@typeInfo(@TypeOf(root.main)).@"fn".calling_convention.eql(.c)) {
+                @export(&main, .{ .name = "main" });
             }
-        } else if (builtin.output_mode == .Exe or @hasDecl(root, "main")) {
-            if (builtin.link_libc and @hasDecl(root, "main")) {
-                if (native_arch.isWasm()) {
-                    @export(&mainWithoutEnv, .{ .name = "__main_argc_argv" });
-                } else if (!@typeInfo(@TypeOf(root.main)).@"fn".calling_convention.eql(.c)) {
-                    @export(&main, .{ .name = "main" });
-                }
-            } else if (native_os == .windows and builtin.link_libc and @hasDecl(root, "wWinMain")) {
-                if (!@typeInfo(@TypeOf(root.wWinMain)).@"fn".calling_convention.eql(.c)) {
-                    @export(&wWinMain, .{ .name = "wWinMain" });
-                }
-            } else if (native_os == .windows) {
-                if (!@hasDecl(root, "WinMain") and !@hasDecl(root, "WinMainCRTStartup") and
-                    !@hasDecl(root, "wWinMain") and !@hasDecl(root, "wWinMainCRTStartup"))
-                {
-                    @export(&WinStartup, .{ .name = "wWinMainCRTStartup" });
-                } else if (@hasDecl(root, "WinMain") and !@hasDecl(root, "WinMainCRTStartup") and
-                    !@hasDecl(root, "wWinMain") and !@hasDecl(root, "wWinMainCRTStartup"))
-                {
-                    @compileError("WinMain not supported; declare wWinMain or main instead");
-                } else if (@hasDecl(root, "wWinMain") and !@hasDecl(root, "wWinMainCRTStartup") and
-                    !@hasDecl(root, "WinMain") and !@hasDecl(root, "WinMainCRTStartup"))
-                {
-                    @export(&wWinMainCRTStartup, .{ .name = "wWinMainCRTStartup" });
-                }
-            } else if (native_os == .uefi) {
-                if (!@hasDecl(root, "EfiMain")) @export(&EfiMain, .{ .name = "EfiMain" });
-            } else if (native_os == .wasi) {
-                const wasm_start_sym = switch (builtin.wasi_exec_model) {
-                    .reactor => "_initialize",
-                    .command => "_start",
-                };
-                if (!@hasDecl(root, wasm_start_sym) and @hasDecl(root, "main")) {
-                    // Only call main when defined. For WebAssembly it's allowed to pass `-fno-entry` in which
-                    // case it's not required to provide an entrypoint such as main.
-                    @export(&wasi_start, .{ .name = wasm_start_sym });
-                }
-            } else if (native_arch.isWasm() and native_os == .freestanding) {
+        } else if (native_os == .windows and builtin.link_libc and @hasDecl(root, "wWinMain")) {
+            if (!@typeInfo(@TypeOf(root.wWinMain)).@"fn".calling_convention.eql(.c)) {
+                @export(&wWinMain, .{ .name = "wWinMain" });
+            }
+        } else if (native_os == .windows) {
+            if (!@hasDecl(root, "WinMain") and !@hasDecl(root, "WinMainCRTStartup") and
+                !@hasDecl(root, "wWinMain") and !@hasDecl(root, "wWinMainCRTStartup"))
+            {
+                @export(&WinStartup, .{ .name = "wWinMainCRTStartup" });
+            } else if (@hasDecl(root, "WinMain") and !@hasDecl(root, "WinMainCRTStartup") and
+                !@hasDecl(root, "wWinMain") and !@hasDecl(root, "wWinMainCRTStartup"))
+            {
+                @compileError("WinMain not supported; declare wWinMain or main instead");
+            } else if (@hasDecl(root, "wWinMain") and !@hasDecl(root, "wWinMainCRTStartup") and
+                !@hasDecl(root, "WinMain") and !@hasDecl(root, "WinMainCRTStartup"))
+            {
+                @export(&wWinMainCRTStartup, .{ .name = "wWinMainCRTStartup" });
+            }
+        } else if (native_os == .uefi) {
+            if (!@hasDecl(root, "EfiMain")) @export(&EfiMain, .{ .name = "EfiMain" });
+        } else if (native_os == .wasi) {
+            const wasm_start_sym = switch (builtin.wasi_exec_model) {
+                .reactor => "_initialize",
+                .command => "_start",
+            };
+            if (!@hasDecl(root, wasm_start_sym) and @hasDecl(root, "main")) {
                 // Only call main when defined. For WebAssembly it's allowed to pass `-fno-entry` in which
                 // case it's not required to provide an entrypoint such as main.
-                if (!@hasDecl(root, start_sym_name) and @hasDecl(root, "main")) @export(&wasm_freestanding_start, .{ .name = start_sym_name });
-            } else switch (native_os) {
-                .other, .freestanding, .@"3ds", .vita => {},
-                else => if (!@hasDecl(root, start_sym_name)) @export(&_start, .{ .name = start_sym_name }),
+                @export(&wasi_start, .{ .name = wasm_start_sym });
             }
+        } else if (native_arch.isWasm() and native_os == .freestanding) {
+            // Only call main when defined. For WebAssembly it's allowed to pass `-fno-entry` in which
+            // case it's not required to provide an entrypoint such as main.
+            if (!@hasDecl(root, start_sym_name) and @hasDecl(root, "main")) @export(&wasm_freestanding_start, .{ .name = start_sym_name });
+        } else switch (native_os) {
+            .other, .freestanding, .@"3ds", .vita => {},
+            else => if (!@hasDecl(root, start_sym_name)) @export(&_start, .{ .name = start_sym_name }),
         }
     }
 }
-
-// Simplified start code for stage2 until it supports more language features ///
-
-fn main2() callconv(.c) c_int {
-    return callMain();
-}
-
-fn _start2() callconv(.withStackAlign(.c, 1)) noreturn {
-    std.process.exit(callMain());
-}
-
-fn spirvMain2() callconv(.kernel) void {
-    root.main();
-}
-
-fn wWinMainCRTStartup2() callconv(.c) noreturn {
-    std.process.exit(callMain());
-}
-
-////////////////////////////////////////////////////////////////////////////////
 
 fn _DllMainCRTStartup(
     hinstDLL: std.os.windows.HINSTANCE,
@@ -142,15 +87,15 @@ fn _DllMainCRTStartup(
 fn wasm_freestanding_start() callconv(.c) void {
     // This is marked inline because for some reason LLVM in
     // release mode fails to inline it, and we want fewer call frames in stack traces.
-    _ = @call(.always_inline, callMain, .{});
+    _ = @call(.always_inline, callMain, .{ {}, {} });
 }
 
 fn wasi_start() callconv(.c) void {
     // The function call is marked inline because for some reason LLVM in
     // release mode fails to inline it, and we want fewer call frames in stack traces.
     switch (builtin.wasi_exec_model) {
-        .reactor => _ = @call(.always_inline, callMain, .{}),
-        .command => std.os.wasi.proc_exit(@call(.always_inline, callMain, .{})),
+        .reactor => _ = @call(.always_inline, callMain, .{ {}, {} }),
+        .command => std.os.wasi.proc_exit(@call(.always_inline, callMain, .{ {}, {} })),
     }
 }
 
@@ -524,13 +469,10 @@ fn WinStartup() callconv(.withStackAlign(.c, 1)) noreturn {
 
     std.debug.maybeEnableSegfaultHandler();
 
-    const peb = std.os.windows.peb();
     const cmd_line = std.os.windows.peb().ProcessParameters.CommandLine;
+    const cmd_line_w = cmd_line.Buffer.?[0..@divExact(cmd_line.Length, 2)];
 
-    std.os.windows.ntdll.RtlExitUserProcess(callMain(
-        cmd_line.Buffer.?[0..@divExact(cmd_line.Length, 2)],
-        peb.ProcessParameters.Environment,
-    ));
+    std.os.windows.ntdll.RtlExitUserProcess(callMain(cmd_line_w, {}));
 }
 
 fn wWinMainCRTStartup() callconv(.withStackAlign(.c, 1)) noreturn {
@@ -637,6 +579,7 @@ fn posixCallMainAndExit(argc_argv_ptr: [*]usize) callconv(.c) noreturn {
 }
 
 fn expandStackSize(phdrs: []elf.Phdr) void {
+    @disableInstrumentation();
     for (phdrs) |*phdr| {
         switch (phdr.p_type) {
             elf.PT_GNU_STACK => {
@@ -674,7 +617,7 @@ fn expandStackSize(phdrs: []elf.Phdr) void {
 inline fn callMainWithArgs(argc: usize, argv: [*][*:0]u8, envp: [:null]?[*:0]u8) u8 {
     if (std.Options.debug_threaded_io) |t| {
         if (@sizeOf(std.Io.Threaded.Argv0) != 0) t.argv0.value = argv[0];
-        t.environ = .{ .block = envp };
+        t.environ = .{ .process_environ = .{ .block = envp } };
     }
     std.debug.maybeEnableSegfaultHandler();
     return callMain(argv[0..argc], envp);
@@ -735,8 +678,8 @@ inline fn callMain(args: std.process.Args.Vector, environ: std.process.Environ.B
     defer arena_allocator.deinit();
 
     var threaded: std.Io.Threaded = .init(gpa, .{
-        .argv0 = if (@sizeOf(std.Io.Threaded.Argv0) != 0) .{ .value = args[0] } else .{},
-        .environ = .{ .block = environ },
+        .argv0 = .init(.{ .value = args }),
+        .environ = .{ .process_environ = .{ .block = environ } },
     });
     defer threaded.deinit();
 

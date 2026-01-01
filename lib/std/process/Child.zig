@@ -21,7 +21,7 @@ pub const Id = switch (native_os) {
 /// On Windows this is the hProcess.
 /// On POSIX this is the pid.
 id: ?Id,
-thread_handle: if (native_os == .windows) std.os.windows.HANDLE else void = {},
+thread_handle: if (native_os == .windows) std.os.windows.HANDLE else void,
 /// The writing end of the child process's standard input pipe.
 /// Usage requires `process.SpawnOptions.StdIo.pipe`.
 stdin: ?File,
