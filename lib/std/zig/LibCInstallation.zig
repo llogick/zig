@@ -167,6 +167,7 @@ pub fn render(self: LibCInstallation, out: *std.Io.Writer) !void {
 
 pub const FindNativeOptions = struct {
     target: *const std.Target,
+    env_map: *const std.process.Environ.Map,
 
     /// If enabled, will print human-friendly errors to stderr.
     verbose: bool = false,
@@ -238,10 +239,7 @@ pub fn deinit(self: *LibCInstallation, allocator: Allocator) void {
 
 fn findNativeIncludeDirPosix(self: *LibCInstallation, gpa: Allocator, io: Io, args: FindNativeOptions) FindError!void {
     // Detect infinite loops.
-    var env_map = std.process.getEnvMap(gpa) catch |err| switch (err) {
-        error.Unexpected => unreachable, // WASI-only
-        else => |e| return e,
-    };
+    var env_map = try args.env_map.clone(gpa);
     defer env_map.deinit();
     const skip_cc_env_var = if (env_map.get(inf_loop_env_key)) |phase| blk: {
         if (std.mem.eql(u8, phase, "1")) {
@@ -260,7 +258,7 @@ fn findNativeIncludeDirPosix(self: *LibCInstallation, gpa: Allocator, io: Io, ar
     var argv = std.array_list.Managed([]const u8).init(gpa);
     defer argv.deinit();
 
-    try appendCcExe(&argv, skip_cc_env_var);
+    try appendCcExe(&argv, skip_cc_env_var, &env_map);
     try argv.appendSlice(&.{
         "-E",
         "-Wp,-v",
@@ -449,6 +447,7 @@ fn findNativeCrtDirWindows(
 
 fn findNativeCrtDirPosix(self: *LibCInstallation, gpa: Allocator, io: Io, args: FindNativeOptions) FindError!void {
     self.crt_dir = try ccPrintFileName(gpa, io, .{
+        .env_map = args.env_map,
         .search_basename = switch (args.target.os.tag) {
             .linux => if (args.target.abi.isAndroid()) "crtbegin_dynamic.o" else "crt1.o",
             else => "crt1.o",
@@ -553,6 +552,7 @@ fn findNativeMsvcLibDir(
 }
 
 pub const CCPrintFileNameOptions = struct {
+    env_map: *const std.process.Environ.Map,
     search_basename: []const u8,
     want_dirname: enum { full_path, only_dir },
     verbose: bool = false,
@@ -561,10 +561,7 @@ pub const CCPrintFileNameOptions = struct {
 /// caller owns returned memory
 fn ccPrintFileName(gpa: Allocator, io: Io, args: CCPrintFileNameOptions) ![:0]u8 {
     // Detect infinite loops.
-    var env_map = std.process.getEnvMap(gpa) catch |err| switch (err) {
-        error.Unexpected => unreachable, // WASI-only
-        else => |e| return e,
-    };
+    var env_map = try args.env_map.clone(gpa);
     defer env_map.deinit();
     const skip_cc_env_var = if (env_map.get(inf_loop_env_key)) |phase| blk: {
         if (std.mem.eql(u8, phase, "1")) {
@@ -584,7 +581,7 @@ fn ccPrintFileName(gpa: Allocator, io: Io, args: CCPrintFileNameOptions) ![:0]u8
     const arg1 = try std.fmt.allocPrint(gpa, "-print-file-name={s}", .{args.search_basename});
     defer gpa.free(arg1);
 
-    try appendCcExe(&argv, skip_cc_env_var);
+    try appendCcExe(&argv, skip_cc_env_var, &env_map);
     try argv.append(arg1);
 
     const run_res = std.process.run(gpa, io, .{
@@ -672,14 +669,18 @@ fn fillInstallations(
 
 const inf_loop_env_key = "ZIG_IS_DETECTING_LIBC_PATHS";
 
-fn appendCcExe(args: *std.array_list.Managed([]const u8), skip_cc_env_var: bool) !void {
+fn appendCcExe(
+    args: *std.array_list.Managed([]const u8),
+    skip_cc_env_var: bool,
+    env_map: *const std.process.Environ.Map,
+) !void {
     const default_cc_exe = if (is_windows) "cc.exe" else "cc";
     try args.ensureUnusedCapacity(1);
     if (skip_cc_env_var) {
         args.appendAssumeCapacity(default_cc_exe);
         return;
     }
-    const cc_env_var = std.zig.EnvVar.CC.getPosix() orelse {
+    const cc_env_var = std.zig.EnvVar.CC.get(env_map) orelse {
         args.appendAssumeCapacity(default_cc_exe);
         return;
     };

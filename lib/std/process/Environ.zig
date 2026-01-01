@@ -20,7 +20,7 @@ const mem = std.mem;
 block: Block,
 
 pub const Block = switch (native_os) {
-    .windows => []const u16,
+    .windows => [*:0]const u16,
     .wasi => switch (builtin.link_libc) {
         false => void,
         true => [:null]const ?[*:0]const u8,

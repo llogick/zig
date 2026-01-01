@@ -516,7 +516,7 @@ pub fn freeSlice(gpa: Allocator, to_slice_result: []const [:0]u8) void {
 }
 
 test "Iterator.Windows" {
-    const t = testArgIteratorWindows;
+    const t = testIteratorWindows;
 
     try t(
         \\"C:\Program Files\zig\zig.exe" run .\src\main.zig -target x86_64-windows-gnu -O ReleaseSafe -- --emoji=🗿 --eval="new Regex(\"Dwayne \\\"The Rock\\\" Johnson\")"
@@ -648,7 +648,7 @@ test "Iterator.Windows" {
     try t("foo.exe \"\xed\xa0\x81\"\xed\xb0\xb7", &.{ "foo.exe", "𐐷" });
 }
 
-fn testArgIteratorWindows(cmd_line: []const u8, expected_args: []const []const u8) !void {
+fn testIteratorWindows(cmd_line: []const u8, expected_args: []const []const u8) !void {
     const cmd_line_w = try std.unicode.wtf8ToWtf16LeAllocZ(testing.allocator, cmd_line);
     defer testing.allocator.free(cmd_line_w);
 
@@ -679,7 +679,7 @@ fn testArgIteratorWindows(cmd_line: []const u8, expected_args: []const []const u
     }
 }
 
-test "general arg parsing" {
+test "general parsing" {
     try testGeneralCmdLine("a   b\tc d", &.{ "a", "b", "c", "d" });
     try testGeneralCmdLine("\"abc\" d e", &.{ "abc", "d", "e" });
     try testGeneralCmdLine("a\\\\\\b d\"e f\"g h", &.{ "a\\\\\\b", "de fg", "h" });
@@ -703,7 +703,7 @@ test "general arg parsing" {
 }
 
 fn testGeneralCmdLine(input_cmd_line: []const u8, expected_args: []const []const u8) !void {
-    var it = try ArgIteratorGeneral(.{}).init(std.testing.allocator, input_cmd_line);
+    var it = try IteratorGeneral(.{}).init(std.testing.allocator, input_cmd_line);
     defer it.deinit();
     for (expected_args) |expected_arg| {
         const arg = it.next().?;
@@ -712,14 +712,14 @@ fn testGeneralCmdLine(input_cmd_line: []const u8, expected_args: []const []const
     try testing.expect(it.next() == null);
 }
 
-/// Optional parameters for `ArgIteratorGeneral`
-pub const ArgIteratorGeneralOptions = struct {
+/// Optional parameters for `IteratorGeneral`
+pub const IteratorGeneralOptions = struct {
     comments: bool = false,
     single_quotes: bool = false,
 };
 
 /// A general Iterator to parse a string into a set of arguments
-pub fn ArgIteratorGeneral(comptime options: ArgIteratorGeneralOptions) type {
+pub fn IteratorGeneral(comptime options: IteratorGeneralOptions) type {
     return struct {
         allocator: Allocator,
         index: usize = 0,
@@ -947,7 +947,7 @@ test "response file arg parsing" {
 }
 
 fn testResponseFileCmdLine(input_cmd_line: []const u8, expected_args: []const []const u8) !void {
-    var it = try ArgIteratorGeneral(.{ .comments = true, .single_quotes = true })
+    var it = try IteratorGeneral(.{ .comments = true, .single_quotes = true })
         .init(std.testing.allocator, input_cmd_line);
     defer it.deinit();
     for (expected_args) |expected_arg| {

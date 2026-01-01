@@ -951,15 +951,14 @@ const MsvcLibDir = struct {
         return msvc_dir;
     }
 
-    fn findViaVs7Key(gpa: Allocator, io: Io, arch: std.Target.Cpu.Arch) error{ OutOfMemory, PathNotFound }![]const u8 {
+    fn findViaVs7Key(
+        gpa: Allocator,
+        io: Io,
+        arch: std.Target.Cpu.Arch,
+        env_map: *const std.process.Environ.Map,
+    ) error{ OutOfMemory, PathNotFound }![]const u8 {
         var base_path: std.array_list.Managed(u8) = base_path: {
             try_env: {
-                var env_map = std.process.getEnvMap(gpa) catch |err| switch (err) {
-                    error.OutOfMemory => return error.OutOfMemory,
-                    else => break :try_env,
-                };
-                defer env_map.deinit();
-
                 if (env_map.get("VS140COMNTOOLS")) |VS140COMNTOOLS| {
                     if (VS140COMNTOOLS.len < "C:\\Common7\\Tools".len) break :try_env;
                     if (!Dir.path.isAbsolute(VS140COMNTOOLS)) break :try_env;

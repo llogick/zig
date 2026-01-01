@@ -54,6 +54,7 @@ gpa: Allocator,
 /// threads at once.
 arena: Allocator,
 io: Io,
+environ_map: *std.process.Environ.Map,
 thread_limit: usize,
 /// Not every Compilation compiles .zig code! For example you could do `zig build-exe foo.o`.
 zcu: ?*Zcu,
@@ -761,6 +762,7 @@ pub const Directories = struct {
             .wasi => void,
             else => []const u8,
         },
+        env_map: *std.process.Environ.Map,
     ) Directories {
         const wasi = builtin.target.os.tag == .wasi;
 
@@ -779,7 +781,7 @@ pub const Directories = struct {
         const global_cache: Cache.Directory = d: {
             if (override_global_cache) |path| break :d openUnresolved(arena, io, cwd, path, .@"global cache");
             if (wasi) break :d openWasiPreopen(wasi_preopens, "/cache");
-            const path = introspect.resolveGlobalCacheDir(arena) catch |err| {
+            const path = introspect.resolveGlobalCacheDir(arena, env_map) catch |err| {
                 fatal("unable to resolve zig cache directory: {t}", .{err});
             };
             break :d openUnresolved(arena, io, cwd, path, .@"global cache");
@@ -1797,6 +1799,8 @@ pub const CreateOptions = struct {
 
     parent_whole_cache: ?ParentWholeCache = null,
 
+    environ_map: *std.process.Environ.Map,
+
     pub const Entry = link.File.OpenOptions.Entry;
 
     /// Which fields are valid depends on the `cache_mode` given.
@@ -1967,6 +1971,7 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
             options.root_mod.resolved_target.is_native_abi,
             link_libc,
             options.libc_installation,
+            options.environ_map,
         ) catch |err| switch (err) {
             error.OutOfMemory => |e| return e,
             // Every other error is specifically related to finding the native installation
@@ -2306,6 +2311,7 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
             .emit_llvm_ir = try options.emit_llvm_ir.resolve(arena, &options, .llvm_ir),
             .emit_llvm_bc = try options.emit_llvm_bc.resolve(arena, &options, .llvm_bc),
             .emit_docs = try options.emit_docs.resolve(arena, &options, .docs),
+            .environ_map = options.environ_map,
         };
 
         errdefer {
@@ -5503,6 +5509,7 @@ fn workerDocsWasmFallible(comp: *Compilation, prog_node: std.Progress.Node) SubU
         .verbose_llvm_bc = comp.verbose_llvm_bc,
         .verbose_cimport = comp.verbose_cimport,
         .verbose_llvm_cpu_features = comp.verbose_llvm_cpu_features,
+        .environ_map = comp.environ_map,
     }) catch |err| switch (err) {
         error.CreateFail => {
             comp.lockAndSetMiscFailure(.docs_wasm, "sub-compilation of docs_wasm failed: {f}", .{sub_create_diag});
@@ -5705,6 +5712,7 @@ pub fn translateC(
     translated_basename: []const u8,
     owner_mod: *Package.Module,
     prog_node: std.Progress.Node,
+    env_map: *std.process.Environ.Map,
 ) !CImportResult {
     dev.check(.translate_c_command);
 
@@ -5774,7 +5782,7 @@ pub fn translateC(
     }
 
     var stdout: []u8 = undefined;
-    try @import("main.zig").translateC(gpa, arena, io, argv.items, prog_node, &stdout);
+    try @import("main.zig").translateC(gpa, arena, io, argv.items, env_map, prog_node, &stdout);
 
     if (out_dep_path) |dep_file_path| add_deps: {
         if (comp.verbose_cimport) log.info("processing dep file at {s}", .{dep_file_path});
@@ -5861,7 +5869,8 @@ pub fn cImport(
         defer arena_allocator.deinit();
         const arena = arena_allocator.allocator();
 
-        break :result try comp.translateC(
+        break :result try translateC(
+            comp,
             arena,
             &man,
             .c,
@@ -5869,6 +5878,7 @@ pub fn cImport(
             translated_basename,
             owner_mod,
             prog_node,
+            comp.environ_map,
         );
     };
 
@@ -6741,15 +6751,16 @@ fn spawnZigRc(
     var node_name: std.ArrayList(u8) = .empty;
     defer node_name.deinit(arena);
 
-    var child = std.process.Child.init(argv, arena);
-    child.stdin_behavior = .ignore;
-    child.stdout_behavior = .pipe;
-    child.stderr_behavior = .pipe;
-    child.progress_node = child_progress_node;
-
-    child.spawn(io) catch |err| {
-        return comp.failWin32Resource(win32_resource, "unable to spawn {s} rc: {t}", .{ argv[0], err });
-    };
+    var child = std.process.spawn(io, .{
+        .argv = argv,
+        .stdin = .ignore,
+        .stdout = .pipe,
+        .stderr = .pipe,
+        .progress_node = child_progress_node,
+    }) catch |err| return comp.failWin32Resource(win32_resource, "unable to spawn {s} rc: {t}", .{
+        argv[0], err,
+    });
+    defer child.kill(io);
 
     var poller = std.Io.poll(comp.gpa, enum { stdout, stderr }, .{
         .stdout = child.stdout.?,
@@ -6781,7 +6792,7 @@ fn spawnZigRc(
     const stderr = poller.reader(.stderr);
 
     const term = child.wait(io) catch |err| {
-        return comp.failWin32Resource(win32_resource, "unable to wait for {s} rc: {s}", .{ argv[0], @errorName(err) });
+        return comp.failWin32Resource(win32_resource, "unable to wait for {s} rc: {t}", .{ argv[0], err });
     };
 
     switch (term) {
@@ -7963,6 +7974,7 @@ fn buildOutputFromZig(
         .verbose_llvm_cpu_features = comp.verbose_llvm_cpu_features,
         .clang_passthrough_mode = comp.clang_passthrough_mode,
         .skip_linker_dependencies = true,
+        .environ_map = comp.environ_map,
     }) catch |err| switch (err) {
         error.CreateFail => {
             comp.lockAndSetMiscFailure(misc_task_tag, "sub-compilation of {t} failed: {f}", .{ misc_task_tag, sub_create_diag });

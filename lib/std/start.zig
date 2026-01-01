@@ -524,9 +524,12 @@ fn WinStartup() callconv(.withStackAlign(.c, 1)) noreturn {
 
     std.debug.maybeEnableSegfaultHandler();
 
+    const peb = std.os.windows.peb();
+    const cmd_line = std.os.windows.peb().ProcessParameters.CommandLine;
+
     std.os.windows.ntdll.RtlExitUserProcess(callMain(
-        std.os.windows.peb().ProcessParameters.CommandLine,
-        std.os.windows.peb().ProcessParameters.Environment,
+        cmd_line.Buffer.?[0..@divExact(cmd_line.Length, 2)],
+        peb.ProcessParameters.Environment,
     ));
 }
 

@@ -101,31 +101,27 @@ pub fn findZigLibDirFromSelfExe(
     return error.FileNotFound;
 }
 
-/// Caller owns returned memory.
-pub fn resolveGlobalCacheDir(gpa: Allocator) ![]u8 {
-    if (try std.zig.EnvVar.ZIG_GLOBAL_CACHE_DIR.get(gpa)) |value| return value;
+pub fn resolveGlobalCacheDir(arena: Allocator, env_map: *std.process.Environ.Map) ![]const u8 {
+    if (std.zig.EnvVar.ZIG_GLOBAL_CACHE_DIR.get(env_map)) |value| return value;
 
     const app_name = "zig";
 
     switch (builtin.os.tag) {
         .wasi => @compileError("on WASI the global cache dir must be resolved with preopens"),
         .windows => {
-            const local_app_data_dir = (std.zig.EnvVar.LOCALAPPDATA.get(gpa) catch |err| switch (err) {
-                error.OutOfMemory => |e| return e,
-                error.InvalidWtf8 => return error.AppDataDirUnavailable,
-            }) orelse return error.AppDataDirUnavailable;
-            defer gpa.free(local_app_data_dir);
-            return Dir.path.join(gpa, &.{ local_app_data_dir, app_name });
+            const local_app_data_dir = std.zig.EnvVar.LOCALAPPDATA.get(env_map) orelse
+                return error.AppDataDirUnavailable;
+            return Dir.path.join(arena, &.{ local_app_data_dir, app_name });
         },
         else => {
-            if (std.zig.EnvVar.XDG_CACHE_HOME.getPosix()) |cache_root| {
+            if (std.zig.EnvVar.XDG_CACHE_HOME.get(env_map)) |cache_root| {
                 if (cache_root.len > 0) {
-                    return Dir.path.join(gpa, &.{ cache_root, app_name });
+                    return Dir.path.join(arena, &.{ cache_root, app_name });
                 }
             }
-            if (std.zig.EnvVar.HOME.getPosix()) |home| {
+            if (std.zig.EnvVar.HOME.get(env_map)) |home| {
                 if (home.len > 0) {
-                    return Dir.path.join(gpa, &.{ home, ".cache", app_name });
+                    return Dir.path.join(arena, &.{ home, ".cache", app_name });
                 }
             }
             return error.AppDataDirUnavailable;
