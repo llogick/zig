@@ -170,14 +170,9 @@ const architectures: []const Arch = &.{
     // .{ .@"var" = "Microblaze", .table = .{ .specific = "arch/microblaze/kernel/syscalls/syscall.tbl" } },
 };
 
-pub fn main() !void {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const gpa = arena.allocator();
-
-    var threaded: Io.Threaded = .init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+pub fn main(init: std.process.Init) !void {
+    const gpa = init.gpa;
+    const io = init.io;
 
     const args = try std.process.argsAlloc(gpa);
     if (args.len < 2 or mem.eql(u8, args[1], "--help")) {

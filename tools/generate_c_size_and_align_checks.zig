@@ -28,21 +28,14 @@ fn cName(ty: std.Target.CType) []const u8 {
 
 var general_purpose_allocator: std.heap.GeneralPurposeAllocator(.{}) = .init;
 
-pub fn main() !void {
-    const gpa = general_purpose_allocator.allocator();
-    defer std.debug.assert(general_purpose_allocator.deinit() == .ok);
-
-    const args = try std.process.argsAlloc(gpa);
-    defer std.process.argsFree(gpa, args);
+pub fn main(init: std.process.Init) !void {
+    const args = try init.args.toSlice(init.arena);
+    const io = init.io;
 
     if (args.len != 2) {
         std.debug.print("Usage: {s} [target_triple]\n", .{args[0]});
         std.process.exit(1);
     }
-
-    var threaded: std.Io.Threaded = .init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
 
     const query = try std.Target.Query.parse(.{ .arch_os_abi = args[1] });
     const target = try std.zig.system.resolveTargetQuery(io, query);

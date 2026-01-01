@@ -27,18 +27,10 @@ fn logImpl(
     );
 }
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
     const fatal = std.process.fatal;
-
-    var arena_instance = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena_instance.deinit();
-    const arena = arena_instance.allocator();
-
-    const gpa = arena;
-
-    var threaded: Io.Threaded = .init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    const arena = init.arena;
+    const io = init.io;
 
     var opt_zig_exe: ?[]const u8 = null;
     var opt_input_file_name: ?[]const u8 = null;

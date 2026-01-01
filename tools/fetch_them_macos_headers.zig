@@ -66,12 +66,9 @@ const usage =
     \\-h, --help                    Print this help and exit
 ;
 
-pub fn main() anyerror!void {
-    var arena = std.heap.ArenaAllocator.init(gpa);
-    defer arena.deinit();
-    const allocator = arena.allocator();
-
-    const args = try std.process.argsAlloc(allocator);
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.arena;
+    const args = try init.args.toSlice(allocator);
 
     var argv = std.array_list.Managed([]const u8).init(allocator);
     var sysroot: ?[]const u8 = null;
