@@ -12,8 +12,6 @@ const expectEqual = std.testing.expectEqual;
 const arch = builtin.cpu.arch;
 const common = @import("common.zig");
 
-pub const panic = common.panic;
-
 comptime {
     @export(&__logh, .{ .name = "__logh", .linkage = common.linkage, .visibility = common.visibility });
     @export(&logf, .{ .name = "logf", .linkage = common.linkage, .visibility = common.visibility });

@@ -13,8 +13,6 @@ const mem = std.mem;
 const expect = std.testing.expect;
 const common = @import("common.zig");
 
-pub const panic = common.panic;
-
 comptime {
     @export(&__ceilh, .{ .name = "__ceilh", .linkage = common.linkage, .visibility = common.visibility });
     @export(&ceilf, .{ .name = "ceilf", .linkage = common.linkage, .visibility = common.visibility });

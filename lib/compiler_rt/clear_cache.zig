@@ -3,7 +3,6 @@ const builtin = @import("builtin");
 const arch = builtin.cpu.arch;
 const os = builtin.os.tag;
 const common = @import("common.zig");
-pub const panic = common.panic;
 
 // Ported from llvm-project d32170dbd5b0d54436537b6b75beaf44324e0c28
 

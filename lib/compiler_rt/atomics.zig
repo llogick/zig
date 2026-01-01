@@ -5,7 +5,6 @@ const cpu = builtin.cpu;
 const arch = cpu.arch;
 const linkage = common.linkage;
 const visibility = common.visibility;
-pub const panic = common.panic;
 
 // This parameter is true iff the target architecture supports the bare minimum
 // to implement the atomic load/store intrinsics.

@@ -2,8 +2,6 @@ const mulv = @import("mulo.zig");
 const common = @import("./common.zig");
 const testing = @import("std").testing;
 
-pub const panic = common.panic;
-
 comptime {
     @export(&__mulvsi3, .{ .name = "__mulvsi3", .linkage = common.linkage, .visibility = common.visibility });
 }

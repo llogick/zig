@@ -13,8 +13,6 @@ const expect = std.testing.expect;
 const arch = builtin.cpu.arch;
 const common = @import("common.zig");
 
-pub const panic = common.panic;
-
 comptime {
     @export(&__floorh, .{ .name = "__floorh", .linkage = common.linkage, .visibility = common.visibility });
     @export(&floorf, .{ .name = "floorf", .linkage = common.linkage, .visibility = common.visibility });

@@ -16,8 +16,6 @@ const trig = @import("trig.zig");
 const rem_pio2 = @import("rem_pio2.zig").rem_pio2;
 const rem_pio2f = @import("rem_pio2f.zig").rem_pio2f;
 
-pub const panic = common.panic;
-
 comptime {
     @export(&__sinh, .{ .name = "__sinh", .linkage = common.linkage, .visibility = common.visibility });
     @export(&sinf, .{ .name = "sinf", .linkage = common.linkage, .visibility = common.visibility });

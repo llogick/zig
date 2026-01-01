@@ -5,8 +5,6 @@ const os = builtin.os.tag;
 const abi = builtin.abi;
 const common = @import("common.zig");
 
-pub const panic = common.panic;
-
 comptime {
     if (common.want_windows_x86_msvc_abi) {
         // Don't let LLVM apply the stdcall name mangling on those MSVC builtins

@@ -10,8 +10,6 @@ const math = std.math;
 const expect = std.testing.expect;
 const common = @import("common.zig");
 
-pub const panic = common.panic;
-
 comptime {
     @export(&__fmah, .{ .name = "__fmah", .linkage = common.linkage, .visibility = common.visibility });
     @export(&fmaf, .{ .name = "fmaf", .linkage = common.linkage, .visibility = common.visibility });

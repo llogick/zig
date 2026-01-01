@@ -13,8 +13,6 @@ const maxInt = std.math.maxInt;
 const arch = builtin.cpu.arch;
 const common = @import("common.zig");
 
-pub const panic = common.panic;
-
 comptime {
     @export(&__log2h, .{ .name = "__log2h", .linkage = common.linkage, .visibility = common.visibility });
     @export(&log2f, .{ .name = "log2f", .linkage = common.linkage, .visibility = common.visibility });
