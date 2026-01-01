@@ -513,7 +513,6 @@ set(ZIG_STAGE2_SOURCES
     src/Builtin.zig
     src/Compilation.zig
     src/Compilation/Config.zig
-    src/DarwinPosixSpawn.zig
     src/InternPool.zig
     src/Package.zig
     src/Package/Fetch.zig

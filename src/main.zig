@@ -4559,43 +4559,13 @@ fn runOrTestHotSwap(
         try argv.appendSlice(all_args[i..]);
     }
 
-    switch (builtin.target.os.tag) {
-        .macos => {
-            const PosixSpawn = @import("DarwinPosixSpawn.zig");
-
-            var attr = try PosixSpawn.Attr.init();
-            defer attr.deinit();
-
-            // ASLR is probably a good default for better debugging experience/programming
-            // with hot-code updates in mind. However, we can also make it work with ASLR on.
-            try attr.set(.{
-                .SETSIGDEF = true,
-                .SETSIGMASK = true,
-                .DISABLE_ASLR = true,
-            });
-
-            var arena_allocator = std.heap.ArenaAllocator.init(gpa);
-            defer arena_allocator.deinit();
-            const arena = arena_allocator.allocator();
-
-            const argv_buf = try arena.allocSentinel(?[*:0]u8, argv.items.len, null);
-            for (argv.items, 0..) |arg, i| argv_buf[i] = (try arena.dupeZ(u8, arg)).ptr;
-
-            const pid = try PosixSpawn.spawn(argv.items[0], null, attr, argv_buf, std.c.environ);
-            return pid;
-        },
-        else => {
-            var child = std.process.Child.init(argv.items, gpa);
-
-            child.stdin_behavior = .inherit;
-            child.stdout_behavior = .inherit;
-            child.stderr_behavior = .inherit;
-
-            try child.spawn(io);
-
-            return child.id;
-        },
-    }
+    var child = try std.process.spwan(io, .{
+        .argv = argv.items,
+        .stdin = .inherit,
+        .stdout = .inherit,
+        .stderr = .inherit,
+    });
+    return child.id;
 }
 
 const UpdateModuleError = Compilation.UpdateError || error{
