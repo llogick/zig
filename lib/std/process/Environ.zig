@@ -792,6 +792,6 @@ test "convert from Environ to Map and back again" {
     var map2 = try environ.createMap(gpa);
     defer map2.deinit();
 
-    try testing.expectEqualSlices([]const u8, map.keys(), map2.keys());
-    try testing.expectEqualSlices([]const u8, map.values(), map2.values());
+    try testing.expectEqualDeep(map.keys(), map2.keys());
+    try testing.expectEqualDeep(map.values(), map2.values());
 }

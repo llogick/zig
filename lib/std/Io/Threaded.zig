@@ -101,6 +101,9 @@ pub const Environ = struct {
         .windows, .wasi => struct {},
         else => struct {
             PATH: ?[:0]const u8 = null,
+            DEBUGINFOD_CACHE_PATH: ?[:0]const u8 = null,
+            XDG_CACHE_HOME: ?[:0]const u8 = null,
+            HOME: ?[:0]const u8 = null,
         },
     };
 };
@@ -12674,27 +12677,6 @@ fn scanEnviron(t: *Threaded) void {
             }
             comptime assert(@sizeOf(Environ.String) == 0);
         }
-    } else if (builtin.link_libc) {
-        var ptr = std.c.environ;
-        while (ptr[0]) |line| : (ptr += 1) {
-            var line_i: usize = 0;
-            while (line[line_i] != 0 and line[line_i] != '=') : (line_i += 1) {}
-            const key = line[0..line_i];
-
-            var end_i: usize = line_i;
-            while (line[end_i] != 0) : (end_i += 1) {}
-            const value = line[line_i + 1 .. end_i :0];
-
-            if (std.mem.eql(u8, key, "NO_COLOR")) {
-                t.environ.exist.NO_COLOR = true;
-            } else if (std.mem.eql(u8, key, "CLICOLOR_FORCE")) {
-                t.environ.exist.CLICOLOR_FORCE = true;
-            } else if (@hasField(Environ.String, "PATH") and std.mem.eql(u8, key, "PATH")) {
-                t.environ.string.PATH = value;
-            } else if (std.mem.eql(u8, key, "ZIG_PROGRESS")) {
-                t.environ.zig_progress_handle = std.fmt.parseInt(u31, value, 10) catch error.UnrecognizedFormat;
-            }
-        }
     } else {
         for (t.environ.block) |opt_line| {
             const line = opt_line.?;
@@ -12710,10 +12692,10 @@ fn scanEnviron(t: *Threaded) void {
                 t.environ.exist.NO_COLOR = true;
             } else if (std.mem.eql(u8, key, "CLICOLOR_FORCE")) {
                 t.environ.exist.CLICOLOR_FORCE = true;
-            } else if (@hasField(Environ.String, "PATH") and std.mem.eql(u8, key, "PATH")) {
-                t.environ.string.PATH = value;
             } else if (std.mem.eql(u8, key, "ZIG_PROGRESS")) {
                 t.environ.zig_progress_handle = std.fmt.parseInt(u31, value, 10) catch error.UnrecognizedFormat;
+            } else inline for (@typeInfo(Environ.String).@"struct".fields) |field| {
+                if (std.mem.eql(u8, key, field.name)) @field(t.environ.string, field.name) = value;
             }
         }
     }
@@ -12966,12 +12948,10 @@ fn childKill(userdata: ?*anyopaque, child: *std.process.Child) void {
     if (is_windows) {
         childKillWindows(t, child, 1) catch {
             childCleanupStreams(child);
-            child.id = null;
         };
     } else {
         childKillPosix(t, child) catch {
             childCleanupStreams(child);
-            child.id = null;
         };
     }
 }
@@ -13012,7 +12992,6 @@ fn childWaitWindows(t: *Threaded, child: *process.Child) process.Child.WaitError
     posix.close(child.id);
     posix.close(child.thread_handle);
     childCleanupStreams(child);
-    child.id = null;
     return term;
 }
 
@@ -13028,10 +13007,8 @@ fn childWaitPosix(t: *Threaded, child: *process.Child) process.Child.WaitError!p
         }
         break :res posix.waitpid(pid, 0);
     };
-    const status = res.status;
     childCleanupStreams(child);
-    child.id = null;
-    return statusToTerm(status);
+    return statusToTerm(res.status);
 }
 
 fn statusToTerm(status: u32) process.Child.Term {
@@ -13046,7 +13023,14 @@ fn statusToTerm(status: u32) process.Child.Term {
 }
 
 fn childKillPosix(t: *Threaded, child: *process.Child) !void {
-    try posix.kill(child.id.?, posix.SIG.TERM);
+    while (true) switch (posix.errno(posix.system.kill(child.id.?, .TERM))) {
+        .SUCCESS => break,
+        .INTR => continue,
+        .PERM => return error.PermissionDenied,
+        .INVAL => |err| return errnoBug(err),
+        .SRCH => |err| return errnoBug(err),
+        else => |err| return posix.unexpectedErrno(err),
+    };
     _ = try childWaitPosix(t, child);
 }
 
@@ -13063,6 +13047,7 @@ fn childCleanupStreams(child: *process.Child) void {
         posix.close(stderr.handle);
         child.stderr = null;
     }
+    child.id = null;
 }
 
 /// Errors that can occur between fork() and execv()
@@ -14365,6 +14350,11 @@ fn progressParentFile(userdata: ?*anyopaque) std.Progress.ParentFileError!File {
         .pointer => @ptrFromInt(int),
         else => return error.UnsupportedOperation,
     } };
+}
+
+pub fn environString(t: *Threaded, comptime name: []const u8) ?[:0]const u8 {
+    t.scanEnviron();
+    return @field(t.environ.string, name);
 }
 
 test {

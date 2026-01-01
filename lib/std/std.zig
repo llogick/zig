@@ -173,6 +173,11 @@ pub const Options = struct {
     /// stack traces will just print an error to the relevant `Io.Writer` and return.
     allow_stack_tracing: bool = !@import("builtin").strip_debug_info,
 
+    elf_debug_info_search_paths: ?fn (exe_path: []const u8) switch (@import("builtin").object_format) {
+        .elf => debug.ElfFile.DebugInfoSearchPaths,
+        else => void,
+    } = null,
+
     pub const debug_threaded_io: ?*Io.Threaded = if (@hasDecl(root, "std_options_debug_threaded_io"))
         root.std_options_debug_threaded_io
     else

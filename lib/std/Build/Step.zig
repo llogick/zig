@@ -448,7 +448,10 @@ pub fn evalZigProcess(
     try handleChildProcUnsupported(s);
     try handleVerbose(s.owner, null, argv);
 
-    var child = std.process.spawn(io, .{
+    const zp = try gpa.create(ZigProcess);
+    defer if (!watch) gpa.destroy(zp);
+
+    zp.child = std.process.spawn(io, .{
         .argv = argv,
         .env_map = &b.graph.env_map,
         .stdin = .pipe,
@@ -457,22 +460,18 @@ pub fn evalZigProcess(
         .request_resource_usage_statistics = true,
         .progress_node = prog_node,
     }) catch |err| return s.fail("failed to spawn zig compiler {s}: {t}", .{ argv[0], err });
-    defer if (!watch) child.kill(io);
+    defer if (!watch) zp.child.kill(io);
 
-    const zp = try gpa.create(ZigProcess);
     zp.* = .{
-        .child = child,
+        .child = zp.child,
         .poller = Io.poll(gpa, ZigProcess.StreamEnum, .{
-            .stdout = child.stdout.?,
-            .stderr = child.stderr.?,
+            .stdout = zp.child.stdout.?,
+            .stderr = zp.child.stderr.?,
         }),
         .progress_ipc_fd = if (std.Progress.have_ipc) prog_node.getIpcFd() else {},
     };
     if (watch) s.setZigProcess(zp);
-    defer if (!watch) {
-        zp.poller.deinit();
-        gpa.destroy(zp);
-    };
+    defer if (!watch) zp.poller.deinit();
 
     const result = try zigProcessUpdate(s, zp, watch, web_server, gpa);
 

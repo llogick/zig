@@ -106,7 +106,7 @@ pub const Term = union(enum) {
 ///
 /// Uncancelable. Ignores unexpected errors from the operating system.
 pub fn kill(child: *Child, io: Io) void {
-    if (child.id != null) {
+    if (child.id == null) {
         assert(child.stdin == null);
         assert(child.stdout == null);
         assert(child.stderr == null);
