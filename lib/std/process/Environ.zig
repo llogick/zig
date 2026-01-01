@@ -19,6 +19,13 @@ const mem = std.mem;
 /// queried and heap-allocated at runtime.
 block: Block,
 
+pub const empty: Environ = .{
+    .block = switch (@TypeOf(Block)) {
+        void => {},
+        else => &.{},
+    },
+};
+
 pub const Block = switch (native_os) {
     .windows => [*:0]const u16,
     .wasi => switch (builtin.link_libc) {

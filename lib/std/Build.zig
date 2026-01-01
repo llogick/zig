@@ -1881,19 +1881,11 @@ pub fn runAllowFail(
 /// inside step make() functions. If any errors occur, it fails the build with
 /// a helpful message.
 pub fn run(b: *Build, argv: []const []const u8) []u8 {
-    if (!process.can_spawn) {
-        std.debug.print("unable to spawn the following command: cannot spawn child process\n{s}\n", .{
-            try Step.allocPrintCmd(b.allocator, null, null, argv),
-        });
-        process.exit(1);
-    }
-
     var code: u8 = undefined;
-    return b.runAllowFail(argv, &code, .inherit) catch |err| {
-        const printed_cmd = Step.allocPrintCmd(b.allocator, null, null, argv) catch @panic("OOM");
-        std.debug.print("unable to spawn the following command: {t}\n{s}\n", .{ err, printed_cmd });
-        process.exit(1);
-    };
+    return b.runAllowFail(argv, &code, .inherit) catch |err| process.fatal(
+        "the following command failed with {t}:\n{s}",
+        .{ err, Step.allocPrintCmd(b.allocator, null, null, argv) catch @panic("OOM") },
+    );
 }
 
 pub fn addSearchPrefix(b: *Build, search_prefix: []const u8) void {

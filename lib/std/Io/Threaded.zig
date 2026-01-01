@@ -66,12 +66,25 @@ environ: Environ,
 
 pub const Argv0 = switch (native_os) {
     .openbsd, .haiku => struct {
-        value: ?[*:0]const u8 = null,
+        value: ?[*:0]const u8,
+
+        pub const empty: Argv0 = .{ .value = null };
+
+        pub fn init(args: process.Args) Argv0 {
+            return .{ .value = args.value[0] };
+        }
     },
-    else => struct {},
+    else => struct {
+        pub const empty: Argv0 = .{};
+
+        pub fn init(args: process.Args) Argv0 {
+            _ = args;
+            return .{};
+        }
+    },
 };
 
-pub const Environ = struct {
+const Environ = struct {
     /// Unmodified data directly from the OS.
     block: process.Environ.Block = &.{},
     /// Protected by `mutex`. Determines whether the other fields have been
@@ -1141,7 +1154,8 @@ pub const InitOptions = struct {
     /// Affects the following operations:
     /// * `fileIsTty`
     /// * `processExecutablePath` on OpenBSD and Haiku (observes "PATH").
-    environ: Environ = .{},
+    /// * `processSpawn`, `processSpawnPath`, `processReplace`, `processReplacePath`
+    environ: process.Environ,
 };
 
 /// Related:
@@ -1171,8 +1185,9 @@ pub fn init(
         .old_sig_pipe = undefined,
         .have_signal_handler = false,
         .argv0 = options.argv0,
-        .environ = options.environ,
         .worker_threads = .init(null),
+        .environ = .{ .block = options.environ.block },
+        .robust_cancel = options.robust_cancel,
     };
 
     if (posix.Sigaction != void) {

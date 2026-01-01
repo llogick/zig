@@ -65,13 +65,13 @@ pub fn main(init: std.process.Init.Minimal) void {
     }
 
     if (listen) {
-        return mainServer(args) catch @panic("internal test runner failure");
+        return mainServer(init) catch @panic("internal test runner failure");
     } else {
-        return mainTerminal(args);
+        return mainTerminal(init);
     }
 }
 
-fn mainServer(args: []const [:0]const u8) !void {
+fn mainServer(init: std.process.Init.Minimal) !void {
     @disableInstrumentation();
     var stdin_reader = Io.File.stdin().readerStreaming(runner_threaded_io, &stdin_buffer);
     var stdout_writer = Io.File.stdout().writerStreaming(runner_threaded_io, &stdout_buffer);
@@ -131,7 +131,8 @@ fn mainServer(args: []const [:0]const u8) !void {
             .run_test => {
                 testing.allocator_instance = .{};
                 testing.io_instance = .init(testing.allocator, .{
-                    .argv0 = if (@hasField(Io.Threaded.Argv0, "value")) .{ .value = args[0] } else .{},
+                    .argv0 = .init(init.args),
+                    .environ = init.environ,
                 });
                 log_err_count = 0;
                 const index = try server.receiveBody_u32();
@@ -216,7 +217,7 @@ fn mainServer(args: []const [:0]const u8) !void {
     }
 }
 
-fn mainTerminal(args: []const [:0]const u8) void {
+fn mainTerminal(init: std.process.Init.Minimal) void {
     @disableInstrumentation();
     if (builtin.fuzz) @panic("fuzz test requires server");
 
@@ -235,7 +236,8 @@ fn mainTerminal(args: []const [:0]const u8) void {
     for (test_fn_list, 0..) |test_fn, i| {
         testing.allocator_instance = .{};
         testing.io_instance = .init(testing.allocator, .{
-            .argv0 = if (@hasField(Io.Threaded.Argv0, "value")) .{ .value = args[0] } else .{},
+            .argv0 = .init(init.args),
+            .environ = init.environ,
         });
         defer {
             testing.io_instance.deinit();

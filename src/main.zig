@@ -186,36 +186,43 @@ pub fn main(init: std.process.Init.Minimal) anyerror!void {
 
     if (args.len > 0) crash_report.zig_argv0 = args[0];
 
-    var env_map = init.environ.createMap(arena) catch |err| fatal("failed to parse environment: {t}", .{err});
-
-    if (tracy.enable_allocation) {
-        var gpa_tracy = tracy.tracyAllocator(gpa);
-        return mainArgs(gpa_tracy.allocator(), arena, args, &env_map);
-    }
-
-    if (native_os == .wasi) {
-        wasi_preopens = try fs.wasi.preopensAlloc(arena);
-    }
-
-    return mainArgs(gpa, arena, args, &env_map);
-}
-
-fn mainArgs(gpa: Allocator, arena: Allocator, args: []const [:0]const u8, env_map: *process.Environ.Map) !void {
-    Compilation.setMainThread();
-
     if (args.len <= 1) {
         std.log.info("{s}", .{usage});
         fatal("expected command argument", .{});
     }
 
+    var env_map = init.environ.createMap(arena) catch |err| fatal("failed to parse environment: {t}", .{err});
+
+    Compilation.setMainThread();
+
     var threaded: Io.Threaded = .init(gpa, .{
-        .argv0 = if (@hasField(Io.Threaded.Argv0, "value")) .{ .value = args[0] } else .{},
+        .argv0 = .init(init.args),
+        .environ = init.environ,
     });
     defer threaded.deinit();
     threaded_impl_ptr = &threaded;
     threaded.stack_size = thread_stack_size;
     const io = threaded.io();
 
+    if (tracy.enable_allocation) {
+        var gpa_tracy = tracy.tracyAllocator(gpa);
+        return mainArgs(gpa_tracy.allocator(), arena, io, args, &env_map);
+    }
+
+    if (native_os == .wasi) {
+        wasi_preopens = try fs.wasi.preopensAlloc(arena);
+    }
+
+    return mainArgs(gpa, arena, io, args, &env_map);
+}
+
+fn mainArgs(
+    gpa: Allocator,
+    arena: Allocator,
+    io: Io,
+    args: []const [:0]const u8,
+    env_map: *process.Environ.Map,
+) !void {
     if (process.can_replace and EnvVar.ZIG_IS_DETECTING_LIBC_PATHS.isSet(env_map)) {
         dev.check(.cc_command);
         // In this case we have accidentally invoked ourselves as "the system C compiler"

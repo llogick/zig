@@ -39,7 +39,10 @@ pub fn main(init: process.Init.Minimal) !void {
 
     const args = try init.args.toSlice(arena);
 
-    var threaded: std.Io.Threaded = .init(gpa, .{});
+    var threaded: std.Io.Threaded = .init(gpa, .{
+        .environ = init.environ,
+        .argv0 = .init(init.args),
+    });
     defer threaded.deinit();
     const io = threaded.io();
 
