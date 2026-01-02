@@ -9,19 +9,10 @@ const Translator = @import("Translator.zig");
 
 const fast_exit = @import("builtin").mode != .Debug;
 
-var general_purpose_allocator: std.heap.GeneralPurposeAllocator(.{}) = .init;
-
-pub fn main() u8 {
-    const gpa = general_purpose_allocator.allocator();
-    defer _ = general_purpose_allocator.deinit();
-
-    var arena_instance = std.heap.ArenaAllocator.init(gpa);
-    defer arena_instance.deinit();
-    const arena = arena_instance.allocator();
-
-    var threaded: std.Io.Threaded = .init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+pub fn main(init: std.process.Init) u8 {
+    const gpa = init.gpa;
+    const arena = init.arena.allocator();
+    const io = init.io;
 
     const args = process.argsAlloc(arena) catch {
         std.debug.print("ran out of memory allocating arguments\n", .{});

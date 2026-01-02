@@ -259,6 +259,7 @@ pub fn buildImportLib(comp: *Compilation, lib_name: []const u8) !void {
         .gpa = gpa,
         .io = io,
         .manifest_dir = try comp.dirs.global_cache.handle.createDirPathOpen(io, "h", .{}),
+        .cwd = comp.dirs.cwd,
     };
     cache.addPrefix(.{ .path = null, .handle = Io.Dir.cwd() });
     cache.addPrefix(comp.dirs.zig_lib);

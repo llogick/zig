@@ -2128,6 +2128,7 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
             .manifest_dir = options.dirs.local_cache.handle.createDirPathOpen(io, "h", .{}) catch |err| {
                 return diag.fail(.{ .create_cache_path = .{ .which = .local, .sub = "h", .err = err } });
             },
+            .cwd = options.dirs.cwd,
         };
         // These correspond to std.zig.Server.Message.PathPrefix.
         cache.addPrefix(.{ .path = null, .handle = Io.Dir.cwd() });

@@ -742,6 +742,7 @@ pub const EnvVar = enum {
     ZIG_IS_DETECTING_LIBC_PATHS,
     ZIG_IS_TRYING_TO_NOT_CALL_ITSELF,
 
+    // C toolchain integration
     NIX_CFLAGS_COMPILE,
     NIX_CFLAGS_LINK,
     NIX_LDFLAGS,
@@ -750,12 +751,17 @@ pub const EnvVar = enum {
     LIBRARY_PATH,
     CC,
 
+    // Terminal integration
     NO_COLOR,
     CLICOLOR_FORCE,
 
+    // Debug info integration
     XDG_CACHE_HOME,
     LOCALAPPDATA,
     HOME,
+
+    // Windows SDK integration
+    PROGRAMDATA,
 
     pub fn isSet(ev: EnvVar, map: *const std.process.Environ.Map) bool {
         return map.contains(@tagName(ev));

@@ -21,19 +21,12 @@ fn usage(io: Io) noreturn {
     std.process.exit(1);
 }
 
-pub fn main() !void {
-    var arena_instance = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena_instance.deinit();
-    const arena = arena_instance.allocator();
+pub fn main(init: std.process.Init) !void {
+    const arena = init.arena.allocator();
+    const gpa = init.gpa;
+    const io = init.io;
 
-    var general_purpose_allocator: std.heap.GeneralPurposeAllocator(.{}) = .init;
-    const gpa = general_purpose_allocator.allocator();
-
-    var threaded: Io.Threaded = .init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    var argv = try std.process.argsWithAllocator(arena);
+    var argv = try init.minimal.args.iterateAllocator(arena);
     defer argv.deinit();
     assert(argv.skip());
     const zig_lib_directory = argv.next().?;
@@ -72,7 +65,7 @@ pub fn main() !void {
     const url_with_newline = try std.fmt.allocPrint(arena, "http://127.0.0.1:{d}/\n", .{port});
     Io.File.stdout().writeStreamingAll(io, url_with_newline) catch {};
     if (should_open_browser) {
-        openBrowserTab(gpa, io, url_with_newline[0 .. url_with_newline.len - 1 :'\n']) catch |err| {
+        openBrowserTab(io, url_with_newline[0 .. url_with_newline.len - 1 :'\n']) catch |err| {
             std.log.err("unable to open browser: {t}", .{err});
         };
     }
@@ -324,11 +317,12 @@ fn buildWasmBinary(
         "--listen=-", //
     });
 
-    var child = std.process.Child.init(argv.items, gpa);
-    child.stdin_behavior = .Pipe;
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    try child.spawn(io);
+    var child = try std.process.spawn(io, .{
+        .argv = argv.items,
+        .stdin = .pipe,
+        .stdout = .pipe,
+        .stderr = .pipe,
+    });
 
     var poller = Io.poll(gpa, enum { stdout, stderr }, .{
         .stdout = child.stdout.?,
@@ -388,19 +382,26 @@ fn buildWasmBinary(
     child.stdin = null;
 
     switch (try child.wait(io)) {
-        .Exited => |code| {
+        .exited => |code| {
             if (code != 0) {
                 std.log.err(
                     "the following command exited with error code {d}:\n{s}",
-                    .{ code, try std.Build.Step.allocPrintCmd(arena, null, argv.items) },
+                    .{ code, try std.Build.Step.allocPrintCmd(arena, null, null, argv.items) },
                 );
                 return error.WasmCompilationFailed;
             }
         },
-        .Signal, .Stopped, .Unknown => {
+        .signal => |sig| {
+            std.log.err(
+                "the following command terminated with signal {t}:\n{s}",
+                .{ sig, try std.Build.Step.allocPrintCmd(arena, null, null, argv.items) },
+            );
+            return error.WasmCompilationFailed;
+        },
+        .stopped, .unknown => {
             std.log.err(
                 "the following command terminated unexpectedly:\n{s}",
-                .{try std.Build.Step.allocPrintCmd(arena, null, argv.items)},
+                .{try std.Build.Step.allocPrintCmd(arena, null, null, argv.items)},
             );
             return error.WasmCompilationFailed;
         },
@@ -410,14 +411,14 @@ fn buildWasmBinary(
         try result_error_bundle.renderToStderr(io, .{}, .auto);
         std.log.err("the following command failed with {d} compilation errors:\n{s}", .{
             result_error_bundle.errorMessageCount(),
-            try std.Build.Step.allocPrintCmd(arena, null, argv.items),
+            try std.Build.Step.allocPrintCmd(arena, null, null, argv.items),
         });
         return error.WasmCompilationFailed;
     }
 
     return result orelse {
         std.log.err("child process failed to report result\n{s}", .{
-            try std.Build.Step.allocPrintCmd(arena, null, argv.items),
+            try std.Build.Step.allocPrintCmd(arena, null, null, argv.items),
         });
         return error.WasmCompilationFailed;
     };
@@ -434,22 +435,24 @@ fn sendMessage(io: Io, file: Io.File, tag: std.zig.Client.Message.Tag) !void {
     };
 }
 
-fn openBrowserTab(gpa: Allocator, io: Io, url: []const u8) !void {
+fn openBrowserTab(io: Io, url: []const u8) !void {
     // Until https://github.com/ziglang/zig/issues/19205 is implemented, we
-    // spawn a thread for this child process.
-    _ = try std.Thread.spawn(.{}, openBrowserTabThread, .{ gpa, io, url });
+    // spawn and then leak a concurrent task for this child process.
+    const future = try io.concurrent(openBrowserTabTask, .{ io, url });
+    _ = future; // leak it
 }
 
-fn openBrowserTabThread(gpa: Allocator, io: Io, url: []const u8) !void {
+fn openBrowserTabTask(io: Io, url: []const u8) !void {
     const main_exe = switch (builtin.os.tag) {
         .windows => "explorer",
         .macos => "open",
         else => "xdg-open",
     };
-    var child = std.process.Child.init(&.{ main_exe, url }, gpa);
-    child.stdin_behavior = .ignore;
-    child.stdout_behavior = .ignore;
-    child.stderr_behavior = .ignore;
-    try child.spawn(io);
+    var child = try std.process.spawn(io, .{
+        .argv = &.{ main_exe, url },
+        .stdin = .ignore,
+        .stdout = .ignore,
+        .stderr = .ignore,
+    });
     _ = try child.wait(io);
 }

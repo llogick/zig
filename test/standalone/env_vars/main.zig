@@ -2,16 +2,11 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 // Note: the environment variables under test are set by the build.zig
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
     @setEvalBranchQuota(10000);
 
-    var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
-
-    var arena_state = std.heap.ArenaAllocator.init(allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    const allocator = init.gpa;
+    const arena = init.arena.allocator();
 
     // hasNonEmptyEnvVar
     {

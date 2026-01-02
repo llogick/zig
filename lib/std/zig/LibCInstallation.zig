@@ -13,6 +13,7 @@ const fs = std.fs;
 const Allocator = std.mem.Allocator;
 const Path = std.Build.Cache.Path;
 const log = std.log.scoped(.libc_installation);
+const Environ = std.process.Environ;
 
 include_dir: ?[]const u8 = null,
 sys_include_dir: ?[]const u8 = null,
@@ -167,7 +168,7 @@ pub fn render(self: LibCInstallation, out: *std.Io.Writer) !void {
 
 pub const FindNativeOptions = struct {
     target: *const std.Target,
-    env_map: *const std.process.Environ.Map,
+    env_map: *const Environ.Map,
 
     /// If enabled, will print human-friendly errors to stderr.
     verbose: bool = false,
@@ -192,7 +193,7 @@ pub fn findNative(gpa: Allocator, io: Io, args: FindNativeOptions) FindError!Lib
         });
         return self;
     } else if (is_windows) {
-        const sdk = std.zig.WindowsSdk.find(gpa, io, args.target.cpu.arch) catch |err| switch (err) {
+        const sdk = std.zig.WindowsSdk.find(gpa, io, args.target.cpu.arch, args.env_map) catch |err| switch (err) {
             error.NotFound => return error.WindowsSdkNotFound,
             error.PathTooLong => return error.WindowsSdkNotFound,
             error.OutOfMemory => return error.OutOfMemory,
@@ -552,7 +553,7 @@ fn findNativeMsvcLibDir(
 }
 
 pub const CCPrintFileNameOptions = struct {
-    env_map: *const std.process.Environ.Map,
+    env_map: *const Environ.Map,
     search_basename: []const u8,
     want_dirname: enum { full_path, only_dir },
     verbose: bool = false,
@@ -672,7 +673,7 @@ const inf_loop_env_key = "ZIG_IS_DETECTING_LIBC_PATHS";
 fn appendCcExe(
     args: *std.array_list.Managed([]const u8),
     skip_cc_env_var: bool,
-    env_map: *const std.process.Environ.Map,
+    env_map: *const Environ.Map,
 ) !void {
     const default_cc_exe = if (is_windows) "cc.exe" else "cc";
     try args.ensureUnusedCapacity(1);

@@ -6,6 +6,7 @@ const Io = std.Io;
 const Dir = std.Io.Dir;
 const Writer = std.Io.Writer;
 const Allocator = std.mem.Allocator;
+const Environ = std.process.Environ;
 
 windows10sdk: ?Installation,
 windows81sdk: ?Installation,
@@ -24,7 +25,12 @@ const product_version_max_length = version_major_minor_max_length + ".65535".len
 /// Find path and version of Windows 10 SDK and Windows 8.1 SDK, and find path to MSVC's `lib/` directory.
 /// Caller owns the result's fields.
 /// Returns memory allocated by `gpa`
-pub fn find(gpa: Allocator, io: Io, arch: std.Target.Cpu.Arch) error{ OutOfMemory, NotFound, PathTooLong }!WindowsSdk {
+pub fn find(
+    gpa: Allocator,
+    io: Io,
+    arch: std.Target.Cpu.Arch,
+    env_map: *const Environ.Map,
+) error{ OutOfMemory, NotFound, PathTooLong }!WindowsSdk {
     if (builtin.os.tag != .windows) return error.NotFound;
 
     //note(dimenus): If this key doesn't exist, neither the Win 8 SDK nor the Win 10 SDK is installed
@@ -49,7 +55,7 @@ pub fn find(gpa: Allocator, io: Io, arch: std.Target.Cpu.Arch) error{ OutOfMemor
     };
     errdefer if (windows81sdk) |*w| w.free(gpa);
 
-    const msvc_lib_dir: ?[]const u8 = MsvcLibDir.find(gpa, io, arch) catch |err| switch (err) {
+    const msvc_lib_dir: ?[]const u8 = MsvcLibDir.find(gpa, io, arch, env_map) catch |err| switch (err) {
         error.MsvcLibDirNotFound => null,
         error.OutOfMemory => return error.OutOfMemory,
     };
@@ -671,7 +677,11 @@ const MsvcLibDir = struct {
         return Dir.openDirAbsolute(io, instances_path, .{ .iterate = true }) catch return error.PathNotFound;
     }
 
-    fn findInstancesDir(gpa: Allocator, io: Io) error{ OutOfMemory, PathNotFound }!Dir {
+    fn findInstancesDir(
+        gpa: Allocator,
+        io: Io,
+        env_map: *const Environ.Map,
+    ) error{ OutOfMemory, PathNotFound }!Dir {
         // First, try getting the packages cache path from the registry.
         // This only seems to exist when the path is different from the default.
         method1: {
@@ -691,16 +701,13 @@ const MsvcLibDir = struct {
         // If that can't be found, fall back to manually appending
         // `Microsoft\VisualStudio\Packages\_Instances` to %PROGRAMDATA%
         method3: {
-            const program_data = std.process.getEnvVarOwned(gpa, "PROGRAMDATA") catch |err| switch (err) {
-                error.OutOfMemory => |e| return e,
-                error.InvalidWtf8 => unreachable,
-                error.EnvironmentVariableNotFound => break :method3,
-            };
-            defer gpa.free(program_data);
+            const program_data = std.zig.EnvVar.PROGRAMDATA.get(env_map) orelse break :method3;
 
             if (!Dir.path.isAbsolute(program_data)) break :method3;
 
-            const instances_path = try Dir.path.join(gpa, &.{ program_data, "Microsoft", "VisualStudio", "Packages", "_Instances" });
+            const instances_path = try Dir.path.join(gpa, &.{
+                program_data, "Microsoft", "VisualStudio", "Packages", "_Instances",
+            });
             defer gpa.free(instances_path);
 
             return Dir.openDirAbsolute(io, instances_path, .{ .iterate = true }) catch break :method3;
@@ -754,12 +761,17 @@ const MsvcLibDir = struct {
     ///
     /// The logic in this function is intended to match what ISetupConfiguration does
     /// under-the-hood, as verified using Procmon.
-    fn findViaCOM(gpa: Allocator, io: Io, arch: std.Target.Cpu.Arch) error{ OutOfMemory, PathNotFound }![]const u8 {
+    fn findViaCOM(
+        gpa: Allocator,
+        io: Io,
+        arch: std.Target.Cpu.Arch,
+        env_map: *const Environ.Map,
+    ) error{ OutOfMemory, PathNotFound }![]const u8 {
         // Typically `%PROGRAMDATA%\Microsoft\VisualStudio\Packages\_Instances`
         // This will contain directories with names of instance IDs like 80a758ca,
         // which will contain `state.json` files that have the version and
         // installation directory.
-        var instances_dir = try findInstancesDir(gpa, io);
+        var instances_dir = try findInstancesDir(gpa, io, env_map);
         defer instances_dir.close(io);
 
         var state_subpath_buf: [Dir.max_name_bytes + 32]u8 = undefined;
@@ -856,15 +868,16 @@ const MsvcLibDir = struct {
     }
 
     // https://learn.microsoft.com/en-us/visualstudio/install/tools-for-managing-visual-studio-instances?view=vs-2022#editing-the-registry-for-a-visual-studio-instance
-    fn findViaRegistry(gpa: Allocator, io: Io, arch: std.Target.Cpu.Arch) error{ OutOfMemory, PathNotFound }![]const u8 {
+    fn findViaRegistry(
+        gpa: Allocator,
+        io: Io,
+        arch: std.Target.Cpu.Arch,
+        env_map: *const Environ.Map,
+    ) error{ OutOfMemory, PathNotFound }![]const u8 {
 
         // %localappdata%\Microsoft\VisualStudio\
         // %appdata%\Local\Microsoft\VisualStudio\
-        const local_app_data_path = (std.zig.EnvVar.LOCALAPPDATA.get(gpa) catch |err| switch (err) {
-            error.OutOfMemory => |e| return e,
-            error.InvalidWtf8 => return error.PathNotFound,
-        }) orelse return error.PathNotFound;
-        defer gpa.free(local_app_data_path);
+        const local_app_data_path = std.zig.EnvVar.LOCALAPPDATA.get(env_map) orelse return error.PathNotFound;
         const visualstudio_folder_path = try Dir.path.join(gpa, &.{
             local_app_data_path, "Microsoft\\VisualStudio\\",
         });
@@ -955,7 +968,7 @@ const MsvcLibDir = struct {
         gpa: Allocator,
         io: Io,
         arch: std.Target.Cpu.Arch,
-        env_map: *const std.process.Environ.Map,
+        env_map: *const Environ.Map,
     ) error{ OutOfMemory, PathNotFound }![]const u8 {
         var base_path: std.array_list.Managed(u8) = base_path: {
             try_env: {
@@ -1029,12 +1042,17 @@ const MsvcLibDir = struct {
 
     /// Find path to MSVC's `lib/` directory.
     /// Caller owns the result.
-    pub fn find(gpa: Allocator, io: Io, arch: std.Target.Cpu.Arch) error{ OutOfMemory, MsvcLibDirNotFound }![]const u8 {
-        const full_path = MsvcLibDir.findViaCOM(gpa, io, arch) catch |err1| switch (err1) {
+    pub fn find(
+        gpa: Allocator,
+        io: Io,
+        arch: std.Target.Cpu.Arch,
+        env_map: *const Environ.Map,
+    ) error{ OutOfMemory, MsvcLibDirNotFound }![]const u8 {
+        const full_path = MsvcLibDir.findViaCOM(gpa, io, arch, env_map) catch |err1| switch (err1) {
             error.OutOfMemory => return error.OutOfMemory,
-            error.PathNotFound => MsvcLibDir.findViaRegistry(gpa, io, arch) catch |err2| switch (err2) {
+            error.PathNotFound => MsvcLibDir.findViaRegistry(gpa, io, arch, env_map) catch |err2| switch (err2) {
                 error.OutOfMemory => return error.OutOfMemory,
-                error.PathNotFound => MsvcLibDir.findViaVs7Key(gpa, io, arch) catch |err3| switch (err3) {
+                error.PathNotFound => MsvcLibDir.findViaVs7Key(gpa, io, arch, env_map) catch |err3| switch (err3) {
                     error.OutOfMemory => return error.OutOfMemory,
                     error.PathNotFound => return error.MsvcLibDirNotFound,
                 },

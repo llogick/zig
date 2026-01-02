@@ -6,6 +6,7 @@ const Dir = std.Io.Dir;
 const mem = std.mem;
 const Allocator = std.mem.Allocator;
 const Cache = std.Build.Cache;
+const assert = std.debug.assert;
 
 const build_options = @import("build_options");
 
@@ -62,14 +63,14 @@ pub fn getResolvedCwd(gpa: Allocator) error{
         if (std.debug.runtime_safety) {
             const cwd = try std.process.getCwdAlloc(gpa);
             defer gpa.free(cwd);
-            std.debug.assert(mem.eql(u8, cwd, "."));
+            assert(mem.eql(u8, cwd, "."));
         }
         return "";
     }
     const cwd = try std.process.getCwdAlloc(gpa);
     defer gpa.free(cwd);
     const resolved = try Dir.path.resolve(gpa, &.{cwd});
-    std.debug.assert(Dir.path.isAbsolute(resolved));
+    assert(Dir.path.isAbsolute(resolved));
     return resolved;
 }
 
@@ -140,7 +141,7 @@ pub fn resolvePath(
     paths: []const []const u8,
 ) Allocator.Error![]u8 {
     if (builtin.target.os.tag == .wasi) {
-        std.debug.assert(mem.eql(u8, cwd_resolved, ""));
+        assert(mem.eql(u8, cwd_resolved, ""));
         const res = try Dir.path.resolve(gpa, paths);
         if (mem.eql(u8, res, ".")) {
             gpa.free(res);
@@ -160,8 +161,8 @@ pub fn resolvePath(
             gpa.free(res);
             return "";
         }
-        std.debug.assert(!Dir.path.isAbsolute(res));
-        std.debug.assert(!isUpDir(res));
+        assert(!Dir.path.isAbsolute(res));
+        assert(!isUpDir(res));
         return res;
     }
 
@@ -180,8 +181,8 @@ pub fn resolvePath(
     };
     errdefer gpa.free(path_resolved);
 
-    std.debug.assert(Dir.path.isAbsolute(path_resolved));
-    std.debug.assert(Dir.path.isAbsolute(cwd_resolved));
+    assert(Dir.path.isAbsolute(path_resolved));
+    assert(Dir.path.isAbsolute(cwd_resolved));
 
     if (!std.mem.startsWith(u8, path_resolved, cwd_resolved)) return path_resolved; // not in cwd
     if (path_resolved.len == cwd_resolved.len) {
