@@ -14,7 +14,7 @@ pub fn main(init: std.process.Init) u8 {
     const arena = init.arena.allocator();
     const io = init.io;
 
-    const args = process.argsAlloc(arena) catch {
+    const args = init.minimal.args.toSlice(arena) catch {
         std.debug.print("ran out of memory allocating arguments\n", .{});
         if (fast_exit) process.exit(1);
         return 1;

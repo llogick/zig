@@ -463,8 +463,33 @@ pub const RunError = posix.GetCwdError || posix.ReadError || SpawnError || posix
 };
 
 pub const RunOptions = struct {
-    spawn_options: SpawnOptions,
+    argv: []const []const u8,
     max_output_bytes: usize = 50 * 1024,
+
+    /// Set to change the current working directory when spawning the child process.
+    cwd: ?[]const u8 = null,
+    /// Set to change the current working directory when spawning the child process.
+    /// This is not yet implemented for Windows. See https://github.com/ziglang/zig/issues/5190
+    /// Once that is done, `cwd` will be deprecated in favor of this field.
+    cwd_dir: ?Io.Dir = null,
+    /// Replaces the child environment when provided. The PATH value from here
+    /// is not used to resolve `argv[0]`; that resolution always uses parent
+    /// environment.
+    env_map: ?*const Environ.Map = null,
+    expand_arg0: ArgExpansion = .no_expand,
+    /// When populated, a pipe will be created for the child process to
+    /// communicate progress back to the parent. The file descriptor of the
+    /// write end of the pipe will be specified in the `ZIG_PROGRESS`
+    /// environment variable inside the child process. The progress reported by
+    /// the child will be attached to this progress node in the parent process.
+    ///
+    /// The child's progress tree will be grafted into the parent's progress tree,
+    /// by substituting this node with the child's root node.
+    progress_node: std.Progress.Node = std.Progress.Node.none,
+    /// Windows-only. Sets the CREATE_NO_WINDOW flag in CreateProcess.
+    create_no_window: bool = true,
+    /// Darwin-only. Disable ASLR for the child process.
+    disable_aslr: bool = false,
 };
 
 pub const RunResult = struct {
@@ -476,7 +501,20 @@ pub const RunResult = struct {
 /// Spawns a child process, waits for it, collecting stdout and stderr, and then returns.
 /// If it succeeds, the caller owns result.stdout and result.stderr memory.
 pub fn run(gpa: Allocator, io: Io, options: RunOptions) RunError!RunResult {
-    var child = try spawn(io, options.spawn_options);
+    var child = try spawn(io, .{
+        .argv = options.argv,
+        .cwd = options.cwd,
+        .cwd_dir = options.cwd_dir,
+        .env_map = options.env_map,
+        .expand_arg0 = options.expand_arg0,
+        .progress_node = options.progress_node,
+        .create_no_window = options.create_no_window,
+        .disable_aslr = options.disable_aslr,
+
+        .stdin = .ignore,
+        .stdout = .pipe,
+        .stderr = .pipe,
+    });
     defer child.kill(io);
 
     var stdout: std.ArrayList(u8) = .empty;

@@ -208,16 +208,16 @@ pub fn findNative(gpa: Allocator, io: Io, args: FindNativeOptions) FindError!Lib
     } else if (is_haiku) {
         try self.findNativeIncludeDirPosix(gpa, io, args);
         try self.findNativeGccDirHaiku(gpa, io, args);
-        self.crt_dir = try gpa.dupeZ(u8, "/system/develop/lib");
+        self.crt_dir = try gpa.dupe(u8, "/system/develop/lib");
     } else if (builtin.target.os.tag == .illumos) {
         // There is only one libc, and its headers/libraries are always in the same spot.
-        self.include_dir = try gpa.dupeZ(u8, "/usr/include");
-        self.sys_include_dir = try gpa.dupeZ(u8, "/usr/include");
-        self.crt_dir = try gpa.dupeZ(u8, "/usr/lib/64");
+        self.include_dir = try gpa.dupe(u8, "/usr/include");
+        self.sys_include_dir = try gpa.dupe(u8, "/usr/include");
+        self.crt_dir = try gpa.dupe(u8, "/usr/lib/64");
     } else if (std.process.can_spawn) {
         try self.findNativeIncludeDirPosix(gpa, io, args);
         switch (builtin.target.os.tag) {
-            .freebsd, .netbsd, .openbsd, .dragonfly => self.crt_dir = try gpa.dupeZ(u8, "/usr/lib"),
+            .freebsd, .netbsd, .openbsd, .dragonfly => self.crt_dir = try gpa.dupe(u8, "/usr/lib"),
             .linux => try self.findNativeCrtDirPosix(gpa, io, args),
             else => {},
         }
@@ -269,15 +269,13 @@ fn findNativeIncludeDirPosix(self: *LibCInstallation, gpa: Allocator, io: Io, ar
 
     const run_res = std.process.run(gpa, io, .{
         .max_output_bytes = 1024 * 1024,
-        .spawn_options = .{
-            .argv = argv.items,
-            .env_map = &env_map,
-            // Some C compilers, such as Clang, are known to rely on argv[0] to find the path
-            // to their own executable, without even bothering to resolve PATH. This results in the message:
-            // error: unable to execute command: Executable "" doesn't exist!
-            // So we use the expandArg0 variant of ChildProcess to give them a helping hand.
-            .expand_arg0 = .expand,
-        },
+        .argv = argv.items,
+        .env_map = &env_map,
+        // Some C compilers, such as Clang, are known to rely on argv[0] to find the path
+        // to their own executable, without even bothering to resolve PATH. This results in the message:
+        // error: unable to execute command: Executable "" doesn't exist!
+        // So we use the expandArg0 variant of ChildProcess to give them a helping hand.
+        .expand_arg0 = .expand,
     }) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => {
@@ -337,7 +335,7 @@ fn findNativeIncludeDirPosix(self: *LibCInstallation, gpa: Allocator, io: Io, ar
 
         if (self.include_dir == null) {
             if (search_dir.access(io, include_dir_example_file, .{})) |_| {
-                self.include_dir = try gpa.dupeZ(u8, search_path);
+                self.include_dir = try gpa.dupe(u8, search_path);
             } else |err| switch (err) {
                 error.FileNotFound => {},
                 else => return error.FileSystem,
@@ -346,7 +344,7 @@ fn findNativeIncludeDirPosix(self: *LibCInstallation, gpa: Allocator, io: Io, ar
 
         if (self.sys_include_dir == null) {
             if (search_dir.access(io, sys_include_dir_example_file, .{})) |_| {
-                self.sys_include_dir = try gpa.dupeZ(u8, search_path);
+                self.sys_include_dir = try gpa.dupe(u8, search_path);
             } else |err| switch (err) {
                 error.FileNotFound => {},
                 else => return error.FileSystem,
@@ -560,7 +558,7 @@ pub const CCPrintFileNameOptions = struct {
 };
 
 /// caller owns returned memory
-fn ccPrintFileName(gpa: Allocator, io: Io, args: CCPrintFileNameOptions) ![:0]u8 {
+fn ccPrintFileName(gpa: Allocator, io: Io, args: CCPrintFileNameOptions) ![]u8 {
     // Detect infinite loops.
     var env_map = try args.env_map.clone(gpa);
     defer env_map.deinit();
@@ -587,15 +585,13 @@ fn ccPrintFileName(gpa: Allocator, io: Io, args: CCPrintFileNameOptions) ![:0]u8
 
     const run_res = std.process.run(gpa, io, .{
         .max_output_bytes = 1024 * 1024,
-        .spawn_options = .{
-            .argv = argv.items,
-            .env_map = &env_map,
-            // Some C compilers, such as Clang, are known to rely on argv[0] to find the path
-            // to their own executable, without even bothering to resolve PATH. This results in the message:
-            // error: unable to execute command: Executable "" doesn't exist!
-            // So we use the expandArg0 variant of ChildProcess to give them a helping hand.
-            .expand_arg0 = .expand,
-        },
+        .argv = argv.items,
+        .env_map = &env_map,
+        // Some C compilers, such as Clang, are known to rely on argv[0] to find the path
+        // to their own executable, without even bothering to resolve PATH. This results in the message:
+        // error: unable to execute command: Executable "" doesn't exist!
+        // So we use the expandArg0 variant of ChildProcess to give them a helping hand.
+        .expand_arg0 = .expand,
     }) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => return error.UnableToSpawnCCompiler,
@@ -621,10 +617,10 @@ fn ccPrintFileName(gpa: Allocator, io: Io, args: CCPrintFileNameOptions) ![:0]u8
     // So we detect failure by checking if the output matches exactly the input.
     if (std.mem.eql(u8, line, args.search_basename)) return error.LibCRuntimeNotFound;
     switch (args.want_dirname) {
-        .full_path => return gpa.dupeZ(u8, line),
+        .full_path => return gpa.dupe(u8, line),
         .only_dir => {
             const dirname = fs.path.dirname(line) orelse return error.LibCRuntimeNotFound;
-            return gpa.dupeZ(u8, dirname);
+            return gpa.dupe(u8, dirname);
         },
     }
 }

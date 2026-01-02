@@ -360,11 +360,11 @@ pub fn captureChildProcess(
     try handleChildProcUnsupported(s);
     try handleVerbose(s.owner, null, argv);
 
-    const result = std.process.run(arena, io, .{ .spawn_options = .{
+    const result = std.process.run(arena, io, .{
         .argv = argv,
         .env_map = &graph.env_map,
         .progress_node = progress_node,
-    } }) catch |err| return s.fail("failed to run {s}: {t}", .{ argv[0], err });
+    }) catch |err| return s.fail("failed to run {s}: {t}", .{ argv[0], err });
 
     if (result.stderr.len > 0) {
         try s.result_error_msgs.append(arena, result.stderr);

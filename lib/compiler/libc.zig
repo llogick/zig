@@ -24,23 +24,19 @@ const usage_libc =
 
 var stdout_buffer: [4096]u8 = undefined;
 
-pub fn main() !void {
-    var arena_instance = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena_instance.deinit();
-    const arena = arena_instance.allocator();
-    const gpa = arena;
+pub fn main(init: std.process.Init) !void {
+    const arena = init.arena.allocator();
+    const gpa = init.gpa;
+    const io = init.io;
+    const args = try init.minimal.args.toSlice(arena);
+    const env_map = init.env_map;
 
-    var threaded: std.Io.Threaded = .init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    const args = try std.process.argsAlloc(arena);
     const zig_lib_directory = args[1];
 
     var input_file: ?[]const u8 = null;
     var target_arch_os_abi: []const u8 = "native";
     var print_includes: bool = false;
-    var stdout_writer = Io.File.stdout().writer(&stdout_buffer);
+    var stdout_writer = Io.File.stdout().writer(io, &stdout_buffer);
     const stdout = &stdout_writer.interface;
     {
         var i: usize = 2;
@@ -77,7 +73,7 @@ pub fn main() !void {
         const libc_installation: ?*LibCInstallation = libc: {
             if (input_file) |libc_file| {
                 const libc = try arena.create(LibCInstallation);
-                libc.* = LibCInstallation.parse(arena, libc_file, &target) catch |err| {
+                libc.* = LibCInstallation.parse(arena, io, libc_file, &target) catch |err| {
                     fatal("unable to parse libc file at path {s}: {t}", .{ libc_file, err });
                 };
                 break :libc libc;
@@ -90,11 +86,13 @@ pub fn main() !void {
 
         const libc_dirs = std.zig.LibCDirs.detect(
             arena,
+            io,
             zig_lib_directory,
             &target,
             is_native_abi,
             true,
             libc_installation,
+            env_map,
         ) catch |err| {
             const zig_target = try target.zigTriple(arena);
             fatal("unable to detect libc for target {s}: {t}", .{ zig_target, err });
@@ -114,7 +112,7 @@ pub fn main() !void {
     }
 
     if (input_file) |libc_file| {
-        var libc = LibCInstallation.parse(gpa, libc_file, &target) catch |err| {
+        var libc = LibCInstallation.parse(gpa, io, libc_file, &target) catch |err| {
             fatal("unable to parse libc file at path {s}: {t}", .{ libc_file, err });
         };
         defer libc.deinit(gpa);
@@ -125,6 +123,7 @@ pub fn main() !void {
         var libc = LibCInstallation.findNative(gpa, io, .{
             .verbose = true,
             .target = &target,
+            .env_map = env_map,
         }) catch |err| {
             fatal("unable to detect native libc: {t}", .{err});
         };

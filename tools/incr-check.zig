@@ -44,7 +44,7 @@ pub fn main(init: std.process.Init) !void {
 
     var debug_log_args: std.ArrayList([]const u8) = .empty;
 
-    var arg_it = try std.process.argsWithAllocator(arena);
+    var arg_it = try init.minimal.argsIterator(arena);
     _ = arg_it.skip();
     while (arg_it.next()) |arg| {
         if (arg.len > 0 and arg[0] == '-') {

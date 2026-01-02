@@ -18,7 +18,7 @@ var debug_allocator: std.heap.DebugAllocator(.{
     .canary = @truncate(0xc647026dc6875134),
 }) = .{};
 
-pub fn main() u8 {
+pub fn main(init: std.process.Init.Minimal) u8 {
     const gpa = if (@import("builtin").link_libc)
         std.heap.c_allocator
     else
@@ -37,7 +37,7 @@ pub fn main() u8 {
 
     const fast_exit = @import("builtin").mode != .Debug;
 
-    const args = process.argsAlloc(arena) catch {
+    const args = init.args.toSlice(arena) catch {
         std.debug.print("out of memory\n", .{});
         if (fast_exit) process.exit(1);
         return 1;

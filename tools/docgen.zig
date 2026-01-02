@@ -28,20 +28,12 @@ const usage =
     \\
 ;
 
-pub fn main() !void {
-    var arena_instance = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena_instance.deinit();
+pub fn main(init: std.process.Init) !void {
+    const arena = init.arena.allocator();
+    const io = init.io;
 
-    const arena = arena_instance.allocator();
-
-    var args_it = try process.argsWithAllocator(arena);
+    var args_it = try init.minimal.args.iterateAllocator(arena);
     if (!args_it.skip()) @panic("expected self arg");
-
-    const gpa = arena;
-
-    var threaded: std.Io.Threaded = .init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
 
     var opt_code_dir: ?[]const u8 = null;
     var opt_input: ?[]const u8 = null;

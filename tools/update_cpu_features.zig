@@ -1883,20 +1883,11 @@ const targets = [_]ArchTarget{
     },
 };
 
-pub fn main() anyerror!void {
-    var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
-    defer _ = debug_allocator.deinit();
-    const gpa = debug_allocator.allocator();
+pub fn main(init: std.process.Init) !void {
+    const arena = init.arena_allocator.allocator();
+    const io = init.io;
 
-    var arena_state: std.heap.ArenaAllocator = .init(gpa);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    var threaded: std.Io.Threaded = .init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    var args = try std.process.argsWithAllocator(arena);
+    var args = try init.minimal.args.iterateAllocator(arena);
     const args0 = args.next().?;
 
     const llvm_tblgen_exe = args.next() orelse

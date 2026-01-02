@@ -1,8 +1,8 @@
 const std = @import("std");
 
-pub fn main() !void {
-    const io = std.Io.Threaded.global_single_threaded.ioBasic();
-    var args = try std.process.argsWithAllocator(std.heap.page_allocator);
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    var args = try init.minimal.argsAllocator(init.arena.allocator());
     _ = args.skip();
     const filename = args.next().?;
     const file = try std.Io.Dir.cwd().createFile(io, filename, .{});

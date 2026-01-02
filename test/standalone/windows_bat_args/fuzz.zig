@@ -4,16 +4,11 @@ const std = @import("std");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
-pub fn main() anyerror!void {
-    var debug_alloc_inst: std.heap.DebugAllocator(.{}) = .init;
-    defer std.debug.assert(debug_alloc_inst.deinit() == .ok);
-    const gpa = debug_alloc_inst.allocator();
+pub fn main(init: std.process.Init) !void {
+    const gpa = init.gpa;
+    const io = init.io;
 
-    var threaded: Io.Threaded = .init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    var it = try std.process.argsWithAllocator(gpa);
+    var it = try init.minimal.argsAllocator(gpa);
     defer it.deinit();
     _ = it.next() orelse unreachable; // skip binary name
     const child_exe_path_orig = it.next() orelse unreachable;

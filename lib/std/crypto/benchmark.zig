@@ -503,16 +503,16 @@ fn mode(comptime x: comptime_int) comptime_int {
     return if (builtin.mode == .Debug) x / 64 else x;
 }
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    const arena = init.arena.allocator();
+
     // Size of buffer is about size of printed message.
     var stdout_buffer: [0x100]u8 = undefined;
-    var stdout_writer = Io.File.stdout().writer(&stdout_buffer);
+    var stdout_writer = Io.File.stdout().writer(io, &stdout_buffer);
     const stdout = &stdout_writer.interface;
 
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const arena_allocator = arena.allocator();
-    const args = try std.process.argsAlloc(arena_allocator);
+    const args = try init.minimal.args.toSlice(arena);
 
     var filter: ?[]u8 = "";
 
@@ -556,13 +556,9 @@ pub fn main() !void {
         }
     }
 
-    var io_threaded = std.Io.Threaded.init(arena_allocator, .{});
-    defer io_threaded.deinit();
-    const io = io_threaded.io();
-
     inline for (parallel_hashes) |H| {
         if (filter == null or std.mem.find(u8, H.name, filter.?) != null) {
-            const throughput = try benchmarkHashParallel(H.ty, mode(128 * MiB), arena_allocator, io);
+            const throughput = try benchmarkHashParallel(H.ty, mode(128 * MiB), arena, io);
             try stdout.print("{s:>17}: {:10} MiB/s\n", .{ H.name, throughput / (1 * MiB) });
             try stdout.flush();
         }
@@ -634,7 +630,7 @@ pub fn main() !void {
 
     inline for (pwhashes) |H| {
         if (filter == null or std.mem.find(u8, H.name, filter.?) != null) {
-            const throughput = try benchmarkPwhash(arena_allocator, H.ty, H.params, mode(64), io);
+            const throughput = try benchmarkPwhash(arena, H.ty, H.params, mode(64), io);
             try stdout.print("{s:>17}: {d:10.3} s/ops\n", .{ H.name, throughput });
             try stdout.flush();
         }

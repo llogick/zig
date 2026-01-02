@@ -4,31 +4,23 @@ const Io = std.Io;
 // 42 is expected by parent; other values result in test failure
 var exit_code: u8 = 42;
 
-pub fn main() !void {
-    var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    const arena = arena_state.allocator();
-
-    var threaded: std.Io.Threaded = .init(arena, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    try run(arena, io);
-    arena_state.deinit();
+pub fn main(init: std.process.Init) !void {
+    try run(init.arena.allocator(), init.io, init.minimal.args);
     std.process.exit(exit_code);
 }
 
-fn run(allocator: std.mem.Allocator, io: Io) !void {
-    var args = try std.process.argsWithAllocator(allocator);
-    defer args.deinit();
-    _ = args.next() orelse unreachable; // skip binary name
+fn run(arena: std.mem.Allocator, io: Io, args: std.process.Args) !void {
+    var it = try args.iterateAllocator(arena);
+    defer it.deinit();
+    _ = it.next() orelse unreachable; // skip binary name
 
     // test cmd args
     const hello_arg = "hello arg";
-    const a1 = args.next() orelse unreachable;
+    const a1 = it.next() orelse unreachable;
     if (!std.mem.eql(u8, a1, hello_arg)) {
         testError(io, "first arg: '{s}'; want '{s}'", .{ a1, hello_arg });
     }
-    if (args.next()) |a2| {
+    if (it.next()) |a2| {
         testError(io, "expected only one arg; got more: {s}", .{a2});
     }
 
