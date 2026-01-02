@@ -5529,7 +5529,9 @@ fn airAsm(f: *Function, inst: Air.Inst.Index) !CValue {
                     .alignas = CType.AlignAs.fromAbiAlignment(input_ty.abiAlignment(zcu)),
                 });
                 try f.allocs.put(gpa, input_local.new_local, false);
-                try f.object.dg.renderTypeAndName(w, input_ty, input_local, Const, .none, .complete);
+                // Do not render the declaration as `const` qualified if we're generating an
+                // explicit `register` local, as GCC will ignore the constraint completely.
+                try f.object.dg.renderTypeAndName(w, input_ty, input_local, if (is_reg) .{} else Const, .none, .complete);
                 if (is_reg) {
                     try w.writeAll(" __asm(\"");
                     try w.writeAll(constraint["{".len .. constraint.len - "}".len]);
