@@ -127,12 +127,10 @@ pub const Edwards25519 = struct {
     /// Check that the point does not generate a low-order group.
     /// Return a `WeakPublicKey` error if it does.
     pub fn rejectLowOrder(p: Edwards25519) WeakPublicKeyError!void {
-        const zi = p.z.invert();
-        const x = p.x.mul(zi);
-        const y = p.y.mul(zi);
-        const x_neg = x.neg();
-        const iy = Fe.sqrtm1.mul(y);
-        if (x.isZero() or y.isZero() or iy.equivalent(x) or iy.equivalent(x_neg)) {
+        const y_sqrtm1 = Fe.sqrtm1.mul(p.y);
+        if (p.x.isZero() or p.y.isZero() or p.z.isZero() or
+            y_sqrtm1.sub(p.x).isZero() or y_sqrtm1.add(p.x).isZero())
+        {
             return error.WeakPublicKey;
         }
     }
