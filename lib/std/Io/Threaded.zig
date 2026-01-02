@@ -14279,17 +14279,6 @@ fn testArgvToCommandLineWindows(argv: []const []const u8, expected_cmd_line: []c
     try std.testing.expectEqualStrings(expected_cmd_line, cmd_line);
 }
 
-/// Replaces the current process image with the executed process. If this
-/// function succeeds, it does not return.
-///
-/// This operation is not available on all targets. `can_execv`
-///
-/// This function also uses the PATH environment variable to get the full path to the executable.
-/// If `file` is an absolute path, this is the same as `execveZ`.
-///
-/// Like `execvpeZ` except if `arg0_expand` is `.expand`, then `argv` is mutable,
-/// and `argv[0]` is expanded to be the same absolute path that is passed to the execve syscall.
-/// If this function returns with an error, `argv[0]` will be restored to the value it was when it was passed in.
 fn execvpeZ_expandArg0(
     arg0_expand: process.ArgExpansion,
     file: [*:0]const u8,

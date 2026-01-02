@@ -4708,7 +4708,7 @@ pub fn translateC(
     arena: Allocator,
     io: Io,
     argv: []const []const u8,
-    env_map: *process.Environ.Map,
+    env_map: *const process.Environ.Map,
     prog_node: std.Progress.Node,
     capture: ?*[]u8,
 ) !void {
@@ -5516,7 +5516,7 @@ fn jitCmd(
     arena: Allocator,
     io: Io,
     args: []const []const u8,
-    env_map: *process.Environ.Map,
+    env_map: *const process.Environ.Map,
     options: JitCmdOptions,
 ) !void {
     dev.check(.jit_command);

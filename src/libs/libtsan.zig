@@ -301,6 +301,7 @@ pub fn buildTsan(comp: *Compilation, prog_node: std.Progress.Node) BuildError!vo
         .linker_allow_shlib_undefined = linker_allow_shlib_undefined,
         .install_name = install_name,
         .headerpad_size = headerpad_size,
+        .environ_map = comp.environ_map,
     }) catch |err| {
         switch (err) {
             else => comp.lockAndSetMiscFailure(misc_task, "unable to build {t}: create compilation failed: {t}", .{ misc_task, err }),

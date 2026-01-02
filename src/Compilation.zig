@@ -54,7 +54,7 @@ gpa: Allocator,
 /// threads at once.
 arena: Allocator,
 io: Io,
-environ_map: *std.process.Environ.Map,
+environ_map: *const std.process.Environ.Map,
 thread_limit: usize,
 /// Not every Compilation compiles .zig code! For example you could do `zig build-exe foo.o`.
 zcu: ?*Zcu,
@@ -762,12 +762,12 @@ pub const Directories = struct {
             .wasi => void,
             else => []const u8,
         },
-        env_map: *std.process.Environ.Map,
+        env_map: *const std.process.Environ.Map,
     ) Directories {
         const wasi = builtin.target.os.tag == .wasi;
 
         const cwd = introspect.getResolvedCwd(arena) catch |err| {
-            fatal("unable to get cwd: {s}", .{@errorName(err)});
+            fatal("unable to get cwd: {t}", .{err});
         };
 
         const zig_lib: Cache.Directory = d: {
@@ -1799,7 +1799,7 @@ pub const CreateOptions = struct {
 
     parent_whole_cache: ?ParentWholeCache = null,
 
-    environ_map: *std.process.Environ.Map,
+    environ_map: *const std.process.Environ.Map,
 
     pub const Entry = link.File.OpenOptions.Entry;
 
@@ -5713,7 +5713,7 @@ pub fn translateC(
     translated_basename: []const u8,
     owner_mod: *Package.Module,
     prog_node: std.Progress.Node,
-    env_map: *std.process.Environ.Map,
+    env_map: *const std.process.Environ.Map,
 ) !CImportResult {
     dev.check(.translate_c_command);
 
@@ -6260,7 +6260,7 @@ fn updateCObject(comp: *Compilation, c_object: *CObject, c_obj_prog_node: std.Pr
         // that we could "tail call" clang by doing an execve, and any use of
         // the caching system would actually be problematic since the user is
         // presumably doing their own caching by using dep file flags.
-        if (std.process.can_execv and direct_o and
+        if (std.process.can_replace and direct_o and
             comp.disable_c_depfile and comp.clang_passthrough_mode)
         {
             try comp.addCCArgs(arena, &argv, ext, null, c_object.src.owner);
@@ -6292,8 +6292,8 @@ fn updateCObject(comp: *Compilation, c_object: *CObject, c_obj_prog_node: std.Pr
                 try dumpArgv(io, argv.items);
             }
 
-            const err = std.process.execv(arena, argv.items);
-            fatal("unable to execv clang: {s}", .{@errorName(err)});
+            const err = std.process.replace(io, .{ .argv = argv.items });
+            fatal("unable to replace process with clang: {t}", .{err});
         }
 
         // We can't know the digest until we do the C compiler invocation,
@@ -6348,14 +6348,21 @@ fn updateCObject(comp: *Compilation, c_object: *CObject, c_obj_prog_node: std.Pr
             else => log.warn("failed to delete '{s}': {s}", .{ dep_file_path, @errorName(err) }),
         };
         if (std.process.can_spawn) {
-            var child = std.process.Child.init(argv.items, arena);
             if (comp.clang_passthrough_mode) {
-                child.stdin_behavior = .inherit;
-                child.stdout_behavior = .inherit;
-                child.stderr_behavior = .inherit;
-
-                const term = child.spawnAndWait(io) catch |err| {
-                    return comp.failCObj(c_object, "failed to spawn zig clang (passthrough mode) {s}: {s}", .{ argv.items[0], @errorName(err) });
+                var child = std.process.spawn(io, .{
+                    .argv = argv.items,
+                    .stdin = .inherit,
+                    .stdout = .inherit,
+                    .stderr = .inherit,
+                }) catch |err| {
+                    return comp.failCObj(c_object, "failed to spawn zig clang (passthrough mode) {s}: {t}", .{
+                        argv.items[0], err,
+                    });
+                };
+                const term = child.wait(io) catch |err| {
+                    return comp.failCObj(c_object, "failed to wait zig clang (passthrough mode) {s}: {t}", .{
+                        argv.items[0], err,
+                    });
                 };
                 switch (term) {
                     .exited => |code| {
@@ -6367,36 +6374,41 @@ fn updateCObject(comp: *Compilation, c_object: *CObject, c_obj_prog_node: std.Pr
                     },
                     else => std.process.abort(),
                 }
-            } else {
-                child.stdin_behavior = .ignore;
-                child.stdout_behavior = .ignore;
-                child.stderr_behavior = .pipe;
+                unreachable;
+            }
 
-                try child.spawn(io);
+            var child = try std.process.spawn(io, .{
+                .argv = argv.items,
+                .stdin = .ignore,
+                .stdout = .ignore,
+                .stderr = .pipe,
+            });
 
-                var stderr_reader = child.stderr.?.readerStreaming(io, &.{});
-                const stderr = try stderr_reader.interface.allocRemaining(arena, .limited(std.math.maxInt(u32)));
+            var stderr_reader = child.stderr.?.readerStreaming(io, &.{});
+            const stderr = try stderr_reader.interface.allocRemaining(arena, .limited(std.math.maxInt(u32)));
 
-                const term = child.wait(io) catch |err| {
-                    return comp.failCObj(c_object, "failed to spawn zig clang {s}: {s}", .{ argv.items[0], @errorName(err) });
-                };
+            const term = child.wait(io) catch |err|
+                return comp.failCObj(c_object, "failed to spawn zig clang {s}: {t}", .{ argv.items[0], err });
 
-                switch (term) {
-                    .exited => |code| if (code != 0) if (out_diag_path) |diag_file_path| {
-                        const bundle = CObject.Diag.Bundle.parse(gpa, io, diag_file_path) catch |err| {
-                            log.err("{}: failed to parse clang diagnostics: {s}", .{ err, stderr });
-                            return comp.failCObj(c_object, "clang exited with code {d}", .{code});
-                        };
-                        return comp.failCObjWithOwnedDiagBundle(c_object, bundle);
-                    } else {
-                        log.err("clang failed with stderr: {s}", .{stderr});
+            switch (term) {
+                .exited => |code| if (code != 0) if (out_diag_path) |diag_file_path| {
+                    const bundle = CObject.Diag.Bundle.parse(gpa, io, diag_file_path) catch |err| {
+                        log.err("{}: failed to parse clang diagnostics: {s}", .{ err, stderr });
                         return comp.failCObj(c_object, "clang exited with code {d}", .{code});
-                    },
-                    else => {
-                        log.err("clang terminated with stderr: {s}", .{stderr});
-                        return comp.failCObj(c_object, "clang terminated unexpectedly", .{});
-                    },
-                }
+                    };
+                    return comp.failCObjWithOwnedDiagBundle(c_object, bundle);
+                } else {
+                    log.err("clang failed with stderr: {s}", .{stderr});
+                    return comp.failCObj(c_object, "clang exited with code {d}", .{code});
+                },
+                .signal => |sig| {
+                    log.err("clang failed with stderr: {s}", .{stderr});
+                    return comp.failCObj(c_object, "clang terminated with signal {t}", .{sig});
+                },
+                else => {
+                    log.err("clang terminated with stderr: {s}", .{stderr});
+                    return comp.failCObj(c_object, "clang terminated unexpectedly", .{});
+                },
             }
         } else {
             const exit_code = try clangMain(arena, argv.items);
@@ -8113,6 +8125,7 @@ pub fn build_crt_file(
         .verbose_llvm_cpu_features = comp.verbose_llvm_cpu_features,
         .clang_passthrough_mode = comp.clang_passthrough_mode,
         .skip_linker_dependencies = true,
+        .environ_map = comp.environ_map,
     }) catch |err| switch (err) {
         error.CreateFail => {
             comp.lockAndSetMiscFailure(misc_task_tag, "sub-compilation of {t} failed: {f}", .{ misc_task_tag, sub_create_diag });

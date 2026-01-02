@@ -102,7 +102,7 @@ pub fn findZigLibDirFromSelfExe(
     return error.FileNotFound;
 }
 
-pub fn resolveGlobalCacheDir(arena: Allocator, env_map: *std.process.Environ.Map) ![]const u8 {
+pub fn resolveGlobalCacheDir(arena: Allocator, env_map: *const std.process.Environ.Map) ![]const u8 {
     if (std.zig.EnvVar.ZIG_GLOBAL_CACHE_DIR.get(env_map)) |value| return value;
 
     const app_name = "zig";
