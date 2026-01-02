@@ -623,22 +623,33 @@ inline fn callMainWithArgs(argc: usize, argv: [*][*:0]u8, envp: [:null]?[*:0]u8)
     return callMain(argv[0..argc], envp);
 }
 
-fn main(c_argc: c_int, c_argv: [*][*:0]u8, c_envp: [*:null]?[*:0]u8) callconv(.c) c_int {
+fn main(c_argc: c_int, c_argv: [*][*:0]c_char, c_envp: [*:null]?[*:0]c_char) callconv(.c) c_int {
     var env_count: usize = 0;
     while (c_envp[env_count] != null) : (env_count += 1) {}
     const envp = c_envp[0..env_count :null];
 
-    if (builtin.os.tag == .linux) {
-        const at_phdr = std.c.getauxval(elf.AT_PHDR);
-        const at_phnum = std.c.getauxval(elf.AT_PHNUM);
-        const phdrs = (@as([*]elf.Phdr, @ptrFromInt(at_phdr)))[0..at_phnum];
-        expandStackSize(phdrs);
+    switch (builtin.os.tag) {
+        .linux => {
+            const at_phdr = std.c.getauxval(elf.AT_PHDR);
+            const at_phnum = std.c.getauxval(elf.AT_PHNUM);
+            const phdrs = (@as([*]elf.Phdr, @ptrFromInt(at_phdr)))[0..at_phnum];
+            expandStackSize(phdrs);
+        },
+        .windows => {
+            // On Windows, we ignore libc environment and argv and get those
+            // values in their intended encoding from the PEB instead.
+            std.debug.maybeEnableSegfaultHandler();
+            const cmd_line = std.os.windows.peb().ProcessParameters.CommandLine;
+            const cmd_line_w = cmd_line.Buffer.?[0..@divExact(cmd_line.Length, 2)];
+            return callMain(cmd_line_w, {});
+        },
+        else => {},
     }
 
-    return callMainWithArgs(@as(usize, @intCast(c_argc)), @as([*][*:0]u8, @ptrCast(c_argv)), envp);
+    return callMainWithArgs(@as(usize, @intCast(c_argc)), @as([*][*:0]u8, @ptrCast(c_argv)), @ptrCast(envp));
 }
 
-fn mainWithoutEnv(c_argc: c_int, c_argv: [*][*:0]u8) callconv(.c) c_int {
+fn mainWithoutEnv(c_argc: c_int, c_argv: [*][*:0]c_char) callconv(.c) c_int {
     const argv = @as([*][*:0]u8, @ptrCast(c_argv))[0..@intCast(c_argc)];
     if (@sizeOf(std.Io.Threaded.Argv0) != 0) {
         if (std.Options.debug_threaded_io) |t| t.argv0.value = argv[0];
