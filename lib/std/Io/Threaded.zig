@@ -5654,7 +5654,7 @@ fn dirSymLinkWindows(
             // Already an NT path, no need to do anything to it
             break :target_path target_path_w.span();
         } else {
-            switch (w.getWin32PathType(u16, target_path_w.span())) {
+            switch (Dir.path.getWin32PathType(u16, target_path_w.span())) {
                 // Rooted paths need to avoid getting put through wToPrefixedFileW
                 // (and they are treated as relative in this context)
                 // Note: It seems that rooted paths in symbolic links are relative to
@@ -12617,6 +12617,45 @@ fn initializeWsa(t: *Threaded) error{ NetworkDown, Canceled }!void {
 
 fn doNothingSignalHandler(_: posix.SIG) callconv(.c) void {}
 
+const WindowsEnvironStrings = struct {
+    PATH: ?[:0]const u16 = null,
+    PATHEXT: ?[:0]const u16 = null,
+
+    fn scan() WindowsEnvironStrings {
+        const ptr = windows.peb().ProcessParameters.Environment;
+
+        var result: WindowsEnvironStrings = .{};
+        var i: usize = 0;
+        while (ptr[i] != 0) {
+            const key_start = i;
+
+            // There are some special environment variables that start with =,
+            // so we need a special case to not treat = as a key/value separator
+            // if it's the first character.
+            // https://devblogs.microsoft.com/oldnewthing/20100506-00/?p=14133
+            if (ptr[key_start] == '=') i += 1;
+
+            while (ptr[i] != 0 and ptr[i] != '=') : (i += 1) {}
+            const key_w = ptr[key_start..i];
+
+            if (ptr[i] == '=') i += 1;
+
+            const value_start = i;
+            while (ptr[i] != 0) : (i += 1) {}
+            const value_w = ptr[value_start..i :0];
+
+            i += 1; // skip over null byte
+
+            inline for (@typeInfo(WindowsEnvironStrings).@"struct".fields) |field| {
+                const field_name_w = comptime std.unicode.wtf8ToWtf16LeStringLiteral(field.name);
+                if (std.mem.eql(u16, key_w, field_name_w)) @field(result, field.name) = value_w;
+            }
+        }
+
+        return result;
+    }
+};
+
 fn scanEnviron(t: *Threaded) void {
     t.mutex.lock();
     defer t.mutex.unlock();
@@ -12625,6 +12664,9 @@ fn scanEnviron(t: *Threaded) void {
     t.environ.initialized = true;
 
     if (is_windows) {
+        // This value expires with any call that modifies the environment,
+        // which is outside of this Io implementation's control, so references
+        // must be short-lived.
         const ptr = windows.peb().ProcessParameters.Environment;
 
         var i: usize = 0;
@@ -12779,6 +12821,7 @@ fn processSpawnPosix(userdata: ?*anyopaque, options: process.SpawnOptions) proce
     };
 
     const any_ignore = (options.stdin == .ignore or options.stdout == .ignore or options.stderr == .ignore);
+    // TODO: cache file handle of /dev/null!
     const dev_null_fd = if (any_ignore)
         posix.openZ("/dev/null", .{ .ACCMODE = .RDWR }, 0) catch |err| switch (err) {
             error.PathAlreadyExists => unreachable,
@@ -12962,53 +13005,86 @@ fn childWait(userdata: ?*anyopaque, child: *std.process.Child) process.Child.Wai
 fn childKill(userdata: ?*anyopaque, child: *std.process.Child) void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     if (is_windows) {
-        childKillWindows(t, child, 1) catch {
-            childCleanupStreams(child);
-        };
+        childKillWindows(t, child, 1) catch childCleanupWindows(child);
     } else {
-        childKillPosix(t, child) catch {
-            childCleanupStreams(child);
-        };
+        childKillPosix(t, child) catch childCleanupPosix(child);
     }
 }
 
 fn childKillWindows(t: *Threaded, child: *process.Child, exit_code: windows.UINT) !void {
-    windows.TerminateProcess(child.id, exit_code) catch |err| switch (err) {
-        error.AccessDenied => {
-            // Usually when TerminateProcess triggers a ACCESS_DENIED error, it
-            // indicates that the process has already exited, but there may be
-            // some rare edge cases where our process handle no longer has the
-            // PROCESS_TERMINATE access right, so let's do another check to make
-            // sure the process is really no longer running:
-            windows.WaitForSingleObjectEx(child.id, 0, false) catch return err;
-            return error.AlreadyTerminated;
-        },
-        else => return err,
-    };
-    try childWaitWindows(t, child);
+    _ = t; // TODO cancelation
+    const handle = child.id.?;
+    if (windows.kernel32.TerminateProcess(handle, exit_code) == 0) {
+        switch (windows.GetLastError()) {
+            .ACCESS_DENIED => {
+                // Usually when TerminateProcess triggers a ACCESS_DENIED error, it
+                // indicates that the process has already exited, but there may be
+                // some rare edge cases where our process handle no longer has the
+                // PROCESS_TERMINATE access right, so let's do another check to make
+                // sure the process is really no longer running:
+                windows.WaitForSingleObjectEx(handle, 0, false) catch return error.AccessDenied;
+                return error.AlreadyTerminated;
+            },
+            else => |err| return windows.unexpectedError(err),
+        }
+    }
+    _ = windows.kernel32.WaitForSingleObjectEx(handle, windows.INFINITE, windows.FALSE);
+    childCleanupWindows(child);
 }
 
 fn childWaitWindows(t: *Threaded, child: *process.Child) process.Child.WaitError!process.Child.Term {
-    _ = t; // TODO cancelation
-    windows.WaitForSingleObjectEx(child.id, windows.INFINITE, false);
+    const current_thread = Thread.getCurrent(t);
+    const handle = child.id.?;
+
+    while (true) {
+        try current_thread.checkCancel();
+        switch (windows.kernel32.WaitForSingleObjectEx(handle, windows.INFINITE, windows.FALSE)) {
+            windows.WAIT_OBJECT_0 => break,
+            windows.WAIT_ABANDONED, windows.WAIT_TIMEOUT => continue,
+            windows.WAIT_FAILED => switch (windows.GetLastError()) {
+                else => |err| return windows.unexpectedError(err),
+            },
+            else => return error.Unexpected,
+        }
+    }
 
     const term: process.Child.Term = x: {
         var exit_code: windows.DWORD = undefined;
-        if (windows.kernel32.GetExitCodeProcess(child.id, &exit_code) == 0) {
+        if (windows.kernel32.GetExitCodeProcess(handle, &exit_code) == 0) {
             break :x .{ .unknown = 0 };
         } else {
             break :x .{ .exited = @as(u8, @truncate(exit_code)) };
         }
     };
 
-    if (child.request_resource_usage_statistics) {
-        child.resource_usage_statistics.rusage = try windows.GetProcessMemoryInfo(child.id);
-    }
-
-    posix.close(child.id);
-    posix.close(child.thread_handle);
-    childCleanupStreams(child);
+    childCleanupWindows(child);
     return term;
+}
+
+fn childCleanupWindows(child: *process.Child) void {
+    const handle = child.id orelse return;
+
+    if (child.request_resource_usage_statistics)
+        child.resource_usage_statistics.rusage = windows.GetProcessMemoryInfo(handle) catch null;
+
+    windows.CloseHandle(handle);
+    child.id = null;
+
+    windows.CloseHandle(child.thread_handle);
+    child.thread_handle = undefined;
+
+    if (child.stdin) |*stdin| {
+        windows.CloseHandle(stdin.handle);
+        child.stdin = null;
+    }
+    if (child.stdout) |*stdout| {
+        windows.CloseHandle(stdout.handle);
+        child.stdout = null;
+    }
+    if (child.stderr) |*stderr| {
+        windows.CloseHandle(stderr.handle);
+        child.stderr = null;
+    }
 }
 
 fn childWaitPosix(t: *Threaded, child: *process.Child) process.Child.WaitError!process.Child.Term {
@@ -13023,7 +13099,7 @@ fn childWaitPosix(t: *Threaded, child: *process.Child) process.Child.WaitError!p
         }
         break :res posix.waitpid(pid, 0);
     };
-    childCleanupStreams(child);
+    childCleanupPosix(child);
     return statusToTerm(res.status);
 }
 
@@ -13050,7 +13126,7 @@ fn childKillPosix(t: *Threaded, child: *process.Child) !void {
     _ = try childWaitPosix(t, child);
 }
 
-fn childCleanupStreams(child: *process.Child) void {
+fn childCleanupPosix(child: *process.Child) void {
     if (child.stdin) |*stdin| {
         posix.close(stdin.handle);
         child.stdin = null;
@@ -13140,9 +13216,8 @@ fn setUpChildIo(stdio: process.SpawnOptions.StdIo, pipe_fd: i32, std_fileno: i32
     }
 }
 
-fn processSpawnWindows(userdata: ?*anyopaque, child: *process.Child) process.SpawnError!void {
+fn processSpawnWindows(userdata: ?*anyopaque, options: process.SpawnOptions) process.SpawnError!process.Child {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    _ = t;
 
     var saAttr: windows.SECURITY_ATTRIBUTES = .{
         .nLength = @sizeOf(windows.SECURITY_ATTRIBUTES),
@@ -13151,10 +13226,11 @@ fn processSpawnWindows(userdata: ?*anyopaque, child: *process.Child) process.Spa
     };
 
     const any_ignore =
-        child.stdin_behavior == .ignore or
-        child.stdout_behavior == .ignore or
-        child.stderr_behavior == .ignore;
+        options.stdin == .ignore or
+        options.stdout == .ignore or
+        options.stderr == .ignore;
 
+    // TODO: cache the handle to null file!
     const nul_handle = if (any_ignore)
         // "\Device\Null" or "\??\NUL"
         windows.OpenFile(&[_]u16{ '\\', 'D', 'e', 'v', 'i', 'c', 'e', '\\', 'N', 'u', 'l', 'l' }, .{
@@ -13185,7 +13261,7 @@ fn processSpawnWindows(userdata: ?*anyopaque, child: *process.Child) process.Spa
 
     var g_hChildStd_IN_Rd: ?windows.HANDLE = null;
     var g_hChildStd_IN_Wr: ?windows.HANDLE = null;
-    switch (child.stdin_behavior) {
+    switch (options.stdin) {
         .pipe => {
             try windowsMakePipeIn(&g_hChildStd_IN_Rd, &g_hChildStd_IN_Wr, &saAttr);
         },
@@ -13198,14 +13274,15 @@ fn processSpawnWindows(userdata: ?*anyopaque, child: *process.Child) process.Spa
         .close => {
             g_hChildStd_IN_Rd = null;
         },
+        .file => @panic("TODO implement passing file stdio in processSpawnWindows"),
     }
-    errdefer if (child.stdin_behavior == .pipe) {
+    errdefer if (options.stdin == .pipe) {
         windowsDestroyPipe(g_hChildStd_IN_Rd, g_hChildStd_IN_Wr);
     };
 
     var g_hChildStd_OUT_Rd: ?windows.HANDLE = null;
     var g_hChildStd_OUT_Wr: ?windows.HANDLE = null;
-    switch (child.stdout_behavior) {
+    switch (options.stdout) {
         .pipe => {
             try windowsMakeAsyncPipe(&g_hChildStd_OUT_Rd, &g_hChildStd_OUT_Wr, &saAttr);
         },
@@ -13218,14 +13295,15 @@ fn processSpawnWindows(userdata: ?*anyopaque, child: *process.Child) process.Spa
         .close => {
             g_hChildStd_OUT_Wr = null;
         },
+        .file => @panic("TODO implement passing file stdio in processSpawnWindows"),
     }
-    errdefer if (child.stdout_behavior == .pipe) {
+    errdefer if (options.stdout == .pipe) {
         windowsDestroyPipe(g_hChildStd_OUT_Rd, g_hChildStd_OUT_Wr);
     };
 
     var g_hChildStd_ERR_Rd: ?windows.HANDLE = null;
     var g_hChildStd_ERR_Wr: ?windows.HANDLE = null;
-    switch (child.stderr_behavior) {
+    switch (options.stderr) {
         .pipe => {
             try windowsMakeAsyncPipe(&g_hChildStd_ERR_Rd, &g_hChildStd_ERR_Wr, &saAttr);
         },
@@ -13238,12 +13316,13 @@ fn processSpawnWindows(userdata: ?*anyopaque, child: *process.Child) process.Spa
         .close => {
             g_hChildStd_ERR_Wr = null;
         },
+        .file => @panic("TODO implement passing file stdio in processSpawnWindows"),
     }
-    errdefer if (child.stderr_behavior == .pipe) {
+    errdefer if (options.stderr == .pipe) {
         windowsDestroyPipe(g_hChildStd_ERR_Rd, g_hChildStd_ERR_Wr);
     };
 
-    var siStartInfo = windows.STARTUPINFOW{
+    var siStartInfo: windows.STARTUPINFOW = .{
         .cb = @sizeOf(windows.STARTUPINFOW),
         .hStdError = g_hChildStd_ERR_Wr,
         .hStdOutput = g_hChildStd_OUT_Wr,
@@ -13266,63 +13345,63 @@ fn processSpawnWindows(userdata: ?*anyopaque, child: *process.Child) process.Spa
     };
     var piProcInfo: windows.PROCESS_INFORMATION = undefined;
 
-    const cwd_w = if (child.cwd) |cwd| try std.unicode.wtf8ToWtf16LeAllocZ(child.allocator, cwd) else null;
-    defer if (cwd_w) |cwd| child.allocator.free(cwd);
+    var arena_allocator = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_allocator.deinit();
+    const arena = arena_allocator.allocator();
+
+    const cwd_w = if (options.cwd) |cwd| try std.unicode.wtf8ToWtf16LeAllocZ(arena, cwd) else null;
     const cwd_w_ptr = if (cwd_w) |cwd| cwd.ptr else null;
 
-    const maybe_envp_buf = if (child.env_map) |env_map| try process.createWindowsEnvBlock(child.allocator, env_map) else null;
-    defer if (maybe_envp_buf) |envp_buf| child.allocator.free(envp_buf);
+    const maybe_envp_buf = if (options.env_map) |env_map| try env_map.createBlockWindows(arena) else null;
     const envp_ptr = if (maybe_envp_buf) |envp_buf| envp_buf.ptr else null;
 
-    const app_name_wtf8 = child.argv[0];
+    const app_name_wtf8 = options.argv[0];
     const app_name_is_absolute = Dir.path.isAbsolute(app_name_wtf8);
 
-    // the cwd set in Child is in effect when choosing the executable path
-    // to match posix semantics
+    // The cwd provided by options is in effect when choosing the executable
+    // path to match POSIX semantics.
     var cwd_path_w_needs_free = false;
     const cwd_path_w = x: {
         // If the app name is absolute, then we need to use its dirname as the cwd
         if (app_name_is_absolute) {
             cwd_path_w_needs_free = true;
             const dir = Dir.path.dirname(app_name_wtf8).?;
-            break :x try std.unicode.wtf8ToWtf16LeAllocZ(child.allocator, dir);
-        } else if (child.cwd) |cwd| {
+            break :x try std.unicode.wtf8ToWtf16LeAllocZ(arena, dir);
+        } else if (options.cwd) |cwd| {
             cwd_path_w_needs_free = true;
-            break :x try std.unicode.wtf8ToWtf16LeAllocZ(child.allocator, cwd);
+            break :x try std.unicode.wtf8ToWtf16LeAllocZ(arena, cwd);
         } else {
             break :x &[_:0]u16{}; // empty for cwd
         }
     };
-    defer if (cwd_path_w_needs_free) child.allocator.free(cwd_path_w);
 
-    // If the app name has more than just a filename, then we need to separate that
-    // into the basename and dirname and use the dirname as an addition to the cwd
-    // path. This is because NtQueryDirectoryFile cannot accept FileName params with
-    // path separators.
+    // If the app name has more than just a filename, then we need to separate
+    // that into the basename and dirname and use the dirname as an addition to
+    // the cwd path. This is because NtQueryDirectoryFile cannot accept
+    // FileName params with path separators.
     const app_basename_wtf8 = Dir.path.basename(app_name_wtf8);
     // If the app name is absolute, then the cwd will already have the app's dirname in it,
     // so only populate app_dirname if app name is a relative path with > 0 path separators.
     const maybe_app_dirname_wtf8 = if (!app_name_is_absolute) Dir.path.dirname(app_name_wtf8) else null;
     const app_dirname_w: ?[:0]u16 = x: {
         if (maybe_app_dirname_wtf8) |app_dirname_wtf8| {
-            break :x try std.unicode.wtf8ToWtf16LeAllocZ(child.allocator, app_dirname_wtf8);
+            break :x try std.unicode.wtf8ToWtf16LeAllocZ(arena, app_dirname_wtf8);
         }
         break :x null;
     };
-    defer if (app_dirname_w != null) child.allocator.free(app_dirname_w.?);
-
-    const app_name_w = try std.unicode.wtf8ToWtf16LeAllocZ(child.allocator, app_basename_wtf8);
-    defer child.allocator.free(app_name_w);
+    const app_name_w = try std.unicode.wtf8ToWtf16LeAllocZ(arena, app_basename_wtf8);
 
     const flags: windows.CreateProcessFlags = .{
-        .create_suspended = child.start_suspended,
+        .create_suspended = options.start_suspended,
         .create_unicode_environment = true,
-        .create_no_window = child.create_no_window,
+        .create_no_window = options.create_no_window,
     };
 
     run: {
-        const PATH: [:0]const u16 = process.getenvW(std.unicode.utf8ToUtf16LeStringLiteral("PATH")) orelse &[_:0]u16{};
-        const PATHEXT: [:0]const u16 = process.getenvW(std.unicode.utf8ToUtf16LeStringLiteral("PATHEXT")) orelse &[_:0]u16{};
+        // We have to scan each time because the PEB environment pointer is not stable.
+        const env_strings: WindowsEnvironStrings = .scan();
+        const PATH = env_strings.PATH orelse &[_:0]u16{};
+        const PATHEXT = env_strings.PATHEXT orelse &[_:0]u16{};
 
         // In case the command ends up being a .bat/.cmd script, we need to escape things using the cmd.exe rules
         // and invoke cmd.exe ourselves in order to mitigate arbitrary command execution from maliciously
@@ -13331,26 +13410,34 @@ fn processSpawnWindows(userdata: ?*anyopaque, child: *process.Child) process.Spa
         // We'll need to wait until we're actually trying to run the command to know for sure
         // if the resolved command has the `.bat` or `.cmd` extension, so we defer actually
         // serializing the command line until we determine how it should be serialized.
-        var cmd_line_cache = WindowsCommandLineCache.init(child.allocator, child.argv);
-        defer cmd_line_cache.deinit();
+        var cmd_line_cache = WindowsCommandLineCache.init(arena, options.argv);
 
         var app_buf: std.ArrayList(u16) = .empty;
-        defer app_buf.deinit(child.allocator);
-
-        try app_buf.appendSlice(child.allocator, app_name_w);
+        try app_buf.appendSlice(arena, app_name_w);
 
         var dir_buf: std.ArrayList(u16) = .empty;
-        defer dir_buf.deinit(child.allocator);
 
         if (cwd_path_w.len > 0) {
-            try dir_buf.appendSlice(child.allocator, cwd_path_w);
+            try dir_buf.appendSlice(arena, cwd_path_w);
         }
         if (app_dirname_w) |app_dir| {
-            if (dir_buf.items.len > 0) try dir_buf.append(child.allocator, Dir.path.sep);
-            try dir_buf.appendSlice(child.allocator, app_dir);
+            if (dir_buf.items.len > 0) try dir_buf.append(arena, Dir.path.sep);
+            try dir_buf.appendSlice(arena, app_dir);
         }
 
-        windowsCreateProcessPathExt(child.allocator, io, &dir_buf, &app_buf, PATHEXT, &cmd_line_cache, envp_ptr, cwd_w_ptr, flags, &siStartInfo, &piProcInfo) catch |no_path_err| {
+        windowsCreateProcessPathExt(
+            t,
+            arena,
+            &dir_buf,
+            &app_buf,
+            PATHEXT,
+            &cmd_line_cache,
+            envp_ptr,
+            cwd_w_ptr,
+            flags,
+            &siStartInfo,
+            &piProcInfo,
+        ) catch |no_path_err| {
             const original_err = switch (no_path_err) {
                 // argv[0] contains unsupported characters that will never resolve to a valid exe.
                 error.InvalidArg0 => return error.FileNotFound,
@@ -13362,7 +13449,7 @@ fn processSpawnWindows(userdata: ?*anyopaque, child: *process.Child) process.Spa
             // If the app name had path separators, that disallows PATH searching,
             // and there's no need to search the PATH if the app name is absolute.
             // We still search the path if the cwd is absolute because of the
-            // "cwd set in Child is in effect when choosing the executable path
+            // "cwd provided by options is in effect when choosing the executable path
             // to match posix semantics" behavior--we don't want to skip searching
             // the PATH just because we were trying to set the cwd of the child process.
             if (app_dirname_w != null or app_name_is_absolute) {
@@ -13372,9 +13459,21 @@ fn processSpawnWindows(userdata: ?*anyopaque, child: *process.Child) process.Spa
             var it = std.mem.tokenizeScalar(u16, PATH, ';');
             while (it.next()) |search_path| {
                 dir_buf.clearRetainingCapacity();
-                try dir_buf.appendSlice(child.allocator, search_path);
+                try dir_buf.appendSlice(arena, search_path);
 
-                if (windowsCreateProcessPathExt(child.allocator, io, &dir_buf, &app_buf, PATHEXT, &cmd_line_cache, envp_ptr, cwd_w_ptr, flags, &siStartInfo, &piProcInfo)) {
+                if (windowsCreateProcessPathExt(
+                    t,
+                    arena,
+                    &dir_buf,
+                    &app_buf,
+                    PATHEXT,
+                    &cmd_line_cache,
+                    envp_ptr,
+                    cwd_w_ptr,
+                    flags,
+                    &siStartInfo,
+                    &piProcInfo,
+                )) {
                     break :run;
                 } else |err| switch (err) {
                     // argv[0] contains unsupported characters that will never resolve to a valid exe.
@@ -13389,35 +13488,18 @@ fn processSpawnWindows(userdata: ?*anyopaque, child: *process.Child) process.Spa
         };
     }
 
-    if (g_hChildStd_IN_Wr) |h| {
-        child.stdin = File{ .handle = h };
-    } else {
-        child.stdin = null;
-    }
-    if (g_hChildStd_OUT_Rd) |h| {
-        child.stdout = File{ .handle = h };
-    } else {
-        child.stdout = null;
-    }
-    if (g_hChildStd_ERR_Rd) |h| {
-        child.stderr = File{ .handle = h };
-    } else {
-        child.stderr = null;
-    }
+    if (options.stdin == .pipe) windows.CloseHandle(g_hChildStd_IN_Rd.?);
+    if (options.stderr == .pipe) windows.CloseHandle(g_hChildStd_ERR_Wr.?);
+    if (options.stdout == .pipe) windows.CloseHandle(g_hChildStd_OUT_Wr.?);
 
-    child.id = piProcInfo.hProcess;
-    child.thread_handle = piProcInfo.hThread;
-    child.term = null;
-
-    if (child.stdin_behavior == .pipe) {
-        posix.close(g_hChildStd_IN_Rd.?);
-    }
-    if (child.stderr_behavior == .pipe) {
-        posix.close(g_hChildStd_ERR_Wr.?);
-    }
-    if (child.stdout_behavior == .pipe) {
-        posix.close(g_hChildStd_OUT_Wr.?);
-    }
+    return .{
+        .id = piProcInfo.hProcess,
+        .thread_handle = piProcInfo.hThread,
+        .stdin = if (g_hChildStd_IN_Wr) |h| .{ .handle = h } else null,
+        .stdout = if (g_hChildStd_OUT_Rd) |h| .{ .handle = h } else null,
+        .stderr = if (g_hChildStd_ERR_Rd) |h| .{ .handle = h } else null,
+        .request_resource_usage_statistics = options.request_resource_usage_statistics,
+    };
 }
 
 /// Expects `app_buf` to contain exactly the app name, and `dir_buf` to contain exactly the dir path.
@@ -13425,12 +13507,12 @@ fn processSpawnWindows(userdata: ?*anyopaque, child: *process.Child) process.Spa
 /// Note: `app_buf` should not contain any leading path separators.
 /// Note: If the dir is the cwd, dir_buf should be empty (len = 0).
 fn windowsCreateProcessPathExt(
-    allocator: Allocator,
+    arena: Allocator,
     dir_buf: *std.ArrayList(u16),
     app_buf: *std.ArrayList(u16),
     pathext: [:0]const u16,
     cmd_line_cache: *WindowsCommandLineCache,
-    envp_ptr: ?[*]u16,
+    envp_ptr: ?[*:0]const u16,
     cwd_ptr: ?[*:0]u16,
     flags: windows.CreateProcessFlags,
     lpStartupInfo: *windows.STARTUPINFOW,
@@ -13471,7 +13553,7 @@ fn windowsCreateProcessPathExt(
     // that scenario.
     var dir = dir: {
         // needs to be null-terminated
-        try dir_buf.append(allocator, 0);
+        try dir_buf.append(arena, 0);
         defer dir_buf.shrinkRetainingCapacity(dir_path_len);
         const dir_path_z = dir_buf.items[0 .. dir_buf.items.len - 1 :0];
         const prefixed_path = try windows.wToPrefixedFileW(null, dir_path_z);
@@ -13482,8 +13564,8 @@ fn windowsCreateProcessPathExt(
     defer windows.CloseHandle(dir.handle);
 
     // Add wildcard and null-terminator
-    try app_buf.append(allocator, '*');
-    try app_buf.append(allocator, 0);
+    try app_buf.append(arena, '*');
+    try app_buf.append(arena, 0);
     const app_name_wildcard = app_buf.items[0 .. app_buf.items.len - 1 :0];
 
     // This 2048 is arbitrary, we just want it to be large enough to get multiple FILE_DIRECTORY_INFORMATION entries
@@ -13563,10 +13645,10 @@ fn windowsCreateProcessPathExt(
         if (unappended_exists) {
             if (dir_path_len != 0) switch (dir_buf.items[dir_buf.items.len - 1]) {
                 '/', '\\' => {},
-                else => try dir_buf.append(allocator, Dir.path.sep),
+                else => try dir_buf.append(arena, Dir.path.sep),
             };
-            try dir_buf.appendSlice(allocator, app_buf.items[0..app_name_len]);
-            try dir_buf.append(allocator, 0);
+            try dir_buf.appendSlice(arena, app_buf.items[0..app_name_len]);
+            try dir_buf.append(arena, 0);
             const full_app_name = dir_buf.items[0 .. dir_buf.items.len - 1 :0];
 
             const is_bat_or_cmd = bat_or_cmd: {
@@ -13588,7 +13670,15 @@ fn windowsCreateProcessPathExt(
             else
                 full_app_name;
 
-            if (windowsCreateProcess(app_name_w.ptr, cmd_line_w.ptr, envp_ptr, cwd_ptr, flags, lpStartupInfo, lpProcessInformation)) |_| {
+            if (windowsCreateProcess(
+                app_name_w.ptr,
+                cmd_line_w.ptr,
+                envp_ptr,
+                cwd_ptr,
+                flags,
+                lpStartupInfo,
+                lpProcessInformation,
+            )) |_| {
                 return;
             } else |err| switch (err) {
                 error.FileNotFound,
@@ -13623,11 +13713,11 @@ fn windowsCreateProcessPathExt(
         dir_buf.shrinkRetainingCapacity(dir_path_len);
         if (dir_path_len != 0) switch (dir_buf.items[dir_buf.items.len - 1]) {
             '/', '\\' => {},
-            else => try dir_buf.append(allocator, Dir.path.sep),
+            else => try dir_buf.append(arena, Dir.path.sep),
         };
-        try dir_buf.appendSlice(allocator, app_buf.items[0..app_name_len]);
-        try dir_buf.appendSlice(allocator, ext);
-        try dir_buf.append(allocator, 0);
+        try dir_buf.appendSlice(arena, app_buf.items[0..app_name_len]);
+        try dir_buf.appendSlice(arena, ext);
+        try dir_buf.append(arena, 0);
         const full_app_name = dir_buf.items[0 .. dir_buf.items.len - 1 :0];
 
         const is_bat_or_cmd = switch (ext_enum) {
@@ -13667,41 +13757,61 @@ fn windowsCreateProcessPathExt(
 fn windowsCreateProcess(
     app_name: [*:0]u16,
     cmd_line: [*:0]u16,
-    envp_ptr: ?[*]u16,
+    env_ptr: ?[*:0]const u16,
     cwd_ptr: ?[*:0]u16,
     flags: windows.CreateProcessFlags,
     lpStartupInfo: *windows.STARTUPINFOW,
     lpProcessInformation: *windows.PROCESS_INFORMATION,
 ) !void {
-    // TODO the docs for environment pointer say:
-    // > A pointer to the environment block for the new process. If this parameter
-    // > is NULL, the new process uses the environment of the calling process.
-    // > ...
-    // > An environment block can contain either Unicode or ANSI characters. If
-    // > the environment block pointed to by lpEnvironment contains Unicode
-    // > characters, be sure that dwCreationFlags includes CREATE_UNICODE_ENVIRONMENT.
-    // > If this parameter is NULL and the environment block of the parent process
-    // > contains Unicode characters, you must also ensure that dwCreationFlags
-    // > includes CREATE_UNICODE_ENVIRONMENT.
-    // This seems to imply that we have to somehow know whether our process parent passed
-    // CREATE_UNICODE_ENVIRONMENT if we want to pass NULL for the environment parameter.
-    // Since we do not know this information that would imply that we must not pass NULL
-    // for the parameter.
-    // However this would imply that programs compiled with -DUNICODE could not pass
-    // environment variables to programs that were not, which seems unlikely.
-    // More investigation is needed.
-    return windows.CreateProcessW(
+    if (windows.kernel32.CreateProcessW(
         app_name,
         cmd_line,
         null,
         null,
         windows.TRUE,
         flags,
-        @as(?*anyopaque, @ptrCast(envp_ptr)),
+        env_ptr,
         cwd_ptr,
         lpStartupInfo,
         lpProcessInformation,
-    );
+    ) == 0) switch (windows.GetLastError()) {
+        .FILE_NOT_FOUND => return error.FileNotFound,
+        .PATH_NOT_FOUND => return error.FileNotFound,
+        .DIRECTORY => return error.FileNotFound,
+        .ACCESS_DENIED => return error.AccessDenied,
+        .INVALID_PARAMETER => unreachable,
+        .INVALID_NAME => return error.InvalidName,
+        .FILENAME_EXCED_RANGE => return error.NameTooLong,
+        .SHARING_VIOLATION => return error.FileBusy,
+
+        // These are all the system errors that are mapped to ENOEXEC by
+        // the undocumented _dosmaperr (old CRT) or __acrt_errno_map_os_error
+        // (newer CRT) functions. Their code can be found in crt/src/dosmap.c (old SDK)
+        // or urt/misc/errno.cpp (newer SDK) in the Windows SDK.
+        .BAD_FORMAT,
+        .INVALID_STARTING_CODESEG, // MIN_EXEC_ERROR in errno.cpp
+        .INVALID_STACKSEG,
+        .INVALID_MODULETYPE,
+        .INVALID_EXE_SIGNATURE,
+        .EXE_MARKED_INVALID,
+        .BAD_EXE_FORMAT,
+        .ITERATED_DATA_EXCEEDS_64k,
+        .INVALID_MINALLOCSIZE,
+        .DYNLINK_FROM_INVALID_RING,
+        .IOPL_NOT_ENABLED,
+        .INVALID_SEGDPL,
+        .AUTODATASEG_EXCEEDS_64k,
+        .RING2SEG_MUST_BE_MOVABLE,
+        .RELOC_CHAIN_XEEDS_SEGLIM,
+        .INFLOOP_IN_RELOC_CHAIN, // MAX_EXEC_ERROR in errno.cpp
+        // This one is not mapped to ENOEXEC but it is possible, for example
+        // when calling CreateProcessW on a plain text file with a .exe extension
+        .EXE_MACHINE_TYPE_MISMATCH,
+        => return error.InvalidExe,
+
+        .COMMITMENT_LIMIT => return error.SystemResources,
+        else => |err| return windows.unexpectedError(err),
+    };
 }
 
 /// Case-insensitive WTF-16 lookup

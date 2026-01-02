@@ -15,7 +15,7 @@ const mem = std.mem;
 block: Block,
 
 pub const empty: Environ = .{
-    .block = switch (@TypeOf(Block)) {
+    .block = switch (Block) {
         void => {},
         else => &.{},
     },
@@ -65,7 +65,7 @@ pub const Map = struct {
                         @as(u8, @intCast((cp_upper >> 0) & 0xff)),
                     });
                 }
-                return h.final();
+                return @truncate(h.final());
             }
             return std.array_hash_map.hashString(s);
         }
@@ -293,8 +293,8 @@ pub const Map = struct {
         return envp_buf;
     }
 
-    /// Caller must free result.
-    pub fn createBlockWindows(map: *const Map, gpa: Allocator) Allocator.Error![]u16 {
+    /// Caller owns result.
+    pub fn createBlockWindows(map: *const Map, gpa: Allocator) error{ OutOfMemory, InvalidWtf8 }![:0]u16 {
         // count bytes needed
         const max_chars_needed = x: {
             // Only need 2 trailing NUL code units for an empty environment
@@ -330,54 +330,27 @@ pub const Map = struct {
             result[i] = 0;
             i += 1;
         }
-        return try gpa.realloc(result, i);
+        const reallocated = try gpa.realloc(result, i);
+        return reallocated[0 .. i - 1 :0];
     }
 };
 
 pub const CreateMapError = error{
     OutOfMemory,
     /// WASI-only. `environ_sizes_get` or `environ_get` failed for an
-    /// unexpected reason.
+    /// unanticipated, undocumented reason.
     Unexpected,
 };
 
 /// Allocates a `Map` and copies environment block into it.
 pub fn createMap(env: Environ, allocator: Allocator) CreateMapError!Map {
+    if (native_os == .windows)
+        return createMapWide(std.os.windows.peb().ProcessParameters.Environment, allocator);
+
     var result = Map.init(allocator);
     errdefer result.deinit();
 
-    if (native_os == .windows) {
-        const ptr = std.os.windows.peb().ProcessParameters.Environment;
-
-        var i: usize = 0;
-        while (ptr[i] != 0) {
-            const key_start = i;
-
-            // There are some special environment variables that start with =,
-            // so we need a special case to not treat = as a key/value separator
-            // if it's the first character.
-            // https://devblogs.microsoft.com/oldnewthing/20100506-00/?p=14133
-            if (ptr[key_start] == '=') i += 1;
-
-            while (ptr[i] != 0 and ptr[i] != '=') : (i += 1) {}
-            const key_w = ptr[key_start..i];
-            const key = try unicode.wtf16LeToWtf8Alloc(allocator, key_w);
-            errdefer allocator.free(key);
-
-            if (ptr[i] == '=') i += 1;
-
-            const value_start = i;
-            while (ptr[i] != 0) : (i += 1) {}
-            const value_w = ptr[value_start..i];
-            const value = try unicode.wtf16LeToWtf8Alloc(allocator, value_w);
-            errdefer allocator.free(value);
-
-            i += 1; // skip over null byte
-
-            try result.putMove(key, value);
-        }
-        return result;
-    } else if (native_os == .wasi and !builtin.link_libc) {
+    if (native_os == .wasi and !builtin.link_libc) {
         var environ_count: usize = undefined;
         var environ_buf_size: usize = undefined;
 
@@ -437,6 +410,40 @@ pub fn createMap(env: Environ, allocator: Allocator) CreateMapError!Map {
         }
         return result;
     }
+}
+
+pub fn createMapWide(ptr: [*:0]u16, gpa: Allocator) CreateMapError!Map {
+    var result = Map.init(gpa);
+    errdefer result.deinit();
+
+    var i: usize = 0;
+    while (ptr[i] != 0) {
+        const key_start = i;
+
+        // There are some special environment variables that start with =,
+        // so we need a special case to not treat = as a key/value separator
+        // if it's the first character.
+        // https://devblogs.microsoft.com/oldnewthing/20100506-00/?p=14133
+        if (ptr[key_start] == '=') i += 1;
+
+        while (ptr[i] != 0 and ptr[i] != '=') : (i += 1) {}
+        const key_w = ptr[key_start..i];
+        const key = try unicode.wtf16LeToWtf8Alloc(gpa, key_w);
+        errdefer gpa.free(key);
+
+        if (ptr[i] == '=') i += 1;
+
+        const value_start = i;
+        while (ptr[i] != 0) : (i += 1) {}
+        const value_w = ptr[value_start..i];
+        const value = try unicode.wtf16LeToWtf8Alloc(gpa, value_w);
+        errdefer gpa.free(value);
+
+        i += 1; // skip over null byte
+
+        try result.putMove(key, value);
+    }
+    return result;
 }
 
 pub const ContainsError = error{
@@ -777,7 +784,7 @@ test "convert from Environ to Map and back again" {
     const arena = arena_allocator.allocator();
 
     const environ: Environ = switch (native_os) {
-        .windows => .{ .block = try map.createBlockWindows(arena) },
+        .windows => return error.SkipZigTest,
         .wasi => if (!builtin.libc) return error.SkipZigTest,
         else => .{ .block = try map.createBlockPosix(arena, .{}) },
     };
@@ -803,4 +810,23 @@ test "convert from Environ to Map and back again" {
 
     try testing.expectEqualDeep(map.keys(), map2.keys());
     try testing.expectEqualDeep(map.values(), map2.values());
+}
+
+test createMapWide {
+    const gpa = testing.allocator;
+
+    var map: Map = .init(gpa);
+    defer map.deinit();
+    try map.put("FOO", "BAR");
+    try map.put("A", "");
+    try map.put("", "B");
+
+    const environ: [:0]u16 = try map.createBlockWindows(gpa);
+    defer gpa.free(environ);
+
+    var map2 = try createMapWide(environ, gpa);
+    defer map2.deinit();
+
+    try testing.expectEqualDeep(&[_][]const u8{ "FOO", "A", "=B" }, map2.keys());
+    try testing.expectEqualDeep(&[_][]const u8{ "BAR", "", "" }, map2.values());
 }

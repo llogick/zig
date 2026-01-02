@@ -3756,17 +3756,6 @@ pub fn GetModuleFileNameW(hModule: ?HMODULE, buf_ptr: [*]u16, buf_len: DWORD) Ge
     return buf_ptr[0..rc :0];
 }
 
-pub const TerminateProcessError = error{ AccessDenied, Unexpected };
-
-pub fn TerminateProcess(hProcess: HANDLE, uExitCode: UINT) TerminateProcessError!void {
-    if (kernel32.TerminateProcess(hProcess, uExitCode) == 0) {
-        switch (GetLastError()) {
-            Win32Error.ACCESS_DENIED => return error.AccessDenied,
-            else => |err| return unexpectedError(err),
-        }
-    }
-}
-
 pub const NtAllocateVirtualMemoryError = error{
     AccessDenied,
     InvalidParameter,
@@ -3919,7 +3908,7 @@ pub fn CreateProcessW(
     lpThreadAttributes: ?*SECURITY_ATTRIBUTES,
     bInheritHandles: BOOL,
     dwCreationFlags: CreateProcessFlags,
-    lpEnvironment: ?*anyopaque,
+    lpEnvironment: ?[*:0]u16,
     lpCurrentDirectory: ?LPCWSTR,
     lpStartupInfo: *STARTUPINFOW,
     lpProcessInformation: *PROCESS_INFORMATION,
@@ -4539,7 +4528,7 @@ const LocalDevicePathType = enum {
 };
 
 /// Only relevant for Win32 -> NT path conversion.
-/// Asserts `path` is of type `Win32PathType.local_device`.
+/// Asserts `path` is of type `std.fs.path.Win32PathType.local_device`.
 fn getLocalDevicePathType(comptime T: type, path: []const T) LocalDevicePathType {
     if (std.debug.runtime_safety) {
         assert(std.fs.path.getWin32PathType(T, path) == .local_device);

@@ -29,13 +29,8 @@ pub const Iterator = struct {
     /// Initialize the args iterator. Consider using `initAllocator` instead
     /// for cross-platform compatibility.
     pub fn init(a: Args) Iterator {
-        if (native_os == .wasi) {
-            @compileError("In WASI, use initAllocator instead.");
-        }
-        if (native_os == .windows) {
-            @compileError("In Windows, use initAllocator instead.");
-        }
-
+        if (native_os == .wasi) @compileError("In WASI, use initAllocator instead.");
+        if (native_os == .windows) @compileError("In Windows, use initAllocator instead.");
         return .{ .inner = .init(a) };
     }
 
@@ -44,10 +39,10 @@ pub const Iterator = struct {
     /// You must deinitialize iterator's internal buffers by calling `deinit` when done.
     pub fn initAllocator(a: Args, gpa: Allocator) InitError!Iterator {
         if (native_os == .wasi and !builtin.link_libc) {
-            return .{ .inner = try .init(a, gpa) };
+            return .{ .inner = try .init(gpa) };
         }
         if (native_os == .windows) {
-            return .{ .inner = try .init(a, gpa) };
+            return .{ .inner = try .init(gpa, a.vector) };
         }
 
         return .{ .inner = .init(a) };
@@ -111,7 +106,7 @@ pub const Iterator = struct {
         ///
         /// The iterator stores and uses `cmd_line_w`, so its memory must be valid for
         /// at least as long as the returned Windows.
-        pub fn init(allocator: Allocator, cmd_line_w: []const u16) Windows.InitError!Windows {
+        pub fn init(gpa: Allocator, cmd_line_w: []const u16) Windows.InitError!Windows {
             const wtf8_len = std.unicode.calcWtf8Len(cmd_line_w);
 
             // This buffer must be large enough to contain contiguous NUL-terminated slices
@@ -121,11 +116,11 @@ pub const Iterator = struct {
             // - The first argument needs one extra byte of space allocated for its NUL
             //   terminator, but for each subsequent argument the necessary whitespace
             //   between arguments guarantees room for their NUL terminator(s).
-            const buffer = try allocator.alloc(u8, wtf8_len + 1);
-            errdefer allocator.free(buffer);
+            const buffer = try gpa.alloc(u8, wtf8_len + 1);
+            errdefer gpa.free(buffer);
 
             return .{
-                .allocator = allocator,
+                .allocator = gpa,
                 .cmd_line = cmd_line_w,
                 .buffer = buffer,
             };
