@@ -6973,9 +6973,20 @@ fn airShlSat(cg: *CodeGen, inst: Air.Inst.Index) InnerError!void {
         return cg.fail("TODO: Saturating shifting left for integers with bitsize '{d}'", .{int_info.bits});
     }
 
-    const lhs = try cg.resolveInst(bin_op.lhs);
-    const rhs = try cg.resolveInst(bin_op.rhs);
     const wasm_bits = toWasmBits(int_info.bits).?;
+
+    const lhs = try cg.resolveInst(bin_op.lhs);
+    const rhs = rhs: {
+        const rhs = try cg.resolveInst(bin_op.rhs);
+        const rhs_ty = cg.typeOf(bin_op.rhs);
+        // The type of `rhs` is the log2 int of the type of `lhs`, but WASM wants the lhs and rhs types to match.
+        if (toWasmBits(@intCast(rhs_ty.bitSize(zcu))).? == wasm_bits) {
+            break :rhs rhs; // the WASM types match, so no cast necessary
+        }
+        const casted = try cg.intcast(rhs, rhs_ty, ty);
+        break :rhs try casted.toLocal(cg, ty);
+    };
+
     const result = try cg.allocLocal(ty);
 
     if (wasm_bits == int_info.bits) {
