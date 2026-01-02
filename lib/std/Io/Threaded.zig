@@ -12790,9 +12790,15 @@ fn processSpawnUnsupported(userdata: ?*anyopaque, options: process.SpawnOptions)
     return error.Unexpected;
 }
 
-fn processSpawnPosix(userdata: ?*anyopaque, options: process.SpawnOptions) process.SpawnError!process.Child {
-    const t: *Threaded = @ptrCast(@alignCast(userdata));
+const Spawned = struct {
+    pid: posix.pid_t,
+    err_fd: posix.fd_t,
+    stdin: ?File,
+    stdout: ?File,
+    stderr: ?File,
+};
 
+fn spawnPosix(t: *Threaded, options: process.SpawnOptions) process.SpawnError!Spawned {
     // The child process does need to access (one end of) these pipes. However,
     // we must initially set CLOEXEC to avoid a race condition. If another thread
     // is racing to spawn a different child process, we don't want it to inherit
@@ -12947,9 +12953,9 @@ fn processSpawnPosix(userdata: ?*anyopaque, options: process.SpawnOptions) proce
     }
 
     const pid: posix.pid_t = @intCast(pid_result); // We are the parent.
+    errdefer comptime unreachable; // The child is forked; we must not error from now on
 
     posix.close(err_pipe[1]); // make sure only the child holds the write end open
-    defer posix.close(err_pipe[0]);
 
     if (options.stdin == .pipe) posix.close(stdin_pipe[0]);
     if (options.stdout == .pipe) posix.close(stdout_pipe[1]);
@@ -12959,8 +12965,31 @@ fn processSpawnPosix(userdata: ?*anyopaque, options: process.SpawnOptions) proce
 
     options.progress_node.setIpcFd(prog_pipe[0]);
 
+    return .{
+        .pid = pid,
+        .err_fd = err_pipe[0],
+        .stdin = switch (options.stdin) {
+            .pipe => .{ .handle = stdin_pipe[1] },
+            else => null,
+        },
+        .stdout = switch (options.stdout) {
+            .pipe => .{ .handle = stdout_pipe[0] },
+            else => null,
+        },
+        .stderr = switch (options.stderr) {
+            .pipe => .{ .handle = stderr_pipe[0] },
+            else => null,
+        },
+    };
+}
+
+fn processSpawnPosix(userdata: ?*anyopaque, options: process.SpawnOptions) process.SpawnError!process.Child {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const spawned = try spawnPosix(t, options);
+    defer posix.close(spawned.err_fd);
+
     // Wait for the child to report any errors in or before `execvpe`.
-    if (readIntFd(t, err_pipe[0])) |child_err_int| {
+    if (readIntFd(t, spawned.err_fd)) |child_err_int| {
         const child_err: process.SpawnError = @errorCast(@errorFromInt(child_err_int));
         return child_err;
     } else |read_err| switch (read_err) {
@@ -12976,20 +13005,11 @@ fn processSpawnPosix(userdata: ?*anyopaque, options: process.SpawnOptions) proce
     }
 
     return .{
-        .id = pid,
+        .id = spawned.pid,
         .thread_handle = {},
-        .stdin = switch (options.stdin) {
-            .pipe => .{ .handle = stdin_pipe[1] },
-            else => null,
-        },
-        .stdout = switch (options.stdout) {
-            .pipe => .{ .handle = stdout_pipe[0] },
-            else => null,
-        },
-        .stderr = switch (options.stderr) {
-            .pipe => .{ .handle = stderr_pipe[0] },
-            else => null,
-        },
+        .stdin = spawned.stdin,
+        .stdout = spawned.stdout,
+        .stderr = spawned.stderr,
         .request_resource_usage_statistics = options.request_resource_usage_statistics,
     };
 }
@@ -13156,10 +13176,13 @@ fn forkBail(fd: posix.fd_t, err: ForkBailError) noreturn {
     // it caused a deadlock instead of doing an exit syscall. In the words of Avril Lavigne,
     // "Why'd you have to go and make things so complicated?"
     if (builtin.link_libc) {
-        // The _exit(2) function does nothing but make the exit syscall, unlike exit(3)
+        // The `_exit` function does nothing but make the exit syscall, unlike `exit`.
         std.c._exit(1);
+    } else if (native_os == .linux and !builtin.single_threaded) {
+        std.os.linux.exit_group(1);
+    } else {
+        posix.system.exit(1);
     }
-    posix.system.exit(1);
 }
 
 fn writeIntFd(fd: posix.fd_t, value: ErrInt) !void {
@@ -13190,7 +13213,7 @@ fn readIntFd(t: *Threaded, fd: posix.fd_t) !ErrInt {
         switch (posix.errno(rc)) {
             .SUCCESS => {
                 const n: usize = @intCast(rc);
-                if (n == 0) return error.EndOfStream;
+                if (n == 0) break;
                 i += n;
                 continue;
             },
@@ -13198,6 +13221,7 @@ fn readIntFd(t: *Threaded, fd: posix.fd_t) !ErrInt {
             else => |err| return posix.unexpectedErrno(err),
         }
     }
+    if (buffer.len - i != 0) return error.EndOfStream;
     return @intCast(std.mem.readInt(u64, &buffer, .little));
 }
 
@@ -14371,9 +14395,9 @@ pub fn execvpeZ(
     file: [*:0]const u8,
     argv_ptr: [*:null]const ?[*:0]const u8,
     envp: [*:null]const ?[*:0]const u8,
-    optional_PATH: ?[]const u8,
+    PATH: []const u8,
 ) process.ReplaceError {
-    return execvpeZ_expandArg0(.no_expand, file, argv_ptr, envp, optional_PATH);
+    return execvpeZ_expandArg0(.no_expand, file, argv_ptr, envp, PATH);
 }
 
 fn windowsMakePipeIn(rd: *?windows.HANDLE, wr: *?windows.HANDLE, sattr: *const windows.SECURITY_ATTRIBUTES) !void {
