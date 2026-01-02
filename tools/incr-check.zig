@@ -6,6 +6,27 @@ const Cache = std.Build.Cache;
 
 const usage = "usage: incr-check <zig binary path> <input file> [--zig-lib-dir lib] [--debug-log foo] [--preserve-tmp] [--zig-cc-binary /path/to/zig]";
 
+pub const std_options: std.Options = .{
+    .logFn = logImpl,
+};
+var log_cur_update: ?struct { *const Case.Target, *const Case.Update } = null;
+fn logImpl(
+    comptime level: std.log.Level,
+    comptime scope: @EnumLiteral(),
+    comptime format: []const u8,
+    args: anytype,
+) void {
+    const target, const update = log_cur_update orelse {
+        return std.log.defaultLog(level, scope, format, args);
+    };
+    std.log.defaultLog(
+        level,
+        scope,
+        "[{s}-{t} '{s}'] " ++ format,
+        .{ target.query, target.backend, update.name } ++ args,
+    );
+}
+
 pub fn main() !void {
     const fatal = std.process.fatal;
 
@@ -225,6 +246,9 @@ pub fn main() !void {
                 std.log.scoped(.status).info("update: '{s}'", .{update.name});
             }
 
+            log_cur_update = .{ &target, &update };
+            defer log_cur_update = null;
+
             eval.write(update);
             try eval.requestUpdate();
             try eval.check(&poller, update, update_node);
@@ -295,9 +319,9 @@ const Eval = struct {
                     if (stderr.bufferedLen() > 0) {
                         const stderr_data = try poller.toOwnedSlice(.stderr);
                         if (eval.allow_stderr) {
-                            std.log.info("error_bundle included stderr:\n{s}", .{stderr_data});
+                            std.log.info("error_bundle stderr:\n{s}", .{stderr_data});
                         } else {
-                            eval.fatal("error_bundle included unexpected stderr:\n{s}", .{stderr_data});
+                            eval.fatal("error_bundle unexpected stderr:\n{s}", .{stderr_data});
                         }
                     }
                     if (result_error_bundle.errorMessageCount() != 0) {
@@ -312,9 +336,9 @@ const Eval = struct {
                     if (stderr.bufferedLen() > 0) {
                         const stderr_data = try poller.toOwnedSlice(.stderr);
                         if (eval.allow_stderr) {
-                            std.log.info("emit_digest included stderr:\n{s}", .{stderr_data});
+                            std.log.info("emit_digest stderr:\n{s}", .{stderr_data});
                         } else {
-                            eval.fatal("emit_digest included unexpected stderr:\n{s}", .{stderr_data});
+                            eval.fatal("emit_digest unexpected stderr:\n{s}", .{stderr_data});
                         }
                     }
 
@@ -344,14 +368,14 @@ const Eval = struct {
 
         if (stderr.bufferedLen() > 0) {
             if (eval.allow_stderr) {
-                std.log.info("update '{s}' included stderr:\n{s}", .{ update.name, stderr.buffered() });
+                std.log.info("stderr:\n{s}", .{stderr.buffered()});
             } else {
-                eval.fatal("update '{s}' failed:\n{s}", .{ update.name, stderr.buffered() });
+                eval.fatal("unexpected stderr:\n{s}", .{stderr.buffered()});
             }
         }
 
         waitChild(eval.child, eval);
-        eval.fatal("update '{s}': compiler failed to send error_bundle or emit_bin_path", .{update.name});
+        eval.fatal("compiler failed to send error_bundle or emit_bin_path", .{});
     }
 
     fn checkErrorOutcome(eval: *Eval, update: Case.Update, error_bundle: std.zig.ErrorBundle) !void {
@@ -361,7 +385,7 @@ const Eval = struct {
             .compile_errors => |ce| ce,
             .stdout, .exit_code => {
                 try error_bundle.renderToStderr(io, .{}, .auto);
-                eval.fatal("update '{s}': unexpected compile errors", .{update.name});
+                eval.fatal("unexpected compile errors", .{});
             },
         };
 
@@ -370,30 +394,29 @@ const Eval = struct {
         for (error_bundle.getMessages()) |err_idx| {
             if (expected_idx == expected.errors.len) {
                 try error_bundle.renderToStderr(io, .{}, .auto);
-                eval.fatal("update '{s}': more errors than expected", .{update.name});
+                eval.fatal("more errors than expected", .{});
             }
-            try eval.checkOneError(update, error_bundle, expected.errors[expected_idx], false, err_idx);
+            try eval.checkOneError(error_bundle, expected.errors[expected_idx], false, err_idx);
             expected_idx += 1;
 
             for (error_bundle.getNotes(err_idx)) |note_idx| {
                 if (expected_idx == expected.errors.len) {
                     try error_bundle.renderToStderr(io, .{}, .auto);
-                    eval.fatal("update '{s}': more error notes than expected", .{update.name});
+                    eval.fatal("more error notes than expected", .{});
                 }
-                try eval.checkOneError(update, error_bundle, expected.errors[expected_idx], true, note_idx);
+                try eval.checkOneError(error_bundle, expected.errors[expected_idx], true, note_idx);
                 expected_idx += 1;
             }
         }
 
         if (!std.mem.eql(u8, error_bundle.getCompileLogOutput(), expected.compile_log_output)) {
             try error_bundle.renderToStderr(io, .{}, .auto);
-            eval.fatal("update '{s}': unexpected compile log output", .{update.name});
+            eval.fatal("unexpected compile log output", .{});
         }
     }
 
     fn checkOneError(
         eval: *Eval,
-        update: Case.Update,
         eb: std.zig.ErrorBundle,
         expected: Case.ExpectedError,
         is_note: bool,
@@ -423,7 +446,7 @@ const Eval = struct {
             !std.mem.eql(u8, expected.msg, msg))
         {
             eb.renderToStderr(io, .{}, .auto) catch {};
-            eval.fatal("update '{s}': compile error did not match expected error", .{update.name});
+            eval.fatal("compile error did not match expected error", .{});
         }
     }
 
@@ -444,7 +467,7 @@ const Eval = struct {
             .cbe => bin: {
                 const rand_int = std.crypto.random.int(u64);
                 const out_bin_name = "./out_" ++ std.fmt.hex(rand_int);
-                try eval.buildCOutput(update, emitted_path, out_bin_name, prog_node);
+                try eval.buildCOutput(emitted_path, out_bin_name, prog_node);
                 break :bin out_bin_name;
             },
         };
@@ -521,8 +544,7 @@ const Eval = struct {
             if (is_foreign) {
                 // Chances are the foreign executor isn't available. Skip this evaluation.
                 if (eval.allow_stderr) {
-                    std.log.warn("update '{s}': skipping execution of '{s}' via executor for foreign target '{s}': {t}", .{
-                        update.name,
+                    std.log.warn("skipping execution of '{s}' via executor for foreign target '{s}': {t}", .{
                         binary_path,
                         try eval.target.resolved.zigTriple(eval.arena),
                         err,
@@ -530,16 +552,14 @@ const Eval = struct {
                 }
                 return;
             }
-            eval.fatal("update '{s}': failed to run the generated executable '{s}': {t}", .{
-                update.name, binary_path, err,
-            });
+            eval.fatal("failed to run the generated executable '{s}': {t}", .{ binary_path, err });
         };
 
         // Some executors (looking at you, Wine) like throwing some stderr in, just for fun.
         // Therefore, we'll ignore stderr when using a foreign executor.
         if (!is_foreign and result.stderr.len != 0) {
-            std.log.err("update '{s}': generated executable '{s}' had unexpected stderr:\n{s}", .{
-                update.name, binary_path, result.stderr,
+            std.log.err("generated executable '{s}' had unexpected stderr:\n{s}", .{
+                binary_path, result.stderr,
             });
         }
 
@@ -548,18 +568,14 @@ const Eval = struct {
                 .unknown, .compile_errors => unreachable,
                 .stdout => |expected_stdout| {
                     if (code != 0) {
-                        eval.fatal("update '{s}': generated executable '{s}' failed with code {d}", .{
-                            update.name, binary_path, code,
-                        });
+                        eval.fatal("generated executable '{s}' failed with code {d}", .{ binary_path, code });
                     }
                     try std.testing.expectEqualStrings(expected_stdout, result.stdout);
                 },
                 .exit_code => |expected_code| try std.testing.expectEqual(expected_code, result.term.Exited),
             },
             .Signal, .Stopped, .Unknown => {
-                eval.fatal("update '{s}': generated executable '{s}' terminated unexpectedly", .{
-                    update.name, binary_path,
-                });
+                eval.fatal("generated executable '{s}' terminated unexpectedly", .{binary_path});
             },
         }
 
@@ -597,7 +613,7 @@ const Eval = struct {
         }
     }
 
-    fn buildCOutput(eval: *Eval, update: Case.Update, c_path: []const u8, out_path: []const u8, prog_node: std.Progress.Node) !void {
+    fn buildCOutput(eval: *Eval, c_path: []const u8, out_path: []const u8, prog_node: std.Progress.Node) !void {
         std.debug.assert(eval.cc_child_args.items.len > 0);
 
         const child_prog_node = prog_node.start("build cbe output", 0);
@@ -612,28 +628,20 @@ const Eval = struct {
             .cwd = eval.tmp_dir_path,
             .progress_node = child_prog_node,
         }) catch |err| {
-            eval.fatal("update '{s}': failed to spawn zig cc for '{s}': {t}", .{ update.name, c_path, err });
+            eval.fatal("failed to spawn zig cc for '{s}': {t}", .{ c_path, err });
         };
         switch (result.term) {
             .Exited => |code| if (code != 0) {
                 if (result.stderr.len != 0) {
-                    std.log.err("update '{s}': zig cc stderr:\n{s}", .{
-                        update.name, result.stderr,
-                    });
+                    std.log.err("zig cc stderr:\n{s}", .{result.stderr});
                 }
-                eval.fatal("update '{s}': zig cc for '{s}' failed with code {d}", .{
-                    update.name, c_path, code,
-                });
+                eval.fatal("zig cc for '{s}' failed with code {d}", .{ c_path, code });
             },
             .Signal, .Stopped, .Unknown => {
                 if (result.stderr.len != 0) {
-                    std.log.err("update '{s}': zig cc stderr:\n{s}", .{
-                        update.name, result.stderr,
-                    });
+                    std.log.err("zig cc stderr:\n{s}", .{result.stderr});
                 }
-                eval.fatal("update '{s}': zig cc for '{s}' terminated unexpectedly", .{
-                    update.name, c_path,
-                });
+                eval.fatal("zig cc for '{s}' terminated unexpectedly", .{c_path});
             },
         }
     }
