@@ -465,58 +465,72 @@ pub fn iterateAllocator(a: Args, gpa: Allocator) Iterator.InitError!Iterator {
 
 pub const ToSliceError = Iterator.Windows.InitError || Iterator.Wasi.InitError;
 
-/// Returned value may reference several allocations; call `freeSlice` to
-/// release.
+/// Returned value may reference several allocations and may point into `a`.
+/// Thefore, an arena-style allocator must be used.
 ///
 /// * On Windows, the result is encoded as
 ///   [WTF-8](https://wtf-8.codeberg.page/).
 /// * On other platforms, the result is an opaque sequence of bytes with no
 ///   particular encoding.
-pub fn toSlice(a: Args, gpa: Allocator) ToSliceError![][:0]u8 {
-    var it = try a.iterateAllocator(gpa);
-    defer it.deinit();
+///
+/// See also:
+/// * `iterate`
+/// * `iterateAllocator`
+pub fn toSlice(a: Args, arena: Allocator) ToSliceError![]const [:0]const u8 {
+    if (native_os == .windows) {
+        var it = try a.iterateAllocator(arena);
+        var contents: std.ArrayList(u8) = .empty;
+        var slice_list: std.ArrayList(usize) = .empty;
+        while (it.next()) |arg| {
+            try contents.appendSlice(arena, arg[0 .. arg.len + 1]);
+            try slice_list.append(arena, arg.len);
+        }
+        const contents_slice = contents.items;
+        const slice_sizes = slice_list.items;
+        const slice_list_bytes = std.math.mul(usize, @sizeOf([]u8), slice_sizes.len) catch return error.OutOfMemory;
+        const total_bytes = std.math.add(usize, slice_list_bytes, contents_slice.len) catch return error.OutOfMemory;
+        const buf = try arena.alignedAlloc(u8, .of([]u8), total_bytes);
+        errdefer arena.free(buf);
 
-    var contents: std.ArrayList(u8) = .empty;
-    defer contents.deinit(gpa);
+        const result_slice_list = std.mem.bytesAsSlice([:0]u8, buf[0..slice_list_bytes]);
+        const result_contents = buf[slice_list_bytes..];
+        @memcpy(result_contents[0..contents_slice.len], contents_slice);
 
-    var slice_list: std.ArrayList(usize) = .empty;
-    defer slice_list.deinit(gpa);
+        var contents_index: usize = 0;
+        for (slice_sizes, 0..) |len, i| {
+            const new_index = contents_index + len;
+            result_slice_list[i] = result_contents[contents_index..new_index :0];
+            contents_index = new_index + 1;
+        }
 
-    while (it.next()) |arg| {
-        try contents.appendSlice(gpa, arg[0 .. arg.len + 1]);
-        try slice_list.append(gpa, arg.len);
+        return result_slice_list;
+    } else if (native_os == .wasi and !builtin.link_libc) {
+        var count: usize = undefined;
+        var buf_size: usize = undefined;
+
+        switch (std.os.wasi.args_sizes_get(&count, &buf_size)) {
+            .SUCCESS => {},
+            else => |err| return std.posix.unexpectedErrno(err),
+        }
+
+        if (count == 0) return &.{};
+
+        const argv = try arena.alloc([*:0]u8, count);
+        const argv_buf = try arena.alloc(u8, buf_size);
+
+        switch (std.os.wasi.args_get(argv.ptr, argv_buf.ptr)) {
+            .SUCCESS => {},
+            else => |err| return std.posix.unexpectedErrno(err),
+        }
+
+        const args = try arena.alloc([:0]const u8, count);
+        for (args, argv) |*dst, src| dst.* = std.mem.sliceTo(src, 0);
+        return args;
+    } else {
+        const args = try arena.alloc([:0]const u8, a.vector.len);
+        for (args, a.vector) |*dst, src| dst.* = std.mem.sliceTo(src, 0);
+        return args;
     }
-
-    const contents_slice = contents.items;
-    const slice_sizes = slice_list.items;
-    const slice_list_bytes = std.math.mul(usize, @sizeOf([]u8), slice_sizes.len) catch return error.OutOfMemory;
-    const total_bytes = std.math.add(usize, slice_list_bytes, contents_slice.len) catch return error.OutOfMemory;
-    const buf = try gpa.alignedAlloc(u8, .of([]u8), total_bytes);
-    errdefer gpa.free(buf);
-
-    const result_slice_list = std.mem.bytesAsSlice([:0]u8, buf[0..slice_list_bytes]);
-    const result_contents = buf[slice_list_bytes..];
-    @memcpy(result_contents[0..contents_slice.len], contents_slice);
-
-    var contents_index: usize = 0;
-    for (slice_sizes, 0..) |len, i| {
-        const new_index = contents_index + len;
-        result_slice_list[i] = result_contents[contents_index..new_index :0];
-        contents_index = new_index + 1;
-    }
-
-    return result_slice_list;
-}
-
-/// Frees memory allocate by `toSlice`.
-pub fn freeSlice(gpa: Allocator, to_slice_result: []const [:0]u8) void {
-    var total_bytes: usize = 0;
-    for (to_slice_result) |arg| {
-        total_bytes += @sizeOf([]u8) + arg.len + 1;
-    }
-    const unaligned_allocated_buf = @as([*]const u8, @ptrCast(to_slice_result.ptr))[0..total_bytes];
-    const aligned_allocated_buf: []align(@alignOf([]u8)) const u8 = @alignCast(unaligned_allocated_buf);
-    return gpa.free(aligned_allocated_buf);
 }
 
 test "Iterator.Windows" {
