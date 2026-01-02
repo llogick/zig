@@ -2006,11 +2006,13 @@ fn readPackedIntBig(comptime T: type, bytes: []const u8, bit_offset: usize) T {
     } else return @as(T, @bitCast(val));
 }
 
+/// Deprecated: use readPackedInt(T, bytes, bit_offset, value, .native)
 pub const readPackedIntNative = switch (native_endian) {
     .little => readPackedIntLittle,
     .big => readPackedIntBig,
 };
 
+/// Deprecated: use readPackedInt(T, bytes, bit_offset, value, .foreign)
 pub const readPackedIntForeign = switch (native_endian) {
     .little => readPackedIntBig,
     .big => readPackedIntLittle,
@@ -2159,11 +2161,13 @@ fn writePackedIntBig(comptime T: type, bytes: []u8, bit_offset: usize, value: T)
     writeInt(StoreInt, write_bytes[(byte_count - store_size)..][0..store_size], write_value, .big);
 }
 
+/// Deprecated: use writePackedInt(T, bytes, bit_offset, value, .native)
 pub const writePackedIntNative = switch (native_endian) {
     .little => writePackedIntLittle,
     .big => writePackedIntBig,
 };
 
+/// Deprecated: use writePackedInt(T, bytes, bit_offset, value, .foreign)
 pub const writePackedIntForeign = switch (native_endian) {
     .little => writePackedIntBig,
     .big => writePackedIntLittle,
