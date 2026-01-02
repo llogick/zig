@@ -1765,7 +1765,7 @@ fn tryFindProgram(b: *Build, full_path: []const u8) ?[]const u8 {
     const io = b.graph.io;
     const arena = b.allocator;
 
-    if (Io.Dir.realPathFileAbsoluteAlloc(io, full_path, arena)) |p| {
+    if (b.build_root.handle.realPathFileAlloc(io, full_path, arena)) |p| {
         return p;
     } else |err| switch (err) {
         error.OutOfMemory => @panic("OOM"),
@@ -1779,7 +1779,7 @@ fn tryFindProgram(b: *Build, full_path: []const u8) ?[]const u8 {
             while (it.next()) |ext| {
                 if (!supportedWindowsProgramExtension(ext)) continue;
 
-                return Io.Dir.realPathFileAbsoluteAlloc(
+                return b.build_root.handle.realPathFileAlloc(
                     io,
                     b.fmt("{s}{s}", .{ full_path, ext }),
                     arena,
