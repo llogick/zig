@@ -623,7 +623,7 @@ inline fn callMainWithArgs(argc: usize, argv: [*][*:0]u8, envp: [:null]?[*:0]u8)
     return callMain(argv[0..argc], envp);
 }
 
-fn main(c_argc: c_int, c_argv: [*][*:0]c_char, c_envp: [*:null]?[*:0]c_char) callconv(.c) c_int {
+fn main(c_argc: c_int, c_argv: [*][*:0]u8, c_envp: [*:null]?[*:0]u8) callconv(.c) c_int {
     var env_count: usize = 0;
     while (c_envp[env_count] != null) : (env_count += 1) {}
     const envp = c_envp[0..env_count :null];
@@ -638,7 +638,7 @@ fn main(c_argc: c_int, c_argv: [*][*:0]c_char, c_envp: [*:null]?[*:0]c_char) cal
     return callMainWithArgs(@as(usize, @intCast(c_argc)), @as([*][*:0]u8, @ptrCast(c_argv)), envp);
 }
 
-fn mainWithoutEnv(c_argc: c_int, c_argv: [*][*:0]c_char) callconv(.c) c_int {
+fn mainWithoutEnv(c_argc: c_int, c_argv: [*][*:0]u8) callconv(.c) c_int {
     const argv = @as([*][*:0]u8, @ptrCast(c_argv))[0..@intCast(c_argc)];
     if (@sizeOf(std.Io.Threaded.Argv0) != 0) {
         if (std.Options.debug_threaded_io) |t| t.argv0.value = argv[0];
@@ -649,7 +649,11 @@ fn mainWithoutEnv(c_argc: c_int, c_argv: [*][*:0]c_char) callconv(.c) c_int {
 /// General error message for a malformed return type
 const bad_main_ret = "expected return type of main to be 'void', '!void', 'noreturn', 'u8', or '!u8'";
 
-const use_debug_allocator = !builtin.link_libc and !native_arch.isWasm() and builtin.mode == .Debug;
+const use_debug_allocator = !native_arch.isWasm() and switch (builtin.mode) {
+    .Debug => true,
+    .ReleaseSafe => !builtin.link_libc, // Not ideal, but the best we have for now.
+    .ReleaseFast, .ReleaseSmall => !builtin.link_libc and builtin.single_threaded, // Also not ideal.
+};
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 
 inline fn callMain(args: std.process.Args.Vector, environ: std.process.Environ.Block) u8 {
@@ -660,14 +664,16 @@ inline fn callMain(args: std.process.Args.Vector, environ: std.process.Environ.B
         .environ = .{ .block = environ },
     }));
 
-    const gpa = if (builtin.link_libc)
-        std.heap.c_allocator
-    else if (native_arch.isWasm())
+    const gpa = if (native_arch.isWasm())
         std.heap.wasm_allocator
     else if (use_debug_allocator)
         debug_allocator.allocator()
+    else if (builtin.link_libc)
+        std.heap.c_allocator
+    else if (!builtin.single_threaded)
+        std.heap.smp_allocator
     else
-        std.heap.smp_allocator;
+        comptime unreachable;
 
     defer if (use_debug_allocator) {
         _ = debug_allocator.deinit(); // Leaks do not affect return code.

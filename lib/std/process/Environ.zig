@@ -381,20 +381,6 @@ pub fn createMap(env: Environ, allocator: Allocator) CreateMapError!Map {
             try result.put(key, value);
         }
         return result;
-    } else if (builtin.link_libc) {
-        var ptr = env.block;
-        while (ptr[0]) |line| : (ptr += 1) {
-            var line_i: usize = 0;
-            while (line[line_i] != 0 and line[line_i] != '=') : (line_i += 1) {}
-            const key = line[0..line_i];
-
-            var end_i: usize = line_i;
-            while (line[end_i] != 0) : (end_i += 1) {}
-            const value = line[line_i + 1 .. end_i];
-
-            try result.put(key, value);
-        }
-        return result;
     } else {
         for (env.block) |opt_line| {
             const line = opt_line.?;
