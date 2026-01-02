@@ -24,7 +24,10 @@ pub fn main(init: std.process.Init.Minimal) !void {
     defer std.debug.assert(debug_allocator.deinit() == .ok);
     const gpa = debug_allocator.allocator();
 
-    var threaded: std.Io.Threaded = .init(gpa, .{});
+    var threaded: std.Io.Threaded = .init(gpa, .{
+        .environ = init.environ,
+        .argv0 = .init(init.args),
+    });
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -536,13 +539,24 @@ const LazyIncludePaths = struct {
     target_machine_type: std.coff.IMAGE.FILE.MACHINE,
     resolved_include_paths: ?[]const []const u8 = null,
 
-    pub fn get(self: *LazyIncludePaths, error_handler: *ErrorHandler) ![]const []const u8 {
+    pub fn get(
+        self: *LazyIncludePaths,
+        error_handler: *ErrorHandler,
+        env_map: *const std.process.Environ.Map,
+    ) ![]const []const u8 {
         const io = self.io;
 
         if (self.resolved_include_paths) |include_paths|
             return include_paths;
 
-        return getIncludePaths(self.arena, io, self.auto_includes_option, self.zig_lib_dir, self.target_machine_type) catch |err| switch (err) {
+        return getIncludePaths(
+            self.arena,
+            io,
+            self.auto_includes_option,
+            self.zig_lib_dir,
+            self.target_machine_type,
+            env_map,
+        ) catch |err| switch (err) {
             error.OutOfMemory => |e| return e,
             else => |e| {
                 switch (e) {
@@ -569,6 +583,7 @@ fn getIncludePaths(
     auto_includes_option: cli.Options.AutoIncludes,
     zig_lib_dir: []const u8,
     target_machine_type: std.coff.IMAGE.FILE.MACHINE,
+    env_map: *const std.process.Environ.Map,
 ) ![]const []const u8 {
     if (auto_includes_option == .none) return &[_][]const u8{};
 
@@ -641,7 +656,16 @@ fn getIncludePaths(
                 };
                 const target = std.zig.resolveTargetQueryOrFatal(io, target_query);
                 const is_native_abi = target_query.isNativeAbi();
-                const detected_libc = std.zig.LibCDirs.detect(arena, io, zig_lib_dir, &target, is_native_abi, true, null) catch |err| switch (err) {
+                const detected_libc = std.zig.LibCDirs.detect(
+                    arena,
+                    io,
+                    zig_lib_dir,
+                    &target,
+                    is_native_abi,
+                    true,
+                    null,
+                    env_map,
+                ) catch |err| switch (err) {
                     error.OutOfMemory => |e| return e,
                     else => return error.MingwIncludesNotFound,
                 };

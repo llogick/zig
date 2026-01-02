@@ -1,9 +1,6 @@
-pub fn main() !void {
-    var arena_state: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    const args = try std.process.argsAlloc(arena);
+pub fn main(init: std.process.Init) !void {
+    const arena = init.arena.allocator();
+    const args = try init.minimal.args.toSlice(arena);
 
     if (args.len != 2) return error.BadUsage;
     const path = args[1];

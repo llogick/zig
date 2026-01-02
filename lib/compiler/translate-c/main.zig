@@ -25,8 +25,8 @@ pub fn main(init: std.process.Init) u8 {
         zig_integration = true;
     }
 
-    const NO_COLOR = std.zig.EnvVar.NO_COLOR.isSet();
-    const CLICOLOR_FORCE = std.zig.EnvVar.CLICOLOR_FORCE.isSet();
+    const NO_COLOR = std.zig.EnvVar.NO_COLOR.isSet(init.env_map);
+    const CLICOLOR_FORCE = std.zig.EnvVar.CLICOLOR_FORCE.isSet(init.env_map);
 
     var stderr_buf: [1024]u8 = undefined;
     var stderr = Io.File.stderr().writer(io, &stderr_buf);

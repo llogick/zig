@@ -14,7 +14,7 @@
 const std = @import("std");
 
 pub fn main(init: std.process.Init) !void {
-    var args = try init.args.iterateAllocator(init.arena);
+    var args = try init.minimal.args.iterateAllocator(init.gpa);
     defer args.deinit();
     _ = args.next() orelse unreachable; // skip binary name
 

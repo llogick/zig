@@ -3,17 +3,12 @@ const fatal = std.process.fatal;
 
 extern fn add(a: u32, b: u32, addr: *usize) u32;
 
-pub fn main() void {
-    var debug_alloc_inst: std.heap.DebugAllocator(.{}) = .init;
-    defer std.debug.assert(debug_alloc_inst.deinit() == .ok);
-    const gpa = debug_alloc_inst.allocator();
+pub fn main(init: std.process.Init) void {
+    const gpa = init.gpa;
+    const io = init.io;
 
     var di: std.debug.SelfInfo = .init;
     defer di.deinit(gpa);
-
-    var threaded: std.Io.Threaded = .init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
 
     var add_addr: usize = undefined;
     _ = add(1, 2, &add_addr);
