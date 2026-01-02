@@ -669,17 +669,16 @@ inline fn callMain(args: std.process.Args.Vector, environ: std.process.Environ.B
     else
         std.heap.smp_allocator;
 
-    defer if (use_debug_allocator) switch (debug_allocator.deinit()) {
-        .leak => std.process.exit(1),
-        .ok => {},
+    defer if (use_debug_allocator) {
+        _ = debug_allocator.deinit(); // Leaks do not affect return code.
     };
 
     var arena_allocator = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena_allocator.deinit();
 
     var threaded: std.Io.Threaded = .init(gpa, .{
-        .argv0 = .init(.{ .value = args }),
-        .environ = .{ .process_environ = .{ .block = environ } },
+        .argv0 = .init(.{ .vector = args }),
+        .environ = .{ .block = environ },
     });
     defer threaded.deinit();
 
