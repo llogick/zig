@@ -22,10 +22,10 @@ const tmpDir = std.testing.tmpDir;
 
 test "check WASI CWD" {
     if (native_os == .wasi) {
-        if (std.options.wasiCwd() != 3) {
+        const cwd: Dir = .cwd();
+        if (cwd.handle != 3) {
             @panic("WASI code that uses cwd (like this test) needs a preopen for cwd (add '--dir=.' to wasmtime)");
         }
-
         if (!builtin.link_libc) {
             // WASI without-libc hardcodes fd 3 as the FDCWD token so it can be passed directly to WASI calls
             try expectEqual(3, posix.AT.FDCWD);

@@ -757,6 +757,9 @@ test Map {
 }
 
 test "convert from Environ to Map and back again" {
+    if (native_os == .windows) return;
+    if (native_os == .wasi and !builtin.link_libc) return;
+
     const gpa = testing.allocator;
 
     var map: Map = .init(gpa);
@@ -769,11 +772,7 @@ test "convert from Environ to Map and back again" {
     defer arena_allocator.deinit();
     const arena = arena_allocator.allocator();
 
-    const environ: Environ = switch (native_os) {
-        .windows => return error.SkipZigTest,
-        .wasi => if (!builtin.libc) return error.SkipZigTest,
-        else => .{ .block = try map.createBlockPosix(arena, .{}) },
-    };
+    const environ: Environ = .{ .block = try map.createBlockPosix(arena, .{}) };
 
     try testing.expectEqual(true, environ.contains(gpa, "FOO"));
     try testing.expectEqual(false, environ.contains(gpa, "BAR"));

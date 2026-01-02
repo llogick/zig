@@ -55,7 +55,7 @@ comptime {
             if (!@hasDecl(root, wasm_start_sym) and @hasDecl(root, "main")) {
                 // Only call main when defined. For WebAssembly it's allowed to pass `-fno-entry` in which
                 // case it's not required to provide an entrypoint such as main.
-                @export(&wasi_start, .{ .name = wasm_start_sym });
+                @export(&startWasi, .{ .name = wasm_start_sym });
             }
         } else if (native_arch.isWasm() and native_os == .freestanding) {
             // Only call main when defined. For WebAssembly it's allowed to pass `-fno-entry` in which
@@ -90,7 +90,7 @@ fn wasm_freestanding_start() callconv(.c) void {
     _ = @call(.always_inline, callMain, .{ {}, {} });
 }
 
-fn wasi_start() callconv(.c) void {
+fn startWasi() callconv(.c) void {
     // The function call is marked inline because for some reason LLVM in
     // release mode fails to inline it, and we want fewer call frames in stack traces.
     switch (builtin.wasi_exec_model) {

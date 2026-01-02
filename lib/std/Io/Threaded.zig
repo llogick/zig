@@ -12787,7 +12787,7 @@ const processSpawn = switch (native_os) {
 fn processSpawnUnsupported(userdata: ?*anyopaque, options: process.SpawnOptions) process.SpawnError!process.Child {
     _ = userdata;
     _ = options;
-    return error.OperationUnsupported;
+    return error.Unexpected;
 }
 
 fn processSpawnPosix(userdata: ?*anyopaque, options: process.SpawnOptions) process.SpawnError!process.Child {
@@ -12995,6 +12995,7 @@ fn processSpawnPosix(userdata: ?*anyopaque, options: process.SpawnOptions) proce
 }
 
 fn childWait(userdata: ?*anyopaque, child: *std.process.Child) process.Child.WaitError!process.Child.Term {
+    if (native_os == .wasi) unreachable;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     switch (native_os) {
         .windows => return childWaitWindows(t, child),
@@ -13003,6 +13004,7 @@ fn childWait(userdata: ?*anyopaque, child: *std.process.Child) process.Child.Wai
 }
 
 fn childKill(userdata: ?*anyopaque, child: *std.process.Child) void {
+    if (native_os == .wasi) unreachable;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     if (is_windows) {
         childKillWindows(t, child, 1) catch childCleanupWindows(child);

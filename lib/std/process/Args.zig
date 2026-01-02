@@ -10,8 +10,14 @@ const testing = std.testing;
 
 vector: Vector,
 
+/// On WASI without libc, this is `void` because the environment has to be
+/// queried and heap-allocated at runtime.
 pub const Vector = switch (native_os) {
     .windows => []const u16, // WTF-16 encoded
+    .wasi => switch (builtin.link_libc) {
+        false => void,
+        true => []const [*:0]const u8,
+    },
     .freestanding, .other => void,
     else => []const [*:0]const u8,
 };
@@ -457,6 +463,8 @@ pub fn iterateAllocator(a: Args, gpa: Allocator) Iterator.InitError!Iterator {
     return .initAllocator(a, gpa);
 }
 
+pub const ToSliceError = Iterator.Windows.InitError || Iterator.Wasi.InitError;
+
 /// Returned value may reference several allocations; call `freeSlice` to
 /// release.
 ///
@@ -464,19 +472,19 @@ pub fn iterateAllocator(a: Args, gpa: Allocator) Iterator.InitError!Iterator {
 ///   [WTF-8](https://wtf-8.codeberg.page/).
 /// * On other platforms, the result is an opaque sequence of bytes with no
 ///   particular encoding.
-pub fn toSlice(a: Args, gpa: Allocator) Allocator.Error![][:0]u8 {
+pub fn toSlice(a: Args, gpa: Allocator) ToSliceError![][:0]u8 {
     var it = try a.iterateAllocator(gpa);
     defer it.deinit();
 
-    var contents = std.array_list.Managed(u8).init(gpa);
-    defer contents.deinit();
+    var contents: std.ArrayList(u8) = .empty;
+    defer contents.deinit(gpa);
 
-    var slice_list = std.array_list.Managed(usize).init(gpa);
-    defer slice_list.deinit();
+    var slice_list: std.ArrayList(usize) = .empty;
+    defer slice_list.deinit(gpa);
 
     while (it.next()) |arg| {
-        try contents.appendSlice(arg[0 .. arg.len + 1]);
-        try slice_list.append(arg.len);
+        try contents.appendSlice(gpa, arg[0 .. arg.len + 1]);
+        try slice_list.append(gpa, arg.len);
     }
 
     const contents_slice = contents.items;
