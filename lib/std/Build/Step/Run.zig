@@ -1555,7 +1555,7 @@ fn spawnChildAndCollect(
     var spawn_options: process.SpawnOptions = .{
         .argv = argv,
         .cwd = child_cwd,
-        .env_map = &graph.env_map,
+        .env_map = env_map,
         .request_resource_usage_statistics = true,
         .stdin = if (run.stdin != .none) s: {
             assert(run.stdio != .inherit);
