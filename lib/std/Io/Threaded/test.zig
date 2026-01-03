@@ -170,7 +170,10 @@ test "cancel blocked read from pipe" {
         }
     };
 
-    var threaded: std.Io.Threaded = .init(std.testing.allocator, .{});
+    var threaded: std.Io.Threaded = .init(std.testing.allocator, .{
+        .argv0 = .empty,
+        .environ = .empty,
+    });
     defer threaded.deinit();
     const io = threaded.io();
 

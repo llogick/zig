@@ -1188,7 +1188,6 @@ pub fn init(
         .argv0 = options.argv0,
         .worker_threads = .init(null),
         .environ = .{ .process_environ = options.environ },
-        .robust_cancel = options.robust_cancel,
     };
 
     if (posix.Sigaction != void) {
@@ -13050,9 +13049,10 @@ fn processSpawnPosix(userdata: ?*anyopaque, options: process.SpawnOptions) proce
 fn childWait(userdata: ?*anyopaque, child: *process.Child) process.Child.WaitError!process.Child.Term {
     if (native_os == .wasi) unreachable;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
+    _ = t;
     switch (native_os) {
-        .windows => return childWaitWindows(t, child),
-        else => return childWaitPosix(Thread.getCurrent(t), child),
+        .windows => return childWaitWindows(child),
+        else => return childWaitPosix(child),
     }
 }
 
@@ -13062,7 +13062,8 @@ fn childKill(userdata: ?*anyopaque, child: *process.Child) void {
     if (is_windows) {
         childKillWindows(t, child, 1) catch childCleanupWindows(child);
     } else {
-        childKillPosix(Thread.getCurrent(t), child) catch childCleanupPosix(child);
+        childKillPosix(child) catch {};
+        childCleanupPosix(child);
     }
 }
 
@@ -13087,21 +13088,24 @@ fn childKillWindows(t: *Threaded, child: *process.Child, exit_code: windows.UINT
     childCleanupWindows(child);
 }
 
-fn childWaitWindows(t: *Threaded, child: *process.Child) process.Child.WaitError!process.Child.Term {
-    const current_thread = Thread.getCurrent(t);
+fn childWaitWindows(child: *process.Child) process.Child.WaitError!process.Child.Term {
     const handle = child.id.?;
 
-    while (true) {
-        try current_thread.checkCancel();
-        switch (windows.kernel32.WaitForSingleObjectEx(handle, windows.INFINITE, windows.FALSE)) {
-            windows.WAIT_OBJECT_0 => break,
-            windows.WAIT_ABANDONED, windows.WAIT_TIMEOUT => continue,
-            windows.WAIT_FAILED => switch (windows.GetLastError()) {
+    var syscall: Syscall = try .start();
+    while (true) switch (windows.kernel32.WaitForSingleObjectEx(handle, windows.INFINITE, windows.FALSE)) {
+        windows.WAIT_OBJECT_0 => break syscall.finish(),
+        windows.WAIT_ABANDONED, windows.WAIT_TIMEOUT => {
+            try syscall.checkCancel();
+            continue;
+        },
+        windows.WAIT_FAILED => {
+            syscall.finish();
+            switch (windows.GetLastError()) {
                 else => |err| return windows.unexpectedError(err),
-            },
-            else => return error.Unexpected,
-        }
-    }
+            }
+        },
+        else => return syscall.fail(error.Unexpected),
+    };
 
     const term: process.Child.Term = x: {
         var exit_code: windows.DWORD = undefined;
@@ -13142,7 +13146,7 @@ fn childCleanupWindows(child: *process.Child) void {
     }
 }
 
-fn childWaitPosix(current_thread: *Thread, child: *process.Child) process.Child.WaitError!process.Child.Term {
+fn childWaitPosix(child: *process.Child) process.Child.WaitError!process.Child.Term {
     defer childCleanupPosix(child);
 
     const pid = child.id.?;
@@ -13152,29 +13156,29 @@ fn childWaitPosix(current_thread: *Thread, child: *process.Child) process.Child.
 
     if (have_wait4) {
         var status: if (builtin.link_libc) c_int else u32 = undefined;
-        try current_thread.beginSyscall();
+        const syscall: Syscall = try .start();
         while (true) switch (posix.errno(posix.system.wait4(pid, &status, 0, ru_ptr))) {
             .SUCCESS => {
-                current_thread.endSyscall();
+                syscall.finish();
                 if (ru_ptr) |p| child.resource_usage_statistics.rusage = p.*;
                 return statusToTerm(@bitCast(status));
             },
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
-            .CHILD => |err| return current_thread.endSyscallErrnoBug(err), // Double-free.
-            else => |err| return current_thread.endSyscallUnexpectedErrno(err),
+            .CHILD => |err| return syscall.errnoBug(err), // Double-free.
+            else => |err| return syscall.unexpectedErrno(err),
         };
     }
 
     if (have_waitid) {
         const linux = std.os.linux; // Bypass libc which has the wrong signature.
         var info: linux.siginfo_t = undefined;
-        try current_thread.beginSyscall();
+        const syscall: Syscall = try .start();
         while (true) switch (linux.errno(linux.waitid(.PID, pid, &info, linux.W.EXITED, ru_ptr))) {
             .SUCCESS => {
-                current_thread.endSyscall();
+                syscall.finish();
                 if (ru_ptr) |p| child.resource_usage_statistics.rusage = p.*;
                 const status: u32 = @bitCast(info.fields.common.second.sigchld.status);
                 const code: linux.CLD = @enumFromInt(info.code);
@@ -13186,26 +13190,27 @@ fn childWaitPosix(current_thread: *Thread, child: *process.Child) process.Child.
                 };
             },
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
-            .CHILD => |err| return current_thread.endSyscallErrnoBug(err), // Double-free.
-            else => |err| return current_thread.endSyscallUnexpectedErrno(err),
+            .CHILD => |err| return syscall.errnoBug(err), // Double-free.
+            else => |err| return syscall.unexpectedErrno(err),
         };
     }
 
     var status: if (builtin.link_libc) c_int else u32 = undefined;
+    const syscall: Syscall = try .start();
     while (true) switch (posix.errno(posix.system.waitpid(pid, &status, 0))) {
         .SUCCESS => {
-            current_thread.endSyscall();
+            syscall.finish();
             return statusToTerm(@bitCast(status));
         },
         .INTR => {
-            try current_thread.checkCancel();
+            try syscall.checkCancel();
             continue;
         },
-        .CHILD => |err| return current_thread.endSyscallErrnoBug(err), // Double-free.
-        else => |err| return current_thread.endSyscallUnexpectedErrno(err),
+        .CHILD => |err| return syscall.errnoBug(err), // Double-free.
+        else => |err| return syscall.unexpectedErrno(err),
     };
 }
 
@@ -13220,9 +13225,12 @@ fn statusToTerm(status: u32) process.Child.Term {
         .{ .unknown = status };
 }
 
-fn childKillPosix(current_thread: *Thread, child: *process.Child) !void {
-    // Intentionally uncancelable.
-    while (true) switch (posix.errno(posix.system.kill(child.id.?, .TERM))) {
+fn childKillPosix(child: *process.Child) !void {
+    // Entire function body is intentionally uncancelable.
+
+    const pid = child.id.?;
+
+    while (true) switch (posix.errno(posix.system.kill(pid, .TERM))) {
         .SUCCESS => break,
         .INTR => continue,
         .PERM => return error.PermissionDenied,
@@ -13230,7 +13238,35 @@ fn childKillPosix(current_thread: *Thread, child: *process.Child) !void {
         .SRCH => |err| return errnoBug(err),
         else => |err| return posix.unexpectedErrno(err),
     };
-    _ = try childWaitPosix(current_thread, child);
+
+    if (have_wait4) {
+        var status: if (builtin.link_libc) c_int else u32 = undefined;
+        while (true) switch (posix.errno(posix.system.wait4(pid, &status, 0, null))) {
+            .SUCCESS => return,
+            .INTR => continue,
+            .CHILD => |err| return errnoBug(err), // Double-free.
+            else => |err| return posix.unexpectedErrno(err),
+        };
+    }
+
+    if (have_waitid) {
+        const linux = std.os.linux; // Bypass libc which has the wrong signature.
+        var info: linux.siginfo_t = undefined;
+        while (true) switch (linux.errno(linux.waitid(.PID, pid, &info, linux.W.EXITED, null))) {
+            .SUCCESS => return,
+            .INTR => continue,
+            .CHILD => |err| return errnoBug(err), // Double-free.
+            else => |err| return posix.unexpectedErrno(err),
+        };
+    }
+
+    var status: if (builtin.link_libc) c_int else u32 = undefined;
+    while (true) switch (posix.errno(posix.system.waitpid(pid, &status, 0))) {
+        .SUCCESS => return,
+        .INTR => continue,
+        .CHILD => |err| return errnoBug(err), // Double-free.
+        else => |err| return posix.unexpectedErrno(err),
+    };
 }
 
 fn childCleanupPosix(child: *process.Child) void {
@@ -13537,7 +13573,6 @@ fn processSpawnWindows(userdata: ?*anyopaque, options: process.SpawnOptions) pro
         }
 
         windowsCreateProcessPathExt(
-            t,
             arena,
             &dir_buf,
             &app_buf,
@@ -13573,7 +13608,6 @@ fn processSpawnWindows(userdata: ?*anyopaque, options: process.SpawnOptions) pro
                 try dir_buf.appendSlice(arena, search_path);
 
                 if (windowsCreateProcessPathExt(
-                    t,
                     arena,
                     &dir_buf,
                     &app_buf,
