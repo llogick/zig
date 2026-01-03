@@ -1139,13 +1139,26 @@ fn createTestServer(io: Io, S: type) !*TestServer {
     }
 
     const address = try net.IpAddress.parse("127.0.0.1", 0);
-    const test_server = try std.testing.allocator.create(TestServer);
+
+    const gpa = std.testing.allocator;
+
+    const test_server = try gpa.create(TestServer);
+    errdefer gpa.destroy(test_server);
+
+    var net_server = try address.listen(io, .{ .reuse_address = true });
+    errdefer net_server.deinit(io);
+
+    // populate `test_server` first so `S.run` can use it
     test_server.* = .{
         .io = io,
-        .net_server = try address.listen(io, .{ .reuse_address = true }),
+        .net_server = net_server,
         .shutting_down = false,
-        .server_thread = try std.Thread.spawn(.{}, S.run, .{test_server}),
+        .server_thread = undefined, // set below
     };
+
+    test_server.server_thread = try .spawn(.{}, S.run, .{test_server});
+    errdefer comptime unreachable;
+
     return test_server;
 }
 

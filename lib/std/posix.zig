@@ -1124,6 +1124,7 @@ pub fn mkdirW(dir_path_w: []const u16, mode: mode_t) MakeDirError!void {
         error.NoDevice => return error.Unexpected,
         error.WouldBlock => return error.Unexpected,
         error.AntivirusInterference => return error.Unexpected,
+        error.OperationCanceled => return error.Unexpected,
         else => |e| return e,
     };
     windows.CloseHandle(sub_dir_handle);

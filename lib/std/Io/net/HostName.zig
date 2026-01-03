@@ -233,11 +233,12 @@ pub fn connect(
         if (result) |stream| {
             return stream;
         } else |err| switch (err) {
+            error.Canceled => unreachable,
+
             error.SystemResources,
             error.OptionUnsupported,
             error.ProcessFdQuotaExceeded,
             error.SystemFdQuotaExceeded,
-            error.Canceled,
             => |e| return e,
 
             error.WouldBlock => return error.Unexpected,
@@ -258,6 +259,8 @@ pub fn connect(
 
 /// Asynchronously establishes a connection to all IP addresses associated with
 /// a host name, adding them to a results queue upon completion.
+///
+/// `error.Canceled` will never be added to the queue, but other errors may be.
 ///
 /// Closes `results` before return, even on error.
 ///
@@ -299,22 +302,15 @@ fn enqueueConnection(
     io: Io,
     queue: *Io.Queue(IpAddress.ConnectError!Stream),
     options: IpAddress.ConnectOptions,
-) void {
-    enqueueConnectionFallible(address, io, queue, options) catch |err| switch (err) {
-        error.Canceled => {},
-    };
-}
-fn enqueueConnectionFallible(
-    address: IpAddress,
-    io: Io,
-    queue: *Io.Queue(IpAddress.ConnectError!Stream),
-    options: IpAddress.ConnectOptions,
 ) Io.Cancelable!void {
-    const result = address.connect(io, options);
+    const result = address.connect(io, options) catch |err| switch (err) {
+        error.Canceled => |e| return e,
+        else => |e| e, // other errors go in the result queue
+    };
     errdefer if (result) |s| s.close(io) else |_| {};
     queue.putOne(io, result) catch |err| switch (err) {
-        error.Closed => unreachable, // `queue` must not be closed
         error.Canceled => |e| return e,
+        error.Closed => unreachable, // `queue` must not be closed
     };
 }
 

@@ -194,7 +194,7 @@ test "Group" {
     group.async(io, count, .{ 1, 10, &results[0] });
     group.async(io, count, .{ 20, 30, &results[1] });
 
-    group.awaitUncancelable(io);
+    try group.await(io);
 
     try testing.expectEqualSlices(usize, &.{ 45, 245 }, &results);
 }
@@ -207,49 +207,53 @@ fn count(a: usize, b: usize, result: *usize) void {
     result.* = sum;
 }
 
-test "Group cancelation" {
+test "Group.cancel" {
+    const global = struct {
+        fn sleep(io: Io, result: *usize) Io.Cancelable!void {
+            defer result.* = 1;
+            io.sleep(.fromSeconds(100_000), .awake) catch |err| switch (err) {
+                error.Canceled => |e| return e,
+                else => {},
+            };
+        }
+
+        fn sleepRecancel(io: Io, result: *usize) void {
+            io.sleep(.fromSeconds(100_000), .awake) catch |err| switch (err) {
+                error.Canceled => io.recancel(),
+                else => {},
+            };
+            result.* = 1;
+        }
+
+        fn sleepUncancelable(io: Io, result: *usize) void {
+            const old_prot = io.swapCancelProtection(.blocked);
+            defer _ = io.swapCancelProtection(old_prot);
+            // Short sleep interval, because this one won't be canceled (that's the point!).
+            io.sleep(.fromMilliseconds(50), .awake) catch {};
+            result.* = 1;
+        }
+    };
+
     const io = testing.io;
 
     var group: Io.Group = .init;
-    var results: [4]usize = .{ 0, 0, 0, 0 };
+    var results: [5]usize = @splat(0);
 
-    // TODO when robust cancelation is available, make the sleep timeouts much
-    // longer so that it causes the unit test to be failed if not canceled.
-    // https://codeberg.org/ziglang/zig/issues/30049
-    group.async(io, sleep, .{ io, &results[0] });
-    group.async(io, sleep, .{ io, &results[1] });
-    group.async(io, sleepUncancelable, .{ io, &results[2] });
-    group.async(io, sleepRecancel, .{ io, &results[3] });
+    group.concurrent(io, global.sleep, .{ io, &results[0] }) catch |err| switch (err) {
+        error.ConcurrencyUnavailable => return error.SkipZigTest,
+    };
+    try group.concurrent(io, global.sleep, .{ io, &results[1] });
+    try group.concurrent(io, global.sleepRecancel, .{ io, &results[2] });
+    try group.concurrent(io, global.sleepUncancelable, .{ io, &results[3] });
+    // Because this one doesn't block until canceled, it is safe to run asynchronously.
+    group.async(io, global.sleepUncancelable, .{ io, &results[4] });
 
     group.cancel(io);
 
-    try testing.expectEqualSlices(usize, &.{ 1, 1, 1, 1 }, &results);
+    try testing.expectEqualSlices(usize, &.{ 1, 1, 1, 1, 1 }, &results);
 }
 
-fn sleep(io: Io, result: *usize) error{Canceled}!void {
-    defer result.* = 1;
-    io.sleep(.fromMilliseconds(1), .awake) catch |err| switch (err) {
-        error.Canceled => |e| return e,
-        else => {},
-    };
-}
-
-fn sleepUncancelable(io: Io, result: *usize) void {
-    const old_prot = io.swapCancelProtection(.blocked);
-    defer _ = io.swapCancelProtection(old_prot);
-    io.sleep(.fromMilliseconds(1), .awake) catch {};
-    result.* = 1;
-}
-
-fn sleepRecancel(io: Io, result: *usize) void {
-    io.sleep(.fromMilliseconds(1), .awake) catch |err| switch (err) {
-        error.Canceled => io.recancel(),
-        else => {},
-    };
-    result.* = 1;
-}
-
-test "Group concurrent" {
+test "Group.concurrent" {
     const io = testing.io;
 
     var group: Io.Group = .init;
@@ -487,4 +491,76 @@ test "swapCancelProtection" {
 
     // Because it reached the `set`, it should be too late for `sleepThenSet` to see `error.Canceled`.
     try set_future.cancel(io);
+}
+
+test "cancel futex wait" {
+    const global = struct {
+        fn blockUntilCanceled(io: Io) void {
+            while (true) io.futexWait(u32, &0, 0) catch |err| switch (err) {
+                error.Canceled => return,
+            };
+        }
+    };
+
+    const io = std.testing.io;
+
+    var future = io.concurrent(global.blockUntilCanceled, .{io}) catch |err| switch (err) {
+        error.ConcurrencyUnavailable => return error.SkipZigTest,
+    };
+    defer future.cancel(io);
+
+    // Give the task some time to start so that we cancel while it is blocked.
+    try io.sleep(.fromMilliseconds(20), .awake);
+}
+
+test "cancel sleep" {
+    const global = struct {
+        fn blockUntilCanceled(io: Io) void {
+            while (true) io.sleep(.fromSeconds(100_000), .awake) catch |err| switch (err) {
+                error.Canceled => return,
+                error.UnsupportedClock => @panic("unsupported clock"),
+                error.Unexpected => @panic("unexpected"),
+            };
+        }
+    };
+
+    const io = std.testing.io;
+
+    var future = io.concurrent(global.blockUntilCanceled, .{io}) catch |err| switch (err) {
+        error.ConcurrencyUnavailable => return error.SkipZigTest,
+    };
+    defer future.cancel(io);
+
+    // Give the task some time to start so that we cancel while it is blocked.
+    try io.sleep(.fromMilliseconds(20), .awake);
+}
+
+test "tasks spawned in group after Group.cancel are canceled" {
+    const global = struct {
+        fn waitThenSpawn(io: Io, group: *Io.Group) void {
+            _ = io.swapCancelProtection(.blocked);
+            group.concurrent(io, blockUntilCanceled, .{io}) catch {};
+            io.sleep(.fromMilliseconds(10), .awake) catch unreachable;
+            group.concurrent(io, blockUntilCanceled, .{io}) catch {};
+            group.async(io, blockUntilCanceled, .{io});
+        }
+        fn blockUntilCanceled(io: Io) Io.Cancelable!void {
+            while (true) io.sleep(.fromSeconds(100_000), .awake) catch |err| switch (err) {
+                error.Canceled => |e| return e,
+                error.UnsupportedClock => @panic("unsupported clock"),
+                error.Unexpected => @panic("unexpected"),
+            };
+        }
+    };
+
+    const io = std.testing.io;
+
+    var group: Io.Group = .init;
+    defer group.cancel(io);
+
+    group.concurrent(io, global.blockUntilCanceled, .{io}) catch |err| switch (err) {
+        error.ConcurrencyUnavailable => return error.SkipZigTest,
+    };
+    try io.sleep(.fromMilliseconds(10), .awake); // let that first sleep start up
+    try group.concurrent(io, global.waitThenSpawn, .{ io, &group });
 }

@@ -315,8 +315,7 @@ const Module = struct {
             );
             if (len == 0) return error.MissingDebugInfo;
             const name_w = name_buffer[0 .. len + 4 :0];
-            // TODO eliminate the reference to Io.Threaded.global_single_threaded here
-            const coff_file = Io.Threaded.global_single_threaded.dirOpenFileWtf16(null, name_w, .{}) catch |err| switch (err) {
+            const coff_file = Io.Threaded.dirOpenFileWtf16(null, name_w, .{}) catch |err| switch (err) {
                 error.Canceled => |e| return e,
                 error.Unexpected => |e| return e,
                 error.FileNotFound => return error.MissingDebugInfo,

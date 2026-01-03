@@ -11399,6 +11399,9 @@ pub const vm_region_flavor_t = darwin.vm_region_flavor_t;
 
 pub const _ksiginfo = netbsd._ksiginfo;
 pub const _lwp_self = netbsd._lwp_self;
+pub const _lwp_park = netbsd._lwp_park;
+pub const _lwp_unpark = netbsd._lwp_unpark;
+pub const _lwp_unpark_all = netbsd._lwp_unpark_all;
 pub const lwpid_t = netbsd.lwpid_t;
 
 pub const lwp_gettid = dragonfly.lwp_gettid;
