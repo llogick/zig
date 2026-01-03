@@ -1,13 +1,8 @@
 const std = @import("std");
 
-pub fn main() !void {
-    var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
-    defer if (debug_allocator.deinit() == .leak) @panic("found memory leaks");
-    const gpa = debug_allocator.allocator();
-
-    var threaded: std.Io.Threaded = .init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+pub fn main(init: std.process.Init) !void {
+    const gpa = init.gpa;
+    const io = init.io;
 
     const self_path = try std.process.executablePathAlloc(io, gpa);
     defer gpa.free(self_path);

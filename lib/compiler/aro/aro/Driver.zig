@@ -1250,21 +1250,25 @@ fn getOutFileName(d: *Driver, source: Source, buf: *[std.fs.max_name_bytes]u8) !
 }
 
 fn invokeAssembler(d: *Driver, tc: *Toolchain, input_path: []const u8, output_path: []const u8) !void {
+    const io = d.comp.io;
     var assembler_path_buf: [std.fs.max_path_bytes]u8 = undefined;
     const assembler_path = try tc.getAssemblerPath(&assembler_path_buf);
     const argv = [_][]const u8{ assembler_path, input_path, "-o", output_path };
 
-    var child = std.process.Child.init(&argv, d.comp.gpa);
-    // TODO handle better
-    child.stdin_behavior = .inherit;
-    child.stdout_behavior = .inherit;
-    child.stderr_behavior = .inherit;
-
-    const term = child.spawnAndWait() catch |er| {
+    var child = std.process.spawn(io, .{
+        .argv = &argv,
+        // TODO handle better
+        .stdin = .inherit,
+        .stdout = .inherit,
+        .stderr = .inherit,
+    }) catch |er| {
         return d.fatal("unable to spawn linker: {s}", .{errorDescription(er)});
     };
+    const term = child.wait(io) catch |er| {
+        return d.fatal("unable to wait linker: {s}", .{errorDescription(er)});
+    };
     switch (term) {
-        .Exited => |code| if (code != 0) {
+        .exited => |code| if (code != 0) {
             const e = d.fatal("assembler exited with an error code", .{});
             return e;
         },
@@ -1490,6 +1494,7 @@ fn dumpLinkerArgs(w: *std.Io.Writer, items: []const []const u8) !void {
 /// **MAY call `exit` if `fast_exit` is set.**
 pub fn invokeLinker(d: *Driver, tc: *Toolchain, comptime fast_exit: bool) Compilation.Error!void {
     const gpa = d.comp.gpa;
+    const io = d.comp.io;
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(gpa);
 
@@ -1506,17 +1511,20 @@ pub fn invokeLinker(d: *Driver, tc: *Toolchain, comptime fast_exit: bool) Compil
             return d.fatal("unable to dump linker args: {s}", .{errorDescription(stdout.err.?)});
         };
     }
-    var child = std.process.Child.init(argv.items, d.comp.gpa);
-    // TODO handle better
-    child.stdin_behavior = .inherit;
-    child.stdout_behavior = .inherit;
-    child.stderr_behavior = .inherit;
-
-    const term = child.spawnAndWait() catch |er| {
+    var child = std.process.spawn(io, .{
+        .argv = argv.items,
+        // TODO handle better
+        .stdin = .inherit,
+        .stdout = .inherit,
+        .stderr = .inherit,
+    }) catch |er| {
         return d.fatal("unable to spawn linker: {s}", .{errorDescription(er)});
     };
+    const term = child.wait(io) catch |er| {
+        return d.fatal("unable to wait linker: {s}", .{errorDescription(er)});
+    };
     switch (term) {
-        .Exited => |code| if (code != 0) {
+        .exited => |code| if (code != 0) {
             const e = d.fatal("linker exited with an error code", .{});
             if (fast_exit) d.exitWithCleanup(code);
             return e;

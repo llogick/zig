@@ -6,16 +6,14 @@ const ascii = std.ascii;
 
 const catalog_txt = @embedFile("crc/catalog.txt");
 
-pub fn main() anyerror!void {
-    var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+pub fn main(init: std.process.Init) !void {
+    const arena = init.arena.allocator();
+    const io = init.io;
+    const args = try init.minimal.args.toSlice(arena);
+    return @"i like cheese"(arena, io, args);
+}
 
-    var threaded: Io.Threaded = .init(arena, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    const args = try std.process.argsAlloc(arena);
+fn @"i like cheese"(arena: std.mem.Allocator, io: Io, args: []const []const u8) !void {
     if (args.len <= 1) printUsageAndExit(args[0]);
 
     const zig_src_root = args[1];

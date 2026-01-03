@@ -7,7 +7,7 @@ const fatal = std.process.fatal;
 pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const io = init.io;
-    const args = try init.args.toSlice(arena);
+    const args = try init.minimal.args.toSlice(arena);
 
     const exe = args[0];
     var catted_anything = false;

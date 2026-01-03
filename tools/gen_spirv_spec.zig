@@ -1,6 +1,7 @@
 const std = @import("std");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
+const assert = std.debug.assert;
 
 const g = @import("spirv/grammar.zig");
 const CoreRegistry = g.CoreRegistry;
@@ -54,28 +55,22 @@ const set_names = std.StaticStringMap(struct { []const u8, []const u8 }).initCom
     .{ "zig", .{ "zig", "Zig" } },
 });
 
-var arena = std.heap.ArenaAllocator.init(std.heap.smp_allocator);
-const allocator = arena.allocator();
-
-pub fn main() !void {
-    defer arena.deinit();
-
-    const args = try std.process.argsAlloc(allocator);
+pub fn main(init: std.process.Init) !void {
+    const arena = init.arena.allocator();
+    const args = try init.minimal.args.toSlice(arena);
     if (args.len != 3) {
         usageAndExit(args[0], 1);
     }
 
-    var threaded: std.Io.Threaded = .init(allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    const io = init.io;
 
-    const json_path = try Io.Dir.path.join(allocator, &.{ args[1], "include/spirv/unified1/" });
+    const json_path = try Io.Dir.path.join(arena, &.{ args[1], "include/spirv/unified1/" });
     const dir = try Io.Dir.cwd().openDir(io, json_path, .{ .iterate = true });
 
-    const core_spec = try readRegistry(io, CoreRegistry, dir, "spirv.core.grammar.json");
+    const core_spec = try readRegistry(io, arena, CoreRegistry, dir, "spirv.core.grammar.json");
     std.mem.sortUnstable(Instruction, core_spec.instructions, CmpInst{}, CmpInst.lt);
 
-    var exts = std.array_list.Managed(Extension).init(allocator);
+    var exts = std.array_list.Managed(Extension).init(arena);
 
     var it = dir.iterate();
     while (try it.next(io)) |entry| {
@@ -83,48 +78,48 @@ pub fn main() !void {
             continue;
         }
 
-        try readExtRegistry(io, &exts, dir, entry.name);
+        try readExtRegistry(io, arena, &exts, dir, entry.name);
     }
 
-    try readExtRegistry(io, &exts, Io.Dir.cwd(), args[2]);
+    try readExtRegistry(io, arena, &exts, Io.Dir.cwd(), args[2]);
 
-    var allocating: std.Io.Writer.Allocating = .init(allocator);
+    var allocating: std.Io.Writer.Allocating = .init(arena);
     defer allocating.deinit();
-    try render(&allocating.writer, core_spec, exts.items);
+    try render(arena, &allocating.writer, core_spec, exts.items);
     try allocating.writer.writeByte(0);
     const output = allocating.written()[0 .. allocating.written().len - 1 :0];
 
-    var tree = try std.zig.Ast.parse(allocator, output, .zig);
+    var tree = try std.zig.Ast.parse(arena, output, .zig);
 
     if (tree.errors.len != 0) {
-        try std.zig.printAstErrorsToStderr(allocator, io, tree, "", .auto);
+        try std.zig.printAstErrorsToStderr(arena, io, tree, "", .auto);
         return;
     }
 
-    var zir = try std.zig.AstGen.generate(allocator, tree);
+    var zir = try std.zig.AstGen.generate(arena, tree);
     if (zir.hasCompileErrors()) {
         var wip_errors: std.zig.ErrorBundle.Wip = undefined;
-        try wip_errors.init(allocator);
+        try wip_errors.init(arena);
         defer wip_errors.deinit();
         try wip_errors.addZirErrorMessages(zir, tree, output, "");
         var error_bundle = try wip_errors.toOwnedBundle("");
-        defer error_bundle.deinit(allocator);
+        defer error_bundle.deinit(arena);
         try error_bundle.renderToStderr(io, .{}, .auto);
     }
 
-    const formatted_output = try tree.renderAlloc(allocator);
+    const formatted_output = try tree.renderAlloc(arena);
     try Io.File.stdout().writeStreamingAll(io, formatted_output);
 }
 
-fn readExtRegistry(io: Io, exts: *std.array_list.Managed(Extension), dir: Io.Dir, sub_path: []const u8) !void {
+fn readExtRegistry(io: Io, arena: Allocator, exts: *std.array_list.Managed(Extension), dir: Io.Dir, sub_path: []const u8) !void {
     const filename = Io.Dir.path.basename(sub_path);
     if (!std.mem.startsWith(u8, filename, "extinst.")) {
         return;
     }
 
-    std.debug.assert(std.mem.endsWith(u8, filename, ".grammar.json"));
+    assert(std.mem.endsWith(u8, filename, ".grammar.json"));
     const name = filename["extinst.".len .. filename.len - ".grammar.json".len];
-    const spec = try readRegistry(io, ExtensionRegistry, dir, sub_path);
+    const spec = try readRegistry(io, arena, ExtensionRegistry, dir, sub_path);
 
     const set_name = set_names.get(name) orelse {
         std.log.info("ignored instruction set '{s}'", .{name});
@@ -140,16 +135,16 @@ fn readExtRegistry(io: Io, exts: *std.array_list.Managed(Extension), dir: Io.Dir
     });
 }
 
-fn readRegistry(io: Io, comptime RegistryType: type, dir: Io.Dir, path: []const u8) !RegistryType {
-    const spec = try dir.readFileAlloc(io, path, allocator, .unlimited);
+fn readRegistry(io: Io, arena: Allocator, comptime RegistryType: type, dir: Io.Dir, path: []const u8) !RegistryType {
+    const spec = try dir.readFileAlloc(io, path, arena, .unlimited);
     // Required for json parsing.
     // TODO: ALI
     @setEvalBranchQuota(10000);
 
-    var scanner = std.json.Scanner.initCompleteInput(allocator, spec);
+    var scanner = std.json.Scanner.initCompleteInput(arena, spec);
     var diagnostics = std.json.Diagnostics{};
     scanner.enableDiagnostics(&diagnostics);
-    const parsed = std.json.parseFromTokenSource(RegistryType, allocator, &scanner, .{}) catch |err| {
+    const parsed = std.json.parseFromTokenSource(RegistryType, arena, &scanner, .{}) catch |err| {
         std.debug.print("{s}:{}:{}:\n", .{ path, diagnostics.getLine(), diagnostics.getColumn() });
         return err;
     };
@@ -158,8 +153,8 @@ fn readRegistry(io: Io, comptime RegistryType: type, dir: Io.Dir, path: []const 
 
 /// Returns a set with types that require an extra struct for the `Instruction` interface
 /// to the spir-v spec, or whether the original type can be used.
-fn extendedStructs(kinds: []const OperandKind) !ExtendedStructSet {
-    var map = ExtendedStructSet.init(allocator);
+fn extendedStructs(arena: Allocator, kinds: []const OperandKind) !ExtendedStructSet {
+    var map = ExtendedStructSet.init(arena);
     try map.ensureTotalCapacity(@as(u32, @intCast(kinds.len)));
 
     for (kinds) |kind| {
@@ -194,6 +189,7 @@ fn tagPriorityScore(tag: []const u8) usize {
 }
 
 fn render(
+    arena: Allocator,
     writer: *std.Io.Writer,
     registry: CoreRegistry,
     extensions: []const Extension,
@@ -299,7 +295,7 @@ fn render(
     );
 
     // Merge the operand kinds from all extensions together.
-    var all_operand_kinds = OperandKindMap.init(allocator);
+    var all_operand_kinds = OperandKindMap.init(arena);
     for (registry.operand_kinds) |kind| {
         try all_operand_kinds.putNoClobber(.{ "core", kind.kind }, kind);
     }
@@ -312,22 +308,22 @@ fn render(
         try all_operand_kinds.ensureUnusedCapacity(ext.spec.operand_kinds.len);
         for (ext.spec.operand_kinds) |kind| {
             var new_kind = kind;
-            new_kind.kind = try std.mem.join(allocator, ".", &.{ ext.name, kind.kind });
+            new_kind.kind = try std.mem.join(arena, ".", &.{ ext.name, kind.kind });
             try all_operand_kinds.putNoClobber(.{ ext.name, kind.kind }, new_kind);
         }
     }
 
-    const extended_structs = try extendedStructs(all_operand_kinds.values());
+    const extended_structs = try extendedStructs(arena, all_operand_kinds.values());
     // Note: extensions don't seem to have class.
-    try renderClass(writer, registry.instructions);
+    try renderClass(arena, writer, registry.instructions);
     try renderOperandKind(writer, all_operand_kinds.values());
 
-    try renderOpcodes(writer, "Opcode", true, registry.instructions, extended_structs);
+    try renderOpcodes(arena, writer, "Opcode", true, registry.instructions, extended_structs);
     for (extensions) |ext| {
-        try renderOpcodes(writer, ext.opcode_name, false, ext.spec.instructions, extended_structs);
+        try renderOpcodes(arena, writer, ext.opcode_name, false, ext.spec.instructions, extended_structs);
     }
 
-    try renderOperandKinds(writer, all_operand_kinds.values(), extended_structs);
+    try renderOperandKinds(arena, writer, all_operand_kinds.values(), extended_structs);
     try renderInstructionSet(writer, registry, extensions, all_operand_kinds);
 }
 
@@ -414,8 +410,8 @@ fn renderInstructionsCase(
     );
 }
 
-fn renderClass(writer: *std.Io.Writer, instructions: []const Instruction) !void {
-    var class_map = std.StringArrayHashMap(void).init(allocator);
+fn renderClass(arena: Allocator, writer: *std.Io.Writer, instructions: []const Instruction) !void {
+    var class_map = std.StringArrayHashMap(void).init(arena);
 
     for (instructions) |inst| {
         if (std.mem.eql(u8, inst.class.?, "@exclude")) continue;
@@ -535,16 +531,17 @@ fn renderEnumerant(writer: *std.Io.Writer, enumerant: Enumerant) !void {
 }
 
 fn renderOpcodes(
+    arena: Allocator,
     writer: *std.Io.Writer,
     opcode_type_name: []const u8,
     want_operands: bool,
     instructions: []const Instruction,
     extended_structs: ExtendedStructSet,
 ) !void {
-    var inst_map = std.AutoArrayHashMap(u32, usize).init(allocator);
+    var inst_map = std.AutoArrayHashMap(u32, usize).init(arena);
     try inst_map.ensureTotalCapacity(instructions.len);
 
-    var aliases = std.array_list.Managed(struct { inst: usize, alias: usize }).init(allocator);
+    var aliases = std.array_list.Managed(struct { inst: usize, alias: usize }).init(arena);
     try aliases.ensureTotalCapacity(instructions.len);
 
     for (instructions, 0..) |inst, i| {
@@ -634,30 +631,32 @@ fn renderOpcodes(
 }
 
 fn renderOperandKinds(
+    arena: Allocator,
     writer: *std.Io.Writer,
     kinds: []const OperandKind,
     extended_structs: ExtendedStructSet,
 ) !void {
     for (kinds) |kind| {
         switch (kind.category) {
-            .ValueEnum => try renderValueEnum(writer, kind, extended_structs),
-            .BitEnum => try renderBitEnum(writer, kind, extended_structs),
+            .ValueEnum => try renderValueEnum(arena, writer, kind, extended_structs),
+            .BitEnum => try renderBitEnum(arena, writer, kind, extended_structs),
             else => {},
         }
     }
 }
 
 fn renderValueEnum(
+    arena: Allocator,
     writer: *std.Io.Writer,
     enumeration: OperandKind,
     extended_structs: ExtendedStructSet,
 ) !void {
     const enumerants = enumeration.enumerants orelse return error.InvalidRegistry;
 
-    var enum_map = std.AutoArrayHashMap(u32, usize).init(allocator);
+    var enum_map = std.AutoArrayHashMap(u32, usize).init(arena);
     try enum_map.ensureTotalCapacity(enumerants.len);
 
-    var aliases = std.array_list.Managed(struct { enumerant: usize, alias: usize }).init(allocator);
+    var aliases = std.array_list.Managed(struct { enumerant: usize, alias: usize }).init(arena);
     try aliases.ensureTotalCapacity(enumerants.len);
 
     for (enumerants, 0..) |enumerant, i| {
@@ -726,6 +725,7 @@ fn renderValueEnum(
 }
 
 fn renderBitEnum(
+    arena: Allocator,
     writer: *std.Io.Writer,
     enumeration: OperandKind,
     extended_structs: ExtendedStructSet,
@@ -735,7 +735,7 @@ fn renderBitEnum(
     var flags_by_bitpos = [_]?usize{null} ** 32;
     const enumerants = enumeration.enumerants orelse return error.InvalidRegistry;
 
-    var aliases = std.array_list.Managed(struct { flag: usize, alias: u5 }).init(allocator);
+    var aliases = std.array_list.Managed(struct { flag: usize, alias: u5 }).init(arena);
     try aliases.ensureTotalCapacity(enumerants.len);
 
     for (enumerants, 0..) |enumerant, i| {
@@ -749,7 +749,7 @@ fn renderBitEnum(
             continue;
         }
 
-        std.debug.assert(@popCount(value) == 1);
+        assert(@popCount(value) == 1);
 
         const bitpos = std.math.log2_int(u32, value);
         if (flags_by_bitpos[bitpos]) |*existing| {

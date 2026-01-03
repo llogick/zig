@@ -9,7 +9,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     };
     const gpa = gpa_state.allocator();
 
-    var it = try init.iterateAllocator(gpa);
+    var it = try init.args.iterateAllocator(gpa);
     defer it.deinit();
     _ = it.next() orelse unreachable; // skip binary name
     const child_path, const needs_free = child_path: {
@@ -28,11 +28,13 @@ pub fn main(init: std.process.Init.Minimal) !void {
     defer threaded.deinit();
     const io = threaded.io();
 
-    var child = std.process.Child.init(&.{ child_path, "hello arg" }, gpa);
-    child.stdin_behavior = .pipe;
-    child.stdout_behavior = .pipe;
-    child.stderr_behavior = .inherit;
-    try child.spawn(io);
+    var child = try std.process.spawn(.{
+        .argv = &.{ child_path, "hello arg" },
+        .stdin = .pipe,
+        .stdout = .pipe,
+        .stderr = .inherit,
+    });
+
     const child_stdin = child.stdin.?;
     try child_stdin.writeStreamingAll(io, "hello from stdin"); // verified in child
     child_stdin.close(io);
@@ -47,7 +49,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     }
 
     switch (try child.wait(io)) {
-        .Exited => |code| {
+        .exited => |code| {
             const child_ok_code = 42; // set by child if no test errors
             if (code != child_ok_code) {
                 testError(io, "child exit code: {d}; want {d}", .{ code, child_ok_code });
@@ -60,7 +62,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     // Check that FileNotFound is consistent across platforms when trying to spawn an executable that doesn't exist
     const missing_child_path = try std.mem.concat(gpa, u8, &.{ child_path, "_intentionally_missing" });
     defer gpa.free(missing_child_path);
-    try std.testing.expectError(error.FileNotFound, std.process.Child.run(gpa, io, .{ .argv = &.{missing_child_path} }));
+    try std.testing.expectError(error.FileNotFound, std.process.run(gpa, io, .{ .argv = &.{missing_child_path} }));
 }
 
 var parent_test_error = false;

@@ -193,14 +193,14 @@ fn printOutput(
             try shell_out.print("\n", .{});
 
             if (expected_outcome == .build_fail) {
-                const result = try process.Child.run(arena, io, .{
+                const result = try process.run(arena, io, .{
                     .argv = build_args.items,
                     .cwd = tmp_dir_path,
                     .env_map = &env_map,
                     .max_output_bytes = max_doc_file_size,
                 });
                 switch (result.term) {
-                    .Exited => |exit_code| {
+                    .exited => |exit_code| {
                         if (exit_code == 0) {
                             print("{s}\nThe following command incorrectly succeeded:\n", .{result.stderr});
                             dumpArgs(build_args.items);
@@ -249,21 +249,21 @@ fn printOutput(
             var exited_with_signal = false;
 
             const result = if (expected_outcome == .fail) blk: {
-                const result = try process.Child.run(arena, io, .{
+                const result = try process.run(arena, io, .{
                     .argv = run_args,
                     .env_map = &env_map,
                     .cwd = tmp_dir_path,
                     .max_output_bytes = max_doc_file_size,
                 });
                 switch (result.term) {
-                    .Exited => |exit_code| {
+                    .exited => |exit_code| {
                         if (exit_code == 0) {
                             print("{s}\nThe following command incorrectly succeeded:\n", .{result.stderr});
                             dumpArgs(run_args);
                             fatal("example incorrectly compiled", .{});
                         }
                     },
-                    .Signal => exited_with_signal = true,
+                    .signal => exited_with_signal = true,
                     else => {},
                 }
                 break :blk result;
@@ -368,14 +368,14 @@ fn printOutput(
                 try test_args.append("-lc");
                 try shell_out.print("-lc ", .{});
             }
-            const result = try process.Child.run(arena, io, .{
+            const result = try process.run(arena, io, .{
                 .argv = test_args.items,
                 .env_map = &env_map,
                 .cwd = tmp_dir_path,
                 .max_output_bytes = max_doc_file_size,
             });
             switch (result.term) {
-                .Exited => |exit_code| {
+                .exited => |exit_code| {
                     if (exit_code == 0) {
                         print("{s}\nThe following command incorrectly succeeded:\n", .{result.stderr});
                         dumpArgs(test_args.items);
@@ -424,14 +424,14 @@ fn printOutput(
                 },
             }
 
-            const result = try process.Child.run(arena, io, .{
+            const result = try process.run(arena, io, .{
                 .argv = test_args.items,
                 .env_map = &env_map,
                 .cwd = tmp_dir_path,
                 .max_output_bytes = max_doc_file_size,
             });
             switch (result.term) {
-                .Exited => |exit_code| {
+                .exited => |exit_code| {
                     if (exit_code == 0) {
                         print("{s}\nThe following command incorrectly succeeded:\n", .{result.stderr});
                         dumpArgs(test_args.items);
@@ -500,14 +500,14 @@ fn printOutput(
             }
 
             if (maybe_error_match) |error_match| {
-                const result = try process.Child.run(arena, io, .{
+                const result = try process.run(arena, io, .{
                     .argv = build_args.items,
                     .env_map = &env_map,
                     .cwd = tmp_dir_path,
                     .max_output_bytes = max_doc_file_size,
                 });
                 switch (result.term) {
-                    .Exited => |exit_code| {
+                    .exited => |exit_code| {
                         if (exit_code == 0) {
                             print("{s}\nThe following command incorrectly succeeded:\n", .{result.stderr});
                             dumpArgs(build_args.items);
@@ -1123,15 +1123,15 @@ fn run(
     env_map: *process.Environ.Map,
     cwd: []const u8,
     args: []const []const u8,
-) !process.Child.RunResult {
-    const result = try process.Child.run(allocator, io, .{
+) !process.RunResult {
+    const result = try process.run(allocator, io, .{
         .argv = args,
         .env_map = env_map,
         .cwd = cwd,
         .max_output_bytes = max_doc_file_size,
     });
     switch (result.term) {
-        .Exited => |exit_code| {
+        .exited => |exit_code| {
             if (exit_code != 0) {
                 std.debug.print("{s}\nThe following command exited with code {}:\n", .{ result.stderr, exit_code });
                 dumpArgs(args);

@@ -68,7 +68,7 @@ const usage =
 
 pub fn main(init: std.process.Init) !void {
     const allocator = init.arena;
-    const args = try init.args.toSlice(allocator);
+    const args = try init.minimal.args.toSlice(allocator);
 
     var argv = std.array_list.Managed([]const u8).init(allocator);
     var sysroot: ?[]const u8 = null;
@@ -161,7 +161,7 @@ fn fetchTarget(
     });
     try cc_argv.appendSlice(args);
 
-    const res = try std.process.Child.run(arena, io, .{ .argv = cc_argv.items });
+    const res = try std.process.run(arena, io, .{ .argv = cc_argv.items });
 
     if (res.stderr.len != 0) {
         std.log.err("{s}", .{res.stderr});

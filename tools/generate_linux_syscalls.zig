@@ -174,7 +174,7 @@ pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
     const io = init.io;
 
-    const args = try std.process.argsAlloc(gpa);
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
     if (args.len < 2 or mem.eql(u8, args[1], "--help")) {
         const stderr = std.debug.lockStderr(&.{});
         const w = &stderr.file_writer.interface;

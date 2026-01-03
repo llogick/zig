@@ -171,14 +171,6 @@ pub fn main(init: std.process.Init) !void {
         const zig_prog_node = target_prog_node.start("zig build-exe", 0);
         defer zig_prog_node.end();
 
-        var child = std.process.Child.init(child_args.items, arena);
-        child.stdin_behavior = .Pipe;
-        child.stdout_behavior = .Pipe;
-        child.stderr_behavior = .Pipe;
-        child.progress_node = zig_prog_node;
-        child.cwd_dir = tmp_dir;
-        child.cwd = tmp_dir_path;
-
         var cc_child_args: std.ArrayList([]const u8) = .empty;
         if (target.backend == .cbe) {
             const resolved_cc_zig_exe = if (opt_cc_zig) |cc_zig_exe|
@@ -201,6 +193,17 @@ pub fn main(init: std.process.Init) !void {
             try cc_child_args.append(arena, "-o");
         }
 
+        var child = std.process.spawn(io, .{
+            .argv = child_args.items,
+            .stdin = .pipe,
+            .stdout = .pipe,
+            .stderr = .pipe,
+            .progress_node = zig_prog_node,
+            .cwd_dir = tmp_dir,
+            .cwd = tmp_dir_path,
+        });
+        defer child.kill(io);
+
         var eval: Eval = .{
             .arena = arena,
             .io = io,
@@ -218,11 +221,6 @@ pub fn main(init: std.process.Init) !void {
             .enable_wasmtime = enable_wasmtime,
             .enable_darling = enable_darling,
         };
-
-        try child.spawn(io);
-        errdefer {
-            _ = child.kill(io) catch {};
-        }
 
         var poller = Io.poll(arena, Eval.StreamEnum, .{
             .stdout = child.stdout.?,
@@ -528,7 +526,7 @@ const Eval = struct {
         const run_prog_node = prog_node.start("run generated executable", 0);
         defer run_prog_node.end();
 
-        const result = std.process.Child.run(eval.arena, io, .{
+        const result = std.process.run(eval.arena, io, .{
             .argv = argv,
             .cwd_dir = eval.tmp_dir,
             .cwd = eval.tmp_dir_path,
@@ -556,7 +554,7 @@ const Eval = struct {
         }
 
         switch (result.term) {
-            .Exited => |code| switch (update.outcome) {
+            .exited => |code| switch (update.outcome) {
                 .unknown, .compile_errors => unreachable,
                 .stdout => |expected_stdout| {
                     if (code != 0) {
@@ -564,9 +562,12 @@ const Eval = struct {
                     }
                     try std.testing.expectEqualStrings(expected_stdout, result.stdout);
                 },
-                .exit_code => |expected_code| try std.testing.expectEqual(expected_code, result.term.Exited),
+                .exit_code => |expected_code| try std.testing.expectEqual(expected_code, code),
             },
-            .Signal, .Stopped, .Unknown => {
+            .signal => |sig| {
+                eval.fatal("generated executable '{s}' terminated with signal {t}", .{ binary_path, sig });
+            },
+            .stopped, .unknown => {
                 eval.fatal("generated executable '{s}' terminated unexpectedly", .{binary_path});
             },
         }
@@ -614,7 +615,7 @@ const Eval = struct {
         try eval.cc_child_args.appendSlice(eval.arena, &.{ out_path, c_path });
         defer eval.cc_child_args.items.len -= 2;
 
-        const result = std.process.Child.run(eval.arena, eval.io, .{
+        const result = std.process.run(eval.arena, eval.io, .{
             .argv = eval.cc_child_args.items,
             .cwd_dir = eval.tmp_dir,
             .cwd = eval.tmp_dir_path,
@@ -623,13 +624,13 @@ const Eval = struct {
             eval.fatal("failed to spawn zig cc for '{s}': {t}", .{ c_path, err });
         };
         switch (result.term) {
-            .Exited => |code| if (code != 0) {
+            .exited => |code| if (code != 0) {
                 if (result.stderr.len != 0) {
                     std.log.err("zig cc stderr:\n{s}", .{result.stderr});
                 }
                 eval.fatal("zig cc for '{s}' failed with code {d}", .{ c_path, code });
             },
-            .Signal, .Stopped, .Unknown => {
+            .signal, .stopped, .unknown => {
                 if (result.stderr.len != 0) {
                     std.log.err("zig cc stderr:\n{s}", .{result.stderr});
                 }
@@ -909,8 +910,9 @@ fn waitChild(child: *std.process.Child, eval: *Eval) void {
     requestExit(child, eval);
     const term = child.wait(io) catch |err| eval.fatal("child process failed: {t}", .{err});
     switch (term) {
-        .Exited => |code| if (code != 0) eval.fatal("compiler failed with code {d}", .{code}),
-        .Signal, .Stopped, .Unknown => eval.fatal("compiler terminated unexpectedly", .{}),
+        .exited => |code| if (code != 0) eval.fatal("compiler failed with code {d}", .{code}),
+        .signal => |sig| eval.fatal("compiler terminated with signal {t}", .{sig}),
+        .stopped, .unknown => eval.fatal("compiler terminated unexpectedly", .{}),
     }
 }
 

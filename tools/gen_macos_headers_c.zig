@@ -16,8 +16,8 @@ const usage =
 pub fn main(init: std.process.Init) !void {
     const arena = init.arena;
     const io = init.io;
+    const args = try init.minimal.args.toSlice(arena);
 
-    const args = try init.args.toSlice(arena);
     if (args.len == 1) fatal("no command or option specified", .{});
 
     var positionals = std.array_list.Managed([]const u8).init(arena);

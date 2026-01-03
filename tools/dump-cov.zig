@@ -10,9 +10,9 @@ const SeenPcsHeader = std.Build.abi.fuzz.SeenPcsHeader;
 
 pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
-    const arena = init.arena;
+    const arena = init.arena.allocator();
     const io = init.io;
-    const args = try init.args.toSlice(arena);
+    const args = try init.minimal.args.toSlice(arena);
 
     const target_query_str = switch (args.len) {
         3 => "native",

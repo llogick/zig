@@ -207,7 +207,7 @@ fn testExec(gpa: Allocator, io: Io, command: []const u8, expected_stdout: []cons
 }
 
 fn testExecWithCwd(gpa: Allocator, io: Io, command: []const u8, cwd: ?[]const u8, expected_stdout: []const u8) !void {
-    const result = try std.process.Child.run(gpa, io, .{
+    const result = try std.process.run(gpa, io, .{
         .argv = &[_][]const u8{command},
         .cwd = cwd,
     });

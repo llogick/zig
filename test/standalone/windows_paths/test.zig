@@ -98,7 +98,7 @@ fn checkRelative(
     cwd: ?[]const u8,
     env_map: ?*const std.process.Environ.Map,
 ) !void {
-    const result = try std.process.Child.run(allocator, io, .{
+    const result = try std.process.run(allocator, io, .{
         .argv = argv,
         .cwd = cwd,
         .env_map = env_map,

@@ -24,6 +24,9 @@ pub fn main(init: std.process.Init.Minimal) !void {
     defer std.debug.assert(debug_allocator.deinit() == .ok);
     const gpa = debug_allocator.allocator();
 
+    var env_map = try init.environ.createMap(gpa);
+    defer env_map.deinit();
+
     var threaded: std.Io.Threaded = .init(gpa, .{
         .environ = init.environ,
         .argv0 = .init(init.args),
@@ -148,8 +151,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
             defer argv.deinit(aro_arena);
 
             try argv.append(aro_arena, "arocc"); // dummy command name
-            const resolved_include_paths = try include_paths.get(&error_handler);
-            try preprocess.appendAroArgs(aro_arena, &argv, options, resolved_include_paths);
+            const resolved_include_paths = try include_paths.get(&error_handler, &env_map);
+            try preprocess.appendAroArgs(aro_arena, &argv, options, resolved_include_paths, &env_map);
             try argv.append(aro_arena, switch (options.input_source) {
                 .stdio => "-",
                 .filename => |filename| filename,
@@ -283,7 +286,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
                     .dependencies = maybe_dependencies,
                     .ignore_include_env_var = options.ignore_include_env_var,
                     .extra_include_paths = options.extra_include_paths.items,
-                    .system_include_paths = try include_paths.get(&error_handler),
+                    .system_include_paths = try include_paths.get(&error_handler, &env_map),
                     .default_language_id = options.default_language_id,
                     .default_code_page = default_code_page,
                     .disjoint_code_page = has_disjoint_code_page,
@@ -292,7 +295,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
                     .max_string_literal_codepoints = options.max_string_literal_codepoints,
                     .silent_duplicate_control_ids = options.silent_duplicate_control_ids,
                     .warn_instead_of_error_on_invalid_code_page = options.warn_instead_of_error_on_invalid_code_page,
-                }) catch |err| switch (err) {
+                }, &env_map) catch |err| switch (err) {
                     error.ParseError, error.CompileError => {
                         try error_handler.emitDiagnostics(gpa, Io.Dir.cwd(), final_input, &diagnostics, mapping_results.mappings);
                         // Delete the output file on error

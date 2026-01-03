@@ -74,9 +74,7 @@ pub const Environment = struct {
         pub const default: @This() = .{ .provided = 0 };
     };
 
-    /// Load all of the environment variables using the std.process API. Do not use if using Aro as a shared library on Linux without libc
-    /// See https://github.com/ziglang/zig/issues/4524
-    pub fn loadAll(allocator: std.mem.Allocator) !Environment {
+    pub fn loadAll(allocator: std.mem.Allocator, environ_map: *const std.process.Environ.Map) !Environment {
         var env: Environment = .{};
         errdefer env.deinit(allocator);
 
@@ -85,11 +83,7 @@ pub const Environment = struct {
 
             var env_var_buf: [field.name.len]u8 = undefined;
             const env_var_name = std.ascii.upperString(&env_var_buf, field.name);
-            const val: ?[]const u8 = std.process.getEnvVarOwned(allocator, env_var_name) catch |err| switch (err) {
-                error.OutOfMemory => |e| return e,
-                error.EnvironmentVariableNotFound => null,
-                error.InvalidWtf8 => null,
-            };
+            const val: ?[]const u8 = if (environ_map.get(env_var_name)) |v| try allocator.dupe(u8, v) else null;
             @field(env, field.name) = val;
         }
         return env;
@@ -193,13 +187,20 @@ pub fn init(gpa: Allocator, arena: Allocator, io: Io, diagnostics: *Diagnostics,
 
 /// Initialize Compilation with default environment,
 /// pragma handlers and emulation mode set to target.
-pub fn initDefault(gpa: Allocator, arena: Allocator, io: Io, diagnostics: *Diagnostics, cwd: Io.Dir) !Compilation {
+pub fn initDefault(
+    gpa: Allocator,
+    arena: Allocator,
+    io: Io,
+    diagnostics: *Diagnostics,
+    cwd: Io.Dir,
+    env_map: *const std.process.Environ.Map,
+) !Compilation {
     var comp: Compilation = .{
         .gpa = gpa,
         .arena = arena,
         .io = io,
         .diagnostics = diagnostics,
-        .environment = try Environment.loadAll(gpa),
+        .environment = try Environment.loadAll(gpa, env_map),
         .cwd = cwd,
     };
     errdefer comp.deinit();
