@@ -830,10 +830,6 @@ fn addCompilerStep(b: *std.Build, options: AddCompilerModOptions) *std.Build.Ste
     const exe = b.addExecutable(.{
         .name = "zig",
         .max_rss = switch (b.graph.host.result.os.tag) {
-            .freebsd => switch (b.graph.host.result.cpu.arch) {
-                .x86_64 => 6_044_158_771,
-                else => 6_100_000_000,
-            },
             .linux => switch (b.graph.host.result.cpu.arch) {
                 .aarch64 => 6_240_805_683,
                 .loongarch64 => 5_024_158_515,
