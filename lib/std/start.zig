@@ -1,13 +1,16 @@
 // This file is included in the compilation unit when exporting an executable.
 
-const root = @import("root");
-const std = @import("std.zig");
 const builtin = @import("builtin");
+const native_arch = builtin.cpu.arch;
+const native_os = builtin.os.tag;
+const is_wasm = native_arch.isWasm();
+
+const std = @import("std.zig");
 const assert = std.debug.assert;
 const uefi = std.os.uefi;
 const elf = std.elf;
-const native_arch = builtin.cpu.arch;
-const native_os = builtin.os.tag;
+
+const root = @import("root");
 
 const start_sym_name = if (native_arch.isMIPS()) "__start" else "_start";
 
@@ -22,7 +25,7 @@ comptime {
         }
     } else if (builtin.output_mode == .Exe or @hasDecl(root, "main")) {
         if (builtin.link_libc and @hasDecl(root, "main")) {
-            if (native_arch.isWasm()) {
+            if (is_wasm) {
                 @export(&mainWithoutEnv, .{ .name = "__main_argc_argv" });
             } else if (!@typeInfo(@TypeOf(root.main)).@"fn".calling_convention.eql(.c)) {
                 @export(&main, .{ .name = "main" });
@@ -57,7 +60,7 @@ comptime {
                 // case it's not required to provide an entrypoint such as main.
                 @export(&startWasi, .{ .name = wasm_start_sym });
             }
-        } else if (native_arch.isWasm() and native_os == .freestanding) {
+        } else if (is_wasm and native_os == .freestanding) {
             // Only call main when defined. For WebAssembly it's allowed to pass `-fno-entry` in which
             // case it's not required to provide an entrypoint such as main.
             if (!@hasDecl(root, start_sym_name) and @hasDecl(root, "main")) @export(&wasm_freestanding_start, .{ .name = start_sym_name });
@@ -660,7 +663,7 @@ fn mainWithoutEnv(c_argc: c_int, c_argv: [*][*:0]c_char) callconv(.c) c_int {
 /// General error message for a malformed return type
 const bad_main_ret = "expected return type of main to be 'void', '!void', 'noreturn', 'u8', or '!u8'";
 
-const use_debug_allocator = !native_arch.isWasm() and switch (builtin.mode) {
+const use_debug_allocator = !is_wasm and switch (builtin.mode) {
     .Debug => true,
     .ReleaseSafe => !builtin.link_libc, // Not ideal, but the best we have for now.
     .ReleaseFast, .ReleaseSmall => !builtin.link_libc and builtin.single_threaded, // Also not ideal.
@@ -675,12 +678,12 @@ inline fn callMain(args: std.process.Args.Vector, environ: std.process.Environ.B
         .environ = .{ .block = environ },
     }));
 
-    const gpa = if (native_arch.isWasm())
-        std.heap.wasm_allocator
-    else if (use_debug_allocator)
+    const gpa = if (use_debug_allocator)
         debug_allocator.allocator()
     else if (builtin.link_libc)
         std.heap.c_allocator
+    else if (is_wasm)
+        std.heap.wasm_allocator
     else if (!builtin.single_threaded)
         std.heap.smp_allocator
     else
@@ -690,7 +693,9 @@ inline fn callMain(args: std.process.Args.Vector, environ: std.process.Environ.B
         _ = debug_allocator.deinit(); // Leaks do not affect return code.
     };
 
-    var arena_allocator = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    const arena_backing_allocator = if (is_wasm) gpa else std.heap.page_allocator;
+
+    var arena_allocator = std.heap.ArenaAllocator.init(arena_backing_allocator);
     defer arena_allocator.deinit();
 
     var threaded: std.Io.Threaded = .init(gpa, .{

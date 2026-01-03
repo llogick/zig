@@ -40,10 +40,11 @@ pub const Init = struct {
     /// exit. Not threadsafe.
     arena: *std.heap.ArenaAllocator,
     /// A default-selected general purpose allocator for temporary heap
-    /// allocations. Debug mode will set up leak checking. Threadsafe.
+    /// allocations. Debug mode will set up leak checking if possible.
+    /// Threadsafe.
     gpa: Allocator,
     /// An appropriate default Io implementation based on the target
-    /// configuration. Debug mode will set up leak checking.
+    /// configuration. Debug mode will set up leak checking if possible.
     io: Io,
     /// Environment variables, initialized with `gpa`. Not threadsafe.
     environ_map: *Environ.Map,
