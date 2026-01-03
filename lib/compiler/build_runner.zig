@@ -544,7 +544,7 @@ pub fn main(init: process.Init.Minimal) !void {
     var w: Watch = w: {
         if (!watch) break :w undefined;
         if (!Watch.have_impl) fatal("--watch not yet implemented for {t}", .{builtin.os.tag});
-        break :w try .init();
+        break :w try .init(graph.cache.cwd);
     };
 
     const now = Io.Clock.Timestamp.now(io, .awake) catch |err| fatal("failed to collect timestamp: {t}", .{err});

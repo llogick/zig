@@ -99,7 +99,8 @@ const Os = switch (builtin.os.tag) {
             };
         };
 
-        fn init() !Watch {
+        fn init(cwd_path: []const u8) !Watch {
+            _ = cwd_path;
             return .{
                 .dir_table = .{},
                 .dir_count = 0,
@@ -427,7 +428,8 @@ const Os = switch (builtin.os.tag) {
             }
         };
 
-        fn init() !Watch {
+        fn init(cwd_path: []const u8) !Watch {
+            _ = cwd_path;
             return .{
                 .dir_table = .{},
                 .dir_count = 0,
@@ -658,14 +660,13 @@ const Os = switch (builtin.os.tag) {
         const EV = std.c.EV;
         const NOTE = std.c.NOTE;
 
-        fn init() !Watch {
-            const kq_fd = try posix.kqueue();
-            errdefer posix.close(kq_fd);
+        fn init(cwd_path: []const u8) !Watch {
+            _ = cwd_path;
             return .{
                 .dir_table = .{},
                 .dir_count = 0,
                 .os = .{
-                    .kq_fd = kq_fd,
+                    .kq_fd = try posix.kqueue(),
                     .handles = .empty,
                 },
                 .generation = 0,
@@ -841,9 +842,9 @@ const Os = switch (builtin.os.tag) {
     .macos => struct {
         fse: FsEvents,
 
-        fn init() !Watch {
+        fn init(cwd_path: []const u8) !Watch {
             return .{
-                .os = .{ .fse = try .init() },
+                .os = .{ .fse = try .init(cwd_path) },
                 .dir_count = 0,
                 .dir_table = undefined,
                 .generation = undefined,
@@ -863,8 +864,8 @@ const Os = switch (builtin.os.tag) {
     else => void,
 };
 
-pub fn init() !Watch {
-    return Os.init();
+pub fn init(cwd_path: []const u8) !Watch {
+    return Os.init(cwd_path);
 }
 
 pub const Match = struct {
