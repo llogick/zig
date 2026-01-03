@@ -288,11 +288,11 @@ pub const ReplaceError = error{
     FileBusy,
     ProcessFdQuotaExceeded,
     SystemFdQuotaExceeded,
-} || Io.Dir.PathNameError || Io.Cancelable || Io.UnexpectedError;
+} || Allocator.Error || Io.Dir.PathNameError || Io.Cancelable || Io.UnexpectedError;
 
 pub const ReplaceOptions = struct {
     argv: []const []const u8,
-    arg0_expand: ArgExpansion = .no_expand,
+    expand_arg0: ArgExpansion = .no_expand,
     /// Replaces the environment when provided. The PATH value from here is
     /// never used to resolve `argv[0]`.
     environ_map: ?*const Environ.Map = null,

@@ -1122,6 +1122,7 @@ const Syscall = struct {
 
 const max_iovecs_len = 8;
 const splat_buffer_size = 64;
+const default_PATH = "/usr/local/bin:/bin/:/usr/bin";
 
 comptime {
     if (@TypeOf(posix.IOV_MAX) != void) assert(max_iovecs_len <= posix.IOV_MAX);
@@ -12765,12 +12766,37 @@ fn scanEnviron(t: *Threaded) void {
 }
 
 fn processReplace(userdata: ?*anyopaque, options: process.ReplaceOptions) process.ReplaceError {
-    _ = userdata;
-    _ = options;
-    @panic("TODO processReplace");
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+
+    if (!process.can_replace) return error.OperationUnsupported;
+
+    t.scanEnviron(); // for PATH
+    const PATH = t.environ.string.PATH orelse default_PATH;
+
+    var arena_allocator = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_allocator.deinit();
+    const arena = arena_allocator.allocator();
+
+    const argv_buf = try arena.allocSentinel(?[*:0]const u8, options.argv.len, null);
+    for (options.argv, 0..) |arg, i| argv_buf[i] = (try arena.dupeZ(u8, arg)).ptr;
+
+    const envp: [*:null]const ?[*:0]const u8 = m: {
+        const prog_fd: i32 = -1;
+        if (options.environ_map) |environ_map| {
+            break :m (try environ_map.createBlockPosix(arena, .{
+                .zig_progress_fd = prog_fd,
+            })).ptr;
+        }
+        break :m (try process.Environ.createBlockPosix(t.environ.process_environ, arena, .{
+            .zig_progress_fd = prog_fd,
+        })).ptr;
+    };
+
+    return posixExecv(options.expand_arg0, argv_buf.ptr[0].?, argv_buf.ptr, envp, PATH);
 }
 
 fn processReplacePath(userdata: ?*anyopaque, dir: Dir, options: process.ReplaceOptions) process.ReplaceError {
+    if (!process.can_replace) return error.OperationUnsupported;
     _ = userdata;
     _ = dir;
     _ = options;
@@ -12778,6 +12804,7 @@ fn processReplacePath(userdata: ?*anyopaque, dir: Dir, options: process.ReplaceO
 }
 
 fn processSpawnPath(userdata: ?*anyopaque, dir: Dir, options: process.SpawnOptions) process.SpawnError!process.Child {
+    if (!process.can_spawn) return error.OperationUnsupported;
     _ = userdata;
     _ = dir;
     _ = options;
@@ -12903,7 +12930,7 @@ fn spawnPosix(t: *Threaded, options: process.SpawnOptions) process.SpawnError!Sp
     errdefer destroyPipe(err_pipe);
 
     t.scanEnviron(); // for PATH
-    const PATH = t.environ.string.PATH orelse "/usr/local/bin:/bin/:/usr/bin";
+    const PATH = t.environ.string.PATH orelse default_PATH;
 
     const pid_result = try posix.fork();
     if (pid_result == 0) {
@@ -12954,7 +12981,7 @@ fn spawnPosix(t: *Threaded, options: process.SpawnOptions) process.SpawnError!Sp
             }
         }
 
-        const err = execvpeZ_expandArg0(options.expand_arg0, argv_buf.ptr[0].?, argv_buf.ptr, envp, PATH);
+        const err = posixExecv(options.expand_arg0, argv_buf.ptr[0].?, argv_buf.ptr, envp, PATH);
         forkBail(err_pipe[1], err);
     }
 
@@ -14361,7 +14388,7 @@ fn testArgvToCommandLineWindows(argv: []const []const u8, expected_cmd_line: []c
     try std.testing.expectEqualStrings(expected_cmd_line, cmd_line);
 }
 
-fn execvpeZ_expandArg0(
+fn posixExecv(
     arg0_expand: process.ArgExpansion,
     file: [*:0]const u8,
     child_argv: [*:null]?[*:0]const u8,
@@ -14369,10 +14396,10 @@ fn execvpeZ_expandArg0(
     PATH: []const u8,
 ) process.ReplaceError {
     const file_slice = std.mem.sliceTo(file, 0);
-    if (std.mem.findScalar(u8, file_slice, '/') != null) return execveZ(file, child_argv, envp);
+    if (std.mem.findScalar(u8, file_slice, '/') != null) return posixExecvPath(file, child_argv, envp);
 
     // Use of PATH_MAX here is valid as the path_buf will be passed
-    // directly to the operating system in execveZ.
+    // directly to the operating system in posixExecvPath.
     var path_buf: [posix.PATH_MAX]u8 = undefined;
     var it = std.mem.tokenizeScalar(u8, PATH, ':');
     var seen_eacces = false;
@@ -14397,7 +14424,7 @@ fn execvpeZ_expandArg0(
             .expand => child_argv[0] = full_path,
             .no_expand => {},
         }
-        err = execveZ(full_path, child_argv, envp);
+        err = posixExecvPath(full_path, child_argv, envp);
         switch (err) {
             error.AccessDenied => seen_eacces = true,
             error.FileNotFound, error.NotDir => {},
@@ -14408,8 +14435,8 @@ fn execvpeZ_expandArg0(
     return err;
 }
 
-/// This function ignores PATH environment variable. See `execvpeZ` for that.
-pub fn execveZ(
+/// This function ignores PATH environment variable.
+pub fn posixExecvPath(
     path: [*:0]const u8,
     child_argv: [*:null]const ?[*:0]const u8,
     envp: [*:null]const ?[*:0]const u8,
@@ -14445,17 +14472,6 @@ pub fn execveZ(
             else => return posix.unexpectedErrno(err),
         },
     }
-}
-
-/// This function also uses the PATH environment variable to get the full path to the executable.
-/// If `file` is an absolute path, this is the same as `execveZ`.
-pub fn execvpeZ(
-    file: [*:0]const u8,
-    argv_ptr: [*:null]const ?[*:0]const u8,
-    envp: [*:null]const ?[*:0]const u8,
-    PATH: []const u8,
-) process.ReplaceError {
-    return execvpeZ_expandArg0(.no_expand, file, argv_ptr, envp, PATH);
 }
 
 fn windowsMakePipeIn(rd: *?windows.HANDLE, wr: *?windows.HANDLE, sattr: *const windows.SECURITY_ATTRIBUTES) !void {
