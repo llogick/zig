@@ -193,14 +193,14 @@ pub fn initDefault(
     io: Io,
     diagnostics: *Diagnostics,
     cwd: Io.Dir,
-    env_map: *const std.process.Environ.Map,
+    environ_map: *const std.process.Environ.Map,
 ) !Compilation {
     var comp: Compilation = .{
         .gpa = gpa,
         .arena = arena,
         .io = io,
         .diagnostics = diagnostics,
-        .environment = try Environment.loadAll(gpa, env_map),
+        .environment = try Environment.loadAll(gpa, environ_map),
         .cwd = cwd,
     };
     errdefer comp.deinit();

@@ -12887,8 +12887,8 @@ fn spawnPosix(t: *Threaded, options: process.SpawnOptions) process.SpawnError!Sp
 
     const envp: [*:null]const ?[*:0]const u8 = m: {
         const prog_fd: i32 = if (prog_pipe[1] == -1) -1 else prog_fileno;
-        if (options.env_map) |env_map| {
-            break :m (try env_map.createBlockPosix(arena, .{
+        if (options.environ_map) |environ_map| {
+            break :m (try environ_map.createBlockPosix(arena, .{
                 .zig_progress_fd = prog_fd,
             })).ptr;
         }
@@ -13436,7 +13436,7 @@ fn processSpawnWindows(userdata: ?*anyopaque, options: process.SpawnOptions) pro
     const cwd_w = if (options.cwd) |cwd| try std.unicode.wtf8ToWtf16LeAllocZ(arena, cwd) else null;
     const cwd_w_ptr = if (cwd_w) |cwd| cwd.ptr else null;
 
-    const maybe_envp_buf = if (options.env_map) |env_map| try env_map.createBlockWindows(arena) else null;
+    const maybe_envp_buf = if (options.environ_map) |environ_map| try environ_map.createBlockWindows(arena) else null;
     const envp_ptr = if (maybe_envp_buf) |envp_buf| envp_buf.ptr else null;
 
     const app_name_wtf8 = options.argv[0];

@@ -568,7 +568,7 @@ fn buildClientWasm(ws: *WebServer, arena: Allocator, optimize: std.builtin.Optim
 
     var child = try std.process.spawn(io, .{
         .argv = argv.items,
-        .env_map = &graph.env_map,
+        .environ_map = &graph.environ_map,
         .stdin = .pipe,
         .stdout = .pipe,
         .stderr = .pipe,

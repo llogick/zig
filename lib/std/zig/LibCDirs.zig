@@ -28,7 +28,7 @@ pub fn detect(
     is_native_abi: bool,
     link_libc: bool,
     libc_installation: ?*const LibCInstallation,
-    env_map: *const std.process.Environ.Map,
+    environ_map: *const std.process.Environ.Map,
 ) LibCInstallation.FindError!LibCDirs {
     if (!link_libc) {
         return .{
@@ -50,7 +50,7 @@ pub fn detect(
         const libc = try arena.create(LibCInstallation);
         libc.* = LibCInstallation.findNative(arena, io, .{
             .target = target,
-            .env_map = env_map,
+            .environ_map = environ_map,
         }) catch |err| switch (err) {
             error.CCompilerExitCode,
             error.CCompilerCrashed,
@@ -91,7 +91,7 @@ pub fn detect(
         libc.* = try LibCInstallation.findNative(arena, io, .{
             .verbose = true,
             .target = target,
-            .env_map = env_map,
+            .environ_map = environ_map,
         });
         return detectFromInstallation(arena, target, libc);
     }

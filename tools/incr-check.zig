@@ -31,7 +31,7 @@ pub fn main(init: std.process.Init) !void {
     const fatal = std.process.fatal;
     const arena = init.arena.allocator();
     const io = init.io;
-    const env_map = init.env_map;
+    const environ_map = init.environ_map;
     const cwd_path = try std.process.getCwdAlloc(arena);
 
     var opt_zig_exe: ?[]const u8 = null;
@@ -113,9 +113,9 @@ pub fn main(init: std.process.Init) !void {
     }
 
     // Convert paths to be relative to the cwd of the subprocess.
-    const resolved_zig_exe = try Dir.path.relative(arena, cwd_path, env_map, tmp_dir_path, zig_exe);
+    const resolved_zig_exe = try Dir.path.relative(arena, cwd_path, environ_map, tmp_dir_path, zig_exe);
     const opt_resolved_lib_dir = if (opt_lib_dir) |lib_dir|
-        try Dir.path.relative(arena, cwd_path, env_map, tmp_dir_path, lib_dir)
+        try Dir.path.relative(arena, cwd_path, environ_map, tmp_dir_path, lib_dir)
     else
         null;
 
@@ -176,7 +176,7 @@ pub fn main(init: std.process.Init) !void {
         var cc_child_args: std.ArrayList([]const u8) = .empty;
         if (target.backend == .cbe) {
             const resolved_cc_zig_exe = if (opt_cc_zig) |cc_zig_exe|
-                try Dir.path.relative(arena, cwd_path, env_map, tmp_dir_path, cc_zig_exe)
+                try Dir.path.relative(arena, cwd_path, environ_map, tmp_dir_path, cc_zig_exe)
             else
                 resolved_zig_exe;
 

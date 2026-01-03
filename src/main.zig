@@ -191,7 +191,7 @@ pub fn main(init: std.process.Init.Minimal) anyerror!void {
         fatal("expected command argument", .{});
     }
 
-    var env_map = init.environ.createMap(arena) catch |err| fatal("failed to parse environment: {t}", .{err});
+    var environ_map = init.environ.createMap(arena) catch |err| fatal("failed to parse environment: {t}", .{err});
 
     Compilation.setMainThread();
 
@@ -206,14 +206,14 @@ pub fn main(init: std.process.Init.Minimal) anyerror!void {
 
     if (tracy.enable_allocation) {
         var gpa_tracy = tracy.tracyAllocator(gpa);
-        return mainArgs(gpa_tracy.allocator(), arena, io, args, &env_map);
+        return mainArgs(gpa_tracy.allocator(), arena, io, args, &environ_map);
     }
 
     if (native_os == .wasi) {
         wasi_preopens = try fs.wasi.preopensAlloc(arena);
     }
 
-    return mainArgs(gpa, arena, io, args, &env_map);
+    return mainArgs(gpa, arena, io, args, &environ_map);
 }
 
 fn mainArgs(
@@ -221,9 +221,9 @@ fn mainArgs(
     arena: Allocator,
     io: Io,
     args: []const [:0]const u8,
-    env_map: *process.Environ.Map,
+    environ_map: *process.Environ.Map,
 ) !void {
-    if (process.can_replace and EnvVar.ZIG_IS_DETECTING_LIBC_PATHS.isSet(env_map)) {
+    if (process.can_replace and EnvVar.ZIG_IS_DETECTING_LIBC_PATHS.isSet(environ_map)) {
         dev.check(.cc_command);
         // In this case we have accidentally invoked ourselves as "the system C compiler"
         // to figure out where libc is installed. This is essentially infinite recursion
@@ -233,7 +233,7 @@ fn mainArgs(
         // why we have this additional environment variable here to check.
 
         const inf_loop_env_key: EnvVar = .ZIG_IS_TRYING_TO_NOT_CALL_ITSELF;
-        if (inf_loop_env_key.isSet(env_map)) {
+        if (inf_loop_env_key.isSet(environ_map)) {
             fatal("{s}", .{
                 "The compilation links against libc, but Zig is unable to provide a libc " ++
                     "for this operating system, and no --libc " ++
@@ -242,17 +242,17 @@ fn mainArgs(
                     "compiler is `zig cc`, so no libc installation was found.",
             });
         }
-        try env_map.put(@tagName(inf_loop_env_key), "1");
+        try environ_map.put(@tagName(inf_loop_env_key), "1");
 
         // Some programs such as CMake will strip the `cc` and subsequent args from the
         // CC environment variable. We detect and support this scenario here because of
         // the ZIG_IS_DETECTING_LIBC_PATHS environment variable.
         if (mem.eql(u8, args[1], "cc")) {
-            return process.replace(io, .{ .argv = args[1..], .env_map = env_map });
+            return process.replace(io, .{ .argv = args[1..], .environ_map = environ_map });
         } else {
             const modified_args = try arena.dupe([]const u8, args);
             modified_args[0] = "cc";
-            return process.replace(io, .{ .argv = modified_args, .env_map = env_map });
+            return process.replace(io, .{ .argv = modified_args, .environ_map = environ_map });
         }
     }
 
@@ -260,22 +260,22 @@ fn mainArgs(
     const cmd_args = args[2..];
     if (mem.eql(u8, cmd, "build-exe")) {
         dev.check(.build_exe_command);
-        return buildOutputType(gpa, arena, io, args, .{ .build = .Exe }, env_map);
+        return buildOutputType(gpa, arena, io, args, .{ .build = .Exe }, environ_map);
     } else if (mem.eql(u8, cmd, "build-lib")) {
         dev.check(.build_lib_command);
-        return buildOutputType(gpa, arena, io, args, .{ .build = .Lib }, env_map);
+        return buildOutputType(gpa, arena, io, args, .{ .build = .Lib }, environ_map);
     } else if (mem.eql(u8, cmd, "build-obj")) {
         dev.check(.build_obj_command);
-        return buildOutputType(gpa, arena, io, args, .{ .build = .Obj }, env_map);
+        return buildOutputType(gpa, arena, io, args, .{ .build = .Obj }, environ_map);
     } else if (mem.eql(u8, cmd, "test")) {
         dev.check(.test_command);
-        return buildOutputType(gpa, arena, io, args, .zig_test, env_map);
+        return buildOutputType(gpa, arena, io, args, .zig_test, environ_map);
     } else if (mem.eql(u8, cmd, "test-obj")) {
         dev.check(.test_command);
-        return buildOutputType(gpa, arena, io, args, .zig_test_obj, env_map);
+        return buildOutputType(gpa, arena, io, args, .zig_test_obj, environ_map);
     } else if (mem.eql(u8, cmd, "run")) {
         dev.check(.run_command);
-        return buildOutputType(gpa, arena, io, args, .run, env_map);
+        return buildOutputType(gpa, arena, io, args, .run, environ_map);
     } else if (mem.eql(u8, cmd, "dlltool") or
         mem.eql(u8, cmd, "ranlib") or
         mem.eql(u8, cmd, "lib") or
@@ -285,7 +285,7 @@ fn mainArgs(
         return process.exit(try llvmArMain(arena, args));
     } else if (mem.eql(u8, cmd, "build")) {
         dev.check(.build_command);
-        return cmdBuild(gpa, arena, io, cmd_args, env_map);
+        return cmdBuild(gpa, arena, io, cmd_args, environ_map);
     } else if (mem.eql(u8, cmd, "clang") or
         mem.eql(u8, cmd, "-cc1") or mem.eql(u8, cmd, "-cc1as"))
     {
@@ -299,16 +299,16 @@ fn mainArgs(
         return process.exit(try lldMain(arena, args, true));
     } else if (mem.eql(u8, cmd, "cc")) {
         dev.check(.cc_command);
-        return buildOutputType(gpa, arena, io, args, .cc, env_map);
+        return buildOutputType(gpa, arena, io, args, .cc, environ_map);
     } else if (mem.eql(u8, cmd, "c++")) {
         dev.check(.cc_command);
-        return buildOutputType(gpa, arena, io, args, .cpp, env_map);
+        return buildOutputType(gpa, arena, io, args, .cpp, environ_map);
     } else if (mem.eql(u8, cmd, "translate-c")) {
         dev.check(.translate_c_command);
-        return buildOutputType(gpa, arena, io, args, .translate_c, env_map);
+        return buildOutputType(gpa, arena, io, args, .translate_c, environ_map);
     } else if (mem.eql(u8, cmd, "rc")) {
         const use_server = cmd_args.len > 0 and std.mem.eql(u8, cmd_args[0], "--zig-integration");
-        return jitCmd(gpa, arena, io, cmd_args, env_map, .{
+        return jitCmd(gpa, arena, io, cmd_args, environ_map, .{
             .cmd_name = "resinator",
             .root_src_path = "resinator/main.zig",
             .depend_on_aro = true,
@@ -319,20 +319,20 @@ fn mainArgs(
         dev.check(.fmt_command);
         return @import("fmt.zig").run(gpa, arena, io, cmd_args);
     } else if (mem.eql(u8, cmd, "objcopy")) {
-        return jitCmd(gpa, arena, io, cmd_args, env_map, .{
+        return jitCmd(gpa, arena, io, cmd_args, environ_map, .{
             .cmd_name = "objcopy",
             .root_src_path = "objcopy.zig",
         });
     } else if (mem.eql(u8, cmd, "fetch")) {
-        return cmdFetch(gpa, arena, io, cmd_args, env_map);
+        return cmdFetch(gpa, arena, io, cmd_args, environ_map);
     } else if (mem.eql(u8, cmd, "libc")) {
-        return jitCmd(gpa, arena, io, cmd_args, env_map, .{
+        return jitCmd(gpa, arena, io, cmd_args, environ_map, .{
             .cmd_name = "libc",
             .root_src_path = "libc.zig",
             .prepend_zig_lib_dir_path = true,
         });
     } else if (mem.eql(u8, cmd, "std")) {
-        return jitCmd(gpa, arena, io, cmd_args, env_map, .{
+        return jitCmd(gpa, arena, io, cmd_args, environ_map, .{
             .cmd_name = "std",
             .root_src_path = "std-docs.zig",
             .prepend_zig_lib_dir_path = true,
@@ -362,11 +362,11 @@ fn mainArgs(
             args,
             if (native_os == .wasi) wasi_preopens,
             &host,
-            env_map,
+            environ_map,
         );
         return stdout_writer.interface.flush();
     } else if (mem.eql(u8, cmd, "reduce")) {
-        return jitCmd(gpa, arena, io, cmd_args, env_map, .{
+        return jitCmd(gpa, arena, io, cmd_args, environ_map, .{
             .cmd_name = "reduce",
             .root_src_path = "reduce.zig",
         });
@@ -811,7 +811,7 @@ fn buildOutputType(
     io: Io,
     all_args: []const []const u8,
     arg_mode: ArgMode,
-    env_map: *process.Environ.Map,
+    environ_map: *process.Environ.Map,
 ) !void {
     var provided_name: ?[]const u8 = null;
     var root_src_file: ?[]const u8 = null;
@@ -824,9 +824,9 @@ fn buildOutputType(
     var debug_compile_errors = false;
     var debug_incremental = false;
     var verbose_link = (native_os != .wasi or builtin.link_libc) and
-        EnvVar.ZIG_VERBOSE_LINK.isSet(env_map);
+        EnvVar.ZIG_VERBOSE_LINK.isSet(environ_map);
     var verbose_cc = (native_os != .wasi or builtin.link_libc) and
-        EnvVar.ZIG_VERBOSE_CC.isSet(env_map);
+        EnvVar.ZIG_VERBOSE_CC.isSet(environ_map);
     var verbose_air = false;
     var verbose_intern_pool = false;
     var verbose_generic_instances = false;
@@ -898,9 +898,9 @@ fn buildOutputType(
     var runtime_args_start: ?usize = null;
     var test_filters: std.ArrayList([]const u8) = .empty;
     var test_runner_path: ?[]const u8 = null;
-    var override_local_cache_dir: ?[]const u8 = EnvVar.ZIG_LOCAL_CACHE_DIR.get(env_map);
-    var override_global_cache_dir: ?[]const u8 = EnvVar.ZIG_GLOBAL_CACHE_DIR.get(env_map);
-    var override_lib_dir: ?[]const u8 = EnvVar.ZIG_LIB_DIR.get(env_map);
+    var override_local_cache_dir: ?[]const u8 = EnvVar.ZIG_LOCAL_CACHE_DIR.get(environ_map);
+    var override_global_cache_dir: ?[]const u8 = EnvVar.ZIG_GLOBAL_CACHE_DIR.get(environ_map);
+    var override_lib_dir: ?[]const u8 = EnvVar.ZIG_LIB_DIR.get(environ_map);
     var clang_preprocessor_mode: Compilation.ClangPreprocessorMode = .no;
     var subsystem: ?std.zig.Subsystem = null;
     var major_subsystem_version: ?u16 = null;
@@ -997,7 +997,7 @@ fn buildOutputType(
         .framework_dirs = .{},
         .rpath_list = .{},
         .each_lib_rpath = null,
-        .libc_paths_file = EnvVar.ZIG_LIBC.get(env_map),
+        .libc_paths_file = EnvVar.ZIG_LIBC.get(environ_map),
         .native_system_include_paths = &.{},
     };
     defer create_module.link_inputs.deinit(gpa);
@@ -1006,9 +1006,9 @@ fn buildOutputType(
     // if set, default the color setting to .off or .on, respectively
     // explicit --color arguments will still override this setting.
     // Disable color on WASI per https://github.com/WebAssembly/WASI/issues/162
-    var color: Color = if (native_os == .wasi or EnvVar.NO_COLOR.isSet(env_map))
+    var color: Color = if (native_os == .wasi or EnvVar.NO_COLOR.isSet(environ_map))
         .off
-    else if (EnvVar.CLICOLOR_FORCE.isSet(env_map))
+    else if (EnvVar.CLICOLOR_FORCE.isSet(environ_map))
         .on
     else
         .auto;
@@ -3106,7 +3106,7 @@ fn buildOutputType(
         },
         if (native_os == .wasi) wasi_preopens,
         self_exe_path,
-        env_map,
+        environ_map,
     );
     defer dirs.deinit(io);
 
@@ -3118,7 +3118,7 @@ fn buildOutputType(
     create_module.opts.emit_bin = emit_bin != .no;
     create_module.opts.any_c_source_files = create_module.c_source_files.items.len != 0;
 
-    const main_mod = try createModule(gpa, arena, io, &create_module, 0, null, color, env_map);
+    const main_mod = try createModule(gpa, arena, io, &create_module, 0, null, color, environ_map);
     for (create_module.modules.keys(), create_module.modules.values()) |key, cli_mod| {
         if (cli_mod.resolved == null)
             fatal("module '{s}' declared but not used", .{key});
@@ -3595,7 +3595,7 @@ fn buildOutputType(
         .global_cc_argv = try cc_argv.toOwnedSlice(arena),
         .file_system_inputs = &file_system_inputs,
         .debug_compiler_runtime_libs = debug_compiler_runtime_libs,
-        .environ_map = env_map,
+        .environ_map = environ_map,
     }) catch |err| switch (err) {
         error.CreateFail => switch (create_diag) {
             .cross_libc_unavailable => {
@@ -3659,7 +3659,7 @@ fn buildOutputType(
                 arg_mode,
                 all_args,
                 runtime_args_start,
-                env_map,
+                environ_map,
             );
             return cleanExit(io);
         },
@@ -3686,7 +3686,7 @@ fn buildOutputType(
                 arg_mode,
                 all_args,
                 runtime_args_start,
-                env_map,
+                environ_map,
             );
             return cleanExit(io);
         },
@@ -3699,7 +3699,7 @@ fn buildOutputType(
         defer root_prog_node.end();
 
         if (arg_mode == .translate_c) {
-            return cmdTranslateC(comp, arena, null, null, root_prog_node, env_map);
+            return cmdTranslateC(comp, arena, null, null, root_prog_node, environ_map);
         }
 
         updateModule(comp, color, root_prog_node) catch |err| switch (err) {
@@ -3767,7 +3767,7 @@ fn buildOutputType(
             all_args,
             runtime_args_start,
             create_module.resolved_options.link_libc,
-            env_map,
+            environ_map,
         );
     }
 
@@ -3823,7 +3823,7 @@ fn createModule(
     index: usize,
     parent: ?*Package.Module,
     color: std.zig.Color,
-    env_map: *process.Environ.Map,
+    environ_map: *process.Environ.Map,
 ) Allocator.Error!*Package.Module {
     const cli_mod = &create_module.modules.values()[index];
     if (cli_mod.resolved) |m| return m;
@@ -4003,7 +4003,7 @@ fn createModule(
             resolved_target.is_native_os and resolved_target.is_native_abi and
             create_module.want_native_include_dirs)
         {
-            var paths = std.zig.system.NativePaths.detect(arena, io, target, env_map) catch |err|
+            var paths = std.zig.system.NativePaths.detect(arena, io, target, environ_map) catch |err|
                 fatal("unable to detect native system paths: {t}", .{err});
             for (paths.warnings.items) |warning| {
                 warn("{s}", .{warning});
@@ -4030,7 +4030,7 @@ fn createModule(
                 create_module.libc_installation = LibCInstallation.findNative(arena, io, .{
                     .verbose = true,
                     .target = target,
-                    .env_map = env_map,
+                    .environ_map = environ_map,
                 }) catch |err| {
                     fatal("unable to find native libc installation: {t}", .{err});
                 };
@@ -4135,7 +4135,7 @@ fn createModule(
     for (cli_mod.deps) |dep| {
         const dep_index = create_module.modules.getIndex(dep.value) orelse
             fatal("module '{s}' depends on non-existent module '{s}'", .{ name, dep.key });
-        const dep_mod = try createModule(gpa, arena, io, create_module, dep_index, mod, color, env_map);
+        const dep_mod = try createModule(gpa, arena, io, create_module, dep_index, mod, color, environ_map);
         try mod.deps.put(arena, dep.key, dep_mod);
     }
 
@@ -4157,7 +4157,7 @@ fn serve(
     arg_mode: ArgMode,
     all_args: []const []const u8,
     runtime_args_start: ?usize,
-    env_map: *process.Environ.Map,
+    environ_map: *process.Environ.Map,
 ) !void {
     const gpa = comp.gpa;
     const io = comp.io;
@@ -4205,7 +4205,7 @@ fn serve(
                     defer arena_instance.deinit();
                     const arena = arena_instance.allocator();
                     var output: Compilation.CImportResult = undefined;
-                    try cmdTranslateC(comp, arena, &output, file_system_inputs, main_progress_node, env_map);
+                    try cmdTranslateC(comp, arena, &output, file_system_inputs, main_progress_node, environ_map);
                     defer output.deinit(gpa);
 
                     if (file_system_inputs.items.len != 0) {
@@ -4405,7 +4405,7 @@ fn runOrTest(
     all_args: []const []const u8,
     runtime_args_start: ?usize,
     link_libc: bool,
-    env_map: *process.Environ.Map,
+    environ_map: *process.Environ.Map,
 ) !void {
     const raw_emit_bin = comp.emit_bin orelse return;
     const exe_path = switch (comp.cache_use) {
@@ -4442,14 +4442,14 @@ fn runOrTest(
     if (runtime_args_start) |i| {
         try argv.appendSlice(all_args[i..]);
     }
-    try env_map.put("ZIG_EXE", self_exe_path);
+    try environ_map.put("ZIG_EXE", self_exe_path);
 
     // We do not execve for tests because if the test fails we want to print
     // the error message and invocation below.
     if (process.can_replace and arg_mode == .run) {
         // process replacement releases the locks; no need to destroy the Compilation here.
         _ = try io.lockStderr(&.{}, .no_color);
-        const err = process.replace(io, .{ .argv = argv.items, .env_map = env_map });
+        const err = process.replace(io, .{ .argv = argv.items, .environ_map = environ_map });
         io.unlockStderr();
         try warnAboutForeignBinaries(io, arena, arg_mode, target, link_libc);
         const cmd = try std.mem.join(arena, " ", argv.items);
@@ -4471,7 +4471,7 @@ fn runOrTest(
 
         var child = std.process.spawn(io, .{
             .argv = argv.items,
-            .env_map = env_map,
+            .environ_map = environ_map,
             .stdin = .inherit,
             .stdout = .inherit,
             .stderr = .inherit,
@@ -4626,7 +4626,7 @@ fn cmdTranslateC(
     fancy_output: ?*Compilation.CImportResult,
     file_system_inputs: ?*std.ArrayList(u8),
     prog_node: std.Progress.Node,
-    env_map: *process.Environ.Map,
+    environ_map: *process.Environ.Map,
 ) !void {
     dev.check(.translate_c_command);
 
@@ -4660,7 +4660,7 @@ fn cmdTranslateC(
             translated_basename,
             comp.root_mod,
             prog_node,
-            env_map,
+            environ_map,
         );
 
         if (result.errors.errorMessageCount() != 0) {
@@ -4708,11 +4708,11 @@ pub fn translateC(
     arena: Allocator,
     io: Io,
     argv: []const []const u8,
-    env_map: *const process.Environ.Map,
+    environ_map: *const process.Environ.Map,
     prog_node: std.Progress.Node,
     capture: ?*[]u8,
 ) !void {
-    try jitCmd(gpa, arena, io, argv, env_map, .{
+    try jitCmd(gpa, arena, io, argv, environ_map, .{
         .cmd_name = "translate-c",
         .root_src_path = "translate-c/main.zig",
         .depend_on_aro = true,
@@ -4869,21 +4869,21 @@ test sanitizeExampleName {
     try std.testing.expectEqualStrings("test_project", try sanitizeExampleName(arena, "test project"));
 }
 
-fn cmdBuild(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8, env_map: *process.Environ.Map) !void {
+fn cmdBuild(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8, environ_map: *process.Environ.Map) !void {
     dev.check(.build_command);
 
     var build_file: ?[]const u8 = null;
-    var override_lib_dir: ?[]const u8 = EnvVar.ZIG_LIB_DIR.get(env_map);
-    var override_global_cache_dir: ?[]const u8 = EnvVar.ZIG_GLOBAL_CACHE_DIR.get(env_map);
-    var override_local_cache_dir: ?[]const u8 = EnvVar.ZIG_LOCAL_CACHE_DIR.get(env_map);
-    var override_build_runner: ?[]const u8 = EnvVar.ZIG_BUILD_RUNNER.get(env_map);
+    var override_lib_dir: ?[]const u8 = EnvVar.ZIG_LIB_DIR.get(environ_map);
+    var override_global_cache_dir: ?[]const u8 = EnvVar.ZIG_GLOBAL_CACHE_DIR.get(environ_map);
+    var override_local_cache_dir: ?[]const u8 = EnvVar.ZIG_LOCAL_CACHE_DIR.get(environ_map);
+    var override_build_runner: ?[]const u8 = EnvVar.ZIG_BUILD_RUNNER.get(environ_map);
     var child_argv = std.array_list.Managed([]const u8).init(arena);
     var reference_trace: ?u32 = null;
     var debug_compile_errors = false;
     var verbose_link = (native_os != .wasi or builtin.link_libc) and
-        EnvVar.ZIG_VERBOSE_LINK.isSet(env_map);
+        EnvVar.ZIG_VERBOSE_LINK.isSet(environ_map);
     var verbose_cc = (native_os != .wasi or builtin.link_libc) and
-        EnvVar.ZIG_VERBOSE_CC.isSet(env_map);
+        EnvVar.ZIG_VERBOSE_CC.isSet(environ_map);
     var verbose_air = false;
     var verbose_intern_pool = false;
     var verbose_generic_instances = false;
@@ -5080,7 +5080,7 @@ fn cmdBuild(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8, 
     }
 
     const work_around_btrfs_bug = native_os == .linux and
-        EnvVar.ZIG_BTRFS_WORKAROUND.isSet(env_map);
+        EnvVar.ZIG_BTRFS_WORKAROUND.isSet(environ_map);
     const root_prog_node = std.Progress.start(io, .{
         .disable_printing = (color == .off),
         .root_name = "Compile Build Script",
@@ -5140,7 +5140,7 @@ fn cmdBuild(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8, 
         } },
         {},
         self_exe_path,
-        env_map,
+        environ_map,
     );
     defer dirs.deinit(io);
 
@@ -5243,7 +5243,7 @@ fn cmdBuild(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8, 
                     job_queue.read_only = true;
                     cleanup_build_dir = job_queue.global_cache.handle;
                 } else {
-                    try http_client.initDefaultProxies(arena, env_map);
+                    try http_client.initDefaultProxies(arena, environ_map);
                 }
 
                 try job_queue.all_fetches.ensureUnusedCapacity(gpa, 1);
@@ -5397,7 +5397,7 @@ fn cmdBuild(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8, 
                 .cache_mode = .whole,
                 .reference_trace = reference_trace,
                 .debug_compile_errors = debug_compile_errors,
-                .environ_map = env_map,
+                .environ_map = environ_map,
             }) catch |err| switch (err) {
                 error.CreateFail => fatal("failed to create compilation: {f}", .{create_diag}),
                 else => fatal("failed to create compilation: {s}", .{@errorName(err)}),
@@ -5516,7 +5516,7 @@ fn jitCmd(
     arena: Allocator,
     io: Io,
     args: []const []const u8,
-    env_map: *const process.Environ.Map,
+    environ_map: *const process.Environ.Map,
     options: JitCmdOptions,
 ) !void {
     dev.check(.jit_command);
@@ -5538,13 +5538,13 @@ fn jitCmd(
     const self_exe_path = process.executablePathAlloc(io, arena) catch |err|
         fatal("unable to find self exe path: {t}", .{err});
 
-    const optimize_mode: std.builtin.OptimizeMode = if (EnvVar.ZIG_DEBUG_CMD.isSet(env_map))
+    const optimize_mode: std.builtin.OptimizeMode = if (EnvVar.ZIG_DEBUG_CMD.isSet(environ_map))
         .Debug
     else
         .ReleaseFast;
     const strip = optimize_mode != .Debug;
-    const override_lib_dir: ?[]const u8 = EnvVar.ZIG_LIB_DIR.get(env_map);
-    const override_global_cache_dir: ?[]const u8 = EnvVar.ZIG_GLOBAL_CACHE_DIR.get(env_map);
+    const override_lib_dir: ?[]const u8 = EnvVar.ZIG_LIB_DIR.get(environ_map);
+    const override_global_cache_dir: ?[]const u8 = EnvVar.ZIG_GLOBAL_CACHE_DIR.get(environ_map);
 
     // This `init` calls `fatal` on error.
     var dirs: Compilation.Directories = .init(
@@ -5555,7 +5555,7 @@ fn jitCmd(
         .global,
         if (native_os == .wasi) wasi_preopens,
         self_exe_path,
-        env_map,
+        environ_map,
     );
     defer dirs.deinit(io);
 
@@ -5629,7 +5629,7 @@ fn jitCmd(
             .self_exe_path = self_exe_path,
             .thread_limit = thread_limit,
             .cache_mode = .whole,
-            .environ_map = env_map,
+            .environ_map = environ_map,
         }) catch |err| switch (err) {
             error.CreateFail => fatal("failed to create compilation: {f}", .{create_diag}),
             else => fatal("failed to create compilation: {s}", .{@errorName(err)}),
@@ -5676,11 +5676,11 @@ fn jitCmd(
     child_argv.appendSliceAssumeCapacity(args);
 
     if (process.can_replace and options.capture == null) {
-        if (EnvVar.ZIG_DEBUG_CMD.isSet(env_map)) {
+        if (EnvVar.ZIG_DEBUG_CMD.isSet(environ_map)) {
             const cmd = try std.mem.join(arena, " ", child_argv.items);
             std.debug.print("{s}\n", .{cmd});
         }
-        const err = process.replace(io, .{ .argv = child_argv.items, .env_map = env_map });
+        const err = process.replace(io, .{ .argv = child_argv.items, .environ_map = environ_map });
         const cmd = try std.mem.join(arena, " ", child_argv.items);
         fatal("the following command failed to execve with '{t}':\n{s}", .{ err, cmd });
     }
@@ -6914,15 +6914,15 @@ fn cmdFetch(
     arena: Allocator,
     io: Io,
     args: []const []const u8,
-    env_map: *process.Environ.Map,
+    environ_map: *process.Environ.Map,
 ) !void {
     dev.check(.fetch_command);
 
     const color: Color = .auto;
     const work_around_btrfs_bug = native_os == .linux and
-        EnvVar.ZIG_BTRFS_WORKAROUND.isSet(env_map);
+        EnvVar.ZIG_BTRFS_WORKAROUND.isSet(environ_map);
     var opt_path_or_url: ?[]const u8 = null;
-    var override_global_cache_dir: ?[]const u8 = EnvVar.ZIG_GLOBAL_CACHE_DIR.get(env_map);
+    var override_global_cache_dir: ?[]const u8 = EnvVar.ZIG_GLOBAL_CACHE_DIR.get(environ_map);
     var debug_hash: bool = false;
     var save: union(enum) {
         no,
@@ -6968,7 +6968,7 @@ fn cmdFetch(
     var http_client: std.http.Client = .{ .allocator = gpa, .io = io };
     defer http_client.deinit();
 
-    try http_client.initDefaultProxies(arena, env_map);
+    try http_client.initDefaultProxies(arena, environ_map);
 
     var root_prog_node = std.Progress.start(io, .{
         .root_name = "Fetch",
@@ -6976,7 +6976,7 @@ fn cmdFetch(
     defer root_prog_node.end();
 
     var global_cache_directory: Directory = l: {
-        const p = override_global_cache_dir orelse try introspect.resolveGlobalCacheDir(arena, env_map);
+        const p = override_global_cache_dir orelse try introspect.resolveGlobalCacheDir(arena, environ_map);
         break :l .{
             .handle = try Io.Dir.cwd().createDirPathOpen(io, p, .{}),
             .path = p,

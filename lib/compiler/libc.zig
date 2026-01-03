@@ -29,7 +29,7 @@ pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
     const io = init.io;
     const args = try init.minimal.args.toSlice(arena);
-    const env_map = init.env_map;
+    const environ_map = init.environ_map;
 
     const zig_lib_directory = args[1];
 
@@ -92,7 +92,7 @@ pub fn main(init: std.process.Init) !void {
             is_native_abi,
             true,
             libc_installation,
-            env_map,
+            environ_map,
         ) catch |err| {
             const zig_target = try target.zigTriple(arena);
             fatal("unable to detect libc for target {s}: {t}", .{ zig_target, err });
@@ -123,7 +123,7 @@ pub fn main(init: std.process.Init) !void {
         var libc = LibCInstallation.findNative(gpa, io, .{
             .verbose = true,
             .target = &target,
-            .env_map = env_map,
+            .environ_map = environ_map,
         }) catch |err| {
             fatal("unable to detect native libc: {t}", .{err});
         };

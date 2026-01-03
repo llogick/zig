@@ -24,8 +24,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
     defer std.debug.assert(debug_allocator.deinit() == .ok);
     const gpa = debug_allocator.allocator();
 
-    var env_map = try init.environ.createMap(gpa);
-    defer env_map.deinit();
+    var environ_map = try init.environ.createMap(gpa);
+    defer environ_map.deinit();
 
     var threaded: std.Io.Threaded = .init(gpa, .{
         .environ = init.environ,
@@ -151,8 +151,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
             defer argv.deinit(aro_arena);
 
             try argv.append(aro_arena, "arocc"); // dummy command name
-            const resolved_include_paths = try include_paths.get(&error_handler, &env_map);
-            try preprocess.appendAroArgs(aro_arena, &argv, options, resolved_include_paths, &env_map);
+            const resolved_include_paths = try include_paths.get(&error_handler, &environ_map);
+            try preprocess.appendAroArgs(aro_arena, &argv, options, resolved_include_paths, &environ_map);
             try argv.append(aro_arena, switch (options.input_source) {
                 .stdio => "-",
                 .filename => |filename| filename,
@@ -286,7 +286,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
                     .dependencies = maybe_dependencies,
                     .ignore_include_env_var = options.ignore_include_env_var,
                     .extra_include_paths = options.extra_include_paths.items,
-                    .system_include_paths = try include_paths.get(&error_handler, &env_map),
+                    .system_include_paths = try include_paths.get(&error_handler, &environ_map),
                     .default_language_id = options.default_language_id,
                     .default_code_page = default_code_page,
                     .disjoint_code_page = has_disjoint_code_page,
@@ -295,7 +295,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
                     .max_string_literal_codepoints = options.max_string_literal_codepoints,
                     .silent_duplicate_control_ids = options.silent_duplicate_control_ids,
                     .warn_instead_of_error_on_invalid_code_page = options.warn_instead_of_error_on_invalid_code_page,
-                }, &env_map) catch |err| switch (err) {
+                }, &environ_map) catch |err| switch (err) {
                     error.ParseError, error.CompileError => {
                         try error_handler.emitDiagnostics(gpa, Io.Dir.cwd(), final_input, &diagnostics, mapping_results.mappings);
                         // Delete the output file on error
@@ -545,7 +545,7 @@ const LazyIncludePaths = struct {
     pub fn get(
         self: *LazyIncludePaths,
         error_handler: *ErrorHandler,
-        env_map: *const std.process.Environ.Map,
+        environ_map: *const std.process.Environ.Map,
     ) ![]const []const u8 {
         const io = self.io;
 
@@ -558,7 +558,7 @@ const LazyIncludePaths = struct {
             self.auto_includes_option,
             self.zig_lib_dir,
             self.target_machine_type,
-            env_map,
+            environ_map,
         ) catch |err| switch (err) {
             error.OutOfMemory => |e| return e,
             else => |e| {
@@ -586,7 +586,7 @@ fn getIncludePaths(
     auto_includes_option: cli.Options.AutoIncludes,
     zig_lib_dir: []const u8,
     target_machine_type: std.coff.IMAGE.FILE.MACHINE,
-    env_map: *const std.process.Environ.Map,
+    environ_map: *const std.process.Environ.Map,
 ) ![]const []const u8 {
     if (auto_includes_option == .none) return &[_][]const u8{};
 
@@ -667,7 +667,7 @@ fn getIncludePaths(
                     is_native_abi,
                     true,
                     null,
-                    env_map,
+                    environ_map,
                 ) catch |err| switch (err) {
                     error.OutOfMemory => |e| return e,
                     else => return error.MingwIncludesNotFound,

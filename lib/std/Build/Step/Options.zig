@@ -550,7 +550,7 @@ test Options {
             .cwd = cwd,
         },
         .zig_exe = "test",
-        .env_map = std.process.Environ.Map.init(arena.allocator()),
+        .environ_map = std.process.Environ.Map.init(arena.allocator()),
         .global_cache_root = .{ .path = "test", .handle = Io.Dir.cwd() },
         .host = .{
             .query = .{},

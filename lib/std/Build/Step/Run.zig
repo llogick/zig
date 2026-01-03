@@ -23,7 +23,7 @@ argv: std.ArrayList(Arg),
 cwd: ?Build.LazyPath,
 
 /// Override this field to modify the environment, or use setEnvironmentVariable
-env_map: ?*EnvMap,
+environ_map: ?*EnvMap,
 
 /// Controls the `NO_COLOR` and `CLICOLOR_FORCE` environment variables.
 color: Color = .auto,
@@ -215,7 +215,7 @@ pub fn create(owner: *std.Build, name: []const u8) *Run {
         }),
         .argv = .{},
         .cwd = null,
-        .env_map = null,
+        .environ_map = null,
         .disable_zig_progress = false,
         .stdio = .infer_from_args,
         .stdin = .none,
@@ -540,12 +540,12 @@ pub fn clearEnvironment(run: *Run) void {
     const b = run.step.owner;
     const new_env_map = b.allocator.create(EnvMap) catch @panic("OOM");
     new_env_map.* = .init(b.allocator);
-    run.env_map = new_env_map;
+    run.environ_map = new_env_map;
 }
 
 pub fn addPathDir(run: *Run, search_path: []const u8) void {
     const b = run.step.owner;
-    const env_map = getEnvMapInternal(run);
+    const environ_map = getEnvMapInternal(run);
 
     const use_wine = b.enable_wine and b.graph.host.result.os.tag != .windows and use_wine: switch (run.argv.items[0]) {
         .artifact => |p| p.artifact.rootModuleTarget().os.tag == .windows,
@@ -562,7 +562,7 @@ pub fn addPathDir(run: *Run, search_path: []const u8) void {
         .output_file, .output_directory => false,
     };
     const key = if (use_wine) "WINEPATH" else "PATH";
-    const prev_path = env_map.get(key);
+    const prev_path = environ_map.get(key);
 
     if (prev_path) |pp| {
         const new_path = b.fmt("{s}{c}{s}", .{
@@ -570,9 +570,9 @@ pub fn addPathDir(run: *Run, search_path: []const u8) void {
             if (use_wine) Dir.path.delimiter_windows else Dir.path.delimiter,
             search_path,
         });
-        env_map.put(key, new_path) catch @panic("OOM");
+        environ_map.put(key, new_path) catch @panic("OOM");
     } else {
-        env_map.put(key, b.dupePath(search_path)) catch @panic("OOM");
+        environ_map.put(key, b.dupePath(search_path)) catch @panic("OOM");
     }
 }
 
@@ -583,18 +583,18 @@ pub fn getEnvMap(run: *Run) *EnvMap {
 fn getEnvMapInternal(run: *Run) *EnvMap {
     const graph = run.step.owner.graph;
     const arena = graph.arena;
-    return run.env_map orelse {
+    return run.environ_map orelse {
         const cloned_map = arena.create(EnvMap) catch @panic("OOM");
-        cloned_map.* = graph.env_map.clone(arena) catch @panic("OOM");
-        run.env_map = cloned_map;
+        cloned_map.* = graph.environ_map.clone(arena) catch @panic("OOM");
+        run.environ_map = cloned_map;
         return cloned_map;
     };
 }
 
 pub fn setEnvironmentVariable(run: *Run, key: []const u8, value: []const u8) void {
-    const env_map = run.getEnvMap();
+    const environ_map = run.getEnvMap();
     // This data structure already dupes keys and values.
-    env_map.put(key, value) catch @panic("OOM");
+    environ_map.put(key, value) catch @panic("OOM");
 }
 
 pub fn removeEnvironmentVariable(run: *Run, key: []const u8) void {
@@ -762,7 +762,7 @@ fn convertPathArg(run: *Run, path: Build.Cache.Path) []const u8 {
         const child_lazy_cwd = run.cwd orelse break :rel path_str;
         const child_cwd = child_lazy_cwd.getPath3(b, &run.step).toString(arena) catch @panic("OOM");
         // Convert it from relative to *our* cwd, to relative to the *child's* cwd.
-        break :rel Dir.path.relative(arena, graph.cache.cwd, &graph.env_map, child_cwd, path_str) catch @panic("OOM");
+        break :rel Dir.path.relative(arena, graph.cache.cwd, &graph.environ_map, child_cwd, path_str) catch @panic("OOM");
     };
     // Not every path can be made relative, e.g. if the path and the child cwd are on different
     // disk designators on Windows. In that case, `relative` will return an absolute path which we can
@@ -794,8 +794,8 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
     var man = b.graph.cache.obtain();
     defer man.deinit();
 
-    if (run.env_map) |env_map| {
-        for (env_map.keys(), env_map.values()) |key, value| {
+    if (run.environ_map) |environ_map| {
+        for (environ_map.keys(), environ_map.values()) |key, value| {
             man.hash.addBytes(key);
             man.hash.addBytes(value);
         }
@@ -1222,7 +1222,7 @@ fn runCommand(
     const cwd: ?[]const u8 = if (run.cwd) |lazy_cwd| lazy_cwd.getPath2(b, step) else null;
 
     try step.handleChildProcUnsupported();
-    try Step.handleVerbose2(step.owner, cwd, run.env_map, argv);
+    try Step.handleVerbose2(step.owner, cwd, run.environ_map, argv);
 
     const allow_skip = switch (run.stdio) {
         .check, .zig_test => run.skip_foreign_checks,
@@ -1232,13 +1232,13 @@ fn runCommand(
     var interp_argv = std.array_list.Managed([]const u8).init(b.allocator);
     defer interp_argv.deinit();
 
-    var env_map: EnvMap = env: {
-        const orig = run.env_map orelse &b.graph.env_map;
+    var environ_map: EnvMap = env: {
+        const orig = run.environ_map orelse &b.graph.environ_map;
         break :env try orig.clone(gpa);
     };
-    defer env_map.deinit();
+    defer environ_map.deinit();
 
-    const opt_generic_result = spawnChildAndCollect(run, argv, &env_map, has_side_effects, options, fuzz_context) catch |err| term: {
+    const opt_generic_result = spawnChildAndCollect(run, argv, &environ_map, has_side_effects, options, fuzz_context) catch |err| term: {
         // InvalidExe: cpu arch mismatch
         // FileNotFound: can happen with a wrong dynamic linker path
         if (err == error.InvalidExe or err == error.FileNotFound) interpret: {
@@ -1274,8 +1274,8 @@ fn runCommand(
 
                         // Wine's excessive stderr logging is only situationally helpful. Disable it by default, but
                         // allow the user to override it (e.g. with `WINEDEBUG=err+all`) if desired.
-                        if (env_map.get("WINEDEBUG") == null) {
-                            try env_map.put("WINEDEBUG", "-all");
+                        if (environ_map.get("WINEDEBUG") == null) {
+                            try environ_map.put("WINEDEBUG", "-all");
                         }
                     } else {
                         return failForeign(run, "-fwine", argv[0], exe);
@@ -1372,9 +1372,9 @@ fn runCommand(
 
             gpa.free(step.result_failed_command.?);
             step.result_failed_command = null;
-            try Step.handleVerbose2(step.owner, cwd, run.env_map, interp_argv.items);
+            try Step.handleVerbose2(step.owner, cwd, run.environ_map, interp_argv.items);
 
-            break :term spawnChildAndCollect(run, interp_argv.items, &env_map, has_side_effects, options, fuzz_context) catch |e| {
+            break :term spawnChildAndCollect(run, interp_argv.items, &environ_map, has_side_effects, options, fuzz_context) catch |e| {
                 if (!run.failing_to_execute_foreign_is_an_error) return error.MakeSkipped;
                 if (e == error.MakeFailed) return error.MakeFailed; // error already reported
                 return step.fail("unable to spawn interpreter {s}: {s}", .{
@@ -1529,7 +1529,7 @@ const EvalGenericResult = struct {
 fn spawnChildAndCollect(
     run: *Run,
     argv: []const []const u8,
-    env_map: *EnvMap,
+    environ_map: *EnvMap,
     has_side_effects: bool,
     options: Step.MakeOptions,
     fuzz_context: ?FuzzContext,
@@ -1548,14 +1548,14 @@ fn spawnChildAndCollect(
     // If an error occurs, it's caused by this command:
     assert(run.step.result_failed_command == null);
     run.step.result_failed_command = try Step.allocPrintCmd(options.gpa, child_cwd, .{
-        .child = env_map,
-        .parent = &graph.env_map,
+        .child = environ_map,
+        .parent = &graph.environ_map,
     }, argv);
 
     var spawn_options: process.SpawnOptions = .{
         .argv = argv,
         .cwd = child_cwd,
-        .env_map = env_map,
+        .environ_map = environ_map,
         .request_resource_usage_statistics = true,
         .stdin = if (run.stdin != .none) s: {
             assert(run.stdio != .inherit);
@@ -1595,7 +1595,7 @@ fn spawnChildAndCollect(
             break :m stderr.terminal_mode;
         } else .no_color;
         defer if (inherit) io.unlockStderr();
-        try setColorEnvironmentVariables(run, env_map, terminal_mode);
+        try setColorEnvironmentVariables(run, environ_map, terminal_mode);
         var timer = try std.time.Timer.start();
         const res = try evalGeneric(run, spawn_options);
         run.step.result_duration_ns = timer.read();
@@ -1603,16 +1603,16 @@ fn spawnChildAndCollect(
     }
 }
 
-fn setColorEnvironmentVariables(run: *Run, env_map: *EnvMap, terminal_mode: Io.Terminal.Mode) !void {
+fn setColorEnvironmentVariables(run: *Run, environ_map: *EnvMap, terminal_mode: Io.Terminal.Mode) !void {
     color: switch (run.color) {
         .manual => {},
         .enable => {
-            try env_map.put("CLICOLOR_FORCE", "1");
-            _ = env_map.swapRemove("NO_COLOR");
+            try environ_map.put("CLICOLOR_FORCE", "1");
+            _ = environ_map.swapRemove("NO_COLOR");
         },
         .disable => {
-            try env_map.put("NO_COLOR", "1");
-            _ = env_map.swapRemove("CLICOLOR_FORCE");
+            try environ_map.put("NO_COLOR", "1");
+            _ = environ_map.swapRemove("CLICOLOR_FORCE");
         },
         .inherit => switch (terminal_mode) {
             .no_color, .windows_api => continue :color .disable,

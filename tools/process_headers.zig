@@ -132,7 +132,7 @@ pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const args = try init.minimal.args.toSlice(arena);
     const cwd_path = try std.process.getCwdAlloc(arena);
-    const env_map = init.env_map;
+    const environ_map = init.environ_map;
 
     var search_paths = std.array_list.Managed([]const u8).init(arena);
     var opt_out_dir: ?[]const u8 = null;
@@ -256,7 +256,7 @@ pub fn main(init: std.process.Init) !void {
                     switch (entry.kind) {
                         .directory => try dir_stack.append(full_path),
                         .file, .sym_link => {
-                            const rel_path = try Dir.path.relative(arena, cwd_path, env_map, target_include_dir, full_path);
+                            const rel_path = try Dir.path.relative(arena, cwd_path, environ_map, target_include_dir, full_path);
                             const max_size = 2 * 1024 * 1024 * 1024;
                             const raw_bytes = try Dir.cwd().readFileAlloc(io, full_path, arena, .limited(max_size));
                             const trimmed = std.mem.trim(u8, raw_bytes, " \r\n\t");

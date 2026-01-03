@@ -19,10 +19,10 @@ pub fn cmdEnv(
         else => void,
     },
     host: *const std.Target,
-    env_map: *std.process.Environ.Map,
+    environ_map: *std.process.Environ.Map,
 ) !void {
-    const override_lib_dir: ?[]const u8 = EnvVar.ZIG_LIB_DIR.get(env_map);
-    const override_global_cache_dir: ?[]const u8 = EnvVar.ZIG_GLOBAL_CACHE_DIR.get(env_map);
+    const override_lib_dir: ?[]const u8 = EnvVar.ZIG_LIB_DIR.get(environ_map);
+    const override_global_cache_dir: ?[]const u8 = EnvVar.ZIG_GLOBAL_CACHE_DIR.get(environ_map);
 
     const self_exe_path = switch (builtin.target.os.tag) {
         .wasi => args[0],
@@ -39,7 +39,7 @@ pub fn cmdEnv(
         .global,
         if (builtin.target.os.tag == .wasi) wasi_preopens,
         if (builtin.target.os.tag != .wasi) self_exe_path,
-        env_map,
+        environ_map,
     );
     defer dirs.deinit(io);
 
@@ -59,7 +59,7 @@ pub fn cmdEnv(
     try root.field("target", triple, .{});
     var env = try root.beginStructField("env", .{});
     inline for (@typeInfo(EnvVar).@"enum".fields) |field| {
-        try env.field(field.name, @field(EnvVar, field.name).get(env_map), .{});
+        try env.field(field.name, @field(EnvVar, field.name).get(environ_map), .{});
     }
     try env.end();
     try root.end();

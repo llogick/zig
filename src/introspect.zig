@@ -102,25 +102,25 @@ pub fn findZigLibDirFromSelfExe(
     return error.FileNotFound;
 }
 
-pub fn resolveGlobalCacheDir(arena: Allocator, env_map: *const std.process.Environ.Map) ![]const u8 {
-    if (std.zig.EnvVar.ZIG_GLOBAL_CACHE_DIR.get(env_map)) |value| return value;
+pub fn resolveGlobalCacheDir(arena: Allocator, environ_map: *const std.process.Environ.Map) ![]const u8 {
+    if (std.zig.EnvVar.ZIG_GLOBAL_CACHE_DIR.get(environ_map)) |value| return value;
 
     const app_name = "zig";
 
     switch (builtin.os.tag) {
         .wasi => @compileError("on WASI the global cache dir must be resolved with preopens"),
         .windows => {
-            const local_app_data_dir = std.zig.EnvVar.LOCALAPPDATA.get(env_map) orelse
+            const local_app_data_dir = std.zig.EnvVar.LOCALAPPDATA.get(environ_map) orelse
                 return error.AppDataDirUnavailable;
             return Dir.path.join(arena, &.{ local_app_data_dir, app_name });
         },
         else => {
-            if (std.zig.EnvVar.XDG_CACHE_HOME.get(env_map)) |cache_root| {
+            if (std.zig.EnvVar.XDG_CACHE_HOME.get(environ_map)) |cache_root| {
                 if (cache_root.len > 0) {
                     return Dir.path.join(arena, &.{ cache_root, app_name });
                 }
             }
-            if (std.zig.EnvVar.HOME.get(env_map)) |home| {
+            if (std.zig.EnvVar.HOME.get(environ_map)) |home| {
                 if (home.len > 0) {
                     return Dir.path.join(arena, &.{ home, ".cache", app_name });
                 }

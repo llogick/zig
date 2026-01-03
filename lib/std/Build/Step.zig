@@ -362,7 +362,7 @@ pub fn captureChildProcess(
 
     const result = std.process.run(arena, io, .{
         .argv = argv,
-        .env_map = &graph.env_map,
+        .environ_map = &graph.environ_map,
         .progress_node = progress_node,
     }) catch |err| return s.fail("failed to run {s}: {t}", .{ argv[0], err });
 
@@ -453,7 +453,7 @@ pub fn evalZigProcess(
 
     zp.child = std.process.spawn(io, .{
         .argv = argv,
-        .env_map = &b.graph.env_map,
+        .environ_map = &b.graph.environ_map,
         .stdin = .pipe,
         .stdout = .pipe,
         .stderr = .pipe,
@@ -702,7 +702,7 @@ pub fn handleVerbose2(
         // stderr before spawning them.
         const text = try allocPrintCmd(b.allocator, opt_cwd, if (opt_env) |env| .{
             .child = env,
-            .parent = &graph.env_map,
+            .parent = &graph.environ_map,
         } else null, argv);
         std.debug.print("{s}\n", .{text});
     }

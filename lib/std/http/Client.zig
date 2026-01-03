@@ -1307,7 +1307,7 @@ pub fn deinit(client: *Client) void {
 /// Asserts the client has no active connections.
 /// Uses `arena` for a few small allocations that must outlive the client, or
 /// at least until those fields are set to different values.
-pub fn initDefaultProxies(client: *Client, arena: Allocator, env_map: *std.process.Environ.Map) !void {
+pub fn initDefaultProxies(client: *Client, arena: Allocator, environ_map: *std.process.Environ.Map) !void {
     // Prevent any new connections from being created.
     client.connection_pool.mutex.lock();
     defer client.connection_pool.mutex.unlock();
@@ -1315,13 +1315,13 @@ pub fn initDefaultProxies(client: *Client, arena: Allocator, env_map: *std.proce
     assert(client.connection_pool.used.first == null); // There are active requests.
 
     if (client.http_proxy == null) {
-        client.http_proxy = try createProxyFromEnvVar(arena, env_map, &.{
+        client.http_proxy = try createProxyFromEnvVar(arena, environ_map, &.{
             "http_proxy", "HTTP_PROXY", "all_proxy", "ALL_PROXY",
         });
     }
 
     if (client.https_proxy == null) {
-        client.https_proxy = try createProxyFromEnvVar(arena, env_map, &.{
+        client.https_proxy = try createProxyFromEnvVar(arena, environ_map, &.{
             "https_proxy", "HTTPS_PROXY", "all_proxy", "ALL_PROXY",
         });
     }
@@ -1329,11 +1329,11 @@ pub fn initDefaultProxies(client: *Client, arena: Allocator, env_map: *std.proce
 
 fn createProxyFromEnvVar(
     arena: Allocator,
-    env_map: *std.process.Environ.Map,
+    environ_map: *std.process.Environ.Map,
     env_var_names: []const []const u8,
 ) !?*Proxy {
     const content = for (env_var_names) |name| {
-        const content = env_map.get(name) orelse continue;
+        const content = environ_map.get(name) orelse continue;
         if (content.len == 0) continue;
         break content;
     } else return null;

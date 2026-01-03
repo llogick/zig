@@ -13,7 +13,7 @@ pub fn main(init: std.process.Init) u8 {
     const gpa = init.gpa;
     const arena = init.arena.allocator();
     const io = init.io;
-    const env_map = init.env_map;
+    const environ_map = init.environ_map;
 
     const args = init.minimal.args.toSlice(arena) catch {
         std.debug.print("ran out of memory allocating arguments\n", .{});
@@ -26,8 +26,8 @@ pub fn main(init: std.process.Init) u8 {
         zig_integration = true;
     }
 
-    const NO_COLOR = std.zig.EnvVar.NO_COLOR.isSet(env_map);
-    const CLICOLOR_FORCE = std.zig.EnvVar.CLICOLOR_FORCE.isSet(env_map);
+    const NO_COLOR = std.zig.EnvVar.NO_COLOR.isSet(environ_map);
+    const CLICOLOR_FORCE = std.zig.EnvVar.CLICOLOR_FORCE.isSet(environ_map);
 
     var stderr_buf: [1024]u8 = undefined;
     var stderr = Io.File.stderr().writer(io, &stderr_buf);
@@ -42,7 +42,7 @@ pub fn main(init: std.process.Init) u8 {
     };
     defer diagnostics.deinit();
 
-    var comp = aro.Compilation.initDefault(gpa, arena, io, &diagnostics, .cwd(), env_map) catch |err| switch (err) {
+    var comp = aro.Compilation.initDefault(gpa, arena, io, &diagnostics, .cwd(), environ_map) catch |err| switch (err) {
         error.OutOfMemory => {
             std.debug.print("ran out of memory initializing C compilation\n", .{});
             if (fast_exit) process.exit(1);

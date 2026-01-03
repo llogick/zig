@@ -12,7 +12,6 @@ const StringHashMap = std.StringHashMap;
 const Allocator = std.mem.Allocator;
 const Target = std.Target;
 const process = std.process;
-const EnvMap = std.process.Environ.Map;
 const File = std.Io.File;
 const Sha256 = std.crypto.hash.sha2.Sha256;
 const ArrayList = std.ArrayList;
@@ -118,7 +117,7 @@ pub const Graph = struct {
     debug_compiler_runtime_libs: bool = false,
     cache: Cache,
     zig_exe: [:0]const u8,
-    env_map: EnvMap,
+    environ_map: process.Environ.Map,
     global_cache_root: Cache.Directory,
     zig_lib_directory: Cache.Directory,
     needed_lazy_dependencies: std.StringArrayHashMapUnmanaged(void) = .empty,
@@ -289,7 +288,7 @@ pub fn create(
         .lib_dir = undefined,
         .exe_dir = undefined,
         .h_dir = undefined,
-        .dest_dir = graph.env_map.get("DESTDIR"),
+        .dest_dir = graph.environ_map.get("DESTDIR"),
         .install_tls = .{
             .step = .init(.{
                 .id = TopLevelStep.base_id,
@@ -1772,7 +1771,7 @@ fn tryFindProgram(b: *Build, full_path: []const u8) ?[]const u8 {
     }
 
     if (builtin.os.tag == .windows) {
-        if (b.graph.env_map.get("PATHEXT")) |PATHEXT| {
+        if (b.graph.environ_map.get("PATHEXT")) |PATHEXT| {
             var it = mem.tokenizeScalar(u8, PATHEXT, fs.path.delimiter);
 
             while (it.next()) |ext| {
@@ -1803,7 +1802,7 @@ pub fn findProgram(b: *Build, names: []const []const u8, paths: []const []const 
             return tryFindProgram(b, b.pathJoin(&.{ search_prefix, "bin", name })) orelse continue;
         }
     }
-    if (b.graph.env_map.get("PATH")) |PATH| {
+    if (b.graph.environ_map.get("PATH")) |PATH| {
         for (names) |name| {
             if (fs.path.isAbsolute(name)) {
                 return name;
@@ -1840,11 +1839,11 @@ pub fn runAllowFail(
     const io = graph.io;
 
     const max_output_size = 400 * 1024;
-    try Step.handleVerbose2(b, null, &graph.env_map, argv);
+    try Step.handleVerbose2(b, null, &graph.environ_map, argv);
 
     var child = try std.process.spawn(io, .{
         .argv = argv,
-        .env_map = &graph.env_map,
+        .environ_map = &graph.environ_map,
         .stdin = .ignore,
         .stdout = .pipe,
         .stderr = stderr_behavior,

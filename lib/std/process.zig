@@ -46,7 +46,7 @@ pub const Init = struct {
     /// configuration. Debug mode will set up leak checking.
     io: Io,
     /// Environment variables, initialized with `gpa`. Not threadsafe.
-    env_map: *Environ.Map,
+    environ_map: *Environ.Map,
 
     /// Alternative to `Init` as the first parameter of the main function.
     pub const Minimal = struct {
@@ -295,7 +295,7 @@ pub const ReplaceOptions = struct {
     arg0_expand: ArgExpansion = .no_expand,
     /// Replaces the environment when provided. The PATH value from here is
     /// never used to resolve `argv[0]`.
-    env_map: ?*const Environ.Map = null,
+    environ_map: ?*const Environ.Map = null,
 };
 
 /// Replaces the current process image with the executed process. If this
@@ -377,7 +377,7 @@ pub const SpawnOptions = struct {
     /// Replaces the child environment when provided. The PATH value from here
     /// is not used to resolve `argv[0]`; that resolution always uses parent
     /// environment.
-    env_map: ?*const Environ.Map = null,
+    environ_map: ?*const Environ.Map = null,
     expand_arg0: ArgExpansion = .no_expand,
     /// When populated, a pipe will be created for the child process to
     /// communicate progress back to the parent. The file descriptor of the
@@ -475,7 +475,7 @@ pub const RunOptions = struct {
     /// Replaces the child environment when provided. The PATH value from here
     /// is not used to resolve `argv[0]`; that resolution always uses parent
     /// environment.
-    env_map: ?*const Environ.Map = null,
+    environ_map: ?*const Environ.Map = null,
     expand_arg0: ArgExpansion = .no_expand,
     /// When populated, a pipe will be created for the child process to
     /// communicate progress back to the parent. The file descriptor of the
@@ -505,7 +505,7 @@ pub fn run(gpa: Allocator, io: Io, options: RunOptions) RunError!RunResult {
         .argv = options.argv,
         .cwd = options.cwd,
         .cwd_dir = options.cwd_dir,
-        .env_map = options.env_map,
+        .environ_map = options.environ_map,
         .expand_arg0 = options.expand_arg0,
         .progress_node = options.progress_node,
         .create_no_window = options.create_no_window,

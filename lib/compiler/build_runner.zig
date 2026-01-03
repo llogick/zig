@@ -87,7 +87,7 @@ pub fn main(init: process.Init.Minimal) !void {
             .cwd = try process.getCwdAlloc(single_threaded_arena.allocator()),
         },
         .zig_exe = zig_exe,
-        .env_map = try init.environ.createMap(arena),
+        .environ_map = try init.environ.createMap(arena),
         .global_cache_root = global_cache_directory,
         .zig_lib_directory = zig_lib_directory,
         .host = .{
@@ -130,13 +130,13 @@ pub fn main(init: process.Init.Minimal) !void {
     var debounce_interval_ms: u16 = 50;
     var webui_listen: ?Io.net.IpAddress = null;
 
-    if (std.zig.EnvVar.ZIG_BUILD_ERROR_STYLE.get(&graph.env_map)) |str| {
+    if (std.zig.EnvVar.ZIG_BUILD_ERROR_STYLE.get(&graph.environ_map)) |str| {
         if (std.meta.stringToEnum(ErrorStyle, str)) |style| {
             error_style = style;
         }
     }
 
-    if (std.zig.EnvVar.ZIG_BUILD_MULTILINE_ERRORS.get(&graph.env_map)) |str| {
+    if (std.zig.EnvVar.ZIG_BUILD_MULTILINE_ERRORS.get(&graph.environ_map)) |str| {
         if (std.meta.stringToEnum(MultilineErrors, str)) |style| {
             multiline_errors = style;
         }
@@ -433,8 +433,8 @@ pub fn main(init: process.Init.Minimal) !void {
         }
     }
 
-    const NO_COLOR = std.zig.EnvVar.NO_COLOR.isSet(&graph.env_map);
-    const CLICOLOR_FORCE = std.zig.EnvVar.CLICOLOR_FORCE.isSet(&graph.env_map);
+    const NO_COLOR = std.zig.EnvVar.NO_COLOR.isSet(&graph.environ_map);
+    const CLICOLOR_FORCE = std.zig.EnvVar.CLICOLOR_FORCE.isSet(&graph.environ_map);
 
     graph.stderr_mode = switch (color) {
         .auto => try .detect(io, .stderr(), NO_COLOR, CLICOLOR_FORCE),

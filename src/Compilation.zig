@@ -762,7 +762,7 @@ pub const Directories = struct {
             .wasi => void,
             else => []const u8,
         },
-        env_map: *const std.process.Environ.Map,
+        environ_map: *const std.process.Environ.Map,
     ) Directories {
         const wasi = builtin.target.os.tag == .wasi;
 
@@ -781,7 +781,7 @@ pub const Directories = struct {
         const global_cache: Cache.Directory = d: {
             if (override_global_cache) |path| break :d openUnresolved(arena, io, cwd, path, .@"global cache");
             if (wasi) break :d openWasiPreopen(wasi_preopens, "/cache");
-            const path = introspect.resolveGlobalCacheDir(arena, env_map) catch |err| {
+            const path = introspect.resolveGlobalCacheDir(arena, environ_map) catch |err| {
                 fatal("unable to resolve zig cache directory: {t}", .{err});
             };
             break :d openUnresolved(arena, io, cwd, path, .@"global cache");
@@ -5713,7 +5713,7 @@ pub fn translateC(
     translated_basename: []const u8,
     owner_mod: *Package.Module,
     prog_node: std.Progress.Node,
-    env_map: *const std.process.Environ.Map,
+    environ_map: *const std.process.Environ.Map,
 ) !CImportResult {
     dev.check(.translate_c_command);
 
@@ -5783,7 +5783,7 @@ pub fn translateC(
     }
 
     var stdout: []u8 = undefined;
-    try @import("main.zig").translateC(gpa, arena, io, argv.items, env_map, prog_node, &stdout);
+    try @import("main.zig").translateC(gpa, arena, io, argv.items, environ_map, prog_node, &stdout);
 
     if (out_dep_path) |dep_file_path| add_deps: {
         if (comp.verbose_cimport) log.info("processing dep file at {s}", .{dep_file_path});

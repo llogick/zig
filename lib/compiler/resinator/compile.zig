@@ -80,7 +80,7 @@ pub const Dependencies = struct {
     }
 };
 
-pub fn compile(allocator: Allocator, io: Io, source: []const u8, writer: *std.Io.Writer, options: CompileOptions, env_map: *const std.process.Environ.Map) !void {
+pub fn compile(allocator: Allocator, io: Io, source: []const u8, writer: *std.Io.Writer, options: CompileOptions, environ_map: *const std.process.Environ.Map) !void {
     var lexer = lex.Lexer.init(source, .{
         .default_code_page = options.default_code_page,
         .source_mappings = options.source_mappings,
@@ -148,7 +148,7 @@ pub fn compile(allocator: Allocator, io: Io, source: []const u8, writer: *std.Io
         try search_dirs.append(allocator, .{ .dir = dir, .path = try allocator.dupe(u8, system_include_path) });
     }
     if (!options.ignore_include_env_var) {
-        const INCLUDE = env_map.get("INCLUDE") orelse "";
+        const INCLUDE = environ_map.get("INCLUDE") orelse "";
 
         // The only precedence here is llvm-rc which also uses the platform-specific
         // delimiter. There's no precedence set by `rc.exe` since it's Windows-only.

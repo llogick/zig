@@ -126,26 +126,26 @@ pub fn main(init: std.process.Init) !void {
 
     // Environ.Map
     {
-        var env_map = try environ.createMap(allocator);
-        defer env_map.deinit();
+        var environ_map = try environ.createMap(allocator);
+        defer environ_map.deinit();
 
-        try std.testing.expectEqualSlices(u8, "123", env_map.get("FOO").?);
-        try std.testing.expectEqual(null, env_map.get("FO"));
-        try std.testing.expectEqual(null, env_map.get("FOOO"));
+        try std.testing.expectEqualSlices(u8, "123", environ_map.get("FOO").?);
+        try std.testing.expectEqual(null, environ_map.get("FO"));
+        try std.testing.expectEqual(null, environ_map.get("FOOO"));
         if (builtin.os.tag == .windows) {
-            try std.testing.expectEqualSlices(u8, "123", env_map.get("foo").?);
+            try std.testing.expectEqualSlices(u8, "123", environ_map.get("foo").?);
         }
-        try std.testing.expectEqualSlices(u8, "ABC=123", env_map.get("EQUALS").?);
-        try std.testing.expectEqual(null, env_map.get("EQUALS=ABC"));
-        try std.testing.expectEqualSlices(u8, "non-ascii አማርኛ \u{10FFFF}", env_map.get("КИРиллИЦА").?);
+        try std.testing.expectEqualSlices(u8, "ABC=123", environ_map.get("EQUALS").?);
+        try std.testing.expectEqual(null, environ_map.get("EQUALS=ABC"));
+        try std.testing.expectEqualSlices(u8, "non-ascii አማርኛ \u{10FFFF}", environ_map.get("КИРиллИЦА").?);
         if (builtin.os.tag == .windows) {
-            try std.testing.expectEqualSlices(u8, "non-ascii አማርኛ \u{10FFFF}", env_map.get("кирИЛЛица").?);
+            try std.testing.expectEqualSlices(u8, "non-ascii አማርኛ \u{10FFFF}", environ_map.get("кирИЛЛица").?);
         }
-        try std.testing.expectEqualSlices(u8, "", env_map.get("NO_VALUE").?);
-        try std.testing.expectEqual(null, env_map.get("NOT_SET"));
+        try std.testing.expectEqualSlices(u8, "", environ_map.get("NO_VALUE").?);
+        try std.testing.expectEqual(null, environ_map.get("NOT_SET"));
         if (builtin.os.tag == .windows) {
-            try std.testing.expectEqualSlices(u8, "hi", env_map.get("=HIDDEN").?);
-            try std.testing.expectEqualSlices(u8, "\xed\xa0\x80", env_map.get("INVALID_UTF16_\xed\xa0\x80").?);
+            try std.testing.expectEqualSlices(u8, "hi", environ_map.get("=HIDDEN").?);
+            try std.testing.expectEqualSlices(u8, "\xed\xa0\x80", environ_map.get("INVALID_UTF16_\xed\xa0\x80").?);
         }
     }
 }

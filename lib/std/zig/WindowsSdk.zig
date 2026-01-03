@@ -29,7 +29,7 @@ pub fn find(
     gpa: Allocator,
     io: Io,
     arch: std.Target.Cpu.Arch,
-    env_map: *const Environ.Map,
+    environ_map: *const Environ.Map,
 ) error{ OutOfMemory, NotFound, PathTooLong }!WindowsSdk {
     if (builtin.os.tag != .windows) return error.NotFound;
 
@@ -55,7 +55,7 @@ pub fn find(
     };
     errdefer if (windows81sdk) |*w| w.free(gpa);
 
-    const msvc_lib_dir: ?[]const u8 = MsvcLibDir.find(gpa, io, arch, env_map) catch |err| switch (err) {
+    const msvc_lib_dir: ?[]const u8 = MsvcLibDir.find(gpa, io, arch, environ_map) catch |err| switch (err) {
         error.MsvcLibDirNotFound => null,
         error.OutOfMemory => return error.OutOfMemory,
     };
@@ -680,7 +680,7 @@ const MsvcLibDir = struct {
     fn findInstancesDir(
         gpa: Allocator,
         io: Io,
-        env_map: *const Environ.Map,
+        environ_map: *const Environ.Map,
     ) error{ OutOfMemory, PathNotFound }!Dir {
         // First, try getting the packages cache path from the registry.
         // This only seems to exist when the path is different from the default.
@@ -701,7 +701,7 @@ const MsvcLibDir = struct {
         // If that can't be found, fall back to manually appending
         // `Microsoft\VisualStudio\Packages\_Instances` to %PROGRAMDATA%
         method3: {
-            const program_data = std.zig.EnvVar.PROGRAMDATA.get(env_map) orelse break :method3;
+            const program_data = std.zig.EnvVar.PROGRAMDATA.get(environ_map) orelse break :method3;
 
             if (!Dir.path.isAbsolute(program_data)) break :method3;
 
@@ -765,13 +765,13 @@ const MsvcLibDir = struct {
         gpa: Allocator,
         io: Io,
         arch: std.Target.Cpu.Arch,
-        env_map: *const Environ.Map,
+        environ_map: *const Environ.Map,
     ) error{ OutOfMemory, PathNotFound }![]const u8 {
         // Typically `%PROGRAMDATA%\Microsoft\VisualStudio\Packages\_Instances`
         // This will contain directories with names of instance IDs like 80a758ca,
         // which will contain `state.json` files that have the version and
         // installation directory.
-        var instances_dir = try findInstancesDir(gpa, io, env_map);
+        var instances_dir = try findInstancesDir(gpa, io, environ_map);
         defer instances_dir.close(io);
 
         var state_subpath_buf: [Dir.max_name_bytes + 32]u8 = undefined;
@@ -872,12 +872,12 @@ const MsvcLibDir = struct {
         gpa: Allocator,
         io: Io,
         arch: std.Target.Cpu.Arch,
-        env_map: *const Environ.Map,
+        environ_map: *const Environ.Map,
     ) error{ OutOfMemory, PathNotFound }![]const u8 {
 
         // %localappdata%\Microsoft\VisualStudio\
         // %appdata%\Local\Microsoft\VisualStudio\
-        const local_app_data_path = std.zig.EnvVar.LOCALAPPDATA.get(env_map) orelse return error.PathNotFound;
+        const local_app_data_path = std.zig.EnvVar.LOCALAPPDATA.get(environ_map) orelse return error.PathNotFound;
         const visualstudio_folder_path = try Dir.path.join(gpa, &.{
             local_app_data_path, "Microsoft\\VisualStudio\\",
         });
@@ -968,11 +968,11 @@ const MsvcLibDir = struct {
         gpa: Allocator,
         io: Io,
         arch: std.Target.Cpu.Arch,
-        env_map: *const Environ.Map,
+        environ_map: *const Environ.Map,
     ) error{ OutOfMemory, PathNotFound }![]const u8 {
         var base_path: std.array_list.Managed(u8) = base_path: {
             try_env: {
-                if (env_map.get("VS140COMNTOOLS")) |VS140COMNTOOLS| {
+                if (environ_map.get("VS140COMNTOOLS")) |VS140COMNTOOLS| {
                     if (VS140COMNTOOLS.len < "C:\\Common7\\Tools".len) break :try_env;
                     if (!Dir.path.isAbsolute(VS140COMNTOOLS)) break :try_env;
                     var list = std.array_list.Managed(u8).init(gpa);
@@ -1046,13 +1046,13 @@ const MsvcLibDir = struct {
         gpa: Allocator,
         io: Io,
         arch: std.Target.Cpu.Arch,
-        env_map: *const Environ.Map,
+        environ_map: *const Environ.Map,
     ) error{ OutOfMemory, MsvcLibDirNotFound }![]const u8 {
-        const full_path = MsvcLibDir.findViaCOM(gpa, io, arch, env_map) catch |err1| switch (err1) {
+        const full_path = MsvcLibDir.findViaCOM(gpa, io, arch, environ_map) catch |err1| switch (err1) {
             error.OutOfMemory => return error.OutOfMemory,
-            error.PathNotFound => MsvcLibDir.findViaRegistry(gpa, io, arch, env_map) catch |err2| switch (err2) {
+            error.PathNotFound => MsvcLibDir.findViaRegistry(gpa, io, arch, environ_map) catch |err2| switch (err2) {
                 error.OutOfMemory => return error.OutOfMemory,
-                error.PathNotFound => MsvcLibDir.findViaVs7Key(gpa, io, arch, env_map) catch |err3| switch (err3) {
+                error.PathNotFound => MsvcLibDir.findViaVs7Key(gpa, io, arch, environ_map) catch |err3| switch (err3) {
                     error.OutOfMemory => return error.OutOfMemory,
                     error.PathNotFound => return error.MsvcLibDirNotFound,
                 },

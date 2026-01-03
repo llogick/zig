@@ -18,12 +18,12 @@ pub fn detect(
     arena: Allocator,
     io: Io,
     native_target: *const std.Target,
-    env_map: *process.Environ.Map,
+    environ_map: *process.Environ.Map,
 ) !NativePaths {
     var self: NativePaths = .{ .arena = arena };
     var is_nix = false;
 
-    if (std.zig.EnvVar.NIX_CFLAGS_COMPILE.get(env_map)) |nix_cflags_compile| {
+    if (std.zig.EnvVar.NIX_CFLAGS_COMPILE.get(environ_map)) |nix_cflags_compile| {
         is_nix = true;
         var it = mem.tokenizeScalar(u8, nix_cflags_compile, ' ');
         while (true) {
@@ -49,7 +49,7 @@ pub fn detect(
         }
     }
 
-    if (std.zig.EnvVar.NIX_LDFLAGS.get(env_map)) |nix_ldflags| {
+    if (std.zig.EnvVar.NIX_LDFLAGS.get(environ_map)) |nix_ldflags| {
         is_nix = true;
         var it = mem.tokenizeScalar(u8, nix_ldflags, ' ');
         while (true) {
@@ -78,7 +78,7 @@ pub fn detect(
         }
     }
 
-    if (std.zig.EnvVar.NIX_CFLAGS_LINK.get(env_map)) |nix_cflags_link| {
+    if (std.zig.EnvVar.NIX_CFLAGS_LINK.get(environ_map)) |nix_cflags_link| {
         is_nix = true;
         var it = mem.tokenizeScalar(u8, nix_cflags_link, ' ');
         while (true) {
@@ -121,7 +121,7 @@ pub fn detect(
         }
 
         // Check for homebrew paths
-        if (std.zig.EnvVar.HOMEBREW_PREFIX.get(env_map)) |prefix| {
+        if (std.zig.EnvVar.HOMEBREW_PREFIX.get(environ_map)) |prefix| {
             try self.addLibDir(try std.fs.path.join(arena, &.{ prefix, "/lib" }));
             try self.addIncludeDir(try std.fs.path.join(arena, &.{ prefix, "/include" }));
         }
@@ -177,21 +177,21 @@ pub fn detect(
 
         // Distros like guix don't use FHS, so they rely on environment
         // variables to search for headers and libraries.
-        if (std.zig.EnvVar.C_INCLUDE_PATH.get(env_map)) |c_include_path| {
+        if (std.zig.EnvVar.C_INCLUDE_PATH.get(environ_map)) |c_include_path| {
             var it = mem.tokenizeScalar(u8, c_include_path, ':');
             while (it.next()) |dir| {
                 try self.addIncludeDir(dir);
             }
         }
 
-        if (std.zig.EnvVar.CPLUS_INCLUDE_PATH.get(env_map)) |cplus_include_path| {
+        if (std.zig.EnvVar.CPLUS_INCLUDE_PATH.get(environ_map)) |cplus_include_path| {
             var it = mem.tokenizeScalar(u8, cplus_include_path, ':');
             while (it.next()) |dir| {
                 try self.addIncludeDir(dir);
             }
         }
 
-        if (std.zig.EnvVar.LIBRARY_PATH.get(env_map)) |library_path| {
+        if (std.zig.EnvVar.LIBRARY_PATH.get(environ_map)) |library_path| {
             var it = mem.tokenizeScalar(u8, library_path, ':');
             while (it.next()) |dir| {
                 try self.addLibDir(dir);

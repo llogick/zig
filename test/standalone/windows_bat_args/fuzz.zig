@@ -94,7 +94,7 @@ fn testExecBat(gpa: Allocator, io: Io, bat: []const u8, args: []const []const u8
     const can_have_trailing_empty_args = std.mem.eql(u8, bat, "args3.bat");
 
     const result = try std.process.run(gpa, io, .{
-        .env_map = env,
+        .environ_map = env,
         .argv = argv,
     });
     defer gpa.free(result.stdout);

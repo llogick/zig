@@ -1506,16 +1506,16 @@ fn testBasenameWindows(input: []const u8, expected_output: []const u8) !void {
 /// on each), a zero-length string is returned.
 ///
 /// See `relativePosix` and `relativeWindows` for operating system specific
-/// details and for how `env_map` is used.
+/// details and for how `environ_map` is used.
 pub fn relative(
     gpa: Allocator,
     cwd: []const u8,
-    env_map: ?*const std.process.Environ.Map,
+    environ_map: ?*const std.process.Environ.Map,
     from: []const u8,
     to: []const u8,
 ) Allocator.Error![]u8 {
     if (native_os == .windows) {
-        return relativeWindows(gpa, cwd, env_map, from, to);
+        return relativeWindows(gpa, cwd, environ_map, from, to);
     } else {
         return relativePosix(gpa, cwd, from, to);
     }
@@ -1536,12 +1536,12 @@ pub fn relative(
 /// Per-drive CWDs are stored in special semi-hidden environment variables of
 /// the format `=<drive-letter>:`, e.g. `=C:`. This type of CWD is purely a
 /// shell concept, so there's no guarantee that it'll be set or that it'll even
-/// be accurate. This is the only reason for the `env_map` parameter. `null` is
+/// be accurate. This is the only reason for the `environ_map` parameter. `null` is
 /// treated equivalent to the environment variable missing.
 pub fn relativeWindows(
     gpa: Allocator,
     cwd: []const u8,
-    env_map: ?*const std.process.Environ.Map,
+    environ_map: ?*const std.process.Environ.Map,
     from: []const u8,
     to: []const u8,
 ) Allocator.Error![]u8 {
@@ -1565,13 +1565,13 @@ pub fn relativeWindows(
     };
 
     if (result_is_always_to) {
-        return windowsResolveAgainstCwd(gpa, cwd, env_map, to, parsed_to);
+        return windowsResolveAgainstCwd(gpa, cwd, environ_map, to, parsed_to);
     }
 
-    const resolved_from = try windowsResolveAgainstCwd(gpa, cwd, env_map, from, parsed_from);
+    const resolved_from = try windowsResolveAgainstCwd(gpa, cwd, environ_map, from, parsed_from);
     defer gpa.free(resolved_from);
     var clean_up_resolved_to = true;
-    const resolved_to = try windowsResolveAgainstCwd(gpa, cwd, env_map, to, parsed_to);
+    const resolved_to = try windowsResolveAgainstCwd(gpa, cwd, environ_map, to, parsed_to);
     defer if (clean_up_resolved_to) gpa.free(resolved_to);
 
     const parsed_resolved_from = parsePathWindows(u8, resolved_from);
@@ -1637,7 +1637,7 @@ pub fn relativeWindows(
 fn windowsResolveAgainstCwd(
     gpa: Allocator,
     cwd: []const u8,
-    env_map: ?*const std.process.Environ.Map,
+    environ_map: ?*const std.process.Environ.Map,
     path: []const u8,
     parsed: WindowsPath2(u8),
 ) ![]u8 {
@@ -1679,7 +1679,7 @@ fn windowsResolveAgainstCwd(
                     if (drive_letters_match)
                         break :drive_cwd cwd;
 
-                    if (env_map) |m| {
+                    if (environ_map) |m| {
                         if (m.get(&.{ '=', parsed.root[0], ':' })) |v| {
                             break :drive_cwd try temp_allocator.dupe(u8, v);
                         }

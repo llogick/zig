@@ -96,12 +96,12 @@ fn checkRelative(
     expected_stdout: []const u8,
     argv: []const []const u8,
     cwd: ?[]const u8,
-    env_map: ?*const std.process.Environ.Map,
+    environ_map: ?*const std.process.Environ.Map,
 ) !void {
     const result = try std.process.run(allocator, io, .{
         .argv = argv,
         .cwd = cwd,
-        .env_map = env_map,
+        .environ_map = environ_map,
     });
     defer allocator.free(result.stdout);
     defer allocator.free(result.stderr);

@@ -699,9 +699,9 @@ inline fn callMain(args: std.process.Args.Vector, environ: std.process.Environ.B
     });
     defer threaded.deinit();
 
-    var env_map = std.process.Environ.createMap(.{ .block = environ }, gpa) catch |err|
+    var environ_map = std.process.Environ.createMap(.{ .block = environ }, gpa) catch |err|
         std.process.fatal("failed to parse environment variables: {t}", .{err});
-    defer env_map.deinit();
+    defer environ_map.deinit();
 
     return wrapMain(root.main(.{
         .minimal = .{
@@ -711,7 +711,7 @@ inline fn callMain(args: std.process.Args.Vector, environ: std.process.Environ.B
         .arena = &arena_allocator,
         .gpa = gpa,
         .io = threaded.io(),
-        .env_map = &env_map,
+        .environ_map = &environ_map,
     }));
 }
 

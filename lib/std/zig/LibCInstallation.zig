@@ -168,7 +168,7 @@ pub fn render(self: LibCInstallation, out: *std.Io.Writer) !void {
 
 pub const FindNativeOptions = struct {
     target: *const std.Target,
-    env_map: *const Environ.Map,
+    environ_map: *const Environ.Map,
 
     /// If enabled, will print human-friendly errors to stderr.
     verbose: bool = false,
@@ -193,7 +193,7 @@ pub fn findNative(gpa: Allocator, io: Io, args: FindNativeOptions) FindError!Lib
         });
         return self;
     } else if (is_windows) {
-        const sdk = std.zig.WindowsSdk.find(gpa, io, args.target.cpu.arch, args.env_map) catch |err| switch (err) {
+        const sdk = std.zig.WindowsSdk.find(gpa, io, args.target.cpu.arch, args.environ_map) catch |err| switch (err) {
             error.NotFound => return error.WindowsSdkNotFound,
             error.PathTooLong => return error.WindowsSdkNotFound,
             error.OutOfMemory => return error.OutOfMemory,
@@ -240,17 +240,17 @@ pub fn deinit(self: *LibCInstallation, allocator: Allocator) void {
 
 fn findNativeIncludeDirPosix(self: *LibCInstallation, gpa: Allocator, io: Io, args: FindNativeOptions) FindError!void {
     // Detect infinite loops.
-    var env_map = try args.env_map.clone(gpa);
-    defer env_map.deinit();
-    const skip_cc_env_var = if (env_map.get(inf_loop_env_key)) |phase| blk: {
+    var environ_map = try args.environ_map.clone(gpa);
+    defer environ_map.deinit();
+    const skip_cc_env_var = if (environ_map.get(inf_loop_env_key)) |phase| blk: {
         if (std.mem.eql(u8, phase, "1")) {
-            try env_map.put(inf_loop_env_key, "2");
+            try environ_map.put(inf_loop_env_key, "2");
             break :blk true;
         } else {
             return error.ZigIsTheCCompiler;
         }
     } else blk: {
-        try env_map.put(inf_loop_env_key, "1");
+        try environ_map.put(inf_loop_env_key, "1");
         break :blk false;
     };
 
@@ -259,7 +259,7 @@ fn findNativeIncludeDirPosix(self: *LibCInstallation, gpa: Allocator, io: Io, ar
     var argv = std.array_list.Managed([]const u8).init(gpa);
     defer argv.deinit();
 
-    try appendCcExe(&argv, skip_cc_env_var, &env_map);
+    try appendCcExe(&argv, skip_cc_env_var, &environ_map);
     try argv.appendSlice(&.{
         "-E",
         "-Wp,-v",
@@ -270,7 +270,7 @@ fn findNativeIncludeDirPosix(self: *LibCInstallation, gpa: Allocator, io: Io, ar
     const run_res = std.process.run(gpa, io, .{
         .max_output_bytes = 1024 * 1024,
         .argv = argv.items,
-        .env_map = &env_map,
+        .environ_map = &environ_map,
         // Some C compilers, such as Clang, are known to rely on argv[0] to find the path
         // to their own executable, without even bothering to resolve PATH. This results in the message:
         // error: unable to execute command: Executable "" doesn't exist!
@@ -446,7 +446,7 @@ fn findNativeCrtDirWindows(
 
 fn findNativeCrtDirPosix(self: *LibCInstallation, gpa: Allocator, io: Io, args: FindNativeOptions) FindError!void {
     self.crt_dir = try ccPrintFileName(gpa, io, .{
-        .env_map = args.env_map,
+        .environ_map = args.environ_map,
         .search_basename = switch (args.target.os.tag) {
             .linux => if (args.target.abi.isAndroid()) "crtbegin_dynamic.o" else "crt1.o",
             else => "crt1.o",
@@ -551,7 +551,7 @@ fn findNativeMsvcLibDir(
 }
 
 pub const CCPrintFileNameOptions = struct {
-    env_map: *const Environ.Map,
+    environ_map: *const Environ.Map,
     search_basename: []const u8,
     want_dirname: enum { full_path, only_dir },
     verbose: bool = false,
@@ -560,17 +560,17 @@ pub const CCPrintFileNameOptions = struct {
 /// caller owns returned memory
 fn ccPrintFileName(gpa: Allocator, io: Io, args: CCPrintFileNameOptions) ![]u8 {
     // Detect infinite loops.
-    var env_map = try args.env_map.clone(gpa);
-    defer env_map.deinit();
-    const skip_cc_env_var = if (env_map.get(inf_loop_env_key)) |phase| blk: {
+    var environ_map = try args.environ_map.clone(gpa);
+    defer environ_map.deinit();
+    const skip_cc_env_var = if (environ_map.get(inf_loop_env_key)) |phase| blk: {
         if (std.mem.eql(u8, phase, "1")) {
-            try env_map.put(inf_loop_env_key, "2");
+            try environ_map.put(inf_loop_env_key, "2");
             break :blk true;
         } else {
             return error.ZigIsTheCCompiler;
         }
     } else blk: {
-        try env_map.put(inf_loop_env_key, "1");
+        try environ_map.put(inf_loop_env_key, "1");
         break :blk false;
     };
 
@@ -580,13 +580,13 @@ fn ccPrintFileName(gpa: Allocator, io: Io, args: CCPrintFileNameOptions) ![]u8 {
     const arg1 = try std.fmt.allocPrint(gpa, "-print-file-name={s}", .{args.search_basename});
     defer gpa.free(arg1);
 
-    try appendCcExe(&argv, skip_cc_env_var, &env_map);
+    try appendCcExe(&argv, skip_cc_env_var, &environ_map);
     try argv.append(arg1);
 
     const run_res = std.process.run(gpa, io, .{
         .max_output_bytes = 1024 * 1024,
         .argv = argv.items,
-        .env_map = &env_map,
+        .environ_map = &environ_map,
         // Some C compilers, such as Clang, are known to rely on argv[0] to find the path
         // to their own executable, without even bothering to resolve PATH. This results in the message:
         // error: unable to execute command: Executable "" doesn't exist!
@@ -669,7 +669,7 @@ const inf_loop_env_key = "ZIG_IS_DETECTING_LIBC_PATHS";
 fn appendCcExe(
     args: *std.array_list.Managed([]const u8),
     skip_cc_env_var: bool,
-    env_map: *const Environ.Map,
+    environ_map: *const Environ.Map,
 ) !void {
     const default_cc_exe = if (is_windows) "cc.exe" else "cc";
     try args.ensureUnusedCapacity(1);
@@ -677,7 +677,7 @@ fn appendCcExe(
         args.appendAssumeCapacity(default_cc_exe);
         return;
     }
-    const cc_env_var = std.zig.EnvVar.CC.get(env_map) orelse {
+    const cc_env_var = std.zig.EnvVar.CC.get(environ_map) orelse {
         args.appendAssumeCapacity(default_cc_exe);
         return;
     };
