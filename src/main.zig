@@ -56,11 +56,11 @@ pub const panic = crash_report.panic;
 pub const debug = crash_report.debug;
 
 var wasi_preopens: fs.wasi.Preopens = undefined;
-pub fn wasi_cwd() std.os.wasi.fd_t {
+pub fn wasi_cwd() Io.Dir {
     // Expect the first preopen to be current working directory.
     const cwd_fd: std.posix.fd_t = 3;
     assert(mem.eql(u8, wasi_preopens.names[cwd_fd], "."));
-    return cwd_fd;
+    return .{ .handle = cwd_fd };
 }
 
 const fatal = std.process.fatal;
