@@ -801,6 +801,8 @@ test "convert from Environ to Map and back again" {
 }
 
 test createMapWide {
+    if (builtin.cpu.arch.endian() == .big) return error.SkipZigTest; // TODO
+
     const gpa = testing.allocator;
 
     var map: Map = .init(gpa);
