@@ -829,26 +829,7 @@ fn addCompilerMod(b: *std.Build, options: AddCompilerModOptions) *std.Build.Modu
 fn addCompilerStep(b: *std.Build, options: AddCompilerModOptions) *std.Build.Step.Compile {
     const exe = b.addExecutable(.{
         .name = "zig",
-        .max_rss = switch (b.graph.host.result.os.tag) {
-            .linux => switch (b.graph.host.result.cpu.arch) {
-                .aarch64 => 6_240_805_683,
-                .loongarch64 => 5_024_158_515,
-                .powerpc64le => 5_224_914_534,
-                .riscv64 => 6_996_309_196,
-                .s390x => 4_997_174_476,
-                .x86_64 => 6_664_025_702,
-                else => 7_000_000_000,
-            },
-            .macos => switch (b.graph.host.result.cpu.arch) {
-                .aarch64 => 6_639_145_779,
-                else => 6_700_000_000,
-            },
-            .windows => switch (b.graph.host.result.cpu.arch) {
-                .x86_64 => 5_770_394_009,
-                else => 5_800_000_000,
-            },
-            else => 7_000_000_000,
-        },
+        .max_rss = 7_000_000_000,
         .root_module = addCompilerMod(b, options),
     });
     exe.stack_size = stack_size;
