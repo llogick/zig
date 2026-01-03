@@ -599,11 +599,10 @@ pub fn Aligned(comptime T: type, comptime alignment: ?mem.Alignment) type {
             return if (alignment) |a| ([:s]align(a.toByteUnits()) T) else [:s]T;
         }
 
-        /// Initialize with capacity to hold `num` elements.
-        /// The resulting capacity will equal `num` exactly.
-        /// Deinitialize with `deinit` or use `toOwnedSlice`.
+        /// Initialize with capacity to hold exactly `num` elements.
+        /// Deinitialize with `deinit` or `toOwnedSlice`.
         pub fn initCapacity(gpa: Allocator, num: usize) Allocator.Error!Self {
-            var self = Self{};
+            var self: Self = .empty;
             try self.ensureTotalCapacityPrecise(gpa, num);
             return self;
         }
