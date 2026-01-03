@@ -7027,8 +7027,7 @@ WebAssembly.instantiate(typedArray, {
 The result is 3{#end_shell_samp#}
       {#header_close#}
       {#header_open|WASI#}
-      <p>Zig's support for WebAssembly System Interface (WASI) is under active development.
-      Example of using the standard library and reading command line arguments:</p>
+      <p>Zig standard library has first-class support for WebAssembly System Interface.</p>
       {#code|wasi_args.zig#}
 
       {#shell_samp#}$ wasmtime wasi_args.wasm 123 hello

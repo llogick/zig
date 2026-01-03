@@ -1,18 +1,10 @@
 const std = @import("std");
-const fs = std.fs;
 
-pub fn main() !void {
-    var general_purpose_allocator: std.heap.GeneralPurposeAllocator(.{}) = .init;
-    const gpa = general_purpose_allocator.allocator();
-
-    var arena_instance = std.heap.ArenaAllocator.init(gpa);
-    defer arena_instance.deinit();
-    const arena = arena_instance.allocator();
-
-    const preopens = try fs.wasi.preopensAlloc(arena);
+pub fn main(init: std.process.Init) !void {
+    const preopens = try std.fs.wasi.preopensAlloc(init.arena.allocator());
 
     for (preopens.names, 0..) |preopen, i| {
-        std.debug.print("{}: {s}\n", .{ i, preopen });
+        std.debug.print("{d}: {s}\n", .{ i, preopen });
     }
 }
 
