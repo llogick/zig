@@ -1539,10 +1539,6 @@ fn runCommand(
     }
 }
 
-const EvalZigTestResult = struct {
-    test_results: Step.TestResults,
-    test_metadata: ?TestMetadata,
-};
 const EvalGenericResult = struct {
     term: std.process.Child.Term,
     stdout: ?[]const u8,
@@ -1605,21 +1601,8 @@ fn spawnChildAndCollect(
 
     if (run.stdio == .zig_test) {
         var timer = try std.time.Timer.start();
-        const res = try evalZigTest(run, &child, options, fuzz_context);
-        run.step.result_duration_ns = timer.read();
-        run.step.test_results = res.test_results;
-        if (res.test_metadata) |tm| {
-            run.cached_test_metadata = tm.toCachedTestMetadata();
-            if (options.web_server) |ws| {
-                if (b.graph.time_report) {
-                    ws.updateTimeReportRunTest(
-                        run,
-                        &run.cached_test_metadata.?,
-                        tm.ns_per_test,
-                    );
-                }
-            }
-        }
+        defer run.step.result_duration_ns = timer.read();
+        try evalZigTest(run, &child, options, fuzz_context);
         return null;
     } else {
         const inherit = child.stdout_behavior == .Inherit or child.stderr_behavior == .Inherit;
@@ -1675,7 +1658,7 @@ fn evalZigTest(
     child: *std.process.Child,
     options: Step.MakeOptions,
     fuzz_context: ?FuzzContext,
-) !EvalZigTestResult {
+) !void {
     const step_owner = run.step.owner;
     const gpa = step_owner.allocator;
     const arena = step_owner.allocator;
@@ -1684,18 +1667,16 @@ fn evalZigTest(
     // We will update this every time a child runs.
     run.step.result_peak_rss = 0;
 
-    var result: EvalZigTestResult = .{
-        .test_results = .{
-            .test_count = 0,
-            .skip_count = 0,
-            .fail_count = 0,
-            .crash_count = 0,
-            .timeout_count = 0,
-            .leak_count = 0,
-            .log_err_count = 0,
-        },
-        .test_metadata = null,
+    var test_results: Step.TestResults = .{
+        .test_count = 0,
+        .skip_count = 0,
+        .fail_count = 0,
+        .crash_count = 0,
+        .timeout_count = 0,
+        .leak_count = 0,
+        .log_err_count = 0,
     };
+    var test_metadata: ?TestMetadata = null;
 
     while (true) {
         try child.spawn(io);
@@ -1721,8 +1702,8 @@ fn evalZigTest(
             options,
             fuzz_context,
             &poller,
-            &result.test_metadata,
-            &result.test_results,
+            &test_metadata,
+            &test_results,
         )) {
             .write_failed => |err| {
                 // The runner unexpectedly closed a stdio pipe, which means a crash. Make sure we've captured
@@ -1741,8 +1722,9 @@ fn evalZigTest(
                     child.resource_usage_statistics.getMaxRss() orelse 0,
                 );
 
-                try run.step.addError("unable to write stdin ({t}); test process unexpectedly {f}", .{ err, fmtTerm(term) });
-                return result;
+                // The individual unit test results are irrelevant: the test runner itself broke!
+                // Fail immediately without populating `s.test_results`.
+                return run.step.fail("unable to write stdin ({t}); test process unexpectedly {f}", .{ err, fmtTerm(term) });
             },
             .no_poll => |no_poll| {
                 // This might be a success (we requested exit and the child dutifully closed stdout) or
@@ -1764,10 +1746,10 @@ fn evalZigTest(
                 if (no_poll.active_test_index) |test_index| {
                     // A test was running, so this is definitely a crash. Report it against that
                     // test, and continue to the next test.
-                    result.test_metadata.?.ns_per_test[test_index] = no_poll.ns_elapsed;
-                    result.test_results.crash_count += 1;
+                    test_metadata.?.ns_per_test[test_index] = no_poll.ns_elapsed;
+                    test_results.crash_count += 1;
                     try run.step.addError("'{s}' {f}{s}{s}", .{
-                        result.test_metadata.?.testName(test_index),
+                        test_metadata.?.testName(test_index),
                         fmtTerm(term),
                         if (stderr_owned.len != 0) " with stderr:\n" else "",
                         std.mem.trim(u8, stderr_owned, "\n"),
@@ -1777,11 +1759,28 @@ fn evalZigTest(
 
                 // Report an error if the child terminated uncleanly or if we were still trying to run more tests.
                 run.step.result_stderr = stderr_owned;
-                const tests_done = result.test_metadata != null and result.test_metadata.?.next_index == std.math.maxInt(u32);
+                const tests_done = test_metadata != null and test_metadata.?.next_index == std.math.maxInt(u32);
                 if (!tests_done or !termMatches(.{ .Exited = 0 }, term)) {
-                    try run.step.addError("test process unexpectedly {f}", .{fmtTerm(term)});
+                    // The individual unit test results are irrelevant: the test runner itself broke!
+                    // Fail immediately without populating `s.test_results`.
+                    return run.step.fail("test process unexpectedly {f}", .{fmtTerm(term)});
                 }
-                return result;
+
+                // We're done with all of the tests! Commit the test results and return.
+                run.step.test_results = test_results;
+                if (test_metadata) |tm| {
+                    run.cached_test_metadata = tm.toCachedTestMetadata();
+                    if (options.web_server) |ws| {
+                        if (run.step.owner.graph.time_report) {
+                            ws.updateTimeReportRunTest(
+                                run,
+                                &run.cached_test_metadata.?,
+                                tm.ns_per_test,
+                            );
+                        }
+                    }
+                }
+                return;
             },
             .timeout => |timeout| {
                 const stderr = poller.reader(.stderr).buffered();
@@ -1789,10 +1788,10 @@ fn evalZigTest(
                 if (timeout.active_test_index) |test_index| {
                     // A test was running. Report the timeout against that test, and continue on to
                     // the next test.
-                    result.test_metadata.?.ns_per_test[test_index] = timeout.ns_elapsed;
-                    result.test_results.timeout_count += 1;
+                    test_metadata.?.ns_per_test[test_index] = timeout.ns_elapsed;
+                    test_results.timeout_count += 1;
                     try run.step.addError("'{s}' timed out after {D}{s}{s}", .{
-                        result.test_metadata.?.testName(test_index),
+                        test_metadata.?.testName(test_index),
                         timeout.ns_elapsed,
                         if (stderr.len != 0) " with stderr:\n" else "",
                         std.mem.trim(u8, stderr, "\n"),
@@ -1801,6 +1800,8 @@ fn evalZigTest(
                 }
                 // Just log an error and let the child be killed.
                 run.step.result_stderr = try arena.dupe(u8, stderr);
+                // The individual unit test results in `results` are irrelevant: the test runner
+                // is broken! Fail immediately without populating `s.test_results`.
                 return run.step.fail("test runner failed to respond for {D}", .{timeout.ns_elapsed});
             },
         }
