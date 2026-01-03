@@ -17,20 +17,10 @@ var stdout_buffer: [1024]u8 = undefined;
 var input_buffer: [1024]u8 = undefined;
 var output_buffer: [1024]u8 = undefined;
 
-pub fn main() !void {
-    var arena_instance = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena_instance.deinit();
-    const arena = arena_instance.allocator();
-
-    var general_purpose_allocator: std.heap.GeneralPurposeAllocator(.{}) = .init;
-    const gpa = general_purpose_allocator.allocator();
-
-    var threaded: std.Io.Threaded = .init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    const args = try std.process.argsAlloc(arena);
-    return cmdObjCopy(arena, io, args[1..]);
+pub fn main(init: std.process.Init) !void {
+    const arena = init.arena.allocator();
+    const args = try init.minimal.args.toSlice(arena);
+    return cmdObjCopy(arena, init.io, args[1..]);
 }
 
 fn cmdObjCopy(arena: Allocator, io: Io, args: []const []const u8) !void {

@@ -9,6 +9,12 @@ pub fn main(init: std.process.Init.Minimal) !void {
     };
     const gpa = gpa_state.allocator();
 
+    const process_cwd_path = try std.process.getCwdAlloc(gpa);
+    defer gpa.free(process_cwd_path);
+
+    var env_map = try init.environ.createMap(gpa);
+    defer env_map.deinit();
+
     var it = try init.args.iterateAllocator(gpa);
     defer it.deinit();
     _ = it.next() orelse unreachable; // skip binary name
@@ -17,7 +23,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         const cwd_path = it.next() orelse break :child_path .{ child_path, false };
         // If there is a third argument, it is the current CWD somewhere within the cache directory.
         // In that case, modify the child path in order to test spawning a path with a leading `..` component.
-        break :child_path .{ try std.fs.path.relative(gpa, cwd_path, child_path), true };
+        break :child_path .{ try std.fs.path.relative(gpa, process_cwd_path, &env_map, cwd_path, child_path), true };
     };
     defer if (needs_free) gpa.free(child_path);
 
@@ -28,7 +34,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     defer threaded.deinit();
     const io = threaded.io();
 
-    var child = try std.process.spawn(.{
+    var child = try std.process.spawn(io, .{
         .argv = &.{ child_path, "hello arg" },
         .stdin = .pipe,
         .stdout = .pipe,

@@ -104,20 +104,20 @@ pub fn main(init: std.process.Init) !void {
     // getAlloc
     {
         try std.testing.expectEqualSlices(u8, "123", try environ.getAlloc(arena, "FOO"));
-        try std.testing.expectError(error.EnvironmentVariableNotFound, environ.getAlloc(arena, "FOO="));
-        try std.testing.expectError(error.EnvironmentVariableNotFound, environ.getAlloc(arena, "FO"));
-        try std.testing.expectError(error.EnvironmentVariableNotFound, environ.getAlloc(arena, "FOOO"));
+        try std.testing.expectError(error.EnvironmentVariableMissing, environ.getAlloc(arena, "FOO="));
+        try std.testing.expectError(error.EnvironmentVariableMissing, environ.getAlloc(arena, "FO"));
+        try std.testing.expectError(error.EnvironmentVariableMissing, environ.getAlloc(arena, "FOOO"));
         if (builtin.os.tag == .windows) {
             try std.testing.expectEqualSlices(u8, "123", try environ.getAlloc(arena, "foo"));
         }
         try std.testing.expectEqualSlices(u8, "ABC=123", try environ.getAlloc(arena, "EQUALS"));
-        try std.testing.expectError(error.EnvironmentVariableNotFound, environ.getAlloc(arena, "EQUALS=ABC"));
+        try std.testing.expectError(error.EnvironmentVariableMissing, environ.getAlloc(arena, "EQUALS=ABC"));
         try std.testing.expectEqualSlices(u8, "non-ascii አማርኛ \u{10FFFF}", try environ.getAlloc(arena, "КИРиллИЦА"));
         if (builtin.os.tag == .windows) {
             try std.testing.expectEqualSlices(u8, "non-ascii አማርኛ \u{10FFFF}", try environ.getAlloc(arena, "кирИЛЛица"));
         }
         try std.testing.expectEqualSlices(u8, "", try environ.getAlloc(arena, "NO_VALUE"));
-        try std.testing.expectError(error.EnvironmentVariableNotFound, environ.getAlloc(arena, "NOT_SET"));
+        try std.testing.expectError(error.EnvironmentVariableMissing, environ.getAlloc(arena, "NOT_SET"));
         if (builtin.os.tag == .windows) {
             try std.testing.expectEqualSlices(u8, "hi", try environ.getAlloc(arena, "=HIDDEN"));
             try std.testing.expectEqualSlices(u8, "\xed\xa0\x80", try environ.getAlloc(arena, "INVALID_UTF16_\xed\xa0\x80"));
