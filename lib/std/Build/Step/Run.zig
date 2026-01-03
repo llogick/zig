@@ -603,18 +603,25 @@ pub fn removeEnvironmentVariable(run: *Run, key: []const u8) void {
 
 /// Adds a check for exact stderr match. Does not add any other checks.
 pub fn expectStdErrEqual(run: *Run, bytes: []const u8) void {
-    const new_check: StdIo.Check = .{ .expect_stderr_exact = run.step.owner.dupe(bytes) };
-    run.addCheck(new_check);
+    run.addCheck(.{ .expect_stderr_exact = run.step.owner.dupe(bytes) });
+}
+
+pub fn expectStdErrMatch(run: *Run, bytes: []const u8) void {
+    run.addCheck(.{ .expect_stderr_match = run.step.owner.dupe(bytes) });
 }
 
 /// Adds a check for exact stdout match as well as a check for exit code 0, if
 /// there is not already an expected termination check.
 pub fn expectStdOutEqual(run: *Run, bytes: []const u8) void {
-    const new_check: StdIo.Check = .{ .expect_stdout_exact = run.step.owner.dupe(bytes) };
-    run.addCheck(new_check);
-    if (!run.hasTermCheck()) {
-        run.expectExitCode(0);
-    }
+    run.addCheck(.{ .expect_stdout_exact = run.step.owner.dupe(bytes) });
+    if (!run.hasTermCheck()) run.expectExitCode(0);
+}
+
+/// Adds a check for stdout match as well as a check for exit code 0, if there
+/// is not already an expected termination check.
+pub fn expectStdOutMatch(run: *Run, bytes: []const u8) void {
+    run.addCheck(.{ .expect_stdout_match = run.step.owner.dupe(bytes) });
+    if (!run.hasTermCheck()) run.expectExitCode(0);
 }
 
 pub fn expectExitCode(run: *Run, code: u8) void {
