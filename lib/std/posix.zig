@@ -1690,47 +1690,6 @@ pub fn getsockoptError(sockfd: fd_t) ConnectError!void {
     }
 }
 
-pub const WaitPidResult = struct {
-    pid: pid_t,
-    status: u32,
-};
-
-/// Use this version of the `waitpid` wrapper if you spawned your child process using explicit
-/// `fork` and `execve` method.
-pub fn waitpid(pid: pid_t, flags: u32) WaitPidResult {
-    var status: if (builtin.link_libc) c_int else u32 = undefined;
-    while (true) {
-        const rc = system.waitpid(pid, &status, @intCast(flags));
-        switch (errno(rc)) {
-            .SUCCESS => return .{
-                .pid = @intCast(rc),
-                .status = @bitCast(status),
-            },
-            .INTR => continue,
-            .CHILD => unreachable, // The process specified does not exist. It would be a race condition to handle this error.
-            .INVAL => unreachable, // Invalid flags.
-            else => unreachable,
-        }
-    }
-}
-
-pub fn wait4(pid: pid_t, flags: u32, ru: ?*rusage) WaitPidResult {
-    var status: if (builtin.link_libc) c_int else u32 = undefined;
-    while (true) {
-        const rc = system.wait4(pid, &status, @intCast(flags), ru);
-        switch (errno(rc)) {
-            .SUCCESS => return .{
-                .pid = @intCast(rc),
-                .status = @bitCast(status),
-            },
-            .INTR => continue,
-            .CHILD => unreachable, // The process specified does not exist. It would be a race condition to handle this error.
-            .INVAL => unreachable, // Invalid flags.
-            else => unreachable,
-        }
-    }
-}
-
 pub const FStatError = std.Io.File.StatError;
 
 /// Return information about a file descriptor.

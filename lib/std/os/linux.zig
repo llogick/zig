@@ -1598,8 +1598,15 @@ pub fn wait4(pid: pid_t, status: *u32, flags: u32, usage: ?*rusage) usize {
     );
 }
 
-pub fn waitid(id_type: P, id: i32, infop: *siginfo_t, flags: u32) usize {
-    return syscall5(.waitid, @intFromEnum(id_type), @as(usize, @bitCast(@as(isize, id))), @intFromPtr(infop), flags, 0);
+pub fn waitid(id_type: P, id: i32, infop: *siginfo_t, flags: u32, usage: ?*rusage) usize {
+    return syscall5(
+        .waitid,
+        @intFromEnum(id_type),
+        @as(usize, @bitCast(@as(isize, id))),
+        @intFromPtr(infop),
+        flags,
+        @intFromPtr(usage),
+    );
 }
 
 pub const F = struct {
@@ -6203,6 +6210,16 @@ const siginfo_fields_union = extern union {
         syscall: i32,
         native_arch: u32,
     },
+};
+
+pub const CLD = enum(i32) {
+    EXITED = 1,
+    KILLED = 2,
+    DUMPED = 3,
+    TRAPPED = 4,
+    STOPPED = 5,
+    CONTINUED = 6,
+    _,
 };
 
 pub const siginfo_t = if (is_mips)
