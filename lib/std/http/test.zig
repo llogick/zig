@@ -1164,7 +1164,6 @@ fn createTestServer(io: Io, S: type) !*TestServer {
 
 test "redirect to different connection" {
     if (builtin.cpu.arch.isPowerPC64() and builtin.mode != .Debug) return error.SkipZigTest; // https://github.com/llvm/llvm-project/issues/171879
-    if (builtin.cpu.arch.isMIPS32() and !builtin.link_libc) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/30216
 
     const io = std.testing.io;
     const test_server_new = try createTestServer(io, struct {
