@@ -12764,13 +12764,13 @@ fn scanEnviron(t: *Threaded) void {
     }
 }
 
-fn processReplace(userdata: ?*anyopaque, options: std.process.ReplaceOptions) std.process.ReplaceError {
+fn processReplace(userdata: ?*anyopaque, options: process.ReplaceOptions) process.ReplaceError {
     _ = userdata;
     _ = options;
     @panic("TODO processReplace");
 }
 
-fn processReplacePath(userdata: ?*anyopaque, dir: Dir, options: std.process.ReplaceOptions) std.process.ReplaceError {
+fn processReplacePath(userdata: ?*anyopaque, dir: Dir, options: process.ReplaceOptions) process.ReplaceError {
     _ = userdata;
     _ = dir;
     _ = options;
@@ -13020,7 +13020,7 @@ fn processSpawnPosix(userdata: ?*anyopaque, options: process.SpawnOptions) proce
     };
 }
 
-fn childWait(userdata: ?*anyopaque, child: *std.process.Child) process.Child.WaitError!process.Child.Term {
+fn childWait(userdata: ?*anyopaque, child: *process.Child) process.Child.WaitError!process.Child.Term {
     if (native_os == .wasi) unreachable;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     switch (native_os) {
@@ -13029,7 +13029,7 @@ fn childWait(userdata: ?*anyopaque, child: *std.process.Child) process.Child.Wai
     }
 }
 
-fn childKill(userdata: ?*anyopaque, child: *std.process.Child) void {
+fn childKill(userdata: ?*anyopaque, child: *process.Child) void {
     if (native_os == .wasi) unreachable;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     if (is_windows) {
