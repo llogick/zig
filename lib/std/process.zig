@@ -328,6 +328,8 @@ pub const ArgExpansion = enum { expand, no_expand };
 pub const WindowsExtension = enum { bat, cmd, com, exe };
 
 pub const SpawnError = error{
+    /// The operating system does not support creating child processes.
+    OperationUnsupported,
     OutOfMemory,
     /// POSIX-only. `StdIo.ignore` was selected and opening `/dev/null` returned ENODEV.
     NoDevice,

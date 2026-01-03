@@ -12820,7 +12820,7 @@ const processSpawn = switch (native_os) {
 fn processSpawnUnsupported(userdata: ?*anyopaque, options: process.SpawnOptions) process.SpawnError!process.Child {
     _ = userdata;
     _ = options;
-    return error.Unexpected;
+    return error.OperationUnsupported;
 }
 
 const Spawned = struct {
