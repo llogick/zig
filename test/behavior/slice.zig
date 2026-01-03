@@ -158,6 +158,18 @@ test "slice of type" {
     }
 }
 
+test "pass a slice of types to a function" {
+    const S = struct {
+        fn checkTypesSlice(types_slice: []const type) !void {
+            try expect(types_slice.len == 2);
+            try expect(types_slice[0] == anyerror);
+            try expect(types_slice[1] == bool);
+        }
+    };
+    const types_array = [_]type{ void, anyerror, bool };
+    try S.checkTypesSlice(types_array[1..]);
+}
+
 test "generic malloc free" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 

@@ -3618,7 +3618,7 @@ fn updateLazyType(
             try wip_nav.strp(name);
             if (array_type.sentinel != .none) try wip_nav.blockValue(src_loc, .fromInterned(array_type.sentinel));
             try wip_nav.refType(array_child_type);
-            try wip_nav.abbrevCode(.array_index);
+            try wip_nav.abbrevCode(.array_len);
             try wip_nav.refType(.usize);
             try diw.writeUleb128(array_type.len);
             try diw.writeUleb128(@intFromEnum(AbbrevCode.null));
@@ -3627,7 +3627,7 @@ fn updateLazyType(
             try wip_nav.abbrevCode(.vector_type);
             try wip_nav.strp(name);
             try wip_nav.refType(.fromInterned(vector_type.child));
-            try wip_nav.abbrevCode(.array_index);
+            try wip_nav.abbrevCode(.array_len);
             try wip_nav.refType(.usize);
             try diw.writeUleb128(vector_type.len);
             try diw.writeUleb128(@intFromEnum(AbbrevCode.null));
@@ -4177,24 +4177,38 @@ fn updateLazyValue(
             try wip_nav.refType(.fromInterned(float.ty));
         },
         .ptr => |ptr| {
+            const Access = union(enum) {
+                index: u64,
+                field: InternPool.NullTerminatedString,
+                synthetic_field: []const u8,
+                tuple_index: u32,
+            };
+            var zero_bit_accesses: std.ArrayList(Access) = .empty;
+            defer zero_bit_accesses.deinit(dwarf.gpa);
             location: {
                 var base_addr = ptr.base_addr;
                 var byte_offset = ptr.byte_offset;
                 const base_unit, const base_entry = while (true) {
-                    const base_ptr = base_ptr: switch (base_addr) {
+                    const base_ptr, const access: Access = base_ptr_access: switch (base_addr) {
                         .nav => |nav_index| break try wip_nav.getNavEntry(nav_index),
                         .comptime_alloc, .comptime_field => unreachable,
                         .uav => |uav| {
                             const uav_ty: Type = .fromInterned(ip.typeOf(uav.val));
                             if (try uav_ty.onePossibleValue(pt)) |_| {
-                                try wip_nav.abbrevCode(.udata_comptime_value);
+                                try wip_nav.abbrevCode(if (zero_bit_accesses.items.len > 0)
+                                    .aggregate_udata_comptime_value
+                                else
+                                    .udata_comptime_value);
                                 try diw.writeUleb128(ip.indexToKey(uav.orig_ty).ptr_type.flags.alignment.toByteUnits() orelse
                                     uav_ty.abiAlignment(zcu).toByteUnits().?);
                                 break :location;
                             } else break try wip_nav.getValueEntry(.fromInterned(uav.val));
                         },
                         .int => {
-                            try wip_nav.abbrevCode(.udata_comptime_value);
+                            try wip_nav.abbrevCode(if (zero_bit_accesses.items.len > 0)
+                                .aggregate_udata_comptime_value
+                            else
+                                .udata_comptime_value);
                             try diw.writeUleb128(byte_offset);
                             break :location;
                         },
@@ -4203,16 +4217,40 @@ fn updateLazyValue(
                             byte_offset += codegen.errUnionPayloadOffset(.fromInterned(ip.indexToKey(
                                 ip.indexToKey(base_ptr.ty).ptr_type.child,
                             ).error_union_type.payload_type), zcu);
-                            break :base_ptr base_ptr;
+                            break :base_ptr_access .{ base_ptr, .{ .synthetic_field = "value" } };
                         },
-                        .opt_payload => |opt_ptr| ip.indexToKey(opt_ptr).ptr,
-                        .field => unreachable,
-                        .arr_elem => unreachable,
+                        .opt_payload => |opt_ptr| .{ ip.indexToKey(opt_ptr).ptr, .{ .synthetic_field = "?" } },
+                        .field => |field| {
+                            const base_ptr = ip.indexToKey(field.base).ptr;
+                            const agg_ty: Type = .fromInterned(ip.indexToKey(base_ptr.ty).ptr_type.child);
+                            break :base_ptr_access .{
+                                base_ptr,
+                                if (agg_ty.isSlice(zcu)) .{ .synthetic_field = switch (field.index) {
+                                    Value.slice_ptr_index => "ptr",
+                                    Value.slice_len_index => "len",
+                                    else => unreachable,
+                                } } else if (agg_ty.structFieldName(@intCast(field.index), zcu).unwrap()) |field_name|
+                                    .{ .field = field_name }
+                                else
+                                    .{ .tuple_index = @intCast(field.index) },
+                            };
+                        },
+                        .arr_elem => |arr_elem| .{
+                            ip.indexToKey(arr_elem.base).ptr,
+                            .{ .index = arr_elem.index },
+                        },
                     };
                     base_addr = base_ptr.base_addr;
                     byte_offset += base_ptr.byte_offset;
+                    if (Type.fromInterned(ip.indexToKey(base_ptr.ty).ptr_type.child).hasRuntimeBits(zcu))
+                        assert(access != .index)
+                    else
+                        try zero_bit_accesses.append(dwarf.gpa, access);
                 };
-                try wip_nav.abbrevCode(.location_comptime_value);
+                try wip_nav.abbrevCode(if (zero_bit_accesses.items.len > 0)
+                    .aggregate_location_comptime_value
+                else
+                    .location_comptime_value);
                 try wip_nav.infoExprLoc(.{ .implicit_pointer = .{
                     .unit = base_unit,
                     .entry = base_entry,
@@ -4220,6 +4258,29 @@ fn updateLazyValue(
                 } });
             }
             try wip_nav.refType(.fromInterned(ptr.ty));
+            if (zero_bit_accesses.items.len > 0) {
+                for (zero_bit_accesses.items) |access| switch (access) {
+                    .index => |index| {
+                        try wip_nav.abbrevCode(.array_index);
+                        try diw.writeUleb128(index);
+                    },
+                    .field => |field| {
+                        try wip_nav.abbrevCode(.field);
+                        try wip_nav.strp(field.toSlice(ip));
+                    },
+                    .synthetic_field => |field| {
+                        try wip_nav.abbrevCode(.field);
+                        try wip_nav.strp(field);
+                    },
+                    .tuple_index => |index| {
+                        try wip_nav.abbrevCode(.field);
+                        var field_name_buf: [std.fmt.count("{d}", .{std.math.maxInt(u32)})]u8 = undefined;
+                        const field_name = std.fmt.bufPrint(&field_name_buf, "{d}", .{index}) catch unreachable;
+                        try wip_nav.strp(field_name);
+                    },
+                };
+                try diw.writeUleb128(@intFromEnum(AbbrevCode.null));
+            }
         },
         .slice => |slice| {
             try wip_nav.abbrevCode(.aggregate_comptime_value);
@@ -4387,12 +4448,7 @@ fn updateLazyValue(
     try dwarf.debug_info.section.replaceEntry(wip_nav.unit, wip_nav.entry, dwarf, wip_nav.debug_info.written());
 }
 
-fn optRepr(opt_child_type: Type, zcu: *const Zcu) enum {
-    unpacked,
-    opv_null,
-    error_set,
-    pointer,
-} {
+fn optRepr(opt_child_type: Type, zcu: *const Zcu) enum { unpacked, opv_null, error_set, pointer } {
     if (opt_child_type.isNoReturn(zcu)) return .opv_null;
     return switch (opt_child_type.toIntern()) {
         .anyerror_type => .error_set,
@@ -5233,6 +5289,7 @@ const AbbrevCode = enum {
     module,
     empty_file,
     file,
+    field,
     signed_enum_field,
     unsigned_enum_field,
     big_enum_field,
@@ -5261,6 +5318,7 @@ const AbbrevCode = enum {
     array_sentinel_type,
     vector_type,
     array_index,
+    array_len,
     nullary_func_type,
     func_type,
     func_type_param,
@@ -5308,10 +5366,12 @@ const AbbrevCode = enum {
     data16_comptime_value,
     sdata_comptime_value,
     udata_comptime_value,
+    aggregate_udata_comptime_value,
     block_comptime_value,
     string_comptime_value,
     location_comptime_value,
     aggregate_comptime_value,
+    aggregate_location_comptime_value,
     comptime_value_field_runtime_bits,
     comptime_value_field_comptime_state,
     comptime_value_elem_runtime_bits,
@@ -5721,6 +5781,12 @@ const AbbrevCode = enum {
                 .{ .alignment, .udata },
             },
         },
+        .field = .{
+            .tag = .member,
+            .attrs = &.{
+                .{ .name, .strp },
+            },
+        },
         .signed_enum_field = .{
             .tag = .enumerator,
             .attrs = &.{
@@ -5936,6 +6002,12 @@ const AbbrevCode = enum {
             },
         },
         .array_index = .{
+            .tag = .subrange_type,
+            .attrs = &.{
+                .{ .lower_bound, .udata },
+            },
+        },
+        .array_len = .{
             .tag = .subrange_type,
             .attrs = &.{
                 .{ .type, .ref_addr },
@@ -6325,6 +6397,14 @@ const AbbrevCode = enum {
                 .{ .type, .ref_addr },
             },
         },
+        .aggregate_udata_comptime_value = .{
+            .tag = .ZIG_comptime_value,
+            .children = true,
+            .attrs = &.{
+                .{ .const_value, .udata },
+                .{ .type, .ref_addr },
+            },
+        },
         .block_comptime_value = .{
             .tag = .ZIG_comptime_value,
             .attrs = &.{
@@ -6350,6 +6430,14 @@ const AbbrevCode = enum {
             .tag = .ZIG_comptime_value,
             .children = true,
             .attrs = &.{
+                .{ .type, .ref_addr },
+            },
+        },
+        .aggregate_location_comptime_value = .{
+            .tag = .ZIG_comptime_value,
+            .children = true,
+            .attrs = &.{
+                .{ .location, .exprloc },
                 .{ .type, .ref_addr },
             },
         },

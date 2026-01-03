@@ -2174,3 +2174,13 @@ test "avoid unused field function body compile error" {
 
     try expect(Case.entry() == 1);
 }
+
+test "pass a pointer to a comptime-only struct field to a function" {
+    const S = struct {
+        fn checkField(field_ptr: *const type) !void {
+            try expect(field_ptr.* == u42);
+        }
+    };
+    const s: struct { x: type } = .{ .x = u42 };
+    try S.checkField(&s.x);
+}
