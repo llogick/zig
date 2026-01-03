@@ -29,8 +29,10 @@ fn logImpl(
 
 pub fn main(init: std.process.Init) !void {
     const fatal = std.process.fatal;
-    const arena = init.arena;
+    const arena = init.arena.allocator();
     const io = init.io;
+    const env_map = init.env_map;
+    const cwd_path = try std.process.getCwdAlloc(arena);
 
     var opt_zig_exe: ?[]const u8 = null;
     var opt_input_file_name: ?[]const u8 = null;
@@ -44,7 +46,7 @@ pub fn main(init: std.process.Init) !void {
 
     var debug_log_args: std.ArrayList([]const u8) = .empty;
 
-    var arg_it = try init.minimal.argsIterator(arena);
+    var arg_it = try init.minimal.args.iterateAllocator(arena);
     _ = arg_it.skip();
     while (arg_it.next()) |arg| {
         if (arg.len > 0 and arg[0] == '-') {
@@ -111,9 +113,9 @@ pub fn main(init: std.process.Init) !void {
     }
 
     // Convert paths to be relative to the cwd of the subprocess.
-    const resolved_zig_exe = try Dir.path.relative(arena, tmp_dir_path, zig_exe);
+    const resolved_zig_exe = try Dir.path.relative(arena, cwd_path, env_map, tmp_dir_path, zig_exe);
     const opt_resolved_lib_dir = if (opt_lib_dir) |lib_dir|
-        try Dir.path.relative(arena, tmp_dir_path, lib_dir)
+        try Dir.path.relative(arena, cwd_path, env_map, tmp_dir_path, lib_dir)
     else
         null;
 
@@ -174,7 +176,7 @@ pub fn main(init: std.process.Init) !void {
         var cc_child_args: std.ArrayList([]const u8) = .empty;
         if (target.backend == .cbe) {
             const resolved_cc_zig_exe = if (opt_cc_zig) |cc_zig_exe|
-                try Dir.path.relative(arena, tmp_dir_path, cc_zig_exe)
+                try Dir.path.relative(arena, cwd_path, env_map, tmp_dir_path, cc_zig_exe)
             else
                 resolved_zig_exe;
 
@@ -193,7 +195,7 @@ pub fn main(init: std.process.Init) !void {
             try cc_child_args.append(arena, "-o");
         }
 
-        var child = std.process.spawn(io, .{
+        var child = try std.process.spawn(io, .{
             .argv = child_args.items,
             .stdin = .pipe,
             .stdout = .pipe,
@@ -644,7 +646,7 @@ const Eval = struct {
         eval.tmp_dir.close(io);
         if (!eval.preserve_tmp_on_fatal) {
             // Kill the child since it holds an open handle to its CWD which is the tmp dir path
-            _ = eval.child.kill(io) catch {};
+            eval.child.kill(io);
             Dir.cwd().deleteTree(io, eval.tmp_dir_path) catch |err| {
                 std.log.warn("failed to delete tree '{s}': {t}", .{ eval.tmp_dir_path, err });
             };
