@@ -121,7 +121,7 @@ pub fn detect(
         }
 
         // Check for homebrew paths
-        if (std.posix.getenv("HOMEBREW_PREFIX")) |prefix| {
+        if (std.zig.EnvVar.HOMEBREW_PREFIX.get(env_map)) |prefix| {
             try self.addLibDir(try std.fs.path.join(arena, &.{ prefix, "/lib" }));
             try self.addIncludeDir(try std.fs.path.join(arena, &.{ prefix, "/include" }));
         }
@@ -177,8 +177,6 @@ pub fn detect(
 
         // Distros like guix don't use FHS, so they rely on environment
         // variables to search for headers and libraries.
-        // We use os.getenv here since this part won't be executed on
-        // windows, to get rid of unnecessary error handling.
         if (std.zig.EnvVar.C_INCLUDE_PATH.get(env_map)) |c_include_path| {
             var it = mem.tokenizeScalar(u8, c_include_path, ':');
             while (it.next()) |dir| {

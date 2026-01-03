@@ -763,6 +763,9 @@ pub const EnvVar = enum {
     // Windows SDK integration
     PROGRAMDATA,
 
+    // Homebrew integration
+    HOMEBREW_PREFIX,
+
     pub fn isSet(ev: EnvVar, map: *const std.process.Environ.Map) bool {
         return map.contains(@tagName(ev));
     }
