@@ -1,21 +1,14 @@
 const std = @import("std");
 
-pub fn main() !void {
-    var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-    const allocator = gpa.allocator();
-
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+pub fn main(init: std.process.Init) !void {
+    const arena = init.arena.allocator();
+    const args = try init.minimal.args.toSlice(arena);
+    const io = init.io;
+    const cwd_path = try std.process.getCwdAlloc(arena);
 
     if (args.len < 3) return error.MissingArgs;
 
-    var threaded: std.Io.Threaded = .init(allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    const relative = try std.fs.path.relative(allocator, args[1], args[2]);
-    defer allocator.free(relative);
+    const relative = try std.fs.path.relative(arena, cwd_path, init.environ_map, args[1], args[2]);
 
     var stdout_writer = std.Io.File.stdout().writerStreaming(io, &.{});
     const stdout = &stdout_writer.interface;

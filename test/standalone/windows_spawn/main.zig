@@ -8,8 +8,9 @@ const utf16Literal = std.unicode.utf8ToUtf16LeStringLiteral;
 pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
     const io = init.io;
+    const process_cwd_path = try std.process.getCwdAlloc(init.arena.allocator());
 
-    var it = try init.minimal.argsAllocator(gpa);
+    var it = try init.minimal.args.iterateAllocator(gpa);
     defer it.deinit();
     _ = it.next() orelse unreachable; // skip binary name
     const hello_exe_cache_path = it.next() orelse unreachable;
@@ -23,7 +24,7 @@ pub fn main(init: std.process.Init) !void {
     defer gpa.free(tmp_absolute_path_w);
     const cwd_absolute_path = try Io.Dir.cwd().realPathFileAlloc(io, ".", gpa);
     defer gpa.free(cwd_absolute_path);
-    const tmp_relative_path = try std.fs.path.relative(gpa, cwd_absolute_path, tmp_absolute_path);
+    const tmp_relative_path = try std.fs.path.relative(gpa, process_cwd_path, init.environ_map, cwd_absolute_path, tmp_absolute_path);
     defer gpa.free(tmp_relative_path);
 
     // Clear PATH

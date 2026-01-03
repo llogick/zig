@@ -6,7 +6,7 @@ pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
     const io = init.io;
 
-    var it = try init.minimal.argsAllocator(gpa);
+    var it = try init.minimal.args.iterateAllocator(gpa);
     defer it.deinit();
     _ = it.next() orelse unreachable; // skip binary name
     const child_exe_path_orig = it.next() orelse unreachable;
@@ -105,7 +105,7 @@ pub fn main(init: std.process.Init) !void {
     try std.testing.expectError(error.FileNotFound, testExecBat(gpa, io, absolute_with_trailing, &.{"abc"}, null));
 
     var env = env: {
-        var env = try std.process.getEnvMap(gpa);
+        var env = try init.environ_map.clone(gpa);
         errdefer env.deinit();
         // No escaping
         try env.put("FOO", "123");

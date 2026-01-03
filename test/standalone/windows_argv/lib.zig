@@ -5,7 +5,7 @@ export fn verify(argc: c_int, argv: [*]const [*:0]const u16) c_int {
     const argv_slice = argv[0..@intCast(argc)];
     testArgv(argv_slice) catch |err| switch (err) {
         error.OutOfMemory => @panic("oom"),
-        error.Overflow => @panic("bytes needed to contain args would overflow usize"),
+        error.Unexpected => @panic("unexpected error"),
         error.ArgvMismatch => return 0,
     };
     return 1;
@@ -16,7 +16,10 @@ fn testArgv(expected_args: []const [*:0]const u16) !void {
     defer arena_state.deinit();
     const allocator = arena_state.allocator();
 
-    const args = try std.process.argsAlloc(allocator);
+    const cmd_line = std.os.windows.peb().ProcessParameters.CommandLine;
+    const cmd_line_w = cmd_line.Buffer.?[0..@divExact(cmd_line.Length, 2)];
+    const raw_args: std.process.Args = .{ .vector = cmd_line_w };
+    const args = try raw_args.toSlice(allocator);
     var wtf8_buf = std.array_list.Managed(u8).init(allocator);
 
     var eql = true;

@@ -542,14 +542,17 @@ pub fn getPosix(environ: Environ, key: []const u8) ?[:0]const u8 {
 /// * `contains`
 pub fn getWindows(environ: Environ, key: [*:0]const u16) ?[:0]const u16 {
     comptime assert(native_os == .windows);
+    comptime assert(@TypeOf(environ.block) == void);
 
     // '=' anywhere but the start makes this an invalid environment variable name.
     const key_slice = mem.sliceTo(key, 0);
     if (key_slice.len > 0 and mem.findScalar(u16, key_slice[1..], '=') != null) return null;
 
+    const ptr = std.os.windows.peb().ProcessParameters.Environment;
+
     var i: usize = 0;
-    while (environ.block[i] != 0) {
-        const key_value = mem.sliceTo(environ.block[i..], 0);
+    while (ptr[i] != 0) {
+        const key_value = mem.sliceTo(ptr[i..], 0);
 
         // There are some special environment variables that start with =,
         // so we need a special case to not treat = as a key/value separator

@@ -1,16 +1,12 @@
 const std = @import("std");
 const Io = std.Io;
 
-pub fn main() anyerror!void {
-    var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    const args = try std.process.argsAlloc(arena);
+pub fn main(init: std.process.Init) !void {
+    const arena = init.arena.allocator();
+    const args = try init.minimal.args.toSlice(arena);
+    const io = init.io;
 
     if (args.len < 2) return error.MissingArgs;
-
-    const io = std.Io.Threaded.global_single_threaded.ioBasic();
 
     const exe_path = args[1];
 
