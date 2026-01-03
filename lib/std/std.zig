@@ -173,15 +173,21 @@ pub const Options = struct {
     /// stack traces will just print an error to the relevant `Io.Writer` and return.
     allow_stack_tracing: bool = !@import("builtin").strip_debug_info,
 
-    elf_debug_info_search_paths: ?fn (exe_path: []const u8) switch (@import("builtin").object_format) {
+    /// TODO This is a separate decl instead of a field as a workaround around
+    /// compilation errors due to zig not being lazy enough.
+    pub const elf_debug_info_search_paths: ?fn (exe_path: []const u8) switch (@import("builtin").object_format) {
         .elf => debug.ElfFile.DebugInfoSearchPaths,
         else => void,
-    } = null,
+    } = if (@hasDecl(root, "std_options_elf_debug_info_search_paths"))
+        root.std_options_elf_debug_info_search_paths
+    else
+        null;
 
     pub const debug_threaded_io: ?*Io.Threaded = if (@hasDecl(root, "std_options_debug_threaded_io"))
         root.std_options_debug_threaded_io
     else
         Io.Threaded.global_single_threaded;
+
     /// The `Io` instance that `std.debug` uses for `std.debug.print`,
     /// capturing stack traces, loading debug info, finding the executable's
     /// own path, and environment variables that affect terminal mode

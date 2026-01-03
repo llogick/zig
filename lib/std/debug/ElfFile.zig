@@ -67,7 +67,7 @@ pub const DebugInfoSearchPaths = struct {
     };
 
     pub fn native(exe_path: []const u8) DebugInfoSearchPaths {
-        if (std.options.elf_debug_info_search_paths) |f| return f(exe_path);
+        if (std.Options.elf_debug_info_search_paths) |f| return f(exe_path);
         if (std.Options.debug_threaded_io) |t| return .{
             .debuginfod_client = p: {
                 if (t.environString("DEBUGINFOD_CACHE_PATH")) |p| {
