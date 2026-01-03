@@ -6374,41 +6374,40 @@ fn updateCObject(comp: *Compilation, c_object: *CObject, c_obj_prog_node: std.Pr
                     },
                     else => std.process.abort(),
                 }
-                unreachable;
-            }
+            } else {
+                var child = try std.process.spawn(io, .{
+                    .argv = argv.items,
+                    .stdin = .ignore,
+                    .stdout = .ignore,
+                    .stderr = .pipe,
+                });
 
-            var child = try std.process.spawn(io, .{
-                .argv = argv.items,
-                .stdin = .ignore,
-                .stdout = .ignore,
-                .stderr = .pipe,
-            });
+                var stderr_reader = child.stderr.?.readerStreaming(io, &.{});
+                const stderr = try stderr_reader.interface.allocRemaining(arena, .limited(std.math.maxInt(u32)));
 
-            var stderr_reader = child.stderr.?.readerStreaming(io, &.{});
-            const stderr = try stderr_reader.interface.allocRemaining(arena, .limited(std.math.maxInt(u32)));
+                const term = child.wait(io) catch |err|
+                    return comp.failCObj(c_object, "failed to spawn zig clang {s}: {t}", .{ argv.items[0], err });
 
-            const term = child.wait(io) catch |err|
-                return comp.failCObj(c_object, "failed to spawn zig clang {s}: {t}", .{ argv.items[0], err });
-
-            switch (term) {
-                .exited => |code| if (code != 0) if (out_diag_path) |diag_file_path| {
-                    const bundle = CObject.Diag.Bundle.parse(gpa, io, diag_file_path) catch |err| {
-                        log.err("{}: failed to parse clang diagnostics: {s}", .{ err, stderr });
+                switch (term) {
+                    .exited => |code| if (code != 0) if (out_diag_path) |diag_file_path| {
+                        const bundle = CObject.Diag.Bundle.parse(gpa, io, diag_file_path) catch |err| {
+                            log.err("{}: failed to parse clang diagnostics: {s}", .{ err, stderr });
+                            return comp.failCObj(c_object, "clang exited with code {d}", .{code});
+                        };
+                        return comp.failCObjWithOwnedDiagBundle(c_object, bundle);
+                    } else {
+                        log.err("clang failed with stderr: {s}", .{stderr});
                         return comp.failCObj(c_object, "clang exited with code {d}", .{code});
-                    };
-                    return comp.failCObjWithOwnedDiagBundle(c_object, bundle);
-                } else {
-                    log.err("clang failed with stderr: {s}", .{stderr});
-                    return comp.failCObj(c_object, "clang exited with code {d}", .{code});
-                },
-                .signal => |sig| {
-                    log.err("clang failed with stderr: {s}", .{stderr});
-                    return comp.failCObj(c_object, "clang terminated with signal {t}", .{sig});
-                },
-                else => {
-                    log.err("clang terminated with stderr: {s}", .{stderr});
-                    return comp.failCObj(c_object, "clang terminated unexpectedly", .{});
-                },
+                    },
+                    .signal => |sig| {
+                        log.err("clang failed with stderr: {s}", .{stderr});
+                        return comp.failCObj(c_object, "clang terminated with signal {t}", .{sig});
+                    },
+                    else => {
+                        log.err("clang terminated with stderr: {s}", .{stderr});
+                        return comp.failCObj(c_object, "clang terminated unexpectedly", .{});
+                    },
+                }
             }
         } else {
             const exit_code = try clangMain(arena, argv.items);
