@@ -1428,7 +1428,7 @@ pub fn io(t: *Threaded) Io {
             .tryLockStderr = tryLockStderr,
             .unlockStderr = unlockStderr,
             .processSetCurrentDir = processSetCurrentDir,
-            .processReplace = processReplace, // TODO audit for cancelation and unreachable
+            .processReplace = processReplace,
             .processReplacePath = processReplacePath, // TODO audit for cancelation and unreachable
             .processSpawn = processSpawn, // TODO audit for cancelation and unreachable
             .processSpawnPath = processSpawnPath, // TODO audit for cancelation and unreachable
@@ -12946,7 +12946,9 @@ fn spawnPosix(t: *Threaded, options: process.SpawnOptions) process.SpawnError!Sp
 
     const pid_result = try posix.fork();
     if (pid_result == 0) {
-        // we are the child
+        // We are the child.
+        if (Thread.current) |current_thread| current_thread.cancel_protection = .blocked;
+
         setUpChildIo(options.stdin, stdin_pipe[0], posix.STDIN_FILENO, dev_null_fd) catch |err| forkBail(err_pipe[1], err);
         setUpChildIo(options.stdout, stdout_pipe[1], posix.STDOUT_FILENO, dev_null_fd) catch |err| forkBail(err_pipe[1], err);
         setUpChildIo(options.stderr, stderr_pipe[1], posix.STDERR_FILENO, dev_null_fd) catch |err| forkBail(err_pipe[1], err);
@@ -14585,8 +14587,8 @@ pub fn posixExecvPath(
     child_argv: [*:null]const ?[*:0]const u8,
     envp: [*:null]const ?[*:0]const u8,
 ) process.ReplaceError {
+    try Thread.checkCancel();
     switch (posix.errno(posix.system.execve(path, child_argv, envp))) {
-        .SUCCESS => unreachable,
         .FAULT => |err| return errnoBug(err), // Bad pointer parameter.
         .@"2BIG" => return error.SystemResources,
         .MFILE => return error.ProcessFdQuotaExceeded,
