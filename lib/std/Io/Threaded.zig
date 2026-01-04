@@ -64,6 +64,8 @@ stderr_writer_initialized: bool = false,
 argv0: Argv0,
 environ: Environ,
 
+nul_handle: if (is_windows) ?windows.HANDLE else void = if (is_windows) null else {},
+
 pub const Argv0 = switch (native_os) {
     .openbsd, .haiku => struct {
         value: ?[*:0]const u8,
@@ -1247,8 +1249,13 @@ pub fn setAsyncLimit(t: *Threaded, new_limit: Io.Limit) void {
 
 pub fn deinit(t: *Threaded) void {
     t.join();
-    if (is_windows and t.wsa.status == .initialized) {
-        if (ws2_32.WSACleanup() != 0) recoverableOsBugDetected();
+    if (is_windows) {
+        if (t.wsa.status == .initialized) {
+            if (ws2_32.WSACleanup() != 0) recoverableOsBugDetected();
+        }
+        if (t.nul_handle) |handle| {
+            windows.CloseHandle(handle);
+        }
     }
     if (posix.Sigaction != void and t.have_signal_handler) {
         if (have_sig_io) posix.sigaction(.IO, &t.old_sig_io, null);
@@ -3666,7 +3673,10 @@ pub fn dirOpenFileWtf16(
                 // kernel bug with retry attempts.
                 syscall.finish();
                 if (max_attempts - attempt == 0) return error.SharingViolation;
-                _ = w.kernel32.SleepEx((@as(u32, 1) << attempt) >> 1, w.TRUE);
+                try parking_sleep.sleep(.{ .duration = .{
+                    .raw = .fromMilliseconds((@as(u32, 1) << attempt) >> 1),
+                    .clock = .awake,
+                } });
                 attempt += 1;
                 syscall = try .start();
                 continue;
@@ -3688,7 +3698,10 @@ pub fn dirOpenFileWtf16(
                 // fixed by sleeping and retrying until the error goes away.
                 syscall.finish();
                 if (max_attempts - attempt == 0) return error.SharingViolation;
-                _ = w.kernel32.SleepEx((@as(u32, 1) << attempt) >> 1, w.TRUE);
+                try parking_sleep.sleep(.{ .duration = .{
+                    .raw = .fromMilliseconds((@as(u32, 1) << attempt) >> 1),
+                    .clock = .awake,
+                } });
                 attempt += 1;
                 syscall = try .start();
                 continue;
@@ -13377,34 +13390,7 @@ fn processSpawnWindows(userdata: ?*anyopaque, options: process.SpawnOptions) pro
         options.stdout == .ignore or
         options.stderr == .ignore;
 
-    // TODO: cache the handle to null file!
-    const nul_handle = if (any_ignore)
-        // "\Device\Null" or "\??\NUL"
-        windows.OpenFile(&[_]u16{ '\\', 'D', 'e', 'v', 'i', 'c', 'e', '\\', 'N', 'u', 'l', 'l' }, .{
-            .access_mask = .{
-                .STANDARD = .{ .SYNCHRONIZE = true },
-                .GENERIC = .{ .WRITE = true, .READ = true },
-            },
-            .sa = &saAttr,
-            .creation = .OPEN,
-        }) catch |err| switch (err) {
-            error.PathAlreadyExists => return error.Unexpected, // not possible for "NUL"
-            error.PipeBusy => return error.Unexpected, // not possible for "NUL"
-            error.NoDevice => return error.Unexpected, // not possible for "NUL"
-            error.FileNotFound => return error.Unexpected, // not possible for "NUL"
-            error.AccessDenied => return error.Unexpected, // not possible for "NUL"
-            error.NameTooLong => return error.Unexpected, // not possible for "NUL"
-            error.WouldBlock => return error.Unexpected, // not possible for "NUL"
-            error.NetworkNotFound => return error.Unexpected, // not possible for "NUL"
-            error.AntivirusInterference => return error.Unexpected, // not possible for "NUL"
-            error.OperationCanceled => return error.Unexpected, // we're not canceling the operation
-            else => |e| return e,
-        }
-    else
-        undefined;
-    defer {
-        if (any_ignore) posix.close(nul_handle);
-    }
+    const nul_handle = if (any_ignore) try getNulHandle(t) else undefined;
 
     var g_hChildStd_IN_Rd: ?windows.HANDLE = null;
     var g_hChildStd_IN_Wr: ?windows.HANDLE = null;
@@ -13644,6 +13630,101 @@ fn processSpawnWindows(userdata: ?*anyopaque, options: process.SpawnOptions) pro
         .stdout = if (g_hChildStd_OUT_Rd) |h| .{ .handle = h } else null,
         .stderr = if (g_hChildStd_ERR_Rd) |h| .{ .handle = h } else null,
         .request_resource_usage_statistics = options.request_resource_usage_statistics,
+    };
+}
+
+fn getNulHandle(t: *Threaded) !windows.HANDLE {
+    {
+        t.mutex.lock();
+        defer t.mutex.unlock();
+        if (t.nul_handle) |handle| return handle;
+    }
+
+    const device_path = [_]u16{ '\\', 'D', 'e', 'v', 'i', 'c', 'e', '\\', 'N', 'u', 'l', 'l' };
+    var nt_name: windows.UNICODE_STRING = .{
+        .Length = device_path.len * 2,
+        .MaximumLength = device_path.len * 2,
+        .Buffer = @constCast(&device_path),
+    };
+    const attr: windows.OBJECT_ATTRIBUTES = .{
+        .Length = @sizeOf(windows.OBJECT_ATTRIBUTES),
+        .RootDirectory = null,
+        .Attributes = .{
+            .INHERIT = true,
+        },
+        .ObjectName = &nt_name,
+        .SecurityDescriptor = null,
+        .SecurityQualityOfService = null,
+    };
+    var io_status_block: windows.IO_STATUS_BLOCK = undefined;
+    var fresh_handle: windows.HANDLE = undefined;
+    var syscall: Syscall = try .start();
+    while (true) switch (windows.ntdll.NtCreateFile(
+        &fresh_handle,
+        .{
+            .STANDARD = .{ .SYNCHRONIZE = true },
+            .GENERIC = .{ .WRITE = true, .READ = true },
+        },
+        &attr,
+        &io_status_block,
+        null,
+        .{ .NORMAL = true },
+        .VALID_FLAGS,
+        .OPEN,
+        .{
+            .DIRECTORY_FILE = false,
+            .NON_DIRECTORY_FILE = true,
+            .IO = .SYNCHRONOUS_NONALERT,
+            .OPEN_REPARSE_POINT = false,
+        },
+        null,
+        0,
+    )) {
+        .SUCCESS => {
+            syscall.finish();
+            t.mutex.lock(); // Another thread might have won the race.
+            defer t.mutex.unlock();
+            if (t.nul_handle) |prev_handle| {
+                windows.CloseHandle(fresh_handle);
+                return prev_handle;
+            } else {
+                t.nul_handle = fresh_handle;
+                return fresh_handle;
+            }
+        },
+        .DELETE_PENDING => {
+            // This error means that there *was* a file in this location on
+            // the file system, but it was deleted. However, the OS is not
+            // finished with the deletion operation, and so this CreateFile
+            // call has failed. There is not really a sane way to handle
+            // this other than retrying the creation after the OS finishes
+            // the deletion.
+            syscall.finish();
+            try parking_sleep.sleep(.{ .duration = .{
+                .raw = .fromMilliseconds(1),
+                .clock = .awake,
+            } });
+            syscall = try .start();
+            continue;
+        },
+        .CANCELLED => {
+            try syscall.checkCancel();
+            continue;
+        },
+        .INVALID_PARAMETER => |status| return syscall.ntstatusBug(status),
+        .OBJECT_PATH_SYNTAX_BAD => |status| return syscall.ntstatusBug(status),
+        .INVALID_HANDLE => |status| return syscall.ntstatusBug(status),
+        .OBJECT_NAME_INVALID => return syscall.fail(error.BadPathName),
+        .OBJECT_NAME_NOT_FOUND => return syscall.fail(error.FileNotFound),
+        .OBJECT_PATH_NOT_FOUND => return syscall.fail(error.FileNotFound),
+        .NO_MEDIA_IN_DEVICE => return syscall.fail(error.NoDevice),
+        .SHARING_VIOLATION => return syscall.fail(error.AccessDenied),
+        .ACCESS_DENIED => return syscall.fail(error.AccessDenied),
+        .PIPE_NOT_AVAILABLE => return syscall.fail(error.NoDevice),
+        .FILE_IS_A_DIRECTORY => return syscall.fail(error.IsDir),
+        .NOT_A_DIRECTORY => return syscall.fail(error.NotDir),
+        .USER_MAPPED_FILE => return syscall.fail(error.AccessDenied),
+        else => |status| return syscall.unexpectedNtstatus(status),
     };
 }
 
