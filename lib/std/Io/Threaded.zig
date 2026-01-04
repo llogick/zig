@@ -13772,11 +13772,6 @@ fn windowsCreateProcessPathExt(
     // we iterate the matches and take note of any that are either the unappended version,
     // or a version with a supported PATHEXT appended. We then try calling CreateProcessW
     // with the found versions in the appropriate order.
-
-    // In the future, child process execution needs to move to Io implementation.
-    // Under those conditions, here we will have access to lower level directory
-    // opening function knowing which implementation we are in. Here, we imitate
-    // that scenario.
     var dir = dir: {
         // needs to be null-terminated
         try dir_buf.append(arena, 0);
