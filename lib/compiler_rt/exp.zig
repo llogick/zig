@@ -13,8 +13,6 @@ const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
 const common = @import("common.zig");
 
-pub const panic = common.panic;
-
 comptime {
     @export(&__exph, .{ .name = "__exph", .linkage = common.linkage, .visibility = common.visibility });
     @export(&expf, .{ .name = "expf", .linkage = common.linkage, .visibility = common.visibility });
@@ -136,14 +134,11 @@ pub fn exp(x_: f64) callconv(.c) f64 {
         }
         if (x > 709.782712893383973096) {
             // overflow if x != inf
-            if (!math.isInf(x)) {
-                math.raiseOverflow();
-            }
-            return math.inf(f64);
+            return if (common.want_float_exceptions) x * 0x1p1023 else std.math.inf(f64);
         }
         if (x < -708.39641853226410622) {
             // underflow if x != -inf
-            // if (common.want_float_exceptions) mem.doNotOptimizeAway(@as(f32, -0x1.0p-149 / x));
+            if (common.want_float_exceptions) mem.doNotOptimizeAway(-0x0.0000000000001p-1022 / x);
             if (x < -745.13321910194110842) {
                 return 0;
             }
@@ -176,7 +171,7 @@ pub fn exp(x_: f64) callconv(.c) f64 {
         lo = 0;
     } else {
         // inexact if x != 0
-        // if (common.want_float_exceptions) mem.doNotOptimizeAway(0x1.0p1023 + x);
+        if (common.want_float_exceptions) mem.doNotOptimizeAway(0x1.0p1023 + x);
         return 1 + x;
     }
 

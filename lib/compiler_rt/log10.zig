@@ -13,8 +13,6 @@ const maxInt = std.math.maxInt;
 const arch = builtin.cpu.arch;
 const common = @import("common.zig");
 
-pub const panic = common.panic;
-
 comptime {
     @export(&__log10h, .{ .name = "__log10h", .linkage = common.linkage, .visibility = common.visibility });
     @export(&log10f, .{ .name = "log10f", .linkage = common.linkage, .visibility = common.visibility });
@@ -51,11 +49,11 @@ pub fn log10f(x_: f32) callconv(.c) f32 {
     if (ix < 0x00800000 or ix >> 31 != 0) {
         // log(+-0) = -inf
         if (ix << 1 == 0) {
-            return -math.inf(f32);
+            return if (common.want_float_exceptions) -1 / (x * x) else -std.math.inf(f64);
         }
         // log(-#) = nan
         if (ix >> 31 != 0) {
-            return math.nan(f32);
+            return if (common.want_float_exceptions) (x - x) / 0.0 else math.nan(f64);
         }
 
         k -= 25;
@@ -113,11 +111,11 @@ pub fn log10(x_: f64) callconv(.c) f64 {
     if (hx < 0x00100000 or hx >> 31 != 0) {
         // log(+-0) = -inf
         if (ix << 1 == 0) {
-            return -math.inf(f64);
+            return if (common.want_float_exceptions) -1 / (x * x) else -std.math.inf(f64);
         }
         // log(-#) = nan
         if (hx >> 31 != 0) {
-            return math.nan(f64);
+            return if (common.want_float_exceptions) (x - x) / 0.0 else math.nan(f64);
         }
 
         // subnormal, scale x

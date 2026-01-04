@@ -13,8 +13,6 @@ const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
 const common = @import("common.zig");
 
-pub const panic = common.panic;
-
 comptime {
     @export(&__exp2h, .{ .name = "__exp2h", .linkage = common.linkage, .visibility = common.visibility });
     @export(&exp2f, .{ .name = "exp2f", .linkage = common.linkage, .visibility = common.visibility });
@@ -110,8 +108,7 @@ pub fn exp2(x: f64) callconv(.c) f64 {
     if (ix >= 0x408FF000) {
         // x >= 1024 or nan
         if (ix >= 0x40900000 and ux >> 63 == 0) {
-            math.raiseOverflow();
-            return math.inf(f64);
+            return if (common.want_float_exceptions) x * 0x1p1023 else std.math.inf(f64);
         }
         // -inf or -nan
         if (ix >= 0x7FF00000) {
