@@ -274,8 +274,8 @@ test "getWin32PathType vs RtlDetermineDosPathNameType_U" {
         std.debug.assert(std.unicode.wtf16LeToWtf8(wtf8_buf.items, path) == wtf8_len);
 
         const windows_type = RtlDetermineDosPathNameType_U(path);
-        const wtf16_type = windows.getWin32PathType(u16, path);
-        const wtf8_type = windows.getWin32PathType(u8, wtf8_buf.items);
+        const wtf16_type = std.fs.path.getWin32PathType(u16, path);
+        const wtf8_type = std.fs.path.getWin32PathType(u8, wtf8_buf.items);
 
         checkPathType(windows_type, wtf16_type) catch |err| {
             std.debug.print("expected type {}, got {} for path: {f}\n", .{ windows_type, wtf16_type, std.unicode.fmtUtf16Le(path) });
@@ -295,7 +295,7 @@ test "getWin32PathType vs RtlDetermineDosPathNameType_U" {
     }
 }
 
-fn checkPathType(windows_type: RTL_PATH_TYPE, zig_type: windows.Win32PathType) !void {
+fn checkPathType(windows_type: RTL_PATH_TYPE, zig_type: std.fs.path.Win32PathType) !void {
     const expected_windows_type: RTL_PATH_TYPE = switch (zig_type) {
         .unc_absolute => .UncAbsolute,
         .drive_absolute => .DriveAbsolute,

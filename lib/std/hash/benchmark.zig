@@ -353,14 +353,15 @@ fn mode(comptime x: comptime_int) comptime_int {
     return if (builtin.mode == .Debug) x / 64 else x;
 }
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    const arena = init.arena.allocator();
+
     var stdout_buffer: [0x100]u8 = undefined;
-    var stdout_writer = Io.File.stdout().writer(&stdout_buffer);
+    var stdout_writer = Io.File.stdout().writer(io, &stdout_buffer);
     const stdout = &stdout_writer.interface;
 
-    var buffer: [1024]u8 = undefined;
-    var fixed = std.heap.FixedBufferAllocator.init(buffer[0..]);
-    const args = try std.process.argsAlloc(fixed.allocator());
+    const args = try init.minimal.args.toSlice(arena);
 
     var filter: ?[]u8 = "";
     var count: usize = mode(128 * MiB);

@@ -10,8 +10,6 @@ const common = @import("common.zig");
 const normalize = common.normalize;
 const wideMultiply = common.wideMultiply;
 
-pub const panic = common.panic;
-
 comptime {
     if (common.want_aeabi) {
         @export(&__aeabi_ddiv, .{ .name = "__aeabi_ddiv", .linkage = common.linkage, .visibility = common.visibility });

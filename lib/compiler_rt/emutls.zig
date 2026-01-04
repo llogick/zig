@@ -15,8 +15,6 @@ const expect = std.testing.expect;
 /// typedef unsigned int gcc_word __attribute__((mode(word)));
 const gcc_word = usize;
 
-pub const panic = common.panic;
-
 comptime {
     if (builtin.link_libc and (builtin.abi.isAndroid() or builtin.abi.isOpenHarmony() or builtin.os.tag == .openbsd)) {
         @export(&__emutls_get_address, .{ .name = "__emutls_get_address", .linkage = common.linkage, .visibility = common.visibility });

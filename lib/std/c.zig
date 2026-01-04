@@ -3764,8 +3764,8 @@ pub const W = switch (native_os) {
         pub fn EXITSTATUS(x: u32) u8 {
             return @as(u8, @intCast(x >> 8));
         }
-        pub fn TERMSIG(x: u32) u32 {
-            return status(x);
+        pub fn TERMSIG(x: u32) SIG {
+            return @enumFromInt(status(x));
         }
         pub fn STOPSIG(x: u32) u32 {
             return x >> 8;
@@ -3797,14 +3797,14 @@ pub const W = switch (native_os) {
         pub fn EXITSTATUS(s: u32) u8 {
             return @as(u8, @intCast((s & 0xff00) >> 8));
         }
-        pub fn TERMSIG(s: u32) u32 {
-            return s & 0x7f;
+        pub fn TERMSIG(s: u32) SIG {
+            return @enumFromInt(s & 0x7f);
         }
         pub fn STOPSIG(s: u32) u32 {
             return EXITSTATUS(s);
         }
         pub fn IFEXITED(s: u32) bool {
-            return TERMSIG(s) == 0;
+            return (s & 0x7f) == 0;
         }
         pub fn IFSTOPPED(s: u32) bool {
             return @as(u16, @truncate((((s & 0xffff) *% 0x10001) >> 8))) > 0x7f00;
@@ -3825,14 +3825,14 @@ pub const W = switch (native_os) {
         pub fn EXITSTATUS(s: u32) u8 {
             return @as(u8, @intCast((s >> 8) & 0xff));
         }
-        pub fn TERMSIG(s: u32) u32 {
-            return s & 0x7f;
+        pub fn TERMSIG(s: u32) SIG {
+            return @enumFromInt(s & 0x7f);
         }
         pub fn STOPSIG(s: u32) u32 {
             return EXITSTATUS(s);
         }
         pub fn IFEXITED(s: u32) bool {
-            return TERMSIG(s) == 0;
+            return (s & 0x7f) == 0;
         }
 
         pub fn IFCONTINUED(s: u32) bool {
@@ -3859,14 +3859,14 @@ pub const W = switch (native_os) {
         pub fn EXITSTATUS(s: u32) u8 {
             return @as(u8, @intCast((s >> 8) & 0xff));
         }
-        pub fn TERMSIG(s: u32) u32 {
-            return s & 0x7f;
+        pub fn TERMSIG(s: u32) SIG {
+            return @enumFromInt(s & 0x7f);
         }
         pub fn STOPSIG(s: u32) u32 {
             return EXITSTATUS(s);
         }
         pub fn IFEXITED(s: u32) bool {
-            return TERMSIG(s) == 0;
+            return (s & 0x7f) == 0;
         }
 
         pub fn IFCONTINUED(s: u32) bool {
@@ -3893,14 +3893,14 @@ pub const W = switch (native_os) {
         pub fn EXITSTATUS(s: u32) u8 {
             return @as(u8, @intCast((s & 0xff00) >> 8));
         }
-        pub fn TERMSIG(s: u32) u32 {
-            return s & 0x7f;
+        pub fn TERMSIG(s: u32) SIG {
+            return @enumFromInt(s & 0x7f);
         }
         pub fn STOPSIG(s: u32) u32 {
             return EXITSTATUS(s);
         }
         pub fn IFEXITED(s: u32) bool {
-            return TERMSIG(s) == 0;
+            return (s & 0x7f) == 0;
         }
         pub fn IFSTOPPED(s: u32) bool {
             return @as(u16, @truncate((((s & 0xffff) *% 0x10001) >> 8))) > 0x7f00;
@@ -3921,8 +3921,8 @@ pub const W = switch (native_os) {
             return @as(u8, @intCast(s & 0xff));
         }
 
-        pub fn TERMSIG(s: u32) u32 {
-            return (s >> 8) & 0xff;
+        pub fn TERMSIG(s: u32) SIG {
+            return @enumFromInt((s >> 8) & 0xff);
         }
 
         pub fn STOPSIG(s: u32) u32 {
@@ -3949,14 +3949,14 @@ pub const W = switch (native_os) {
         pub fn EXITSTATUS(s: u32) u8 {
             return @as(u8, @intCast((s >> 8) & 0xff));
         }
-        pub fn TERMSIG(s: u32) u32 {
-            return (s & 0x7f);
+        pub fn TERMSIG(s: u32) SIG {
+            return @enumFromInt(s & 0x7f);
         }
         pub fn STOPSIG(s: u32) u32 {
             return EXITSTATUS(s);
         }
         pub fn IFEXITED(s: u32) bool {
-            return TERMSIG(s) == 0;
+            return (s & 0x7f) == 0;
         }
 
         pub fn IFCONTINUED(s: u32) bool {
@@ -3988,12 +3988,12 @@ pub const W = switch (native_os) {
             return EXITSTATUS(s);
         }
 
-        pub fn TERMSIG(s: u32) u32 {
-            return s & 0x7f;
+        pub fn TERMSIG(s: u32) SIG {
+            return @enumFromInt(s & 0x7f);
         }
 
         pub fn IFEXITED(s: u32) bool {
-            return TERMSIG(s) == 0;
+            return (s & 0x7f) == 0;
         }
 
         pub fn IFSTOPPED(s: u32) bool {

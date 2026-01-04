@@ -537,6 +537,9 @@ test Options {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
 
+    const cwd = try std.process.getCwdAlloc(std.testing.allocator);
+    defer std.testing.allocator.free(cwd);
+
     var graph: std.Build.Graph = .{
         .io = io,
         .arena = arena.allocator(),
@@ -544,9 +547,10 @@ test Options {
             .io = io,
             .gpa = arena.allocator(),
             .manifest_dir = Io.Dir.cwd(),
+            .cwd = cwd,
         },
         .zig_exe = "test",
-        .env_map = std.process.EnvMap.init(arena.allocator()),
+        .environ_map = std.process.Environ.Map.init(arena.allocator()),
         .global_cache_root = .{ .path = "test", .handle = Io.Dir.cwd() },
         .host = .{
             .query = .{},

@@ -2571,10 +2571,7 @@ fn newEmbedFile(
         try whole.cache_manifest_mutex.lock(io);
         defer whole.cache_manifest_mutex.unlock(io);
 
-        man.addFilePostContents(path_str, contents, new_file.stat) catch |err| switch (err) {
-            error.Unexpected => unreachable,
-            else => |e| return e,
-        };
+        try man.addFilePostContents(path_str, contents, new_file.stat);
     }
 
     return new_file;

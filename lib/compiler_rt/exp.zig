@@ -13,8 +13,6 @@ const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
 const common = @import("common.zig");
 
-pub const panic = common.panic;
-
 comptime {
     @export(&__exph, .{ .name = "__exph", .linkage = common.linkage, .visibility = common.visibility });
     @export(&expf, .{ .name = "expf", .linkage = common.linkage, .visibility = common.visibility });

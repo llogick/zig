@@ -322,6 +322,7 @@ const Module = struct {
         if (mod.loaded_elf == null) mod.loaded_elf = loadElf(mod, gpa, io);
         return if (mod.loaded_elf.?) |*elf| elf else |err| err;
     }
+
     fn loadElf(mod: *Module, gpa: Allocator, io: Io) Error!LoadedElf {
         const load_result = if (mod.name.len > 0) res: {
             var file = Io.Dir.cwd().openFile(io, mod.name, .{}) catch return error.MissingDebugInfo;

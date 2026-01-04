@@ -19,9 +19,10 @@ pub fn cmdEnv(
         else => void,
     },
     host: *const std.Target,
+    environ_map: *std.process.Environ.Map,
 ) !void {
-    const override_lib_dir: ?[]const u8 = try EnvVar.ZIG_LIB_DIR.get(arena);
-    const override_global_cache_dir: ?[]const u8 = try EnvVar.ZIG_GLOBAL_CACHE_DIR.get(arena);
+    const override_lib_dir: ?[]const u8 = EnvVar.ZIG_LIB_DIR.get(environ_map);
+    const override_global_cache_dir: ?[]const u8 = EnvVar.ZIG_GLOBAL_CACHE_DIR.get(environ_map);
 
     const self_exe_path = switch (builtin.target.os.tag) {
         .wasi => args[0],
@@ -38,6 +39,7 @@ pub fn cmdEnv(
         .global,
         if (builtin.target.os.tag == .wasi) wasi_preopens,
         if (builtin.target.os.tag != .wasi) self_exe_path,
+        environ_map,
     );
     defer dirs.deinit(io);
 
@@ -56,8 +58,8 @@ pub fn cmdEnv(
     try root.field("version", build_options.version, .{});
     try root.field("target", triple, .{});
     var env = try root.beginStructField("env", .{});
-    inline for (@typeInfo(std.zig.EnvVar).@"enum".fields) |field| {
-        try env.field(field.name, try @field(std.zig.EnvVar, field.name).get(arena), .{});
+    inline for (@typeInfo(EnvVar).@"enum".fields) |field| {
+        try env.field(field.name, @field(EnvVar, field.name).get(environ_map), .{});
     }
     try env.end();
     try root.end();

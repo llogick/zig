@@ -680,6 +680,7 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
         .gpa = gpa,
         .io = io,
         .manifest_dir = try comp.dirs.global_cache.handle.createDirPathOpen(io, "h", .{}),
+        .cwd = comp.dirs.cwd,
     };
     cache.addPrefix(.{ .path = null, .handle = Io.Dir.cwd() });
     cache.addPrefix(comp.dirs.zig_lib);
@@ -1258,6 +1259,7 @@ fn buildSharedLib(
         .soname = soname,
         .c_source_files = &c_source_files,
         .skip_linker_dependencies = true,
+        .environ_map = comp.environ_map,
     }) catch |err| switch (err) {
         error.CreateFail => {
             comp.lockAndSetMiscFailure(misc_task, "sub-compilation of {t} failed: {f}", .{ misc_task, sub_create_diag });

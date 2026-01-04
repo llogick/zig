@@ -224,14 +224,14 @@ pub const W = struct {
     pub fn EXITSTATUS(s: u32) u8 {
         return @as(u8, @intCast((s & 0xff00) >> 8));
     }
-    pub fn TERMSIG(s: u32) u32 {
-        return s & 0x7f;
+    pub fn TERMSIG(s: u32) SIG {
+        return @enumFromInt(s & 0x7f);
     }
     pub fn STOPSIG(s: u32) u32 {
         return EXITSTATUS(s);
     }
     pub fn IFEXITED(s: u32) bool {
-        return TERMSIG(s) == 0;
+        return (s & 0x7f) == 0;
     }
     pub fn IFSTOPPED(s: u32) bool {
         return @as(u16, @truncate(((s & 0xffff) *% 0x10001) >> 8)) > 0x7f00;

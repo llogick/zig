@@ -38,16 +38,11 @@ const exempt_extensions = [_][]const u8{
     "-2.33.c",
 };
 
-pub fn main() !void {
-    var arena_instance = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena_instance.deinit();
-    const arena = arena_instance.allocator();
+pub fn main(init: std.process.Init) !void {
+    const arena = init.arena.allocator();
+    const io = init.io;
+    const args = try init.minimal.args.toSlice(arena);
 
-    var threaded: Io.Threaded = .init(arena, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    const args = try std.process.argsAlloc(arena);
     const glibc_src_path = args[1];
     const zig_src_path = args[2];
 

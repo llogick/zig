@@ -3,8 +3,6 @@ const builtin = @import("builtin");
 const common = @import("common.zig");
 const bigIntFromFloat = @import("int_from_float.zig").bigIntFromFloat;
 
-pub const panic = common.panic;
-
 comptime {
     @export(&__fixunsxfei, .{ .name = "__fixunsxfei", .linkage = common.linkage, .visibility = common.visibility });
 }

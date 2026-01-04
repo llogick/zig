@@ -114,9 +114,6 @@ pub const options: Options = if (@hasDecl(root, "std_options")) root.std_options
 pub const Options = struct {
     enable_segfault_handler: bool = debug.default_enable_segfault_handler,
 
-    /// Function used to implement `std.Io.Dir.cwd` for WASI.
-    wasiCwd: fn () os.wasi.fd_t = os.defaultWasiCwd,
-
     /// The current log level.
     log_level: log.Level = log.default_level,
 
@@ -176,10 +173,21 @@ pub const Options = struct {
     /// stack traces will just print an error to the relevant `Io.Writer` and return.
     allow_stack_tracing: bool = !@import("builtin").strip_debug_info,
 
+    /// TODO This is a separate decl instead of a field as a workaround around
+    /// compilation errors due to zig not being lazy enough.
+    pub const elf_debug_info_search_paths: ?fn (exe_path: []const u8) switch (@import("builtin").object_format) {
+        .elf => debug.ElfFile.DebugInfoSearchPaths,
+        else => void,
+    } = if (@hasDecl(root, "std_options_elf_debug_info_search_paths"))
+        root.std_options_elf_debug_info_search_paths
+    else
+        null;
+
     pub const debug_threaded_io: ?*Io.Threaded = if (@hasDecl(root, "std_options_debug_threaded_io"))
         root.std_options_debug_threaded_io
     else
         Io.Threaded.global_single_threaded;
+
     /// The `Io` instance that `std.debug` uses for `std.debug.print`,
     /// capturing stack traces, loading debug info, finding the executable's
     /// own path, and environment variables that affect terminal mode
@@ -193,6 +201,9 @@ pub const Options = struct {
 
     /// Overrides `std.Io.File.Permissions`.
     pub const FilePermissions: ?type = if (@hasDecl(root, "std_options_FilePermissions")) root.std_options_FilePermissions else null;
+
+    /// Overrides `std.Io.Dir.cwd`.
+    pub const cwd: ?fn () Io.Dir = if (@hasDecl(root, "std_options_cwd")) root.std_options_cwd else null;
 };
 
 // This forces the start.zig file to be imported, and the comptime logic inside that

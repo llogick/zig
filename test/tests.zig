@@ -2062,7 +2062,7 @@ pub fn addCliTests(b: *std.Build) *Step {
         run_run.setCwd(.{ .cwd_relative = tmp_path });
         run_run.setName("zig build run");
         run_run.expectStdOutEqual("Run `zig build test` to run the tests.\n");
-        run_run.expectStdErrEqual("All your codebase are belong to us.\n");
+        run_run.expectStdErrMatch("All your codebase are belong to us.\n");
         run_run.step.dependOn(&init_exe.step);
 
         const cleanup = b.addRemoveDirTree(.{ .cwd_relative = tmp_path });
@@ -2718,7 +2718,7 @@ pub fn addIncrementalTests(b: *std.Build, test_step: *Step, test_filters: []cons
         if (b.enable_wasmtime) run.addArg("-fwasmtime");
         if (b.enable_darling) run.addArg("-fdarling");
 
-        run.addCheck(.{ .expect_term = .{ .Exited = 0 } });
+        run.addCheck(.{ .expect_term = .{ .exited = 0 } });
 
         test_step.dependOn(&run.step);
     }

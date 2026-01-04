@@ -3,8 +3,6 @@ const builtin = @import("builtin");
 const common = @import("common.zig");
 const floatFromBigInt = @import("float_from_int.zig").floatFromBigInt;
 
-pub const panic = common.panic;
-
 comptime {
     @export(&__floateidf, .{ .name = "__floateidf", .linkage = common.linkage, .visibility = common.visibility });
 }

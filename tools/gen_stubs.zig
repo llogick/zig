@@ -281,16 +281,10 @@ const Parse = struct {
     arch: Arch,
 };
 
-pub fn main() !void {
-    var arena_instance = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena_instance.deinit();
-    const arena = arena_instance.allocator();
-
-    var threaded: std.Io.Threaded = .init(arena, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    const args = try std.process.argsAlloc(arena);
+pub fn main(init: std.process.Init) !void {
+    const arena = init.arena.allocator();
+    const io = init.io;
+    const args = try init.minimal.args.toSlice(arena);
     const build_all_path = args[1];
 
     var build_all_dir = try Io.Dir.cwd().openDir(io, build_all_path, .{});

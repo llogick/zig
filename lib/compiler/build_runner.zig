@@ -24,7 +24,7 @@ pub const std_options: std.Options = .{
     .crypto_fork_safety = false,
 };
 
-pub fn main() !void {
+pub fn main(init: process.Init.Minimal) !void {
     // The build runner is often short-lived, but thanks to `--watch` and `--webui`, that's not
     // always the case. So, we do need a true gpa for some things.
     var debug_gpa_state: std.heap.DebugAllocator(.{}) = .init;
@@ -37,9 +37,12 @@ pub fn main() !void {
     var thread_safe_arena: std.heap.ThreadSafeAllocator = .{ .child_allocator = single_threaded_arena.allocator() };
     const arena = thread_safe_arena.allocator();
 
-    const args = try process.argsAlloc(arena);
+    const args = try init.args.toSlice(arena);
 
-    var threaded: std.Io.Threaded = .init(gpa, .{});
+    var threaded: std.Io.Threaded = .init(gpa, .{
+        .environ = init.environ,
+        .argv0 = .init(init.args),
+    });
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -81,9 +84,10 @@ pub fn main() !void {
             .io = io,
             .gpa = arena,
             .manifest_dir = try local_cache_directory.handle.createDirPathOpen(io, "h", .{}),
+            .cwd = try process.getCwdAlloc(single_threaded_arena.allocator()),
         },
         .zig_exe = zig_exe,
-        .env_map = try process.getEnvMap(arena),
+        .environ_map = try init.environ.createMap(arena),
         .global_cache_root = global_cache_directory,
         .zig_lib_directory = zig_lib_directory,
         .host = .{
@@ -126,13 +130,13 @@ pub fn main() !void {
     var debounce_interval_ms: u16 = 50;
     var webui_listen: ?Io.net.IpAddress = null;
 
-    if (try std.zig.EnvVar.ZIG_BUILD_ERROR_STYLE.get(arena)) |str| {
+    if (std.zig.EnvVar.ZIG_BUILD_ERROR_STYLE.get(&graph.environ_map)) |str| {
         if (std.meta.stringToEnum(ErrorStyle, str)) |style| {
             error_style = style;
         }
     }
 
-    if (try std.zig.EnvVar.ZIG_BUILD_MULTILINE_ERRORS.get(arena)) |str| {
+    if (std.zig.EnvVar.ZIG_BUILD_MULTILINE_ERRORS.get(&graph.environ_map)) |str| {
         if (std.meta.stringToEnum(MultilineErrors, str)) |style| {
             multiline_errors = style;
         }
@@ -429,8 +433,8 @@ pub fn main() !void {
         }
     }
 
-    const NO_COLOR = std.zig.EnvVar.NO_COLOR.isSet();
-    const CLICOLOR_FORCE = std.zig.EnvVar.CLICOLOR_FORCE.isSet();
+    const NO_COLOR = std.zig.EnvVar.NO_COLOR.isSet(&graph.environ_map);
+    const CLICOLOR_FORCE = std.zig.EnvVar.CLICOLOR_FORCE.isSet(&graph.environ_map);
 
     graph.stderr_mode = switch (color) {
         .auto => try .detect(io, .stderr(), NO_COLOR, CLICOLOR_FORCE),
@@ -540,7 +544,7 @@ pub fn main() !void {
     var w: Watch = w: {
         if (!watch) break :w undefined;
         if (!Watch.have_impl) fatal("--watch not yet implemented for {t}", .{builtin.os.tag});
-        break :w try .init();
+        break :w try .init(graph.cache.cwd);
     };
 
     const now = Io.Clock.Timestamp.now(io, .awake) catch |err| fatal("failed to collect timestamp: {t}", .{err});

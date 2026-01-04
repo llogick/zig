@@ -4,16 +4,11 @@ const std = @import("std");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
-pub fn main() anyerror!void {
-    var debug_alloc_inst: std.heap.DebugAllocator(.{}) = .init;
-    defer std.debug.assert(debug_alloc_inst.deinit() == .ok);
-    const gpa = debug_alloc_inst.allocator();
+pub fn main(init: std.process.Init) !void {
+    const gpa = init.gpa;
+    const io = init.io;
 
-    var threaded: Io.Threaded = .init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    var it = try std.process.argsWithAllocator(gpa);
+    var it = try init.minimal.args.iterateAllocator(gpa);
     defer it.deinit();
     _ = it.next() orelse unreachable; // skip binary name
     const child_exe_path_orig = it.next() orelse unreachable;
@@ -84,13 +79,13 @@ pub fn main() anyerror!void {
     }
 }
 
-fn testExec(gpa: Allocator, io: Io, args: []const []const u8, env: ?*std.process.EnvMap) !void {
+fn testExec(gpa: Allocator, io: Io, args: []const []const u8, env: ?*std.process.Environ.Map) !void {
     try testExecBat(gpa, io, "args1.bat", args, env);
     try testExecBat(gpa, io, "args2.bat", args, env);
     try testExecBat(gpa, io, "args3.bat", args, env);
 }
 
-fn testExecBat(gpa: Allocator, io: Io, bat: []const u8, args: []const []const u8, env: ?*std.process.EnvMap) !void {
+fn testExecBat(gpa: Allocator, io: Io, bat: []const u8, args: []const []const u8, env: ?*std.process.Environ.Map) !void {
     const argv = try gpa.alloc([]const u8, 1 + args.len);
     defer gpa.free(argv);
     argv[0] = bat;
@@ -98,8 +93,8 @@ fn testExecBat(gpa: Allocator, io: Io, bat: []const u8, args: []const []const u8
 
     const can_have_trailing_empty_args = std.mem.eql(u8, bat, "args3.bat");
 
-    const result = try std.process.Child.run(gpa, io, .{
-        .env_map = env,
+    const result = try std.process.run(gpa, io, .{
+        .environ_map = env,
         .argv = argv,
     });
     defer gpa.free(result.stdout);

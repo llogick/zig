@@ -4,8 +4,6 @@ const math = std.math;
 const arch = builtin.cpu.arch;
 const common = @import("common.zig");
 
-pub const panic = common.panic;
-
 comptime {
     @export(&__fminh, .{ .name = "__fminh", .linkage = common.linkage, .visibility = common.visibility });
     @export(&fminf, .{ .name = "fminf", .linkage = common.linkage, .visibility = common.visibility });

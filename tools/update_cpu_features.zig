@@ -1883,20 +1883,11 @@ const targets = [_]ArchTarget{
     },
 };
 
-pub fn main() anyerror!void {
-    var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
-    defer _ = debug_allocator.deinit();
-    const gpa = debug_allocator.allocator();
+pub fn main(init: std.process.Init) !void {
+    const arena = init.arena.allocator();
+    const io = init.io;
 
-    var arena_state: std.heap.ArenaAllocator = .init(gpa);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    var threaded: std.Io.Threaded = .init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    var args = try std.process.argsWithAllocator(arena);
+    var args = try init.minimal.args.iterateAllocator(arena);
     const args0 = args.next().?;
 
     const llvm_tblgen_exe = args.next() orelse
@@ -1994,7 +1985,7 @@ fn processOneTarget(io: Io, job: Job) void {
             }),
         };
 
-        const child_result = try std.process.Child.run(arena, io, .{
+        const child_result = try std.process.run(arena, io, .{
             .argv = &child_args,
             .max_output_bytes = 500 * 1024 * 1024,
         });
@@ -2004,7 +1995,7 @@ fn processOneTarget(io: Io, job: Job) void {
         }
 
         const json_text = switch (child_result.term) {
-            .Exited => |code| if (code == 0) child_result.stdout else {
+            .exited => |code| if (code == 0) child_result.stdout else {
                 std.debug.print("llvm-tblgen exited with code {d}\n", .{code});
                 std.process.exit(1);
             },

@@ -2306,7 +2306,7 @@ fn addTest(
     run.addArgs(db_argv2);
     run.addArtifactArg(exe);
     for (expected_output) |expected| run.addCheck(.{ .expect_stdout_match = db.b.fmt("{s}\n", .{expected}) });
-    run.addCheck(.{ .expect_term = .{ .Exited = success } });
+    run.addCheck(.{ .expect_term = .{ .exited = success } });
     run.setStdIn(.{ .bytes = "" });
     db.root_step.dependOn(&run.step);
 }

@@ -19,12 +19,18 @@ const fmtResourceType = @import("res.zig").NameOrOrdinal.fmtResourceType;
 const aro = @import("aro");
 const compiler_util = @import("../util.zig");
 
-pub fn main() !void {
+pub fn main(init: std.process.Init.Minimal) !void {
     var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
     defer std.debug.assert(debug_allocator.deinit() == .ok);
     const gpa = debug_allocator.allocator();
 
-    var threaded: std.Io.Threaded = .init(gpa, .{});
+    var environ_map = try init.environ.createMap(gpa);
+    defer environ_map.deinit();
+
+    var threaded: std.Io.Threaded = .init(gpa, .{
+        .environ = init.environ,
+        .argv0 = .init(init.args),
+    });
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -32,7 +38,7 @@ pub fn main() !void {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const args = try std.process.argsAlloc(arena);
+    const args = try init.args.toSlice(arena);
 
     if (args.len < 2) {
         const stderr = try io.lockStderr(&.{}, null);
@@ -145,8 +151,8 @@ pub fn main() !void {
             defer argv.deinit(aro_arena);
 
             try argv.append(aro_arena, "arocc"); // dummy command name
-            const resolved_include_paths = try include_paths.get(&error_handler);
-            try preprocess.appendAroArgs(aro_arena, &argv, options, resolved_include_paths);
+            const resolved_include_paths = try include_paths.get(&error_handler, &environ_map);
+            try preprocess.appendAroArgs(aro_arena, &argv, options, resolved_include_paths, &environ_map);
             try argv.append(aro_arena, switch (options.input_source) {
                 .stdio => "-",
                 .filename => |filename| filename,
@@ -280,7 +286,7 @@ pub fn main() !void {
                     .dependencies = maybe_dependencies,
                     .ignore_include_env_var = options.ignore_include_env_var,
                     .extra_include_paths = options.extra_include_paths.items,
-                    .system_include_paths = try include_paths.get(&error_handler),
+                    .system_include_paths = try include_paths.get(&error_handler, &environ_map),
                     .default_language_id = options.default_language_id,
                     .default_code_page = default_code_page,
                     .disjoint_code_page = has_disjoint_code_page,
@@ -289,7 +295,7 @@ pub fn main() !void {
                     .max_string_literal_codepoints = options.max_string_literal_codepoints,
                     .silent_duplicate_control_ids = options.silent_duplicate_control_ids,
                     .warn_instead_of_error_on_invalid_code_page = options.warn_instead_of_error_on_invalid_code_page,
-                }) catch |err| switch (err) {
+                }, &environ_map) catch |err| switch (err) {
                     error.ParseError, error.CompileError => {
                         try error_handler.emitDiagnostics(gpa, Io.Dir.cwd(), final_input, &diagnostics, mapping_results.mappings);
                         // Delete the output file on error
@@ -536,13 +542,24 @@ const LazyIncludePaths = struct {
     target_machine_type: std.coff.IMAGE.FILE.MACHINE,
     resolved_include_paths: ?[]const []const u8 = null,
 
-    pub fn get(self: *LazyIncludePaths, error_handler: *ErrorHandler) ![]const []const u8 {
+    pub fn get(
+        self: *LazyIncludePaths,
+        error_handler: *ErrorHandler,
+        environ_map: *const std.process.Environ.Map,
+    ) ![]const []const u8 {
         const io = self.io;
 
         if (self.resolved_include_paths) |include_paths|
             return include_paths;
 
-        return getIncludePaths(self.arena, io, self.auto_includes_option, self.zig_lib_dir, self.target_machine_type) catch |err| switch (err) {
+        return getIncludePaths(
+            self.arena,
+            io,
+            self.auto_includes_option,
+            self.zig_lib_dir,
+            self.target_machine_type,
+            environ_map,
+        ) catch |err| switch (err) {
             error.OutOfMemory => |e| return e,
             else => |e| {
                 switch (e) {
@@ -569,6 +586,7 @@ fn getIncludePaths(
     auto_includes_option: cli.Options.AutoIncludes,
     zig_lib_dir: []const u8,
     target_machine_type: std.coff.IMAGE.FILE.MACHINE,
+    environ_map: *const std.process.Environ.Map,
 ) ![]const []const u8 {
     if (auto_includes_option == .none) return &[_][]const u8{};
 
@@ -615,7 +633,7 @@ fn getIncludePaths(
                 };
                 const target = std.zig.resolveTargetQueryOrFatal(io, target_query);
                 const is_native_abi = target_query.isNativeAbi();
-                const detected_libc = std.zig.LibCDirs.detect(arena, io, zig_lib_dir, &target, is_native_abi, true, null) catch {
+                const detected_libc = std.zig.LibCDirs.detect(arena, io, zig_lib_dir, &target, is_native_abi, true, null, environ_map) catch {
                     if (includes == .any) {
                         // fall back to mingw
                         includes = .gnu;
@@ -641,7 +659,16 @@ fn getIncludePaths(
                 };
                 const target = std.zig.resolveTargetQueryOrFatal(io, target_query);
                 const is_native_abi = target_query.isNativeAbi();
-                const detected_libc = std.zig.LibCDirs.detect(arena, io, zig_lib_dir, &target, is_native_abi, true, null) catch |err| switch (err) {
+                const detected_libc = std.zig.LibCDirs.detect(
+                    arena,
+                    io,
+                    zig_lib_dir,
+                    &target,
+                    is_native_abi,
+                    true,
+                    null,
+                    environ_map,
+                ) catch |err| switch (err) {
                     error.OutOfMemory => |e| return e,
                     else => return error.MingwIncludesNotFound,
                 };

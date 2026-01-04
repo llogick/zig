@@ -22,10 +22,10 @@ const tmpDir = std.testing.tmpDir;
 
 test "check WASI CWD" {
     if (native_os == .wasi) {
-        if (std.options.wasiCwd() != 3) {
+        const cwd: Dir = .cwd();
+        if (cwd.handle != 3) {
             @panic("WASI code that uses cwd (like this test) needs a preopen for cwd (add '--dir=.' to wasmtime)");
         }
-
         if (!builtin.link_libc) {
             // WASI without-libc hardcodes fd 3 as the FDCWD token so it can be passed directly to WASI calls
             try expectEqual(3, posix.AT.FDCWD);
@@ -131,18 +131,13 @@ test "pipe" {
     if (native_os == .windows or native_os == .wasi)
         return error.SkipZigTest;
 
-    const fds = try posix.pipe();
+    const fds = try std.Io.Threaded.pipe2(.{});
     try expect((try posix.write(fds[1], "hello")) == 5);
     var buf: [16]u8 = undefined;
     try expect((try posix.read(fds[0], buf[0..])) == 5);
     try expectEqualSlices(u8, buf[0..5], "hello");
     posix.close(fds[1]);
     posix.close(fds[0]);
-}
-
-test "argsAlloc" {
-    const args = try std.process.argsAlloc(std.testing.allocator);
-    std.process.argsFree(std.testing.allocator, args);
 }
 
 test "memfd_create" {
@@ -438,42 +433,11 @@ test "sigset add/del" {
     }
 }
 
-test "dup & dup2" {
-    switch (native_os) {
-        .linux, .illumos => {},
-        else => return error.SkipZigTest,
-    }
-
-    const io = testing.io;
-
-    var tmp = tmpDir(.{});
-    defer tmp.cleanup();
-
-    {
-        var file = try tmp.dir.createFile(io, "os_dup_test", .{});
-        defer file.close(io);
-
-        var duped = Io.File{ .handle = try posix.dup(file.handle) };
-        defer duped.close(io);
-        try duped.writeStreamingAll(io, "dup");
-
-        // Tests aren't run in parallel so using the next fd shouldn't be an issue.
-        const new_fd = duped.handle + 1;
-        try posix.dup2(file.handle, new_fd);
-        var dup2ed = Io.File{ .handle = new_fd };
-        defer dup2ed.close(io);
-        try dup2ed.writeStreamingAll(io, "dup2");
-    }
-
-    var buffer: [8]u8 = undefined;
-    try expectEqualStrings("dupdup2", try tmp.dir.readFile(io, "os_dup_test", &buffer));
-}
-
 test "getpid" {
     if (native_os == .wasi) return error.SkipZigTest;
     if (native_os == .windows) return error.SkipZigTest;
 
-    try expect(posix.getpid() != 0);
+    try expect(posix.system.getpid() != 0);
 }
 
 test "getppid" {
@@ -532,7 +496,7 @@ test "rename smoke test" {
         // Create some directory
         const file_path = try Dir.path.join(gpa, &.{ base_path, "some_dir" });
         defer gpa.free(file_path);
-        try posix.mkdir(file_path, mode);
+        try Io.Dir.createDirAbsolute(io, file_path, .fromMode(mode));
 
         // Rename the directory
         const new_file_path = try Dir.path.join(gpa, &.{ base_path, "some_other_dir" });

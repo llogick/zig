@@ -67,15 +67,16 @@ pub const DebugInfoSearchPaths = struct {
     };
 
     pub fn native(exe_path: []const u8) DebugInfoSearchPaths {
-        return .{
+        if (std.Options.elf_debug_info_search_paths) |f| return f(exe_path);
+        if (std.Options.debug_threaded_io) |t| return .{
             .debuginfod_client = p: {
-                if (std.posix.getenv("DEBUGINFOD_CACHE_PATH")) |p| {
+                if (t.environString("DEBUGINFOD_CACHE_PATH")) |p| {
                     break :p .{ p, "" };
                 }
-                if (std.posix.getenv("XDG_CACHE_HOME")) |cache_path| {
+                if (t.environString("XDG_CACHE_HOME")) |cache_path| {
                     break :p .{ cache_path, "/debuginfod_client" };
                 }
-                if (std.posix.getenv("HOME")) |home_path| {
+                if (t.environString("HOME")) |home_path| {
                     break :p .{ home_path, "/.cache/debuginfod_client" };
                 }
                 break :p null;
@@ -85,6 +86,7 @@ pub const DebugInfoSearchPaths = struct {
             },
             .exe_dir = std.fs.path.dirname(exe_path) orelse ".",
         };
+        @compileError("std.Options.elf_debug_info_search_paths must be provided");
     }
 };
 

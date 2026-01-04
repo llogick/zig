@@ -86,7 +86,7 @@ fn hasAnyErrors(comp: *aro.Compilation) bool {
 
 /// `arena` is used for temporary -D argument strings and the INCLUDE environment variable.
 /// The arena should be kept alive at least as long as `argv`.
-pub fn appendAroArgs(arena: Allocator, argv: *std.ArrayList([]const u8), options: cli.Options, system_include_paths: []const []const u8) !void {
+pub fn appendAroArgs(arena: Allocator, argv: *std.ArrayList([]const u8), options: cli.Options, system_include_paths: []const []const u8, environ_map: *const std.process.Environ.Map) !void {
     try argv.appendSlice(arena, &.{
         "-E",
         "--comments",
@@ -109,7 +109,7 @@ pub fn appendAroArgs(arena: Allocator, argv: *std.ArrayList([]const u8), options
     }
 
     if (!options.ignore_include_env_var) {
-        const INCLUDE = std.process.getEnvVarOwned(arena, "INCLUDE") catch "";
+        const INCLUDE = environ_map.get("INCLUDE") orelse "";
 
         // The only precedence here is llvm-rc which also uses the platform-specific
         // delimiter. There's no precedence set by `rc.exe` since it's Windows-only.

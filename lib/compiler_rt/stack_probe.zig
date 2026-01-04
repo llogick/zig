@@ -5,8 +5,6 @@ const os_tag = builtin.os.tag;
 const arch = builtin.cpu.arch;
 const abi = builtin.abi;
 
-pub const panic = common.panic;
-
 comptime {
     if (builtin.os.tag == .windows) {
         // Default stack-probe functions emitted by LLVM

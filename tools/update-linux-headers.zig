@@ -141,15 +141,13 @@ const HashToContents = std.StringHashMap(Contents);
 const TargetToHash = std.ArrayHashMap(DestTarget, []const u8, DestTarget.HashContext, true);
 const PathTable = std.StringHashMap(*TargetToHash);
 
-pub fn main() !void {
-    var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    const arena = arena_state.allocator();
+pub fn main(init: std.process.Init) !void {
+    const arena = init.arena.allocator();
+    const io = init.io;
+    const args = try init.minimal.args.toSlice(arena);
+    const environ_map = init.environ_map;
+    const cwd = try std.process.getCwdAlloc(arena);
 
-    var threaded: Io.Threaded = .init(arena, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    const args = try std.process.argsAlloc(arena);
     var search_paths = std.array_list.Managed([]const u8).init(arena);
     var opt_out_dir: ?[]const u8 = null;
 
@@ -211,7 +209,7 @@ pub fn main() !void {
                     switch (entry.kind) {
                         .directory => try dir_stack.append(full_path),
                         .file => {
-                            const rel_path = try Dir.path.relative(arena, target_include_dir, full_path);
+                            const rel_path = try Dir.path.relative(arena, cwd, environ_map, target_include_dir, full_path);
                             const max_size = 2 * 1024 * 1024 * 1024;
                             const raw_bytes = try Dir.cwd().readFileAlloc(io, full_path, arena, .limited(max_size));
                             const trimmed = std.mem.trim(u8, raw_bytes, " \r\n\t");

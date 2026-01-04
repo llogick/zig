@@ -2,174 +2,150 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 // Note: the environment variables under test are set by the build.zig
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
     @setEvalBranchQuota(10000);
 
-    var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = init.gpa;
+    const arena = init.arena.allocator();
+    const environ = init.minimal.environ;
 
-    var arena_state = std.heap.ArenaAllocator.init(allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    // hasNonEmptyEnvVar
+    // containsUnempty
     {
-        try std.testing.expect(try std.process.hasNonEmptyEnvVar(allocator, "FOO"));
-        try std.testing.expect(!(try std.process.hasNonEmptyEnvVar(allocator, "FOO=")));
-        try std.testing.expect(!(try std.process.hasNonEmptyEnvVar(allocator, "FO")));
-        try std.testing.expect(!(try std.process.hasNonEmptyEnvVar(allocator, "FOOO")));
+        try std.testing.expect(try environ.containsUnempty(allocator, "FOO"));
+        try std.testing.expect(!(try environ.containsUnempty(allocator, "FOO=")));
+        try std.testing.expect(!(try environ.containsUnempty(allocator, "FO")));
+        try std.testing.expect(!(try environ.containsUnempty(allocator, "FOOO")));
         if (builtin.os.tag == .windows) {
-            try std.testing.expect(try std.process.hasNonEmptyEnvVar(allocator, "foo"));
+            try std.testing.expect(try environ.containsUnempty(allocator, "foo"));
         }
-        try std.testing.expect(try std.process.hasNonEmptyEnvVar(allocator, "EQUALS"));
-        try std.testing.expect(!(try std.process.hasNonEmptyEnvVar(allocator, "EQUALS=ABC")));
-        try std.testing.expect(try std.process.hasNonEmptyEnvVar(allocator, "КИРиллИЦА"));
+        try std.testing.expect(try environ.containsUnempty(allocator, "EQUALS"));
+        try std.testing.expect(!(try environ.containsUnempty(allocator, "EQUALS=ABC")));
+        try std.testing.expect(try environ.containsUnempty(allocator, "КИРиллИЦА"));
         if (builtin.os.tag == .windows) {
-            try std.testing.expect(try std.process.hasNonEmptyEnvVar(allocator, "кирИЛЛица"));
+            try std.testing.expect(try environ.containsUnempty(allocator, "кирИЛЛица"));
         }
-        try std.testing.expect(!(try std.process.hasNonEmptyEnvVar(allocator, "NO_VALUE")));
-        try std.testing.expect(!(try std.process.hasNonEmptyEnvVar(allocator, "NOT_SET")));
+        try std.testing.expect(!(try environ.containsUnempty(allocator, "NO_VALUE")));
+        try std.testing.expect(!(try environ.containsUnempty(allocator, "NOT_SET")));
         if (builtin.os.tag == .windows) {
-            try std.testing.expect(try std.process.hasNonEmptyEnvVar(allocator, "=HIDDEN"));
-            try std.testing.expect(try std.process.hasNonEmptyEnvVar(allocator, "INVALID_UTF16_\xed\xa0\x80"));
+            try std.testing.expect(try environ.containsUnempty(allocator, "=HIDDEN"));
+            try std.testing.expect(try environ.containsUnempty(allocator, "INVALID_UTF16_\xed\xa0\x80"));
         }
     }
 
-    // hasNonEmptyEnvVarContstant
+    // containsUnemptyConstant
     {
-        try std.testing.expect(std.process.hasNonEmptyEnvVarConstant("FOO"));
-        try std.testing.expect(!std.process.hasNonEmptyEnvVarConstant("FOO="));
-        try std.testing.expect(!std.process.hasNonEmptyEnvVarConstant("FO"));
-        try std.testing.expect(!std.process.hasNonEmptyEnvVarConstant("FOOO"));
+        try std.testing.expect(environ.containsUnemptyConstant("FOO"));
+        try std.testing.expect(!environ.containsUnemptyConstant("FOO="));
+        try std.testing.expect(!environ.containsUnemptyConstant("FO"));
+        try std.testing.expect(!environ.containsUnemptyConstant("FOOO"));
         if (builtin.os.tag == .windows) {
-            try std.testing.expect(std.process.hasNonEmptyEnvVarConstant("foo"));
+            try std.testing.expect(environ.containsUnemptyConstant("foo"));
         }
-        try std.testing.expect(std.process.hasNonEmptyEnvVarConstant("EQUALS"));
-        try std.testing.expect(!std.process.hasNonEmptyEnvVarConstant("EQUALS=ABC"));
-        try std.testing.expect(std.process.hasNonEmptyEnvVarConstant("КИРиллИЦА"));
+        try std.testing.expect(environ.containsUnemptyConstant("EQUALS"));
+        try std.testing.expect(!environ.containsUnemptyConstant("EQUALS=ABC"));
+        try std.testing.expect(environ.containsUnemptyConstant("КИРиллИЦА"));
         if (builtin.os.tag == .windows) {
-            try std.testing.expect(std.process.hasNonEmptyEnvVarConstant("кирИЛЛица"));
+            try std.testing.expect(environ.containsUnemptyConstant("кирИЛЛица"));
         }
-        try std.testing.expect(!(std.process.hasNonEmptyEnvVarConstant("NO_VALUE")));
-        try std.testing.expect(!(std.process.hasNonEmptyEnvVarConstant("NOT_SET")));
+        try std.testing.expect(!(environ.containsUnemptyConstant("NO_VALUE")));
+        try std.testing.expect(!(environ.containsUnemptyConstant("NOT_SET")));
         if (builtin.os.tag == .windows) {
-            try std.testing.expect(std.process.hasNonEmptyEnvVarConstant("=HIDDEN"));
-            try std.testing.expect(std.process.hasNonEmptyEnvVarConstant("INVALID_UTF16_\xed\xa0\x80"));
+            try std.testing.expect(environ.containsUnemptyConstant("=HIDDEN"));
+            try std.testing.expect(environ.containsUnemptyConstant("INVALID_UTF16_\xed\xa0\x80"));
         }
     }
 
-    // hasEnvVar
+    // contains
     {
-        try std.testing.expect(try std.process.hasEnvVar(allocator, "FOO"));
-        try std.testing.expect(!(try std.process.hasEnvVar(allocator, "FOO=")));
-        try std.testing.expect(!(try std.process.hasEnvVar(allocator, "FO")));
-        try std.testing.expect(!(try std.process.hasEnvVar(allocator, "FOOO")));
+        try std.testing.expect(try environ.contains(allocator, "FOO"));
+        try std.testing.expect(!(try environ.contains(allocator, "FOO=")));
+        try std.testing.expect(!(try environ.contains(allocator, "FO")));
+        try std.testing.expect(!(try environ.contains(allocator, "FOOO")));
         if (builtin.os.tag == .windows) {
-            try std.testing.expect(try std.process.hasEnvVar(allocator, "foo"));
+            try std.testing.expect(try environ.contains(allocator, "foo"));
         }
-        try std.testing.expect(try std.process.hasEnvVar(allocator, "EQUALS"));
-        try std.testing.expect(!(try std.process.hasEnvVar(allocator, "EQUALS=ABC")));
-        try std.testing.expect(try std.process.hasEnvVar(allocator, "КИРиллИЦА"));
+        try std.testing.expect(try environ.contains(allocator, "EQUALS"));
+        try std.testing.expect(!(try environ.contains(allocator, "EQUALS=ABC")));
+        try std.testing.expect(try environ.contains(allocator, "КИРиллИЦА"));
         if (builtin.os.tag == .windows) {
-            try std.testing.expect(try std.process.hasEnvVar(allocator, "кирИЛЛица"));
+            try std.testing.expect(try environ.contains(allocator, "кирИЛЛица"));
         }
-        try std.testing.expect(try std.process.hasEnvVar(allocator, "NO_VALUE"));
-        try std.testing.expect(!(try std.process.hasEnvVar(allocator, "NOT_SET")));
+        try std.testing.expect(try environ.contains(allocator, "NO_VALUE"));
+        try std.testing.expect(!(try environ.contains(allocator, "NOT_SET")));
         if (builtin.os.tag == .windows) {
-            try std.testing.expect(try std.process.hasEnvVar(allocator, "=HIDDEN"));
-            try std.testing.expect(try std.process.hasEnvVar(allocator, "INVALID_UTF16_\xed\xa0\x80"));
+            try std.testing.expect(try environ.contains(allocator, "=HIDDEN"));
+            try std.testing.expect(try environ.contains(allocator, "INVALID_UTF16_\xed\xa0\x80"));
         }
     }
 
-    // hasEnvVarConstant
+    // containsConstant
     {
-        try std.testing.expect(std.process.hasEnvVarConstant("FOO"));
-        try std.testing.expect(!std.process.hasEnvVarConstant("FOO="));
-        try std.testing.expect(!std.process.hasEnvVarConstant("FO"));
-        try std.testing.expect(!std.process.hasEnvVarConstant("FOOO"));
+        try std.testing.expect(environ.containsConstant("FOO"));
+        try std.testing.expect(!environ.containsConstant("FOO="));
+        try std.testing.expect(!environ.containsConstant("FO"));
+        try std.testing.expect(!environ.containsConstant("FOOO"));
         if (builtin.os.tag == .windows) {
-            try std.testing.expect(std.process.hasEnvVarConstant("foo"));
+            try std.testing.expect(environ.containsConstant("foo"));
         }
-        try std.testing.expect(std.process.hasEnvVarConstant("EQUALS"));
-        try std.testing.expect(!std.process.hasEnvVarConstant("EQUALS=ABC"));
-        try std.testing.expect(std.process.hasEnvVarConstant("КИРиллИЦА"));
+        try std.testing.expect(environ.containsConstant("EQUALS"));
+        try std.testing.expect(!environ.containsConstant("EQUALS=ABC"));
+        try std.testing.expect(environ.containsConstant("КИРиллИЦА"));
         if (builtin.os.tag == .windows) {
-            try std.testing.expect(std.process.hasEnvVarConstant("кирИЛЛица"));
+            try std.testing.expect(environ.containsConstant("кирИЛЛица"));
         }
-        try std.testing.expect(std.process.hasEnvVarConstant("NO_VALUE"));
-        try std.testing.expect(!(std.process.hasEnvVarConstant("NOT_SET")));
+        try std.testing.expect(environ.containsConstant("NO_VALUE"));
+        try std.testing.expect(!(environ.containsConstant("NOT_SET")));
         if (builtin.os.tag == .windows) {
-            try std.testing.expect(std.process.hasEnvVarConstant("=HIDDEN"));
-            try std.testing.expect(std.process.hasEnvVarConstant("INVALID_UTF16_\xed\xa0\x80"));
+            try std.testing.expect(environ.containsConstant("=HIDDEN"));
+            try std.testing.expect(environ.containsConstant("INVALID_UTF16_\xed\xa0\x80"));
         }
     }
 
-    // getEnvVarOwned
+    // getAlloc
     {
-        try std.testing.expectEqualSlices(u8, "123", try std.process.getEnvVarOwned(arena, "FOO"));
-        try std.testing.expectError(error.EnvironmentVariableNotFound, std.process.getEnvVarOwned(arena, "FOO="));
-        try std.testing.expectError(error.EnvironmentVariableNotFound, std.process.getEnvVarOwned(arena, "FO"));
-        try std.testing.expectError(error.EnvironmentVariableNotFound, std.process.getEnvVarOwned(arena, "FOOO"));
+        try std.testing.expectEqualSlices(u8, "123", try environ.getAlloc(arena, "FOO"));
+        try std.testing.expectError(error.EnvironmentVariableMissing, environ.getAlloc(arena, "FOO="));
+        try std.testing.expectError(error.EnvironmentVariableMissing, environ.getAlloc(arena, "FO"));
+        try std.testing.expectError(error.EnvironmentVariableMissing, environ.getAlloc(arena, "FOOO"));
         if (builtin.os.tag == .windows) {
-            try std.testing.expectEqualSlices(u8, "123", try std.process.getEnvVarOwned(arena, "foo"));
+            try std.testing.expectEqualSlices(u8, "123", try environ.getAlloc(arena, "foo"));
         }
-        try std.testing.expectEqualSlices(u8, "ABC=123", try std.process.getEnvVarOwned(arena, "EQUALS"));
-        try std.testing.expectError(error.EnvironmentVariableNotFound, std.process.getEnvVarOwned(arena, "EQUALS=ABC"));
-        try std.testing.expectEqualSlices(u8, "non-ascii አማርኛ \u{10FFFF}", try std.process.getEnvVarOwned(arena, "КИРиллИЦА"));
+        try std.testing.expectEqualSlices(u8, "ABC=123", try environ.getAlloc(arena, "EQUALS"));
+        try std.testing.expectError(error.EnvironmentVariableMissing, environ.getAlloc(arena, "EQUALS=ABC"));
+        try std.testing.expectEqualSlices(u8, "non-ascii አማርኛ \u{10FFFF}", try environ.getAlloc(arena, "КИРиллИЦА"));
         if (builtin.os.tag == .windows) {
-            try std.testing.expectEqualSlices(u8, "non-ascii አማርኛ \u{10FFFF}", try std.process.getEnvVarOwned(arena, "кирИЛЛица"));
+            try std.testing.expectEqualSlices(u8, "non-ascii አማርኛ \u{10FFFF}", try environ.getAlloc(arena, "кирИЛЛица"));
         }
-        try std.testing.expectEqualSlices(u8, "", try std.process.getEnvVarOwned(arena, "NO_VALUE"));
-        try std.testing.expectError(error.EnvironmentVariableNotFound, std.process.getEnvVarOwned(arena, "NOT_SET"));
+        try std.testing.expectEqualSlices(u8, "", try environ.getAlloc(arena, "NO_VALUE"));
+        try std.testing.expectError(error.EnvironmentVariableMissing, environ.getAlloc(arena, "NOT_SET"));
         if (builtin.os.tag == .windows) {
-            try std.testing.expectEqualSlices(u8, "hi", try std.process.getEnvVarOwned(arena, "=HIDDEN"));
-            try std.testing.expectEqualSlices(u8, "\xed\xa0\x80", try std.process.getEnvVarOwned(arena, "INVALID_UTF16_\xed\xa0\x80"));
+            try std.testing.expectEqualSlices(u8, "hi", try environ.getAlloc(arena, "=HIDDEN"));
+            try std.testing.expectEqualSlices(u8, "\xed\xa0\x80", try environ.getAlloc(arena, "INVALID_UTF16_\xed\xa0\x80"));
         }
     }
 
-    // parseEnvVarInt
+    // Environ.Map
     {
-        try std.testing.expectEqual(123, try std.process.parseEnvVarInt("FOO", u32, 10));
-        try std.testing.expectError(error.EnvironmentVariableNotFound, std.process.parseEnvVarInt("FO", u32, 10));
-        try std.testing.expectError(error.EnvironmentVariableNotFound, std.process.parseEnvVarInt("FOOO", u32, 10));
-        try std.testing.expectEqual(0x123, try std.process.parseEnvVarInt("FOO", u32, 16));
-        if (builtin.os.tag == .windows) {
-            try std.testing.expectEqual(123, try std.process.parseEnvVarInt("foo", u32, 10));
-        }
-        try std.testing.expectError(error.InvalidCharacter, std.process.parseEnvVarInt("EQUALS", u32, 10));
-        try std.testing.expectError(error.EnvironmentVariableNotFound, std.process.parseEnvVarInt("EQUALS=ABC", u32, 10));
-        try std.testing.expectError(error.InvalidCharacter, std.process.parseEnvVarInt("КИРиллИЦА", u32, 10));
-        try std.testing.expectError(error.InvalidCharacter, std.process.parseEnvVarInt("NO_VALUE", u32, 10));
-        try std.testing.expectError(error.EnvironmentVariableNotFound, std.process.parseEnvVarInt("NOT_SET", u32, 10));
-        if (builtin.os.tag == .windows) {
-            try std.testing.expectError(error.InvalidCharacter, std.process.parseEnvVarInt("=HIDDEN", u32, 10));
-            try std.testing.expectError(error.InvalidCharacter, std.process.parseEnvVarInt("INVALID_UTF16_\xed\xa0\x80", u32, 10));
-        }
-    }
+        var environ_map = try environ.createMap(allocator);
+        defer environ_map.deinit();
 
-    // EnvMap
-    {
-        var env_map = try std.process.getEnvMap(allocator);
-        defer env_map.deinit();
-
-        try std.testing.expectEqualSlices(u8, "123", env_map.get("FOO").?);
-        try std.testing.expectEqual(null, env_map.get("FO"));
-        try std.testing.expectEqual(null, env_map.get("FOOO"));
+        try std.testing.expectEqualSlices(u8, "123", environ_map.get("FOO").?);
+        try std.testing.expectEqual(null, environ_map.get("FO"));
+        try std.testing.expectEqual(null, environ_map.get("FOOO"));
         if (builtin.os.tag == .windows) {
-            try std.testing.expectEqualSlices(u8, "123", env_map.get("foo").?);
+            try std.testing.expectEqualSlices(u8, "123", environ_map.get("foo").?);
         }
-        try std.testing.expectEqualSlices(u8, "ABC=123", env_map.get("EQUALS").?);
-        try std.testing.expectEqual(null, env_map.get("EQUALS=ABC"));
-        try std.testing.expectEqualSlices(u8, "non-ascii አማርኛ \u{10FFFF}", env_map.get("КИРиллИЦА").?);
+        try std.testing.expectEqualSlices(u8, "ABC=123", environ_map.get("EQUALS").?);
+        try std.testing.expectEqual(null, environ_map.get("EQUALS=ABC"));
+        try std.testing.expectEqualSlices(u8, "non-ascii አማርኛ \u{10FFFF}", environ_map.get("КИРиллИЦА").?);
         if (builtin.os.tag == .windows) {
-            try std.testing.expectEqualSlices(u8, "non-ascii አማርኛ \u{10FFFF}", env_map.get("кирИЛЛица").?);
+            try std.testing.expectEqualSlices(u8, "non-ascii አማርኛ \u{10FFFF}", environ_map.get("кирИЛЛица").?);
         }
-        try std.testing.expectEqualSlices(u8, "", env_map.get("NO_VALUE").?);
-        try std.testing.expectEqual(null, env_map.get("NOT_SET"));
+        try std.testing.expectEqualSlices(u8, "", environ_map.get("NO_VALUE").?);
+        try std.testing.expectEqual(null, environ_map.get("NOT_SET"));
         if (builtin.os.tag == .windows) {
-            try std.testing.expectEqualSlices(u8, "hi", env_map.get("=HIDDEN").?);
-            try std.testing.expectEqualSlices(u8, "\xed\xa0\x80", env_map.get("INVALID_UTF16_\xed\xa0\x80").?);
+            try std.testing.expectEqualSlices(u8, "hi", environ_map.get("=HIDDEN").?);
+            try std.testing.expectEqualSlices(u8, "\xed\xa0\x80", environ_map.get("INVALID_UTF16_\xed\xa0\x80").?);
         }
     }
 }

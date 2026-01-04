@@ -1,127 +1,75 @@
 // This file is included in the compilation unit when exporting an executable.
 
-const root = @import("root");
-const std = @import("std.zig");
 const builtin = @import("builtin");
+const native_arch = builtin.cpu.arch;
+const native_os = builtin.os.tag;
+const is_wasm = native_arch.isWasm();
+
+const std = @import("std.zig");
 const assert = std.debug.assert;
 const uefi = std.os.uefi;
 const elf = std.elf;
-const native_arch = builtin.cpu.arch;
-const native_os = builtin.os.tag;
+
+const root = @import("root");
 
 const start_sym_name = if (native_arch.isMIPS()) "__start" else "_start";
-
-// The self-hosted compiler is not fully capable of handling all of this start.zig file.
-// Until then, we have simplified logic here for self-hosted. TODO remove this once
-// self-hosted is capable enough to handle all of the real start.zig logic.
-pub const simplified_logic = switch (builtin.zig_backend) {
-    .stage2_aarch64,
-    .stage2_arm,
-    .stage2_powerpc,
-    .stage2_sparc64,
-    .stage2_spirv,
-    .stage2_x86,
-    => true,
-    else => false,
-};
 
 comptime {
     // No matter what, we import the root file, so that any export, test, comptime
     // decls there get run.
     _ = root;
 
-    if (simplified_logic) {
-        if (builtin.output_mode == .Exe) {
-            if ((builtin.link_libc or builtin.object_format == .c) and @hasDecl(root, "main")) {
-                if (!@typeInfo(@TypeOf(root.main)).@"fn".calling_convention.eql(.c)) {
-                    @export(&main2, .{ .name = "main" });
-                }
-            } else if (builtin.os.tag == .windows) {
-                if (!@hasDecl(root, "wWinMainCRTStartup") and !@hasDecl(root, "mainCRTStartup")) {
-                    @export(&wWinMainCRTStartup2, .{ .name = "wWinMainCRTStartup" });
-                }
-            } else if (builtin.os.tag == .opencl or builtin.os.tag == .vulkan) {
-                if (@hasDecl(root, "main"))
-                    @export(&spirvMain2, .{ .name = "main" });
-            } else {
-                if (!@hasDecl(root, "_start")) {
-                    @export(&_start2, .{ .name = "_start" });
-                }
-            }
+    if (builtin.output_mode == .Lib and builtin.link_mode == .dynamic) {
+        if (native_os == .windows and !@hasDecl(root, "_DllMainCRTStartup")) {
+            @export(&_DllMainCRTStartup, .{ .name = "_DllMainCRTStartup" });
         }
-    } else {
-        if (builtin.output_mode == .Lib and builtin.link_mode == .dynamic) {
-            if (native_os == .windows and !@hasDecl(root, "_DllMainCRTStartup")) {
-                @export(&_DllMainCRTStartup, .{ .name = "_DllMainCRTStartup" });
+    } else if (builtin.output_mode == .Exe or @hasDecl(root, "main")) {
+        if (builtin.link_libc and @hasDecl(root, "main")) {
+            if (is_wasm) {
+                @export(&mainWithoutEnv, .{ .name = "__main_argc_argv" });
+            } else if (!@typeInfo(@TypeOf(root.main)).@"fn".calling_convention.eql(.c)) {
+                @export(&main, .{ .name = "main" });
             }
-        } else if (builtin.output_mode == .Exe or @hasDecl(root, "main")) {
-            if (builtin.link_libc and @hasDecl(root, "main")) {
-                if (native_arch.isWasm()) {
-                    @export(&mainWithoutEnv, .{ .name = "__main_argc_argv" });
-                } else if (!@typeInfo(@TypeOf(root.main)).@"fn".calling_convention.eql(.c)) {
-                    @export(&main, .{ .name = "main" });
-                }
-            } else if (native_os == .windows and builtin.link_libc and @hasDecl(root, "wWinMain")) {
-                if (!@typeInfo(@TypeOf(root.wWinMain)).@"fn".calling_convention.eql(.c)) {
-                    @export(&wWinMain, .{ .name = "wWinMain" });
-                }
-            } else if (native_os == .windows) {
-                if (!@hasDecl(root, "WinMain") and !@hasDecl(root, "WinMainCRTStartup") and
-                    !@hasDecl(root, "wWinMain") and !@hasDecl(root, "wWinMainCRTStartup"))
-                {
-                    @export(&WinStartup, .{ .name = "wWinMainCRTStartup" });
-                } else if (@hasDecl(root, "WinMain") and !@hasDecl(root, "WinMainCRTStartup") and
-                    !@hasDecl(root, "wWinMain") and !@hasDecl(root, "wWinMainCRTStartup"))
-                {
-                    @compileError("WinMain not supported; declare wWinMain or main instead");
-                } else if (@hasDecl(root, "wWinMain") and !@hasDecl(root, "wWinMainCRTStartup") and
-                    !@hasDecl(root, "WinMain") and !@hasDecl(root, "WinMainCRTStartup"))
-                {
-                    @export(&wWinMainCRTStartup, .{ .name = "wWinMainCRTStartup" });
-                }
-            } else if (native_os == .uefi) {
-                if (!@hasDecl(root, "EfiMain")) @export(&EfiMain, .{ .name = "EfiMain" });
-            } else if (native_os == .wasi) {
-                const wasm_start_sym = switch (builtin.wasi_exec_model) {
-                    .reactor => "_initialize",
-                    .command => "_start",
-                };
-                if (!@hasDecl(root, wasm_start_sym) and @hasDecl(root, "main")) {
-                    // Only call main when defined. For WebAssembly it's allowed to pass `-fno-entry` in which
-                    // case it's not required to provide an entrypoint such as main.
-                    @export(&wasi_start, .{ .name = wasm_start_sym });
-                }
-            } else if (native_arch.isWasm() and native_os == .freestanding) {
+        } else if (native_os == .windows and builtin.link_libc and @hasDecl(root, "wWinMain")) {
+            if (!@typeInfo(@TypeOf(root.wWinMain)).@"fn".calling_convention.eql(.c)) {
+                @export(&wWinMain, .{ .name = "wWinMain" });
+            }
+        } else if (native_os == .windows) {
+            if (!@hasDecl(root, "WinMain") and !@hasDecl(root, "WinMainCRTStartup") and
+                !@hasDecl(root, "wWinMain") and !@hasDecl(root, "wWinMainCRTStartup"))
+            {
+                @export(&WinStartup, .{ .name = "wWinMainCRTStartup" });
+            } else if (@hasDecl(root, "WinMain") and !@hasDecl(root, "WinMainCRTStartup") and
+                !@hasDecl(root, "wWinMain") and !@hasDecl(root, "wWinMainCRTStartup"))
+            {
+                @compileError("WinMain not supported; declare wWinMain or main instead");
+            } else if (@hasDecl(root, "wWinMain") and !@hasDecl(root, "wWinMainCRTStartup") and
+                !@hasDecl(root, "WinMain") and !@hasDecl(root, "WinMainCRTStartup"))
+            {
+                @export(&wWinMainCRTStartup, .{ .name = "wWinMainCRTStartup" });
+            }
+        } else if (native_os == .uefi) {
+            if (!@hasDecl(root, "EfiMain")) @export(&EfiMain, .{ .name = "EfiMain" });
+        } else if (native_os == .wasi) {
+            const wasm_start_sym = switch (builtin.wasi_exec_model) {
+                .reactor => "_initialize",
+                .command => "_start",
+            };
+            if (!@hasDecl(root, wasm_start_sym) and @hasDecl(root, "main")) {
                 // Only call main when defined. For WebAssembly it's allowed to pass `-fno-entry` in which
                 // case it's not required to provide an entrypoint such as main.
-                if (!@hasDecl(root, start_sym_name) and @hasDecl(root, "main")) @export(&wasm_freestanding_start, .{ .name = start_sym_name });
-            } else switch (native_os) {
-                .other, .freestanding, .@"3ds", .vita => {},
-                else => if (!@hasDecl(root, start_sym_name)) @export(&_start, .{ .name = start_sym_name }),
+                @export(&startWasi, .{ .name = wasm_start_sym });
             }
+        } else if (is_wasm and native_os == .freestanding) {
+            // Only call main when defined. For WebAssembly it's allowed to pass `-fno-entry` in which
+            // case it's not required to provide an entrypoint such as main.
+            if (!@hasDecl(root, start_sym_name) and @hasDecl(root, "main")) @export(&wasm_freestanding_start, .{ .name = start_sym_name });
+        } else switch (native_os) {
+            .other, .freestanding, .@"3ds", .vita => {},
+            else => if (!@hasDecl(root, start_sym_name)) @export(&_start, .{ .name = start_sym_name }),
         }
     }
 }
-
-// Simplified start code for stage2 until it supports more language features ///
-
-fn main2() callconv(.c) c_int {
-    return callMain();
-}
-
-fn _start2() callconv(.withStackAlign(.c, 1)) noreturn {
-    std.process.exit(callMain());
-}
-
-fn spirvMain2() callconv(.kernel) void {
-    root.main();
-}
-
-fn wWinMainCRTStartup2() callconv(.c) noreturn {
-    std.process.exit(callMain());
-}
-
-////////////////////////////////////////////////////////////////////////////////
 
 fn _DllMainCRTStartup(
     hinstDLL: std.os.windows.HINSTANCE,
@@ -142,15 +90,15 @@ fn _DllMainCRTStartup(
 fn wasm_freestanding_start() callconv(.c) void {
     // This is marked inline because for some reason LLVM in
     // release mode fails to inline it, and we want fewer call frames in stack traces.
-    _ = @call(.always_inline, callMain, .{});
+    _ = @call(.always_inline, callMain, .{ {}, {} });
 }
 
-fn wasi_start() callconv(.c) void {
+fn startWasi() callconv(.c) void {
     // The function call is marked inline because for some reason LLVM in
     // release mode fails to inline it, and we want fewer call frames in stack traces.
     switch (builtin.wasi_exec_model) {
-        .reactor => _ = @call(.always_inline, callMain, .{}),
-        .command => std.os.wasi.proc_exit(@call(.always_inline, callMain, .{})),
+        .reactor => _ = @call(.always_inline, callMain, .{ {}, {} }),
+        .command => std.os.wasi.proc_exit(@call(.always_inline, callMain, .{ {}, {} })),
     }
 }
 
@@ -524,7 +472,10 @@ fn WinStartup() callconv(.withStackAlign(.c, 1)) noreturn {
 
     std.debug.maybeEnableSegfaultHandler();
 
-    std.os.windows.ntdll.RtlExitUserProcess(callMain());
+    const cmd_line = std.os.windows.peb().ProcessParameters.CommandLine;
+    const cmd_line_w = cmd_line.Buffer.?[0..@divExact(cmd_line.Length, 2)];
+
+    std.os.windows.ntdll.RtlExitUserProcess(callMain(cmd_line_w, {}));
 }
 
 fn wWinMainCRTStartup() callconv(.withStackAlign(.c, 1)) noreturn {
@@ -556,7 +507,7 @@ fn posixCallMainAndExit(argc_argv_ptr: [*]usize) callconv(.c) noreturn {
     const envp_optional: [*:null]?[*:0]u8 = @ptrCast(@alignCast(argv + argc + 1));
     var envp_count: usize = 0;
     while (envp_optional[envp_count]) |_| : (envp_count += 1) {}
-    const envp = @as([*][*:0]u8, @ptrCast(envp_optional))[0..envp_count];
+    const envp = envp_optional[0..envp_count :null];
 
     // Find the beginning of the auxiliary vector
     const auxv: [*]elf.Auxv = @ptrCast(@alignCast(envp.ptr + envp_count + 1));
@@ -631,6 +582,7 @@ fn posixCallMainAndExit(argc_argv_ptr: [*]usize) callconv(.c) noreturn {
 }
 
 fn expandStackSize(phdrs: []elf.Phdr) void {
+    @disableInstrumentation();
     for (phdrs) |*phdr| {
         switch (phdr.p_type) {
             elf.PT_GNU_STACK => {
@@ -665,92 +617,137 @@ fn expandStackSize(phdrs: []elf.Phdr) void {
     }
 }
 
-inline fn callMainWithArgs(argc: usize, argv: [*][*:0]u8, envp: [][*:0]u8) u8 {
-    std.os.argv = argv[0..argc];
-    std.os.environ = envp;
-
+inline fn callMainWithArgs(argc: usize, argv: [*][*:0]u8, envp: [:null]?[*:0]u8) u8 {
     if (std.Options.debug_threaded_io) |t| {
         if (@sizeOf(std.Io.Threaded.Argv0) != 0) t.argv0.value = argv[0];
-        t.environ = .{ .block = envp };
+        t.environ = .{ .process_environ = .{ .block = envp } };
     }
-
     std.debug.maybeEnableSegfaultHandler();
-
-    return callMain();
+    return callMain(argv[0..argc], envp);
 }
 
 fn main(c_argc: c_int, c_argv: [*][*:0]c_char, c_envp: [*:null]?[*:0]c_char) callconv(.c) c_int {
     var env_count: usize = 0;
     while (c_envp[env_count] != null) : (env_count += 1) {}
-    const envp = @as([*][*:0]u8, @ptrCast(c_envp))[0..env_count];
+    const envp = c_envp[0..env_count :null];
 
-    if (builtin.os.tag == .linux) {
-        const at_phdr = std.c.getauxval(elf.AT_PHDR);
-        const at_phnum = std.c.getauxval(elf.AT_PHNUM);
-        const phdrs = (@as([*]elf.Phdr, @ptrFromInt(at_phdr)))[0..at_phnum];
-        expandStackSize(phdrs);
+    switch (builtin.os.tag) {
+        .linux => {
+            const at_phdr = std.c.getauxval(elf.AT_PHDR);
+            const at_phnum = std.c.getauxval(elf.AT_PHNUM);
+            const phdrs = (@as([*]elf.Phdr, @ptrFromInt(at_phdr)))[0..at_phnum];
+            expandStackSize(phdrs);
+        },
+        .windows => {
+            // On Windows, we ignore libc environment and argv and get those
+            // values in their intended encoding from the PEB instead.
+            std.debug.maybeEnableSegfaultHandler();
+            const cmd_line = std.os.windows.peb().ProcessParameters.CommandLine;
+            const cmd_line_w = cmd_line.Buffer.?[0..@divExact(cmd_line.Length, 2)];
+            return callMain(cmd_line_w, {});
+        },
+        else => {},
     }
 
-    return callMainWithArgs(@as(usize, @intCast(c_argc)), @as([*][*:0]u8, @ptrCast(c_argv)), envp);
+    return callMainWithArgs(@as(usize, @intCast(c_argc)), @as([*][*:0]u8, @ptrCast(c_argv)), @ptrCast(envp));
 }
 
 fn mainWithoutEnv(c_argc: c_int, c_argv: [*][*:0]c_char) callconv(.c) c_int {
-    std.os.argv = @as([*][*:0]u8, @ptrCast(c_argv))[0..@intCast(c_argc)];
-
+    const argv = @as([*][*:0]u8, @ptrCast(c_argv))[0..@intCast(c_argc)];
     if (@sizeOf(std.Io.Threaded.Argv0) != 0) {
-        if (std.Options.debug_threaded_io) |t| t.argv0.value = std.os.argv[0];
+        if (std.Options.debug_threaded_io) |t| t.argv0.value = argv[0];
     }
-
-    return callMain();
+    return callMain(argv, &.{});
 }
 
-// General error message for a malformed return type
+/// General error message for a malformed return type
 const bad_main_ret = "expected return type of main to be 'void', '!void', 'noreturn', 'u8', or '!u8'";
 
-pub inline fn callMain() u8 {
-    const ReturnType = @typeInfo(@TypeOf(root.main)).@"fn".return_type.?;
+const use_debug_allocator = !is_wasm and switch (builtin.mode) {
+    .Debug => true,
+    .ReleaseSafe => !builtin.link_libc, // Not ideal, but the best we have for now.
+    .ReleaseFast, .ReleaseSmall => !builtin.link_libc and builtin.single_threaded, // Also not ideal.
+};
+var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 
-    switch (ReturnType) {
-        void => {
-            root.main();
-            return 0;
-        },
-        noreturn, u8 => {
-            return root.main();
-        },
-        else => {
-            if (@typeInfo(ReturnType) != .error_union) @compileError(bad_main_ret);
+inline fn callMain(args: std.process.Args.Vector, environ: std.process.Environ.Block) u8 {
+    const fn_info = @typeInfo(@TypeOf(root.main)).@"fn";
+    if (fn_info.params.len == 0) return wrapMain(root.main());
+    if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
+        .args = .{ .vector = args },
+        .environ = .{ .block = environ },
+    }));
 
-            const result = root.main() catch |err| {
-                switch (builtin.zig_backend) {
-                    .stage2_powerpc,
-                    .stage2_riscv64,
-                    => {
-                        _ = std.posix.write(std.posix.STDERR_FILENO, "error: failed with error\n") catch {};
-                        return 1;
-                    },
-                    else => {},
-                }
-                std.log.err("{s}", .{@errorName(err)});
-                switch (native_os) {
-                    .freestanding, .other => {},
-                    else => if (@errorReturnTrace()) |trace| {
-                        std.debug.dumpStackTrace(trace);
-                    },
-                }
-                return 1;
-            };
+    const gpa = if (use_debug_allocator)
+        debug_allocator.allocator()
+    else if (builtin.link_libc)
+        std.heap.c_allocator
+    else if (is_wasm)
+        std.heap.wasm_allocator
+    else if (!builtin.single_threaded)
+        std.heap.smp_allocator
+    else
+        comptime unreachable;
 
-            return switch (@TypeOf(result)) {
-                void => 0,
-                u8 => result,
-                else => @compileError(bad_main_ret),
-            };
+    defer if (use_debug_allocator) {
+        _ = debug_allocator.deinit(); // Leaks do not affect return code.
+    };
+
+    const arena_backing_allocator = if (is_wasm) gpa else std.heap.page_allocator;
+
+    var arena_allocator = std.heap.ArenaAllocator.init(arena_backing_allocator);
+    defer arena_allocator.deinit();
+
+    var threaded: std.Io.Threaded = .init(gpa, .{
+        .argv0 = .init(.{ .vector = args }),
+        .environ = .{ .block = environ },
+    });
+    defer threaded.deinit();
+
+    var environ_map = std.process.Environ.createMap(.{ .block = environ }, gpa) catch |err|
+        std.process.fatal("failed to parse environment variables: {t}", .{err});
+    defer environ_map.deinit();
+
+    return wrapMain(root.main(.{
+        .minimal = .{
+            .args = .{ .vector = args },
+            .environ = .{ .block = environ },
         },
-    }
+        .arena = &arena_allocator,
+        .gpa = gpa,
+        .io = threaded.io(),
+        .environ_map = &environ_map,
+    }));
 }
 
-pub fn call_wWinMain() std.os.windows.INT {
+inline fn wrapMain(result: anytype) u8 {
+    const ReturnType = @TypeOf(result);
+    switch (ReturnType) {
+        void => return 0,
+        noreturn => unreachable,
+        u8 => return result,
+        else => {},
+    }
+    if (@typeInfo(ReturnType) != .error_union) @compileError(bad_main_ret);
+
+    const unwrapped_result = result catch |err| {
+        std.log.err("{t}", .{err});
+        switch (native_os) {
+            .freestanding, .other => {},
+            else => if (@errorReturnTrace()) |trace| std.debug.dumpStackTrace(trace),
+        }
+        return 1;
+    };
+
+    return switch (@TypeOf(unwrapped_result)) {
+        noreturn => unreachable,
+        void => 0,
+        u8 => unwrapped_result,
+        else => @compileError(bad_main_ret),
+    };
+}
+
+fn call_wWinMain() std.os.windows.INT {
     const peb = std.os.windows.peb();
     const MAIN_HINSTANCE = @typeInfo(@TypeOf(root.wWinMain)).@"fn".params[0].type.?;
     const hInstance: MAIN_HINSTANCE = @ptrCast(peb.ImageBaseAddress);

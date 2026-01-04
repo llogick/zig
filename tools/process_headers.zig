@@ -127,16 +127,14 @@ const LibCVendor = enum {
     netbsd,
 };
 
-pub fn main() !void {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    const allocator = arena.allocator();
+pub fn main(init: std.process.Init) !void {
+    const arena = init.arena.allocator();
+    const io = init.io;
+    const args = try init.minimal.args.toSlice(arena);
+    const cwd_path = try std.process.getCwdAlloc(arena);
+    const environ_map = init.environ_map;
 
-    var threaded: Io.Threaded = .init(allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    const args = try std.process.argsAlloc(allocator);
-    var search_paths = std.array_list.Managed([]const u8).init(allocator);
+    var search_paths = std.array_list.Managed([]const u8).init(arena);
     var opt_out_dir: ?[]const u8 = null;
     var opt_abi: ?[]const u8 = null;
 
@@ -172,7 +170,7 @@ pub fn main() !void {
         usageAndExit(args[0]);
     };
 
-    const generic_name = try std.fmt.allocPrint(allocator, "generic-{s}", .{abi_name});
+    const generic_name = try std.fmt.allocPrint(arena, "generic-{s}", .{abi_name});
     const libc_targets = switch (vendor) {
         .glibc => &glibc_targets,
         .musl => &musl_targets,
@@ -180,8 +178,8 @@ pub fn main() !void {
         .netbsd => &netbsd_targets,
     };
 
-    var path_table = PathTable.init(allocator);
-    var hash_to_contents = HashToContents.init(allocator);
+    var path_table = PathTable.init(arena);
+    var hash_to_contents = HashToContents.init(arena);
     var max_bytes_saved: usize = 0;
     var total_bytes: usize = 0;
 
@@ -189,7 +187,7 @@ pub fn main() !void {
 
     for (libc_targets) |libc_target| {
         const libc_dir = switch (vendor) {
-            .glibc => try std.zig.target.glibcRuntimeTriple(allocator, libc_target.arch, .linux, libc_target.abi),
+            .glibc => try std.zig.target.glibcRuntimeTriple(arena, libc_target.arch, .linux, libc_target.abi),
             .musl => std.zig.target.muslArchName(libc_target.arch, libc_target.abi),
             .freebsd => switch (libc_target.arch) {
                 .arm => "armv7",
@@ -221,7 +219,7 @@ pub fn main() !void {
             },
         };
 
-        const dest_target = if (libc_target.dest) |dest| dest else try std.fmt.allocPrint(allocator, "{s}-{s}-{s}", .{
+        const dest_target = if (libc_target.dest) |dest| dest else try std.fmt.allocPrint(arena, "{s}-{s}-{s}", .{
             @tagName(libc_target.arch),
             switch (vendor) {
                 .musl, .glibc => "linux",
@@ -239,8 +237,8 @@ pub fn main() !void {
                 => &[_][]const u8{ search_path, libc_dir, "usr", "include" },
                 .musl => &[_][]const u8{ search_path, libc_dir, "usr", "local", "musl", "include" },
             };
-            const target_include_dir = try Dir.path.join(allocator, sub_path);
-            var dir_stack = std.array_list.Managed([]const u8).init(allocator);
+            const target_include_dir = try Dir.path.join(arena, sub_path);
+            var dir_stack = std.array_list.Managed([]const u8).init(arena);
             try dir_stack.append(target_include_dir);
 
             while (dir_stack.pop()) |full_dir_name| {
@@ -254,16 +252,16 @@ pub fn main() !void {
                 var dir_it = dir.iterate();
 
                 while (try dir_it.next(io)) |entry| {
-                    const full_path = try Dir.path.join(allocator, &[_][]const u8{ full_dir_name, entry.name });
+                    const full_path = try Dir.path.join(arena, &[_][]const u8{ full_dir_name, entry.name });
                     switch (entry.kind) {
                         .directory => try dir_stack.append(full_path),
                         .file, .sym_link => {
-                            const rel_path = try Dir.path.relative(allocator, target_include_dir, full_path);
+                            const rel_path = try Dir.path.relative(arena, cwd_path, environ_map, target_include_dir, full_path);
                             const max_size = 2 * 1024 * 1024 * 1024;
-                            const raw_bytes = try Dir.cwd().readFileAlloc(io, full_path, allocator, .limited(max_size));
+                            const raw_bytes = try Dir.cwd().readFileAlloc(io, full_path, arena, .limited(max_size));
                             const trimmed = std.mem.trim(u8, raw_bytes, " \r\n\t");
                             total_bytes += raw_bytes.len;
-                            const hash = try allocator.alloc(u8, 32);
+                            const hash = try arena.alloc(u8, 32);
                             hasher = Blake3.init(.{});
                             hasher.update(rel_path);
                             hasher.update(trimmed);
@@ -285,8 +283,8 @@ pub fn main() !void {
                             }
                             const path_gop = try path_table.getOrPut(rel_path);
                             const target_to_hash = if (path_gop.found_existing) path_gop.value_ptr.* else blk: {
-                                const ptr = try allocator.create(TargetToHash);
-                                ptr.* = TargetToHash.init(allocator);
+                                const ptr = try arena.create(TargetToHash);
+                                ptr.* = TargetToHash.init(arena);
                                 path_gop.value_ptr.* = ptr;
                                 break :blk ptr;
                             };
@@ -327,7 +325,7 @@ pub fn main() !void {
     // gets their header in a separate arch directory.
     var path_it = path_table.iterator();
     while (path_it.next()) |path_kv| {
-        var contents_list = std.array_list.Managed(*Contents).init(allocator);
+        var contents_list = std.array_list.Managed(*Contents).init(arena);
         {
             var hash_it = path_kv.value_ptr.*.iterator();
             while (hash_it.next()) |hash_kv| {
@@ -339,7 +337,7 @@ pub fn main() !void {
         const best_contents = contents_list.pop().?;
         if (best_contents.hit_count > 1) {
             // worth it to make it generic
-            const full_path = try Dir.path.join(allocator, &[_][]const u8{ out_dir, generic_name, path_kv.key_ptr.* });
+            const full_path = try Dir.path.join(arena, &[_][]const u8{ out_dir, generic_name, path_kv.key_ptr.* });
             try Dir.cwd().createDirPath(io, Dir.path.dirname(full_path).?);
             try Dir.cwd().writeFile(io, .{ .sub_path = full_path, .data = best_contents.bytes });
             best_contents.is_generic = true;
@@ -360,7 +358,7 @@ pub fn main() !void {
             if (contents.is_generic) continue;
 
             const dest_target = hash_kv.key_ptr.*;
-            const full_path = try Dir.path.join(allocator, &[_][]const u8{ out_dir, dest_target, path_kv.key_ptr.* });
+            const full_path = try Dir.path.join(arena, &[_][]const u8{ out_dir, dest_target, path_kv.key_ptr.* });
             try Dir.cwd().createDirPath(io, Dir.path.dirname(full_path).?);
             try Dir.cwd().writeFile(io, .{ .sub_path = full_path, .data = contents.bytes });
         }

@@ -18,8 +18,6 @@ const rem_pio2f = @import("rem_pio2f.zig").rem_pio2f;
 const arch = builtin.cpu.arch;
 const common = @import("common.zig");
 
-pub const panic = common.panic;
-
 comptime {
     @export(&__tanh, .{ .name = "__tanh", .linkage = common.linkage, .visibility = common.visibility });
     @export(&tanf, .{ .name = "tanf", .linkage = common.linkage, .visibility = common.visibility });

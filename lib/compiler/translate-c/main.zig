@@ -9,21 +9,13 @@ const Translator = @import("Translator.zig");
 
 const fast_exit = @import("builtin").mode != .Debug;
 
-var general_purpose_allocator: std.heap.GeneralPurposeAllocator(.{}) = .init;
+pub fn main(init: std.process.Init) u8 {
+    const gpa = init.gpa;
+    const arena = init.arena.allocator();
+    const io = init.io;
+    const environ_map = init.environ_map;
 
-pub fn main() u8 {
-    const gpa = general_purpose_allocator.allocator();
-    defer _ = general_purpose_allocator.deinit();
-
-    var arena_instance = std.heap.ArenaAllocator.init(gpa);
-    defer arena_instance.deinit();
-    const arena = arena_instance.allocator();
-
-    var threaded: std.Io.Threaded = .init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    const args = process.argsAlloc(arena) catch {
+    const args = init.minimal.args.toSlice(arena) catch {
         std.debug.print("ran out of memory allocating arguments\n", .{});
         if (fast_exit) process.exit(1);
         return 1;
@@ -34,8 +26,8 @@ pub fn main() u8 {
         zig_integration = true;
     }
 
-    const NO_COLOR = std.zig.EnvVar.NO_COLOR.isSet();
-    const CLICOLOR_FORCE = std.zig.EnvVar.CLICOLOR_FORCE.isSet();
+    const NO_COLOR = std.zig.EnvVar.NO_COLOR.isSet(environ_map);
+    const CLICOLOR_FORCE = std.zig.EnvVar.CLICOLOR_FORCE.isSet(environ_map);
 
     var stderr_buf: [1024]u8 = undefined;
     var stderr = Io.File.stderr().writer(io, &stderr_buf);
@@ -50,7 +42,7 @@ pub fn main() u8 {
     };
     defer diagnostics.deinit();
 
-    var comp = aro.Compilation.initDefault(gpa, arena, io, &diagnostics, Io.Dir.cwd()) catch |err| switch (err) {
+    var comp = aro.Compilation.initDefault(gpa, arena, io, &diagnostics, .cwd(), environ_map) catch |err| switch (err) {
         error.OutOfMemory => {
             std.debug.print("ran out of memory initializing C compilation\n", .{});
             if (fast_exit) process.exit(1);
@@ -123,43 +115,41 @@ pub const usage =
     \\
 ;
 
-fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8, zig_integration: bool) !void {
+fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: []const [:0]const u8, zig_integration: bool) !void {
     const gpa = d.comp.gpa;
     const io = d.comp.io;
 
-    const aro_args = args: {
-        var i: usize = 0;
-        for (args) |arg| {
-            args[i] = arg;
-            if (mem.eql(u8, arg, "--help")) {
-                var stdout_buf: [512]u8 = undefined;
-                var stdout = Io.File.stdout().writer(io, &stdout_buf);
-                try stdout.interface.print(usage, .{args[0]});
-                try stdout.interface.flush();
-                return;
-            } else if (mem.eql(u8, arg, "--version")) {
-                var stdout_buf: [512]u8 = undefined;
-                var stdout = Io.File.stdout().writer(io, &stdout_buf);
-                // TODO add version
-                try stdout.interface.writeAll("0.0.0-dev\n");
-                try stdout.interface.flush();
-                return;
-            } else if (mem.eql(u8, arg, "--zig-integration")) {
-                if (i != 1 or !zig_integration)
-                    return d.fatal("--zig-integration must be the first argument", .{});
-            } else {
-                i += 1;
-            }
+    var aro_args: std.ArrayList([:0]const u8) = .empty;
+    defer aro_args.deinit(gpa);
+
+    for (args, 0..) |arg, i| {
+        if (mem.eql(u8, arg, "--help")) {
+            var stdout_buf: [512]u8 = undefined;
+            var stdout = Io.File.stdout().writer(io, &stdout_buf);
+            try stdout.interface.print(usage, .{args[0]});
+            try stdout.interface.flush();
+            return;
+        } else if (mem.eql(u8, arg, "--version")) {
+            var stdout_buf: [512]u8 = undefined;
+            var stdout = Io.File.stdout().writer(io, &stdout_buf);
+            // TODO add version
+            try stdout.interface.writeAll("0.0.0-dev\n");
+            try stdout.interface.flush();
+            return;
+        } else if (mem.eql(u8, arg, "--zig-integration")) {
+            if (i != 1 or !zig_integration)
+                return d.fatal("--zig-integration must be the first argument", .{});
+        } else {
+            try aro_args.append(gpa, arg);
         }
-        break :args args[0..i];
-    };
+    }
     const user_macros = macros: {
         var macro_buf: std.ArrayList(u8) = .empty;
         defer macro_buf.deinit(gpa);
 
         var discard_buf: [256]u8 = undefined;
         var discarding: std.Io.Writer.Discarding = .init(&discard_buf);
-        assert(!try d.parseArgs(&discarding.writer, &macro_buf, aro_args));
+        assert(!try d.parseArgs(&discarding.writer, &macro_buf, aro_args.items));
         if (macro_buf.items.len > std.math.maxInt(u32)) {
             return d.fatal("user provided macro source exceeded max size", .{});
         }

@@ -1,16 +1,12 @@
 const std = @import("std");
 const Io = std.Io;
 
-pub fn main() anyerror!void {
-    var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    const args = try std.process.argsAlloc(arena);
+pub fn main(init: std.process.Init) !void {
+    const arena = init.arena.allocator();
+    const args = try init.minimal.args.toSlice(arena);
+    const io = init.io;
 
     if (args.len < 2) return error.MissingArgs;
-
-    const io = std.Io.Threaded.global_single_threaded.ioBasic();
 
     const exe_path = args[1];
 
@@ -25,10 +21,10 @@ pub fn main() anyerror!void {
     const alt_drive_letter = try getAltDriveLetter(cwd_path);
     const alt_drive_cwd_key = try std.fmt.allocPrint(arena, "={c}:", .{alt_drive_letter});
     const alt_drive_cwd = try std.fmt.allocPrint(arena, "{c}:\\baz", .{alt_drive_letter});
-    var alt_drive_env_map = std.process.EnvMap.init(arena);
+    var alt_drive_env_map = std.process.Environ.Map.init(arena);
     try alt_drive_env_map.put(alt_drive_cwd_key, alt_drive_cwd);
 
-    const empty_env = std.process.EnvMap.init(arena);
+    const empty_env = std.process.Environ.Map.init(arena);
 
     {
         const drive_rel = try std.fmt.allocPrint(arena, "{c}:foo", .{alt_drive_letter});
@@ -96,12 +92,12 @@ fn checkRelative(
     expected_stdout: []const u8,
     argv: []const []const u8,
     cwd: ?[]const u8,
-    env_map: ?*const std.process.EnvMap,
+    environ_map: ?*const std.process.Environ.Map,
 ) !void {
-    const result = try std.process.Child.run(allocator, io, .{
+    const result = try std.process.run(allocator, io, .{
         .argv = argv,
         .cwd = cwd,
-        .env_map = env_map,
+        .environ_map = environ_map,
     });
     defer allocator.free(result.stdout);
     defer allocator.free(result.stderr);

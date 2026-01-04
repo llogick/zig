@@ -8,8 +8,6 @@ const rem_pio2 = @import("rem_pio2.zig").rem_pio2;
 const rem_pio2f = @import("rem_pio2f.zig").rem_pio2f;
 const common = @import("common.zig");
 
-pub const panic = common.panic;
-
 comptime {
     @export(&__sincosh, .{ .name = "__sincosh", .linkage = common.linkage, .visibility = common.visibility });
     @export(&sincosf, .{ .name = "sincosf", .linkage = common.linkage, .visibility = common.visibility });

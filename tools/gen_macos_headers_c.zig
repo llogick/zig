@@ -6,9 +6,6 @@ const info = std.log.info;
 const fatal = std.process.fatal;
 const Allocator = std.mem.Allocator;
 
-var general_purpose_allocator = std.heap.GeneralPurposeAllocator(.{}){};
-const gpa = general_purpose_allocator.allocator();
-
 const usage =
     \\gen_macos_headers_c [dir]
     \\
@@ -16,16 +13,11 @@ const usage =
     \\-h, --help                    Print this help and exit
 ;
 
-pub fn main() anyerror!void {
-    var arena_allocator = std.heap.ArenaAllocator.init(gpa);
-    defer arena_allocator.deinit();
-    const arena = arena_allocator.allocator();
+pub fn main(init: std.process.Init) !void {
+    const arena = init.arena.allocator();
+    const io = init.io;
+    const args = try init.minimal.args.toSlice(arena);
 
-    var threaded: Io.Threaded = .init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    const args = try std.process.argsAlloc(arena);
     if (args.len == 1) fatal("no command or option specified", .{});
 
     var positionals = std.array_list.Managed([]const u8).init(arena);

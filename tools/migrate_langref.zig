@@ -11,20 +11,13 @@ const fatal = std.process.fatal;
 
 const max_doc_file_size = 10 * 1024 * 1024;
 
-pub fn main() !void {
-    var arena_instance = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena_instance.deinit();
-    const arena = arena_instance.allocator();
+pub fn main(init: std.process.Init) !void {
+    const arena = init.arena.allocator();
+    const io = init.io;
+    const args = try init.minimal.args.toSlice(arena);
 
-    const gpa = arena;
-
-    const args = try std.process.argsAlloc(arena);
     const input_file = args[1];
     const output_file = args[2];
-
-    var threaded: std.Io.Threaded = .init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
 
     var in_file = try Dir.cwd().openFile(io, input_file, .{ .mode = .read_only });
     defer in_file.close(io);

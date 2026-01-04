@@ -14,10 +14,16 @@ framework_dirs: std.ArrayList([]const u8) = .empty,
 rpaths: std.ArrayList([]const u8) = .empty,
 warnings: std.ArrayList([]const u8) = .empty,
 
-pub fn detect(arena: Allocator, io: Io, native_target: *const std.Target) !NativePaths {
+pub fn detect(
+    arena: Allocator,
+    io: Io,
+    native_target: *const std.Target,
+    environ_map: *process.Environ.Map,
+) !NativePaths {
     var self: NativePaths = .{ .arena = arena };
     var is_nix = false;
-    if (process.getEnvVarOwned(arena, "NIX_CFLAGS_COMPILE")) |nix_cflags_compile| {
+
+    if (std.zig.EnvVar.NIX_CFLAGS_COMPILE.get(environ_map)) |nix_cflags_compile| {
         is_nix = true;
         var it = mem.tokenizeScalar(u8, nix_cflags_compile, ' ');
         while (true) {
@@ -41,12 +47,9 @@ pub fn detect(arena: Allocator, io: Io, native_target: *const std.Target) !Nativ
                 try self.addWarningFmt("Unrecognized C flag from NIX_CFLAGS_COMPILE: {s}", .{word});
             }
         }
-    } else |err| switch (err) {
-        error.InvalidWtf8 => unreachable,
-        error.EnvironmentVariableNotFound => {},
-        error.OutOfMemory => |e| return e,
     }
-    if (process.getEnvVarOwned(arena, "NIX_LDFLAGS")) |nix_ldflags| {
+
+    if (std.zig.EnvVar.NIX_LDFLAGS.get(environ_map)) |nix_ldflags| {
         is_nix = true;
         var it = mem.tokenizeScalar(u8, nix_ldflags, ' ');
         while (true) {
@@ -73,12 +76,9 @@ pub fn detect(arena: Allocator, io: Io, native_target: *const std.Target) !Nativ
                 break;
             }
         }
-    } else |err| switch (err) {
-        error.InvalidWtf8 => unreachable,
-        error.EnvironmentVariableNotFound => {},
-        error.OutOfMemory => |e| return e,
     }
-    if (process.getEnvVarOwned(arena, "NIX_CFLAGS_LINK")) |nix_cflags_link| {
+
+    if (std.zig.EnvVar.NIX_CFLAGS_LINK.get(environ_map)) |nix_cflags_link| {
         is_nix = true;
         var it = mem.tokenizeScalar(u8, nix_cflags_link, ' ');
         while (true) {
@@ -105,11 +105,8 @@ pub fn detect(arena: Allocator, io: Io, native_target: *const std.Target) !Nativ
                 break;
             }
         }
-    } else |err| switch (err) {
-        error.InvalidWtf8 => unreachable,
-        error.EnvironmentVariableNotFound => {},
-        error.OutOfMemory => |e| return e,
     }
+
     if (is_nix) {
         return self;
     }
@@ -124,7 +121,7 @@ pub fn detect(arena: Allocator, io: Io, native_target: *const std.Target) !Nativ
         }
 
         // Check for homebrew paths
-        if (std.posix.getenv("HOMEBREW_PREFIX")) |prefix| {
+        if (std.zig.EnvVar.HOMEBREW_PREFIX.get(environ_map)) |prefix| {
             try self.addLibDir(try std.fs.path.join(arena, &.{ prefix, "/lib" }));
             try self.addIncludeDir(try std.fs.path.join(arena, &.{ prefix, "/include" }));
         }
@@ -180,23 +177,21 @@ pub fn detect(arena: Allocator, io: Io, native_target: *const std.Target) !Nativ
 
         // Distros like guix don't use FHS, so they rely on environment
         // variables to search for headers and libraries.
-        // We use os.getenv here since this part won't be executed on
-        // windows, to get rid of unnecessary error handling.
-        if (std.posix.getenv("C_INCLUDE_PATH")) |c_include_path| {
+        if (std.zig.EnvVar.C_INCLUDE_PATH.get(environ_map)) |c_include_path| {
             var it = mem.tokenizeScalar(u8, c_include_path, ':');
             while (it.next()) |dir| {
                 try self.addIncludeDir(dir);
             }
         }
 
-        if (std.posix.getenv("CPLUS_INCLUDE_PATH")) |cplus_include_path| {
+        if (std.zig.EnvVar.CPLUS_INCLUDE_PATH.get(environ_map)) |cplus_include_path| {
             var it = mem.tokenizeScalar(u8, cplus_include_path, ':');
             while (it.next()) |dir| {
                 try self.addIncludeDir(dir);
             }
         }
 
-        if (std.posix.getenv("LIBRARY_PATH")) |library_path| {
+        if (std.zig.EnvVar.LIBRARY_PATH.get(environ_map)) |library_path| {
             var it = mem.tokenizeScalar(u8, library_path, ':');
             while (it.next()) |dir| {
                 try self.addLibDir(dir);

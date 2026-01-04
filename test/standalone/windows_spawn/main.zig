@@ -5,16 +5,12 @@ const Allocator = std.mem.Allocator;
 const windows = std.os.windows;
 const utf16Literal = std.unicode.utf8ToUtf16LeStringLiteral;
 
-pub fn main() anyerror!void {
-    var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
-    defer if (debug_allocator.deinit() == .leak) @panic("found memory leaks");
-    const gpa = debug_allocator.allocator();
+pub fn main(init: std.process.Init) !void {
+    const gpa = init.gpa;
+    const io = init.io;
+    const process_cwd_path = try std.process.getCwdAlloc(init.arena.allocator());
 
-    var threaded: std.Io.Threaded = .init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    var it = try std.process.argsWithAllocator(gpa);
+    var it = try init.minimal.args.iterateAllocator(gpa);
     defer it.deinit();
     _ = it.next() orelse unreachable; // skip binary name
     const hello_exe_cache_path = it.next() orelse unreachable;
@@ -28,7 +24,7 @@ pub fn main() anyerror!void {
     defer gpa.free(tmp_absolute_path_w);
     const cwd_absolute_path = try Io.Dir.cwd().realPathFileAlloc(io, ".", gpa);
     defer gpa.free(cwd_absolute_path);
-    const tmp_relative_path = try std.fs.path.relative(gpa, cwd_absolute_path, tmp_absolute_path);
+    const tmp_relative_path = try std.fs.path.relative(gpa, process_cwd_path, init.environ_map, cwd_absolute_path, tmp_absolute_path);
     defer gpa.free(tmp_relative_path);
 
     // Clear PATH
@@ -212,7 +208,7 @@ fn testExec(gpa: Allocator, io: Io, command: []const u8, expected_stdout: []cons
 }
 
 fn testExecWithCwd(gpa: Allocator, io: Io, command: []const u8, cwd: ?[]const u8, expected_stdout: []const u8) !void {
-    const result = try std.process.Child.run(gpa, io, .{
+    const result = try std.process.run(gpa, io, .{
         .argv = &[_][]const u8{command},
         .cwd = cwd,
     });

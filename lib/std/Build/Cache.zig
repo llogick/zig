@@ -30,6 +30,8 @@ mutex: Io.Mutex = .init,
 /// and usefulness of the cache for advanced use cases.
 prefixes_buffer: [4]Directory = undefined,
 prefixes_len: usize = 0,
+/// Used to identify prefixes. References external memory.
+cwd: []const u8,
 
 pub const Path = @import("Cache/Path.zig");
 pub const Directory = @import("Cache/Directory.zig");
@@ -78,11 +80,12 @@ fn findPrefix(cache: *const Cache, file_path: []const u8) !PrefixedPath {
 /// Takes ownership of `resolved_path` on success.
 fn findPrefixResolved(cache: *const Cache, resolved_path: []u8) !PrefixedPath {
     const gpa = cache.gpa;
+    const cwd = cache.cwd;
     const prefixes_slice = cache.prefixes();
     var i: u8 = 1; // Start at 1 to skip over checking the null prefix.
     while (i < prefixes_slice.len) : (i += 1) {
         const p = prefixes_slice[i].path.?;
-        const sub_path = getPrefixSubpath(gpa, p, resolved_path) catch |err| switch (err) {
+        const sub_path = getPrefixSubpath(gpa, cwd, p, resolved_path) catch |err| switch (err) {
             error.NotASubPath => continue,
             else => |e| return e,
         };
@@ -100,10 +103,10 @@ fn findPrefixResolved(cache: *const Cache, resolved_path: []u8) !PrefixedPath {
     };
 }
 
-fn getPrefixSubpath(allocator: Allocator, prefix: []const u8, path: []u8) ![]u8 {
-    const relative = try std.fs.path.relative(allocator, prefix, path);
-    errdefer allocator.free(relative);
-    var component_iterator = std.fs.path.NativeComponentIterator.init(relative);
+fn getPrefixSubpath(gpa: Allocator, cwd: []const u8, prefix: []const u8, path: []u8) ![]u8 {
+    const relative = try std.fs.path.relative(gpa, cwd, null, prefix, path);
+    errdefer gpa.free(relative);
+    var component_iterator: std.fs.path.NativeComponentIterator = .init(relative);
     if (component_iterator.root() != null) {
         return error.NotASubPath;
     }
@@ -1307,10 +1310,13 @@ fn testGetCurrentFileTimestamp(io: Io, dir: Io.Dir) !Io.Timestamp {
 }
 
 test "cache file and then recall it" {
-    const io = std.testing.io;
+    const io = testing.io;
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
+
+    const cwd = try std.process.getCwdAlloc(testing.allocator);
+    defer testing.allocator.free(cwd);
 
     const temp_file = "test.txt";
     const temp_manifest_dir = "temp_manifest_dir";
@@ -1331,6 +1337,7 @@ test "cache file and then recall it" {
             .io = io,
             .gpa = testing.allocator,
             .manifest_dir = try tmp.dir.createDirPathOpen(io, temp_manifest_dir, .{}),
+            .cwd = cwd,
         };
         cache.addPrefix(.{ .path = null, .handle = tmp.dir });
         defer cache.manifest_dir.close(io);
@@ -1371,10 +1378,13 @@ test "cache file and then recall it" {
 }
 
 test "check that changing a file makes cache fail" {
-    const io = std.testing.io;
+    const io = testing.io;
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
+
+    const cwd = try std.process.getCwdAlloc(testing.allocator);
+    defer testing.allocator.free(cwd);
 
     const temp_file = "cache_hash_change_file_test.txt";
     const temp_manifest_dir = "cache_hash_change_file_manifest_dir";
@@ -1397,6 +1407,7 @@ test "check that changing a file makes cache fail" {
             .io = io,
             .gpa = testing.allocator,
             .manifest_dir = try tmp.dir.createDirPathOpen(io, temp_manifest_dir, .{}),
+            .cwd = cwd,
         };
         cache.addPrefix(.{ .path = null, .handle = tmp.dir });
         defer cache.manifest_dir.close(io);
@@ -1448,6 +1459,9 @@ test "no file inputs" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
+    const cwd = try std.process.getCwdAlloc(testing.allocator);
+    defer testing.allocator.free(cwd);
+
     const temp_manifest_dir = "no_file_inputs_manifest_dir";
 
     var digest1: HexDigest = undefined;
@@ -1457,6 +1471,7 @@ test "no file inputs" {
         .io = io,
         .gpa = testing.allocator,
         .manifest_dir = try tmp.dir.createDirPathOpen(io, temp_manifest_dir, .{}),
+        .cwd = cwd,
     };
     cache.addPrefix(.{ .path = null, .handle = tmp.dir });
     defer cache.manifest_dir.close(io);
@@ -1489,10 +1504,13 @@ test "no file inputs" {
 }
 
 test "Manifest with files added after initial hash work" {
-    const io = std.testing.io;
+    const io = testing.io;
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
+
+    const cwd = try std.process.getCwdAlloc(testing.allocator);
+    defer testing.allocator.free(cwd);
 
     const temp_file1 = "cache_hash_post_file_test1.txt";
     const temp_file2 = "cache_hash_post_file_test2.txt";
@@ -1516,6 +1534,7 @@ test "Manifest with files added after initial hash work" {
             .io = io,
             .gpa = testing.allocator,
             .manifest_dir = try tmp.dir.createDirPathOpen(io, temp_manifest_dir, .{}),
+            .cwd = cwd,
         };
         cache.addPrefix(.{ .path = null, .handle = tmp.dir });
         defer cache.manifest_dir.close(io);

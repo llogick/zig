@@ -422,7 +422,7 @@ pub const StartFailure = union(enum) {
     unstarted,
     spawn_ipc_worker: error{ConcurrencyUnavailable},
     spawn_update_worker: error{ConcurrencyUnavailable},
-    parse_env_var: error{ InvalidCharacter, Overflow },
+    parent_ipc: error{ UnsupportedOperation, UnrecognizedFormat },
 };
 
 const node_storage_buffer_len = 83;
@@ -444,6 +444,12 @@ const noop_impl = builtin.single_threaded or switch (builtin.os.tag) {
     else => false,
 } or switch (builtin.zig_backend) {
     else => false,
+};
+
+pub const ParentFileError = error{
+    UnsupportedOperation,
+    EnvironmentVariableMissing,
+    UnrecognizedFormat,
 };
 
 /// Initializes a global Progress instance.
@@ -476,20 +482,13 @@ pub fn start(io: Io, options: Options) Node {
 
     global_progress.io = io;
 
-    if (std.process.parseEnvVarInt("ZIG_PROGRESS", u31, 10)) |ipc_fd| {
-        global_progress.update_worker = io.concurrent(ipcThreadRun, .{
-            io,
-            @as(Io.File, .{ .handle = switch (@typeInfo(Io.File.Handle)) {
-                .int => ipc_fd,
-                .pointer => @ptrFromInt(ipc_fd),
-                else => @compileError("unsupported fd_t of " ++ @typeName(Io.File.Handle)),
-            } }),
-        }) catch |err| {
+    if (io.vtable.progressParentFile(io.userdata)) |ipc_file| {
+        global_progress.update_worker = io.concurrent(ipcThreadRun, .{ io, ipc_file }) catch |err| {
             global_progress.start_failure = .{ .spawn_ipc_worker = err };
             return Node.none;
         };
     } else |env_err| switch (env_err) {
-        error.EnvironmentVariableNotFound => {
+        error.EnvironmentVariableMissing => {
             if (options.disable_printing) {
                 return Node.none;
             }
@@ -535,7 +534,7 @@ pub fn start(io: Io, options: Options) Node {
             }
         },
         else => |e| {
-            global_progress.start_failure = .{ .parse_env_var = e };
+            global_progress.start_failure = .{ .parent_ipc = e };
             return Node.none;
         },
     }

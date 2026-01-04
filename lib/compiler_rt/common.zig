@@ -126,10 +126,6 @@ pub const test_safety = switch (builtin.zig_backend) {
     else => builtin.is_test,
 };
 
-// Avoid dragging in the runtime safety mechanisms into this .o file, unless
-// we're trying to test compiler-rt.
-pub const panic = if (test_safety) std.debug.FullPanic(std.debug.defaultPanic) else std.debug.no_panic;
-
 /// This seems to mostly correspond to `clang::TargetInfo::HasFloat16`.
 pub fn F16T(comptime OtherType: type) type {
     return switch (builtin.cpu.arch) {

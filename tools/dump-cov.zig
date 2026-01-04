@@ -8,20 +8,11 @@ const Path = std.Build.Cache.Path;
 const assert = std.debug.assert;
 const SeenPcsHeader = std.Build.abi.fuzz.SeenPcsHeader;
 
-pub fn main() !void {
-    var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
-    defer _ = debug_allocator.deinit();
-    const gpa = debug_allocator.allocator();
-
-    var arena_instance: std.heap.ArenaAllocator = .init(gpa);
-    defer arena_instance.deinit();
-    const arena = arena_instance.allocator();
-
-    var threaded: Io.Threaded = .init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    const args = try std.process.argsAlloc(arena);
+pub fn main(init: std.process.Init) !void {
+    const gpa = init.gpa;
+    const arena = init.arena.allocator();
+    const io = init.io;
+    const args = try init.minimal.args.toSlice(arena);
 
     const target_query_str = switch (args.len) {
         3 => "native",

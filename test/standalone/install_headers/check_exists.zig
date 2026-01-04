@@ -2,16 +2,12 @@ const std = @import("std");
 
 /// Checks the existence of files relative to cwd.
 /// A path starting with ! should not exist.
-pub fn main() !void {
-    var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena_state.deinit();
+pub fn main(init: std.process.Init) !void {
+    const arena = init.arena.allocator();
+    const io = init.io;
 
-    const arena = arena_state.allocator();
-
-    var arg_it = try std.process.argsWithAllocator(arena);
+    var arg_it = try init.minimal.args.iterateAllocator(arena);
     _ = arg_it.next();
-
-    const io = std.Io.Threaded.global_single_threaded.ioBasic();
 
     const cwd = std.Io.Dir.cwd();
     const cwd_realpath = try cwd.realPathFileAlloc(io, ".", arena);

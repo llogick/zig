@@ -272,6 +272,7 @@ pub fn buildCrtFile(comp: *Compilation, in_crt_file: CrtFile, prog_node: std.Pro
                 },
                 .skip_linker_dependencies = true,
                 .soname = "libc.so",
+                .environ_map = comp.environ_map,
             }) catch |err| switch (err) {
                 error.CreateFail => {
                     comp.lockAndSetMiscFailure(misc_task, "sub-compilation of {t} failed: {f}", .{ misc_task, sub_create_diag });

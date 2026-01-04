@@ -1,7 +1,23 @@
+const std = @import("std");
 const builtin = @import("builtin");
 const common = @import("compiler_rt/common.zig");
 
-pub const panic = common.panic;
+/// Avoid dragging in the runtime safety mechanisms into this .o file, unless
+/// we're trying to test compiler-rt.
+pub const panic = if (common.test_safety)
+    std.debug.FullPanic(std.debug.defaultPanic)
+else
+    std.debug.no_panic;
+
+pub const std_options_debug_threaded_io: ?*std.Io.Threaded = if (builtin.is_test)
+    std.Io.Threaded.global_single_threaded
+else
+    null;
+
+pub const std_options_debug_io: std.Io = if (builtin.is_test)
+    std.Io.Threaded.global_single_threaded.ioBasic()
+else
+    unreachable;
 
 comptime {
     // Integer routines

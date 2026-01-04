@@ -6,6 +6,7 @@ const Dir = std.Io.Dir;
 const mem = std.mem;
 const Allocator = std.mem.Allocator;
 const Cache = std.Build.Cache;
+const assert = std.debug.assert;
 
 const build_options = @import("build_options");
 
@@ -62,14 +63,14 @@ pub fn getResolvedCwd(gpa: Allocator) error{
         if (std.debug.runtime_safety) {
             const cwd = try std.process.getCwdAlloc(gpa);
             defer gpa.free(cwd);
-            std.debug.assert(mem.eql(u8, cwd, "."));
+            assert(mem.eql(u8, cwd, "."));
         }
         return "";
     }
     const cwd = try std.process.getCwdAlloc(gpa);
     defer gpa.free(cwd);
     const resolved = try Dir.path.resolve(gpa, &.{cwd});
-    std.debug.assert(Dir.path.isAbsolute(resolved));
+    assert(Dir.path.isAbsolute(resolved));
     return resolved;
 }
 
@@ -101,31 +102,27 @@ pub fn findZigLibDirFromSelfExe(
     return error.FileNotFound;
 }
 
-/// Caller owns returned memory.
-pub fn resolveGlobalCacheDir(gpa: Allocator) ![]u8 {
-    if (try std.zig.EnvVar.ZIG_GLOBAL_CACHE_DIR.get(gpa)) |value| return value;
+pub fn resolveGlobalCacheDir(arena: Allocator, environ_map: *const std.process.Environ.Map) ![]const u8 {
+    if (std.zig.EnvVar.ZIG_GLOBAL_CACHE_DIR.get(environ_map)) |value| return value;
 
     const app_name = "zig";
 
     switch (builtin.os.tag) {
         .wasi => @compileError("on WASI the global cache dir must be resolved with preopens"),
         .windows => {
-            const local_app_data_dir = (std.zig.EnvVar.LOCALAPPDATA.get(gpa) catch |err| switch (err) {
-                error.OutOfMemory => |e| return e,
-                error.InvalidWtf8 => return error.AppDataDirUnavailable,
-            }) orelse return error.AppDataDirUnavailable;
-            defer gpa.free(local_app_data_dir);
-            return Dir.path.join(gpa, &.{ local_app_data_dir, app_name });
+            const local_app_data_dir = std.zig.EnvVar.LOCALAPPDATA.get(environ_map) orelse
+                return error.AppDataDirUnavailable;
+            return Dir.path.join(arena, &.{ local_app_data_dir, app_name });
         },
         else => {
-            if (std.zig.EnvVar.XDG_CACHE_HOME.getPosix()) |cache_root| {
+            if (std.zig.EnvVar.XDG_CACHE_HOME.get(environ_map)) |cache_root| {
                 if (cache_root.len > 0) {
-                    return Dir.path.join(gpa, &.{ cache_root, app_name });
+                    return Dir.path.join(arena, &.{ cache_root, app_name });
                 }
             }
-            if (std.zig.EnvVar.HOME.getPosix()) |home| {
+            if (std.zig.EnvVar.HOME.get(environ_map)) |home| {
                 if (home.len > 0) {
-                    return Dir.path.join(gpa, &.{ home, ".cache", app_name });
+                    return Dir.path.join(arena, &.{ home, ".cache", app_name });
                 }
             }
             return error.AppDataDirUnavailable;
@@ -144,7 +141,7 @@ pub fn resolvePath(
     paths: []const []const u8,
 ) Allocator.Error![]u8 {
     if (builtin.target.os.tag == .wasi) {
-        std.debug.assert(mem.eql(u8, cwd_resolved, ""));
+        assert(mem.eql(u8, cwd_resolved, ""));
         const res = try Dir.path.resolve(gpa, paths);
         if (mem.eql(u8, res, ".")) {
             gpa.free(res);
@@ -164,8 +161,8 @@ pub fn resolvePath(
             gpa.free(res);
             return "";
         }
-        std.debug.assert(!Dir.path.isAbsolute(res));
-        std.debug.assert(!isUpDir(res));
+        assert(!Dir.path.isAbsolute(res));
+        assert(!isUpDir(res));
         return res;
     }
 
@@ -184,8 +181,8 @@ pub fn resolvePath(
     };
     errdefer gpa.free(path_resolved);
 
-    std.debug.assert(Dir.path.isAbsolute(path_resolved));
-    std.debug.assert(Dir.path.isAbsolute(cwd_resolved));
+    assert(Dir.path.isAbsolute(path_resolved));
+    assert(Dir.path.isAbsolute(cwd_resolved));
 
     if (!std.mem.startsWith(u8, path_resolved, cwd_resolved)) return path_resolved; // not in cwd
     if (path_resolved.len == cwd_resolved.len) {

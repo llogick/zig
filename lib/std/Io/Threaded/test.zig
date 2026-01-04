@@ -13,7 +13,10 @@ test "concurrent vs main prevents deadlock via oversubscription" {
         return error.SkipZigTest;
     }
 
-    var threaded: Io.Threaded = .init(std.testing.allocator, .{});
+    var threaded: Io.Threaded = .init(std.testing.allocator, .{
+        .argv0 = .empty,
+        .environ = .empty,
+    });
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -46,7 +49,10 @@ test "concurrent vs concurrent prevents deadlock via oversubscription" {
         return error.SkipZigTest;
     }
 
-    var threaded: Io.Threaded = .init(std.testing.allocator, .{});
+    var threaded: Io.Threaded = .init(std.testing.allocator, .{
+        .argv0 = .empty,
+        .environ = .empty,
+    });
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -80,7 +86,10 @@ test "async/concurrent context and result alignment" {
     var buffer: [2048]u8 align(@alignOf(ByteArray512)) = undefined;
     var fba: std.heap.FixedBufferAllocator = .init(&buffer);
 
-    var threaded: std.Io.Threaded = .init(fba.allocator(), .{});
+    var threaded: std.Io.Threaded = .init(fba.allocator(), .{
+        .argv0 = .empty,
+        .environ = .empty,
+    });
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -113,7 +122,10 @@ test "Group.async context alignment" {
     var buffer: [2048]u8 align(@alignOf(ByteArray512)) = undefined;
     var fba: std.heap.FixedBufferAllocator = .init(&buffer);
 
-    var threaded: std.Io.Threaded = .init(fba.allocator(), .{});
+    var threaded: std.Io.Threaded = .init(fba.allocator(), .{
+        .argv0 = .empty,
+        .environ = .empty,
+    });
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -133,7 +145,10 @@ fn returnArray() [32]u8 {
 }
 
 test "async with array return type" {
-    var threaded: std.Io.Threaded = .init(std.testing.allocator, .{});
+    var threaded: std.Io.Threaded = .init(std.testing.allocator, .{
+        .argv0 = .empty,
+        .environ = .empty,
+    });
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -155,7 +170,10 @@ test "cancel blocked read from pipe" {
         }
     };
 
-    var threaded: std.Io.Threaded = .init(std.testing.allocator, .{});
+    var threaded: std.Io.Threaded = .init(std.testing.allocator, .{
+        .argv0 = .empty,
+        .environ = .empty,
+    });
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -169,7 +187,7 @@ test "cancel blocked read from pipe" {
             .bInheritHandle = std.os.windows.FALSE,
         }),
         else => {
-            const pipe = try std.posix.pipe();
+            const pipe = try std.Io.Threaded.pipe2(.{});
             read_end = .{ .handle = pipe[0] };
             write_end = .{ .handle = pipe[1] };
         },

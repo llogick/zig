@@ -47,19 +47,11 @@ const Interestingness = enum { interesting, unknown, boring };
 // - reduce flags sent to the compiler
 // - integrate with the build system?
 
-pub fn main() !void {
-    var arena_instance = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena_instance.deinit();
-    const arena = arena_instance.allocator();
-
-    var general_purpose_allocator: std.heap.GeneralPurposeAllocator(.{}) = .init;
-    const gpa = general_purpose_allocator.allocator();
-
-    var threaded: std.Io.Threaded = .init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    const args = try std.process.argsAlloc(arena);
+pub fn main(init: std.process.Init) !void {
+    const arena = init.arena.allocator();
+    const gpa = init.gpa;
+    const io = init.io;
+    const args = try init.minimal.args.toSlice(arena);
 
     var opt_checker_path: ?[]const u8 = null;
     var opt_root_source_file_path: ?[]const u8 = null;
@@ -73,8 +65,7 @@ pub fn main() !void {
             const arg = args[i];
             if (mem.startsWith(u8, arg, "-")) {
                 if (mem.eql(u8, arg, "-h") or mem.eql(u8, arg, "--help")) {
-                    const stdout = Io.File.stdout();
-                    try stdout.writeAll(usage);
+                    try Io.File.stdout().writeStreamingAll(io, usage);
                     return std.process.cleanExit(io);
                 } else if (mem.eql(u8, arg, "--")) {
                     argv = args[i + 1 ..];
@@ -131,12 +122,10 @@ pub fn main() !void {
 
     if (!skip_smoke_test) {
         std.debug.print("smoke testing the interestingness check...\n", .{});
-        switch (try runCheck(arena, interestingness_argv.items)) {
+        switch (try runCheck(arena, io, interestingness_argv.items)) {
             .interesting => {},
             .boring, .unknown => |t| {
-                fatal("interestingness check returned {s} for unmodified input\n", .{
-                    @tagName(t),
-                });
+                fatal("interestingness check returned {t} for unmodified input\n", .{t});
             },
         }
     }
@@ -238,7 +227,7 @@ pub fn main() !void {
             try Io.Dir.cwd().writeFile(io, .{ .sub_path = root_source_file_path, .data = rendered.written() });
             // std.debug.print("trying this code:\n{s}\n", .{rendered.items});
 
-            const interestingness = try runCheck(arena, interestingness_argv.items);
+            const interestingness = try runCheck(arena, io, interestingness_argv.items);
             std.debug.print("{d} random transformations: {t}. {d}/{d}\n", .{
                 subset_size, interestingness, start_index, transformations.items.len,
             });
@@ -293,20 +282,24 @@ fn sortTransformations(transformations: []Walk.Transformation, rng: std.Random) 
 
 fn termToInteresting(term: std.process.Child.Term) Interestingness {
     return switch (term) {
-        .Exited => |code| switch (code) {
+        .exited => |code| switch (code) {
             0 => .interesting,
             1 => .unknown,
             else => .boring,
         },
-        else => b: {
+        .signal => |sig| {
+            std.debug.print("interestingness check terminated with signal {t}\n", .{sig});
+            return .boring;
+        },
+        else => {
             std.debug.print("interestingness check aborted unexpectedly\n", .{});
-            break :b .boring;
+            return .boring;
         },
     };
 }
 
 fn runCheck(arena: Allocator, io: Io, argv: []const []const u8) !Interestingness {
-    const result = try std.process.Child.run(arena, io, .{ .argv = argv });
+    const result = try std.process.run(arena, io, .{ .argv = argv });
     if (result.stderr.len != 0)
         std.debug.print("{s}", .{result.stderr});
     return termToInteresting(result.term);

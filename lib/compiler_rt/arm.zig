@@ -6,8 +6,6 @@ const target = builtin.target;
 const arch = builtin.cpu.arch;
 const common = @import("common.zig");
 
-pub const panic = common.panic;
-
 comptime {
     if (!builtin.is_test) {
         if (arch.isArm()) {

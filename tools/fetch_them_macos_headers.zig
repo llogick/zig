@@ -6,12 +6,8 @@ const process = std.process;
 const assert = std.debug.assert;
 const fatal = std.process.fatal;
 const info = std.log.info;
-
-const Allocator = mem.Allocator;
+const Allocator = std.mem.Allocator;
 const OsTag = std.Target.Os.Tag;
-
-var general_purpose_allocator = std.heap.GeneralPurposeAllocator(.{}){};
-const gpa = general_purpose_allocator.allocator();
 
 const Arch = enum {
     aarch64,
@@ -66,14 +62,12 @@ const usage =
     \\-h, --help                    Print this help and exit
 ;
 
-pub fn main() anyerror!void {
-    var arena = std.heap.ArenaAllocator.init(gpa);
-    defer arena.deinit();
-    const allocator = arena.allocator();
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    const arena = init.arena.allocator();
+    const args = try init.minimal.args.toSlice(arena);
 
-    const args = try std.process.argsAlloc(allocator);
-
-    var argv = std.array_list.Managed([]const u8).init(allocator);
+    var argv = std.array_list.Managed([]const u8).init(arena);
     var sysroot: ?[]const u8 = null;
 
     var args_iter = ArgsIterator{ .args = args[1..] };
@@ -85,23 +79,19 @@ pub fn main() anyerror!void {
         } else try argv.append(arg);
     }
 
-    var threaded: Io.Threaded = .init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
     const sysroot_path = sysroot orelse blk: {
         const target = try std.zig.system.resolveTargetQuery(io, .{});
-        break :blk std.zig.system.darwin.getSdk(allocator, io, &target) orelse
+        break :blk std.zig.system.darwin.getSdk(arena, io, &target) orelse
             fatal("no SDK found; you can provide one explicitly with '--sysroot' flag", .{});
     };
 
     var sdk_dir = try Dir.cwd().openDir(io, sysroot_path, .{});
     defer sdk_dir.close(io);
-    const sdk_info = try sdk_dir.readFileAlloc(io, "SDKSettings.json", allocator, .limited(std.math.maxInt(u32)));
+    const sdk_info = try sdk_dir.readFileAlloc(io, "SDKSettings.json", arena, .limited(std.math.maxInt(u32)));
 
     const parsed_json = try std.json.parseFromSlice(struct {
         DefaultProperties: struct { MACOSX_DEPLOYMENT_TARGET: []const u8 },
-    }, allocator, sdk_info, .{ .ignore_unknown_fields = true });
+    }, arena, sdk_info, .{ .ignore_unknown_fields = true });
 
     const version = Version.parse(parsed_json.value.DefaultProperties.MACOSX_DEPLOYMENT_TARGET) orelse
         fatal("don't know how to parse SDK version: {s}", .{
@@ -117,7 +107,7 @@ pub fn main() anyerror!void {
             .arch = arch,
             .os_ver = os_ver,
         };
-        try fetchTarget(allocator, io, argv.items, sysroot_path, target, version, tmp_dir);
+        try fetchTarget(arena, io, argv.items, sysroot_path, target, version, tmp_dir);
     }
 }
 
@@ -164,7 +154,7 @@ fn fetchTarget(
     });
     try cc_argv.appendSlice(args);
 
-    const res = try std.process.Child.run(arena, io, .{ .argv = cc_argv.items });
+    const res = try std.process.run(arena, io, .{ .argv = cc_argv.items });
 
     if (res.stderr.len != 0) {
         std.log.err("{s}", .{res.stderr});

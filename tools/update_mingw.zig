@@ -2,16 +2,11 @@ const std = @import("std");
 const Io = std.Io;
 const Dir = std.Io.Dir;
 
-pub fn main() !void {
-    var arena_instance = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena_instance.deinit();
-    const arena = arena_instance.allocator();
+pub fn main(init: std.process.Init) !void {
+    const arena = init.arena.allocator();
+    const io = init.io;
+    const args = try init.minimal.args.toSlice(arena);
 
-    var threaded: Io.Threaded = .init(arena, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    const args = try std.process.argsAlloc(arena);
     const zig_src_lib_path = args[1];
     const mingw_src_path = args[2];
 

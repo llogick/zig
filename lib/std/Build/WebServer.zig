@@ -482,8 +482,8 @@ pub fn serveFile(
     });
 }
 pub fn serveTarFile(ws: *WebServer, request: *http.Server.Request, paths: []const Cache.Path) !void {
-    const gpa = ws.gpa;
-    const io = ws.graph.io;
+    const graph = ws.graph;
+    const io = graph.io;
 
     var send_buffer: [0x4000]u8 = undefined;
     var response = try request.respondStreaming(&send_buffer, .{
@@ -494,9 +494,6 @@ pub fn serveTarFile(ws: *WebServer, request: *http.Server.Request, paths: []cons
             },
         },
     });
-
-    var cached_cwd_path: ?[]const u8 = null;
-    defer if (cached_cwd_path) |p| gpa.free(p);
 
     var archiver: std.tar.Writer = .{ .underlying_writer = &response.writer };
 
@@ -516,10 +513,7 @@ pub fn serveTarFile(ws: *WebServer, request: *http.Server.Request, paths: []cons
         // resulting in modules named "" and "src". The compiler needs to tell the build system
         // about the module graph so that the build system can correctly encode this information in
         // the tar file.
-        archiver.prefix = path.root_dir.path orelse cwd: {
-            if (cached_cwd_path == null) cached_cwd_path = try std.process.getCwdAlloc(gpa);
-            break :cwd cached_cwd_path.?;
-        };
+        archiver.prefix = path.root_dir.path orelse graph.cache.cwd;
         try archiver.writeFile(path.sub_path, &file_reader, @intCast(stat.mtime.toSeconds()));
     }
 
@@ -528,13 +522,13 @@ pub fn serveTarFile(ws: *WebServer, request: *http.Server.Request, paths: []cons
 }
 
 fn buildClientWasm(ws: *WebServer, arena: Allocator, optimize: std.builtin.OptimizeMode) !Cache.Path {
-    const io = ws.graph.io;
     const root_name = "build-web";
     const arch_os_abi = "wasm32-freestanding";
     const cpu_features = "baseline+atomics+bulk_memory+multivalue+mutable_globals+nontrapping_fptoint+reference_types+sign_ext";
 
     const gpa = ws.gpa;
     const graph = ws.graph;
+    const io = graph.io;
 
     const main_src_path: Cache.Path = .{
         .root_dir = graph.zig_lib_directory,
@@ -572,11 +566,14 @@ fn buildClientWasm(ws: *WebServer, arena: Allocator, optimize: std.builtin.Optim
         "--listen=-",
     });
 
-    var child: std.process.Child = .init(argv.items, gpa);
-    child.stdin_behavior = .Pipe;
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    try child.spawn(io);
+    var child = try std.process.spawn(io, .{
+        .argv = argv.items,
+        .environ_map = &graph.environ_map,
+        .stdin = .pipe,
+        .stdout = .pipe,
+        .stderr = .pipe,
+    });
+    defer child.kill(io);
 
     var poller = Io.poll(gpa, enum { stdout, stderr }, .{
         .stdout = child.stdout.?,
@@ -636,19 +633,26 @@ fn buildClientWasm(ws: *WebServer, arena: Allocator, optimize: std.builtin.Optim
     child.stdin = null;
 
     switch (try child.wait(io)) {
-        .Exited => |code| {
+        .exited => |code| {
             if (code != 0) {
                 log.err(
                     "the following command exited with error code {d}:\n{s}",
-                    .{ code, try Build.Step.allocPrintCmd(arena, null, argv.items) },
+                    .{ code, try Build.Step.allocPrintCmd(arena, null, null, argv.items) },
                 );
                 return error.WasmCompilationFailed;
             }
         },
-        .Signal, .Stopped, .Unknown => {
+        .signal => |sig| {
+            log.err(
+                "the following command terminated with signal {t}:\n{s}",
+                .{ sig, try Build.Step.allocPrintCmd(arena, null, null, argv.items) },
+            );
+            return error.WasmCompilationFailed;
+        },
+        .stopped, .unknown => {
             log.err(
                 "the following command terminated unexpectedly:\n{s}",
-                .{try Build.Step.allocPrintCmd(arena, null, argv.items)},
+                .{try Build.Step.allocPrintCmd(arena, null, null, argv.items)},
             );
             return error.WasmCompilationFailed;
         },
@@ -658,14 +662,14 @@ fn buildClientWasm(ws: *WebServer, arena: Allocator, optimize: std.builtin.Optim
         try result_error_bundle.renderToStderr(io, .{}, .auto);
         log.err("the following command failed with {d} compilation errors:\n{s}", .{
             result_error_bundle.errorMessageCount(),
-            try Build.Step.allocPrintCmd(arena, null, argv.items),
+            try Build.Step.allocPrintCmd(arena, null, null, argv.items),
         });
         return error.WasmCompilationFailed;
     }
 
     const base_path = result orelse {
         log.err("child process failed to report result\n{s}", .{
-            try Build.Step.allocPrintCmd(arena, null, argv.items),
+            try Build.Step.allocPrintCmd(arena, null, null, argv.items),
         });
         return error.WasmCompilationFailed;
     };

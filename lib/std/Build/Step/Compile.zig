@@ -741,13 +741,13 @@ fn runPkgConfig(compile: *Compile, lib_name: []const u8) !PkgConfigResult {
     };
 
     var code: u8 = undefined;
-    const pkg_config_exe = b.graph.env_map.get("PKG_CONFIG") orelse "pkg-config";
+    const pkg_config_exe = b.graph.environ_map.get("PKG_CONFIG") orelse "pkg-config";
     const stdout = if (b.runAllowFail(&[_][]const u8{
         pkg_config_exe,
         pkg_name,
         "--cflags",
         "--libs",
-    }, &code, .Ignore)) |stdout| stdout else |err| switch (err) {
+    }, &code, .ignore)) |stdout| stdout else |err| switch (err) {
         error.ProcessTerminated => return error.PkgConfigCrashed,
         error.ExecNotSupported => return error.PkgConfigFailed,
         error.ExitCodeFailure => return error.PkgConfigFailed,
@@ -1846,8 +1846,8 @@ pub fn doAtomicSymLinks(
 }
 
 fn execPkgConfigList(b: *std.Build, out_code: *u8) (PkgConfigError || RunError)![]const PkgConfigPkg {
-    const pkg_config_exe = b.graph.env_map.get("PKG_CONFIG") orelse "pkg-config";
-    const stdout = try b.runAllowFail(&[_][]const u8{ pkg_config_exe, "--list-all" }, out_code, .Ignore);
+    const pkg_config_exe = b.graph.environ_map.get("PKG_CONFIG") orelse "pkg-config";
+    const stdout = try b.runAllowFail(&[_][]const u8{ pkg_config_exe, "--list-all" }, out_code, .ignore);
     var list = std.array_list.Managed(PkgConfigPkg).init(b.allocator);
     errdefer list.deinit();
     var line_it = mem.tokenizeAny(u8, stdout, "\r\n");

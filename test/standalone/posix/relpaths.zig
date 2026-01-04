@@ -6,16 +6,10 @@ const builtin = @import("builtin");
 const std = @import("std");
 const Io = std.Io;
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
     if (builtin.target.os.tag == .wasi) return; // Can link, but can't change into tmpDir
 
-    var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
-    const gpa = debug_allocator.allocator();
-    defer std.debug.assert(debug_allocator.deinit() == .ok);
-
-    var threaded: std.Io.Threaded = .init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    const io = init.io;
 
     var tmp = tmpDir(io, .{});
     defer tmp.cleanup(io);

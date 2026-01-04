@@ -12,7 +12,6 @@ const StringHashMap = std.StringHashMap;
 const Allocator = std.mem.Allocator;
 const Target = std.Target;
 const process = std.process;
-const EnvMap = std.process.EnvMap;
 const File = std.Io.File;
 const Sha256 = std.crypto.hash.sha2.Sha256;
 const ArrayList = std.ArrayList;
@@ -118,7 +117,7 @@ pub const Graph = struct {
     debug_compiler_runtime_libs: bool = false,
     cache: Cache,
     zig_exe: [:0]const u8,
-    env_map: EnvMap,
+    environ_map: process.Environ.Map,
     global_cache_root: Cache.Directory,
     zig_lib_directory: Cache.Directory,
     needed_lazy_dependencies: std.StringArrayHashMapUnmanaged(void) = .empty,
@@ -190,7 +189,7 @@ pub const RunError = error{
     ExitCodeFailure,
     ProcessTerminated,
     ExecNotSupported,
-} || std.process.Child.SpawnError;
+} || std.process.SpawnError;
 
 pub const PkgConfigError = error{
     PkgConfigCrashed,
@@ -289,7 +288,7 @@ pub fn create(
         .lib_dir = undefined,
         .exe_dir = undefined,
         .h_dir = undefined,
-        .dest_dir = graph.env_map.get("DESTDIR"),
+        .dest_dir = graph.environ_map.get("DESTDIR"),
         .install_tls = .{
             .step = .init(.{
                 .id = TopLevelStep.base_id,
@@ -1738,8 +1737,7 @@ pub fn pathFromRoot(b: *Build, sub_path: []const u8) []u8 {
 }
 
 fn pathFromCwd(b: *Build, sub_path: []const u8) []u8 {
-    const cwd = process.getCwdAlloc(b.allocator) catch @panic("OOM");
-    return b.pathResolve(&.{ cwd, sub_path });
+    return b.pathResolve(&.{ b.graph.cache.cwd, sub_path });
 }
 
 pub fn pathJoin(b: *Build, paths: []const []const u8) []u8 {
@@ -1755,7 +1753,7 @@ pub fn fmt(b: *Build, comptime format: []const u8, args: anytype) []u8 {
 }
 
 fn supportedWindowsProgramExtension(ext: []const u8) bool {
-    inline for (@typeInfo(std.process.Child.WindowsExtension).@"enum".fields) |field| {
+    inline for (@typeInfo(std.process.WindowsExtension).@"enum".fields) |field| {
         if (std.ascii.eqlIgnoreCase(ext, "." ++ field.name)) return true;
     }
     return false;
@@ -1773,7 +1771,7 @@ fn tryFindProgram(b: *Build, full_path: []const u8) ?[]const u8 {
     }
 
     if (builtin.os.tag == .windows) {
-        if (b.graph.env_map.get("PATHEXT")) |PATHEXT| {
+        if (b.graph.environ_map.get("PATHEXT")) |PATHEXT| {
             var it = mem.tokenizeScalar(u8, PATHEXT, fs.path.delimiter);
 
             while (it.next()) |ext| {
@@ -1804,7 +1802,7 @@ pub fn findProgram(b: *Build, names: []const []const u8, paths: []const []const 
             return tryFindProgram(b, b.pathJoin(&.{ search_prefix, "bin", name })) orelse continue;
         }
     }
-    if (b.graph.env_map.get("PATH")) |PATH| {
+    if (b.graph.environ_map.get("PATH")) |PATH| {
         for (names) |name| {
             if (fs.path.isAbsolute(name)) {
                 return name;
@@ -1830,24 +1828,26 @@ pub fn runAllowFail(
     b: *Build,
     argv: []const []const u8,
     out_code: *u8,
-    stderr_behavior: std.process.Child.StdIo,
+    stderr_behavior: std.process.SpawnOptions.StdIo,
 ) RunError![]u8 {
     assert(argv.len != 0);
 
     if (!process.can_spawn)
         return error.ExecNotSupported;
 
-    const io = b.graph.io;
+    const graph = b.graph;
+    const io = graph.io;
 
     const max_output_size = 400 * 1024;
-    var child = std.process.Child.init(argv, b.allocator);
-    child.stdin_behavior = .Ignore;
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = stderr_behavior;
-    child.env_map = &b.graph.env_map;
+    try Step.handleVerbose2(b, null, &graph.environ_map, argv);
 
-    try Step.handleVerbose2(b, null, child.env_map, argv);
-    try child.spawn(io);
+    var child = try std.process.spawn(io, .{
+        .argv = argv,
+        .environ_map = &graph.environ_map,
+        .stdin = .ignore,
+        .stdout = .pipe,
+        .stderr = stderr_behavior,
+    });
 
     var stdout_reader = child.stdout.?.readerStreaming(io, &.{});
     const stdout = stdout_reader.interface.allocRemaining(b.allocator, .limited(max_output_size)) catch {
@@ -1857,14 +1857,18 @@ pub fn runAllowFail(
 
     const term = try child.wait(io);
     switch (term) {
-        .Exited => |code| {
+        .exited => |code| {
             if (code != 0) {
                 out_code.* = @as(u8, @truncate(code));
                 return error.ExitCodeFailure;
             }
             return stdout;
         },
-        .Signal, .Stopped, .Unknown => |code| {
+        .signal => |sig| {
+            out_code.* = @as(u8, @truncate(@intFromEnum(sig)));
+            return error.ProcessTerminated;
+        },
+        .stopped, .unknown => |code| {
             out_code.* = @as(u8, @truncate(code));
             return error.ProcessTerminated;
         },
@@ -1875,21 +1879,11 @@ pub fn runAllowFail(
 /// inside step make() functions. If any errors occur, it fails the build with
 /// a helpful message.
 pub fn run(b: *Build, argv: []const []const u8) []u8 {
-    if (!process.can_spawn) {
-        std.debug.print("unable to spawn the following command: cannot spawn child process\n{s}\n", .{
-            try Step.allocPrintCmd(b.allocator, null, argv),
-        });
-        process.exit(1);
-    }
-
     var code: u8 = undefined;
-    return b.runAllowFail(argv, &code, .Inherit) catch |err| {
-        const printed_cmd = Step.allocPrintCmd(b.allocator, null, argv) catch @panic("OOM");
-        std.debug.print("unable to spawn the following command: {s}\n{s}\n", .{
-            @errorName(err), printed_cmd,
-        });
-        process.exit(1);
-    };
+    return b.runAllowFail(argv, &code, .inherit) catch |err| process.fatal(
+        "the following command failed with {t}:\n{s}",
+        .{ err, Step.allocPrintCmd(b.allocator, null, null, argv) catch @panic("OOM") },
+    );
 }
 
 pub fn addSearchPrefix(b: *Build, search_prefix: []const u8) void {

@@ -13,16 +13,15 @@
 //! https://github.com/WebAssembly/wasi-filesystem/issues/17#issuecomment-1430639353
 
 const builtin = @import("builtin");
+const native_os = builtin.target.os.tag;
+
 const std = @import("../std.zig");
-const debug = std.debug;
-const assert = debug.assert;
+const assert = std.debug.assert;
 const testing = std.testing;
 const mem = std.mem;
-const ascii = std.ascii;
-const Allocator = mem.Allocator;
-const windows = std.os.windows;
-const process = std.process;
-const native_os = builtin.target.os.tag;
+const Allocator = std.mem.Allocator;
+const eqlIgnoreCaseWtf8 = std.os.windows.eqlIgnoreCaseWtf8;
+const eqlIgnoreCaseWtf16 = std.os.windows.eqlIgnoreCaseWtf16;
 
 pub const sep_windows: u8 = '\\';
 pub const sep_posix: u8 = '/';
@@ -281,7 +280,7 @@ pub fn isAbsolute(path: []const u8) bool {
 }
 
 fn isAbsoluteWindowsImpl(comptime T: type, path: []const T) bool {
-    return switch (windows.getWin32PathType(T, path)) {
+    return switch (getWin32PathType(T, path)) {
         // Unambiguously absolute
         .drive_absolute, .unc_absolute, .local_device, .root_local_device => true,
         // Unambiguously relative
@@ -515,13 +514,13 @@ test parsePathPosix {
 
 pub fn WindowsPath2(comptime T: type) type {
     return struct {
-        kind: windows.Win32PathType,
+        kind: Win32PathType,
         root: []const T,
     };
 }
 
 pub fn parsePathWindows(comptime T: type, path: []const T) WindowsPath2(T) {
-    const kind = windows.getWin32PathType(T, path);
+    const kind = getWin32PathType(T, path);
     const root = root: switch (kind) {
         .drive_absolute, .drive_relative => {
             const drive_letter_len = getDriveLetter(T, path).len;
@@ -731,7 +730,7 @@ fn parseUNC(comptime T: type, path: []const T) WindowsUNC(T) {
     // For the share, there can be any number of path separators between the server
     // and the share, so we want to skip over all of them instead of just looking for
     // the first one.
-    var it = std.mem.tokenizeAny(T, path[server_end + 1 ..], any_sep);
+    var it = mem.tokenizeAny(T, path[server_end + 1 ..], any_sep);
     const share = it.next() orelse return .{
         .server = path[2..server_end],
         .sep_after_server = true,
@@ -803,8 +802,8 @@ const DiskDesignatorKind = enum { drive, unc };
 /// `p1` and `p2` are both assumed to be the `kind` provided.
 fn compareDiskDesignators(comptime T: type, kind: DiskDesignatorKind, p1: []const T, p2: []const T) bool {
     const eql = switch (T) {
-        u8 => windows.eqlIgnoreCaseWtf8,
-        u16 => windows.eqlIgnoreCaseWtf16,
+        u8 => eqlIgnoreCaseWtf8,
+        u16 => eqlIgnoreCaseWtf16,
         else => @compileError("only u8 (WTF-8) and u16 (WTF-16LE) is supported"),
     };
     switch (kind) {
@@ -1094,10 +1093,14 @@ pub fn resolveWindows(allocator: Allocator, paths: []const []const u8) Allocator
 }
 
 /// This function is like a series of `cd` statements executed one after another.
+///
 /// It resolves "." and ".." to the best of its ability, but will not convert relative paths to
 /// an absolute path, use Io.Dir.realpath instead.
+///
 /// ".." components may persist in the resolved path if the resolved path is relative.
+///
 /// The result does not have a trailing path separator.
+///
 /// This function does not perform any syscalls. Executing this series of path
 /// lookups on the actual filesystem may produce different results due to
 /// symlinks.
@@ -1494,25 +1497,54 @@ fn testBasenameWindows(input: []const u8, expected_output: []const u8) !void {
     try testing.expectEqualSlices(u8, expected_output, basenameWindows(input));
 }
 
-pub const RelativeError = std.process.GetCwdAllocError;
-
-/// Returns the relative path from `from` to `to`. If `from` and `to` each
-/// resolve to the same path (after calling `resolve` on each), a zero-length
-/// string is returned.
-/// On Windows, the result is not guaranteed to be relative, as the paths may be
-/// on different volumes. In that case, the result will be the canonicalized absolute
-/// path of `to`.
-pub fn relative(allocator: Allocator, from: []const u8, to: []const u8) RelativeError![]u8 {
+/// Returns the non-absolute path from `from` to `to`.
+///
+/// Other than memory allocation, this is a pure function; the result solely
+/// depends on the input parameters.
+///
+/// If `from` and `to` each resolve to the same path (after calling `resolve`
+/// on each), a zero-length string is returned.
+///
+/// See `relativePosix` and `relativeWindows` for operating system specific
+/// details and for how `environ_map` is used.
+pub fn relative(
+    gpa: Allocator,
+    cwd: []const u8,
+    environ_map: ?*const std.process.Environ.Map,
+    from: []const u8,
+    to: []const u8,
+) Allocator.Error![]u8 {
     if (native_os == .windows) {
-        return relativeWindows(allocator, from, to);
+        return relativeWindows(gpa, cwd, environ_map, from, to);
     } else {
-        return relativePosix(allocator, from, to);
+        return relativePosix(gpa, cwd, from, to);
     }
 }
 
-pub fn relativeWindows(allocator: Allocator, from: []const u8, to: []const u8) ![]u8 {
-    if (native_os != .windows) @compileError("this function relies on Windows-specific semantics");
-
+/// Returns the non-absolute path from `from` to `to` according to Windows rules.
+///
+/// Other than memory allocation, this is a pure function; the result solely
+/// depends on the input parameters.
+///
+/// If `from` and `to` each resolve to the same path (after calling `resolve`
+/// on each), a zero-length string is returned.
+///
+/// The result is not guaranteed to be relative, as the paths may be on
+/// different volumes. In that case, the result will be the canonicalized
+/// absolute path of `to`.
+///
+/// Per-drive CWDs are stored in special semi-hidden environment variables of
+/// the format `=<drive-letter>:`, e.g. `=C:`. This type of CWD is purely a
+/// shell concept, so there's no guarantee that it'll be set or that it'll even
+/// be accurate. This is the only reason for the `environ_map` parameter. `null` is
+/// treated equivalent to the environment variable missing.
+pub fn relativeWindows(
+    gpa: Allocator,
+    cwd: []const u8,
+    environ_map: ?*const std.process.Environ.Map,
+    from: []const u8,
+    to: []const u8,
+) Allocator.Error![]u8 {
     const parsed_from = parsePathWindows(u8, from);
     const parsed_to = parsePathWindows(u8, to);
 
@@ -1533,14 +1565,14 @@ pub fn relativeWindows(allocator: Allocator, from: []const u8, to: []const u8) !
     };
 
     if (result_is_always_to) {
-        return windowsResolveAgainstCwd(allocator, to, parsed_to);
+        return windowsResolveAgainstCwd(gpa, cwd, environ_map, to, parsed_to);
     }
 
-    const resolved_from = try windowsResolveAgainstCwd(allocator, from, parsed_from);
-    defer allocator.free(resolved_from);
+    const resolved_from = try windowsResolveAgainstCwd(gpa, cwd, environ_map, from, parsed_from);
+    defer gpa.free(resolved_from);
     var clean_up_resolved_to = true;
-    const resolved_to = try windowsResolveAgainstCwd(allocator, to, parsed_to);
-    defer if (clean_up_resolved_to) allocator.free(resolved_to);
+    const resolved_to = try windowsResolveAgainstCwd(gpa, cwd, environ_map, to, parsed_to);
+    defer if (clean_up_resolved_to) gpa.free(resolved_to);
 
     const parsed_resolved_from = parsePathWindows(u8, resolved_from);
     const parsed_resolved_to = parsePathWindows(u8, resolved_to);
@@ -1569,18 +1601,18 @@ pub fn relativeWindows(allocator: Allocator, from: []const u8, to: []const u8) !
     var from_it = mem.tokenizeAny(u8, resolved_from[parsed_resolved_from.root.len..], "/\\");
     var to_it = mem.tokenizeAny(u8, resolved_to[parsed_resolved_to.root.len..], "/\\");
     while (true) {
-        const from_component = from_it.next() orelse return allocator.dupe(u8, to_it.rest());
+        const from_component = from_it.next() orelse return gpa.dupe(u8, to_it.rest());
         const to_rest = to_it.rest();
         if (to_it.next()) |to_component| {
-            if (windows.eqlIgnoreCaseWtf8(from_component, to_component))
+            if (eqlIgnoreCaseWtf8(from_component, to_component))
                 continue;
         }
         var up_index_end = "..".len;
         while (from_it.next()) |_| {
             up_index_end += "\\..".len;
         }
-        const result = try allocator.alloc(u8, up_index_end + @intFromBool(to_rest.len > 0) + to_rest.len);
-        errdefer allocator.free(result);
+        const result = try gpa.alloc(u8, up_index_end + @intFromBool(to_rest.len > 0) + to_rest.len);
+        errdefer gpa.free(result);
 
         result[0..2].* = "..".*;
         var result_index: usize = 2;
@@ -1597,85 +1629,60 @@ pub fn relativeWindows(allocator: Allocator, from: []const u8, to: []const u8) !
             result_index += to_component.len;
         }
 
-        return allocator.realloc(result, result_index);
+        return gpa.realloc(result, result_index);
     }
     return [_]u8{};
 }
 
-fn windowsResolveAgainstCwd(allocator: Allocator, path: []const u8, parsed: WindowsPath2(u8)) ![]u8 {
+fn windowsResolveAgainstCwd(
+    gpa: Allocator,
+    cwd: []const u8,
+    environ_map: ?*const std.process.Environ.Map,
+    path: []const u8,
+    parsed: WindowsPath2(u8),
+) ![]u8 {
     // Space for 256 WTF-16 code units; potentially 3 WTF-8 bytes per WTF-16 code unit
-    var temp_allocator_state = std.heap.stackFallback(256 * 3, allocator);
+    var temp_allocator_state = std.heap.stackFallback(256 * 3, gpa);
     return switch (parsed.kind) {
         .drive_absolute,
         .unc_absolute,
         .root_local_device,
         .local_device,
-        => try resolveWindows(allocator, &.{path}),
-        .relative => blk: {
-            const temp_allocator = temp_allocator_state.get();
+        => try resolveWindows(gpa, &.{path}),
 
-            const peb_cwd = windows.peb().ProcessParameters.CurrentDirectory.DosPath;
-            const cwd_w = (peb_cwd.Buffer.?)[0 .. peb_cwd.Length / 2];
+        .relative => try resolveWindows(gpa, &.{ cwd, path }),
 
-            const wtf8_len = std.unicode.calcWtf8Len(cwd_w);
-            const wtf8_buf = try temp_allocator.alloc(u8, wtf8_len);
-            defer temp_allocator.free(wtf8_buf);
-            assert(std.unicode.wtf16LeToWtf8(wtf8_buf, cwd_w) == wtf8_len);
-
-            break :blk try resolveWindows(allocator, &.{ wtf8_buf, path });
-        },
         .rooted => blk: {
-            const peb_cwd = windows.peb().ProcessParameters.CurrentDirectory.DosPath;
-            const cwd_w = (peb_cwd.Buffer.?)[0 .. peb_cwd.Length / 2];
-            const parsed_cwd = parsePathWindows(u16, cwd_w);
+            const parsed_cwd = parsePathWindows(u8, cwd);
             switch (parsed_cwd.kind) {
                 .drive_absolute => {
                     var drive_buf = "_:\\".*;
-                    drive_buf[0] = @truncate(cwd_w[0]);
-                    break :blk try resolveWindows(allocator, &.{ &drive_buf, path });
+                    drive_buf[0] = cwd[0];
+                    break :blk try resolveWindows(gpa, &.{ &drive_buf, path });
                 },
                 .unc_absolute => {
-                    const temp_allocator = temp_allocator_state.get();
-                    var root_buf = try temp_allocator.alloc(u8, parsed_cwd.root.len * 3);
-                    defer temp_allocator.free(root_buf);
-
-                    const wtf8_len = std.unicode.wtf16LeToWtf8(root_buf, parsed_cwd.root);
-                    const root = root_buf[0..wtf8_len];
-                    break :blk try resolveWindows(allocator, &.{ root, path });
+                    break :blk try resolveWindows(gpa, &.{ parsed_cwd.root, path });
                 },
                 // Effectively a malformed CWD, give up and just return a normalized path
-                else => break :blk try resolveWindows(allocator, &.{path}),
+                else => break :blk try resolveWindows(gpa, &.{path}),
             }
         },
         .drive_relative => blk: {
             const temp_allocator = temp_allocator_state.get();
             const drive_cwd = drive_cwd: {
-                const peb_cwd = windows.peb().ProcessParameters.CurrentDirectory.DosPath;
-                const cwd_w = (peb_cwd.Buffer.?)[0 .. peb_cwd.Length / 2];
-                const parsed_cwd = parsePathWindows(u16, cwd_w);
+                const parsed_cwd = parsePathWindows(u8, cwd);
 
                 if (parsed_cwd.kind == .drive_absolute) {
                     const drive_letter_w = parsed_cwd.root[0];
                     const drive_letters_match = drive_letter_w <= 0x7F and
-                        ascii.toUpper(@intCast(drive_letter_w)) == ascii.toUpper(parsed.root[0]);
-                    if (drive_letters_match) {
-                        const wtf8_len = std.unicode.calcWtf8Len(cwd_w);
-                        const wtf8_buf = try temp_allocator.alloc(u8, wtf8_len);
-                        assert(std.unicode.wtf16LeToWtf8(wtf8_buf, cwd_w) == wtf8_len);
-                        break :drive_cwd wtf8_buf[0..];
-                    }
+                        std.ascii.toUpper(@intCast(drive_letter_w)) == std.ascii.toUpper(parsed.root[0]);
+                    if (drive_letters_match)
+                        break :drive_cwd cwd;
 
-                    // Per-drive CWD's are stored in special semi-hidden environment variables
-                    // of the format `=<drive-letter>:`, e.g. `=C:`. This type of CWD is
-                    // purely a shell concept, so there's no guarantee that it'll be set
-                    // or that it'll even be accurate.
-                    var key_buf = std.unicode.wtf8ToWtf16LeStringLiteral("=_:").*;
-                    key_buf[1] = parsed.root[0];
-                    if (std.process.getenvW(&key_buf)) |drive_cwd_w| {
-                        const wtf8_len = std.unicode.calcWtf8Len(drive_cwd_w);
-                        const wtf8_buf = try temp_allocator.alloc(u8, wtf8_len);
-                        assert(std.unicode.wtf16LeToWtf8(wtf8_buf, drive_cwd_w) == wtf8_len);
-                        break :drive_cwd wtf8_buf[0..];
+                    if (environ_map) |m| {
+                        if (m.get(&.{ '=', parsed.root[0], ':' })) |v| {
+                            break :drive_cwd try temp_allocator.dupe(u8, v);
+                        }
                     }
                 }
 
@@ -1686,16 +1693,20 @@ fn windowsResolveAgainstCwd(allocator: Allocator, path: []const u8, parsed: Wind
                 break :drive_cwd drive_buf;
             };
             defer temp_allocator.free(drive_cwd);
-            break :blk try resolveWindows(allocator, &.{ drive_cwd, path });
+            break :blk try resolveWindows(gpa, &.{ drive_cwd, path });
         },
     };
 }
 
-pub fn relativePosix(allocator: Allocator, from: []const u8, to: []const u8) ![]u8 {
-    if (native_os == .windows) @compileError("this function relies on semantics that do not apply to Windows");
-
-    const cwd = try process.getCwdAlloc(allocator);
-    defer allocator.free(cwd);
+/// Returns the non-absolute path from `from` to `to` according to Windows rules.
+///
+/// Other than memory allocation, this is a pure function; the result solely
+/// depends on the input parameters.
+///
+/// If `from` and `to` each resolve to the same path (after calling `resolve`
+/// on each), a zero-length string is returned.
+///
+pub fn relativePosix(allocator: Allocator, cwd: []const u8, from: []const u8, to: []const u8) Allocator.Error![]u8 {
     const resolved_from = try resolvePosix(allocator, &[_][]const u8{ cwd, from });
     defer allocator.free(resolved_from);
     const resolved_to = try resolvePosix(allocator, &[_][]const u8{ cwd, to });
@@ -1736,69 +1747,67 @@ pub fn relativePosix(allocator: Allocator, from: []const u8, to: []const u8) ![]
 }
 
 test relative {
-    if (native_os == .windows) {
-        try testRelativeWindows("c:/blah\\blah", "d:/games", "D:\\games");
-        try testRelativeWindows("c:/aaaa/bbbb", "c:/aaaa", "..");
-        try testRelativeWindows("c:/aaaa/bbbb", "c:/cccc", "..\\..\\cccc");
-        try testRelativeWindows("c:/aaaa/bbbb", "C:/aaaa/bbbb", "");
-        try testRelativeWindows("c:/aaaa/bbbb", "c:/aaaa/cccc", "..\\cccc");
-        try testRelativeWindows("c:/aaaa/", "c:/aaaa/cccc", "cccc");
-        try testRelativeWindows("c:/", "c:\\aaaa\\bbbb", "aaaa\\bbbb");
-        try testRelativeWindows("c:/aaaa/bbbb", "d:\\", "D:\\");
-        try testRelativeWindows("c:/AaAa/bbbb", "c:/aaaa/bbbb", "");
-        try testRelativeWindows("c:/aaaaa/", "c:/aaaa/cccc", "..\\aaaa\\cccc");
-        try testRelativeWindows("C:\\foo\\bar\\baz\\quux", "C:\\", "..\\..\\..\\..");
-        try testRelativeWindows("C:\\foo\\test", "C:\\foo\\test\\bar\\package.json", "bar\\package.json");
-        try testRelativeWindows("C:\\foo\\bar\\baz-quux", "C:\\foo\\bar\\baz", "..\\baz");
-        try testRelativeWindows("C:\\foo\\bar\\baz", "C:\\foo\\bar\\baz-quux", "..\\baz-quux");
-        try testRelativeWindows("\\\\foo\\bar", "\\\\foo\\bar\\baz", "baz");
-        try testRelativeWindows("\\\\foo\\bar\\baz", "\\\\foo\\bar", "..");
-        try testRelativeWindows("\\\\foo\\bar\\baz-quux", "\\\\foo\\bar\\baz", "..\\baz");
-        try testRelativeWindows("\\\\foo/bar\\baz-quux", "//foo\\bar/baz", "..\\baz");
-        try testRelativeWindows("\\\\foo\\bar\\baz", "\\\\foo\\bar\\baz-quux", "..\\baz-quux");
-        try testRelativeWindows("C:\\baz-quux", "C:\\baz", "..\\baz");
-        try testRelativeWindows("C:\\baz", "C:\\baz-quux", "..\\baz-quux");
-        try testRelativeWindows("\\\\foo\\baz-quux", "\\\\foo\\baz", "\\\\foo\\baz");
-        try testRelativeWindows("\\\\foo\\baz", "\\\\foo\\baz-quux", "\\\\foo\\baz-quux");
-        try testRelativeWindows("C:\\baz", "\\\\foo\\bar\\baz", "\\\\foo\\bar\\baz");
-        try testRelativeWindows("\\\\foo\\bar\\baz", "C:\\baz", "C:\\baz");
+    try testRelativeWindows("c:/blah\\blah", "d:/games", "D:\\games");
+    try testRelativeWindows("c:/aaaa/bbbb", "c:/aaaa", "..");
+    try testRelativeWindows("c:/aaaa/bbbb", "c:/cccc", "..\\..\\cccc");
+    try testRelativeWindows("c:/aaaa/bbbb", "C:/aaaa/bbbb", "");
+    try testRelativeWindows("c:/aaaa/bbbb", "c:/aaaa/cccc", "..\\cccc");
+    try testRelativeWindows("c:/aaaa/", "c:/aaaa/cccc", "cccc");
+    try testRelativeWindows("c:/", "c:\\aaaa\\bbbb", "aaaa\\bbbb");
+    try testRelativeWindows("c:/aaaa/bbbb", "d:\\", "D:\\");
+    try testRelativeWindows("c:/AaAa/bbbb", "c:/aaaa/bbbb", "");
+    try testRelativeWindows("c:/aaaaa/", "c:/aaaa/cccc", "..\\aaaa\\cccc");
+    try testRelativeWindows("C:\\foo\\bar\\baz\\quux", "C:\\", "..\\..\\..\\..");
+    try testRelativeWindows("C:\\foo\\test", "C:\\foo\\test\\bar\\package.json", "bar\\package.json");
+    try testRelativeWindows("C:\\foo\\bar\\baz-quux", "C:\\foo\\bar\\baz", "..\\baz");
+    try testRelativeWindows("C:\\foo\\bar\\baz", "C:\\foo\\bar\\baz-quux", "..\\baz-quux");
+    try testRelativeWindows("\\\\foo\\bar", "\\\\foo\\bar\\baz", "baz");
+    try testRelativeWindows("\\\\foo\\bar\\baz", "\\\\foo\\bar", "..");
+    try testRelativeWindows("\\\\foo\\bar\\baz-quux", "\\\\foo\\bar\\baz", "..\\baz");
+    try testRelativeWindows("\\\\foo/bar\\baz-quux", "//foo\\bar/baz", "..\\baz");
+    try testRelativeWindows("\\\\foo\\bar\\baz", "\\\\foo\\bar\\baz-quux", "..\\baz-quux");
+    try testRelativeWindows("C:\\baz-quux", "C:\\baz", "..\\baz");
+    try testRelativeWindows("C:\\baz", "C:\\baz-quux", "..\\baz-quux");
+    try testRelativeWindows("\\\\foo\\baz-quux", "\\\\foo\\baz", "\\\\foo\\baz");
+    try testRelativeWindows("\\\\foo\\baz", "\\\\foo\\baz-quux", "\\\\foo\\baz-quux");
+    try testRelativeWindows("C:\\baz", "\\\\foo\\bar\\baz", "\\\\foo\\bar\\baz");
+    try testRelativeWindows("\\\\foo\\bar\\baz", "C:\\baz", "C:\\baz");
 
-        try testRelativeWindows("c:blah\\blah", "c:foo", "..\\..\\foo");
-        try testRelativeWindows("c:foo", "c:foo\\bar", "bar");
-        try testRelativeWindows("\\blah\\blah", "\\foo", "..\\..\\foo");
-        try testRelativeWindows("\\foo", "\\foo\\bar", "bar");
+    try testRelativeWindows("c:blah\\blah", "c:foo", "..\\..\\foo");
+    try testRelativeWindows("c:foo", "c:foo\\bar", "bar");
+    try testRelativeWindows("\\blah\\blah", "\\foo", "..\\..\\foo");
+    try testRelativeWindows("\\foo", "\\foo\\bar", "bar");
 
-        try testRelativeWindows("a/b/c", "a\\b", "..");
-        try testRelativeWindows("a/b/c", "a", "..\\..");
-        try testRelativeWindows("a/b/c", "a\\b\\c\\d", "d");
+    try testRelativeWindows("a/b/c", "a\\b", "..");
+    try testRelativeWindows("a/b/c", "a", "..\\..");
+    try testRelativeWindows("a/b/c", "a\\b\\c\\d", "d");
 
-        try testRelativeWindows("\\\\FOO\\bar\\baz", "\\\\foo\\BAR\\BAZ", "");
-        // Unicode-aware case-insensitive path comparison
-        try testRelativeWindows("\\\\кириллица\\ελληνικά\\português", "\\\\КИРИЛЛИЦА\\ΕΛΛΗΝΙΚΆ\\PORTUGUÊS", "");
-    } else {
-        try testRelativePosix("/var/lib", "/var", "..");
-        try testRelativePosix("/var/lib", "/bin", "../../bin");
-        try testRelativePosix("/var/lib", "/var/lib", "");
-        try testRelativePosix("/var/lib", "/var/apache", "../apache");
-        try testRelativePosix("/var/", "/var/lib", "lib");
-        try testRelativePosix("/", "/var/lib", "var/lib");
-        try testRelativePosix("/foo/test", "/foo/test/bar/package.json", "bar/package.json");
-        try testRelativePosix("/Users/a/web/b/test/mails", "/Users/a/web/b", "../..");
-        try testRelativePosix("/foo/bar/baz-quux", "/foo/bar/baz", "../baz");
-        try testRelativePosix("/foo/bar/baz", "/foo/bar/baz-quux", "../baz-quux");
-        try testRelativePosix("/baz-quux", "/baz", "../baz");
-        try testRelativePosix("/baz", "/baz-quux", "../baz-quux");
-    }
+    try testRelativeWindows("\\\\FOO\\bar\\baz", "\\\\foo\\BAR\\BAZ", "");
+    // Unicode-aware case-insensitive path comparison
+    try testRelativeWindows("\\\\кириллица\\ελληνικά\\português", "\\\\КИРИЛЛИЦА\\ΕΛΛΗΝΙΚΆ\\PORTUGUÊS", "");
+
+    try testRelativePosix("/var/lib", "/var", "..");
+    try testRelativePosix("/var/lib", "/bin", "../../bin");
+    try testRelativePosix("/var/lib", "/var/lib", "");
+    try testRelativePosix("/var/lib", "/var/apache", "../apache");
+    try testRelativePosix("/var/", "/var/lib", "lib");
+    try testRelativePosix("/", "/var/lib", "var/lib");
+    try testRelativePosix("/foo/test", "/foo/test/bar/package.json", "bar/package.json");
+    try testRelativePosix("/Users/a/web/b/test/mails", "/Users/a/web/b", "../..");
+    try testRelativePosix("/foo/bar/baz-quux", "/foo/bar/baz", "../baz");
+    try testRelativePosix("/foo/bar/baz", "/foo/bar/baz-quux", "../baz-quux");
+    try testRelativePosix("/baz-quux", "/baz", "../baz");
+    try testRelativePosix("/baz", "/baz-quux", "../baz-quux");
 }
 
 fn testRelativePosix(from: []const u8, to: []const u8, expected_output: []const u8) !void {
-    const result = try relativePosix(testing.allocator, from, to);
+    const result = try relativePosix(testing.allocator, ".", from, to);
     defer testing.allocator.free(result);
     try testing.expectEqualStrings(expected_output, result);
 }
 
 fn testRelativeWindows(from: []const u8, to: []const u8, expected_output: []const u8) !void {
-    const result = try relativeWindows(testing.allocator, from, to);
+    const result = try relativeWindows(testing.allocator, ".", null, from, to);
     defer testing.allocator.free(result);
     try testing.expectEqualStrings(expected_output, result);
 }
@@ -2554,3 +2563,124 @@ pub const fmtAsUtf8Lossy = std.unicode.fmtUtf8;
 /// a lossy conversion if the path contains any unpaired surrogates.
 /// Unpaired surrogates are replaced by the replacement character (U+FFFD).
 pub const fmtWtf16LeAsUtf8Lossy = std.unicode.fmtUtf16Le;
+
+/// Similar to `RTL_PATH_TYPE`, but without the `UNKNOWN` path type.
+pub const Win32PathType = enum {
+    /// `\\server\share\foo`
+    unc_absolute,
+    /// `C:\foo`
+    drive_absolute,
+    /// `C:foo`
+    drive_relative,
+    /// `\foo`
+    rooted,
+    /// `foo`
+    relative,
+    /// `\\.\foo`, `\\?\foo`
+    local_device,
+    /// `\\.`, `\\?`
+    root_local_device,
+};
+
+/// Get the path type of a Win32 namespace path.
+/// Similar to `RtlDetermineDosPathNameType_U`.
+/// If `T` is `u16`, then `path` should be encoded as WTF-16LE.
+pub fn getWin32PathType(comptime T: type, path: []const T) Win32PathType {
+    if (path.len < 1) return .relative;
+
+    const windows_path = std.fs.path.PathType.windows;
+    if (windows_path.isSep(T, path[0])) {
+        // \x
+        if (path.len < 2 or !windows_path.isSep(T, path[1])) return .rooted;
+        // \\. or \\?
+        if (path.len > 2 and (path[2] == mem.nativeToLittle(T, '.') or path[2] == mem.nativeToLittle(T, '?'))) {
+            // exactly \\. or \\? with nothing trailing
+            if (path.len == 3) return .root_local_device;
+            // \\.\x or \\?\x
+            if (windows_path.isSep(T, path[3])) return .local_device;
+        }
+        // \\x
+        return .unc_absolute;
+    } else {
+        // Some choice has to be made about how non-ASCII code points as drive-letters are handled, since
+        // path[0] is a different size for WTF-16 vs WTF-8, leading to a potential mismatch in classification
+        // for a WTF-8 path and its WTF-16 equivalent. For example, `€:\` encoded in WTF-16 is three code
+        // units `<0x20AC>:\` whereas `€:\` encoded as WTF-8 is 6 code units `<0xE2><0x82><0xAC>:\` so
+        // checking path[0], path[1] and path[2] would not behave the same between WTF-8/WTF-16.
+        //
+        // `RtlDetermineDosPathNameType_U` exclusively deals with WTF-16 and considers
+        // `€:\` a drive-absolute path, but code points that take two WTF-16 code units to encode get
+        // classified as a relative path (e.g. with U+20000 as the drive-letter that'd be encoded
+        // in WTF-16 as `<0xD840><0xDC00>:\` and be considered a relative path).
+        //
+        // The choice made here is to emulate the behavior of `RtlDetermineDosPathNameType_U` for both
+        // WTF-16 and WTF-8. This is because, while unlikely and not supported by the Disk Manager GUI,
+        // drive letters are not actually restricted to A-Z. Using `SetVolumeMountPointW` will allow you
+        // to set any byte value as a drive letter, and going through `IOCTL_MOUNTMGR_CREATE_POINT` will
+        // allow you to set any WTF-16 code unit as a drive letter.
+        //
+        // Non-A-Z drive letters don't interact well with most of Windows, but certain things do work, e.g.
+        // `cd /D €:\` will work, filesystem functions still work, etc.
+        //
+        // The unfortunate part of this is that this makes handling WTF-8 more complicated as we can't
+        // just check path[0], path[1], path[2].
+        const colon_i: usize = switch (T) {
+            u8 => i: {
+                const code_point_len = std.unicode.utf8ByteSequenceLength(path[0]) catch return .relative;
+                // Conveniently, 4-byte sequences in WTF-8 have the same starting code point
+                // as 2-code-unit sequences in WTF-16.
+                if (code_point_len > 3) return .relative;
+                break :i code_point_len;
+            },
+            u16 => 1,
+            else => @compileError("unsupported type: " ++ @typeName(T)),
+        };
+        // x
+        if (path.len < colon_i + 1 or path[colon_i] != mem.nativeToLittle(T, ':')) return .relative;
+        // x:\
+        if (path.len > colon_i + 1 and windows_path.isSep(T, path[colon_i + 1])) return .drive_absolute;
+        // x:
+        return .drive_relative;
+    }
+}
+
+test getWin32PathType {
+    try std.testing.expectEqual(.relative, getWin32PathType(u8, ""));
+    try std.testing.expectEqual(.relative, getWin32PathType(u8, "x"));
+    try std.testing.expectEqual(.relative, getWin32PathType(u8, "x\\"));
+
+    try std.testing.expectEqual(.root_local_device, getWin32PathType(u8, "//."));
+    try std.testing.expectEqual(.root_local_device, getWin32PathType(u8, "/\\?"));
+    try std.testing.expectEqual(.root_local_device, getWin32PathType(u8, "\\\\?"));
+
+    try std.testing.expectEqual(.local_device, getWin32PathType(u8, "//./x"));
+    try std.testing.expectEqual(.local_device, getWin32PathType(u8, "/\\?\\x"));
+    try std.testing.expectEqual(.local_device, getWin32PathType(u8, "\\\\?\\x"));
+    // local device paths require a path separator after the root, otherwise it is considered a UNC path
+    try std.testing.expectEqual(.unc_absolute, getWin32PathType(u8, "\\\\?x"));
+    try std.testing.expectEqual(.unc_absolute, getWin32PathType(u8, "//.x"));
+
+    try std.testing.expectEqual(.unc_absolute, getWin32PathType(u8, "//"));
+    try std.testing.expectEqual(.unc_absolute, getWin32PathType(u8, "\\\\x"));
+    try std.testing.expectEqual(.unc_absolute, getWin32PathType(u8, "//x"));
+
+    try std.testing.expectEqual(.rooted, getWin32PathType(u8, "\\x"));
+    try std.testing.expectEqual(.rooted, getWin32PathType(u8, "/"));
+
+    try std.testing.expectEqual(.drive_relative, getWin32PathType(u8, "x:"));
+    try std.testing.expectEqual(.drive_relative, getWin32PathType(u8, "x:abc"));
+    try std.testing.expectEqual(.drive_relative, getWin32PathType(u8, "x:a/b/c"));
+
+    try std.testing.expectEqual(.drive_absolute, getWin32PathType(u8, "x:\\"));
+    try std.testing.expectEqual(.drive_absolute, getWin32PathType(u8, "x:\\abc"));
+    try std.testing.expectEqual(.drive_absolute, getWin32PathType(u8, "x:/a/b/c"));
+
+    // Non-ASCII code point that is encoded as one WTF-16 code unit is considered a valid drive letter
+    try std.testing.expectEqual(.drive_absolute, getWin32PathType(u8, "€:\\"));
+    try std.testing.expectEqual(.drive_absolute, getWin32PathType(u16, std.unicode.wtf8ToWtf16LeStringLiteral("€:\\")));
+    try std.testing.expectEqual(.drive_relative, getWin32PathType(u8, "€:"));
+    try std.testing.expectEqual(.drive_relative, getWin32PathType(u16, std.unicode.wtf8ToWtf16LeStringLiteral("€:")));
+    // But code points that are encoded as two WTF-16 code units are not
+    try std.testing.expectEqual(.relative, getWin32PathType(u8, "\u{10000}:\\"));
+    try std.testing.expectEqual(.relative, getWin32PathType(u16, std.unicode.wtf8ToWtf16LeStringLiteral("\u{10000}:\\")));
+}
