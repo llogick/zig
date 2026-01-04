@@ -527,7 +527,7 @@ test "rename smoke test" {
         // Create some directory
         const file_path = try Dir.path.join(gpa, &.{ base_path, "some_dir" });
         defer gpa.free(file_path);
-        try posix.mkdir(file_path, mode);
+        try Io.Dir.createDirAbsolute(io, file_path, .fromMode(mode));
 
         // Rename the directory
         const new_file_path = try Dir.path.join(gpa, &.{ base_path, "some_other_dir" });
