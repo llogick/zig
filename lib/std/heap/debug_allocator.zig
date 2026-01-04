@@ -1350,7 +1350,10 @@ test "non-page-allocator backing allocator" {
 }
 
 test "realloc large object to larger alignment" {
-    if (!builtin.link_libc and builtin.os.tag == .wasi) return error.SkipZigTest; // https://github.com/ziglang/zig/issues/22731
+    if (builtin.os.tag == .wasi) {
+        // https://github.com/ziglang/zig/issues/22731
+        return error.SkipZigTest;
+    }
 
     var gpa = DebugAllocator(test_config){};
     defer std.testing.expect(gpa.deinit() == .ok) catch @panic("leak");
