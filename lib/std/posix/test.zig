@@ -131,7 +131,7 @@ test "pipe" {
     if (native_os == .windows or native_os == .wasi)
         return error.SkipZigTest;
 
-    const fds = try posix.pipe();
+    const fds = try std.Io.Threaded.pipe2(.{});
     try expect((try posix.write(fds[1], "hello")) == 5);
     var buf: [16]u8 = undefined;
     try expect((try posix.read(fds[0], buf[0..])) == 5);

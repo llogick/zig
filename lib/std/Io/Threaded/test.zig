@@ -187,7 +187,7 @@ test "cancel blocked read from pipe" {
             .bInheritHandle = std.os.windows.FALSE,
         }),
         else => {
-            const pipe = try std.posix.pipe();
+            const pipe = try std.Io.Threaded.pipe2(.{});
             read_end = .{ .handle = pipe[0] };
             write_end = .{ .handle = pipe[1] };
         },
