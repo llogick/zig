@@ -564,3 +564,14 @@ test "tasks spawned in group after Group.cancel are canceled" {
     try io.sleep(.fromMilliseconds(10), .awake); // let that first sleep start up
     try group.concurrent(io, global.waitThenSpawn, .{ io, &group });
 }
+
+test "CSPRNG" {
+    const io = testing.io;
+
+    var random = io.random();
+
+    const a = random.int(u64);
+    const b = random.int(u64);
+    const c = random.int(u64);
+    try std.testing.expect(a ^ b ^ c != 0);
+}

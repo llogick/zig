@@ -235,9 +235,6 @@ pub const nacl = struct {
 /// Finite-field arithmetic.
 pub const ff = @import("crypto/ff.zig");
 
-/// This is a thread-local, cryptographically secure pseudo random number generator.
-pub const random = @import("crypto/tlcsprng.zig").interface;
-
 /// Encoding and decoding
 pub const codecs = @import("crypto/codecs.zig");
 
@@ -364,18 +361,10 @@ test {
     _ = secureZero;
     _ = timing_safe;
     _ = ff;
-    _ = random;
     _ = errors;
     _ = tls;
     _ = Certificate;
     _ = codecs;
-}
-
-test "CSPRNG" {
-    const a = random.int(u64);
-    const b = random.int(u64);
-    const c = random.int(u64);
-    try std.testing.expect(a ^ b ^ c != 0);
 }
 
 test "issue #4532: no index out of bounds" {

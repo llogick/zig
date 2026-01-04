@@ -137,12 +137,6 @@ pub const Options = struct {
 
     fmt_max_depth: usize = fmt.default_max_depth,
 
-    cryptoRandomSeed: fn (buffer: []u8) void = @import("crypto/tlcsprng.zig").defaultRandomSeed,
-
-    crypto_always_getrandom: bool = false,
-
-    crypto_fork_safety: bool = true,
-
     /// By default, std.http.Client will support HTTPS connections.  Set this option to `true` to
     /// disable TLS support.
     ///

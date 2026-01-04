@@ -731,6 +731,8 @@ pub const VTable = struct {
     now: *const fn (?*anyopaque, Clock) Clock.Error!Timestamp,
     sleep: *const fn (?*anyopaque, Timeout) SleepError!void,
 
+    random: *const fn (?*anyopaque, buffer: []u8) RandomError!void,
+
     netListenIp: *const fn (?*anyopaque, address: net.IpAddress, net.IpAddress.ListenOptions) net.IpAddress.ListenError!net.Server,
     netAccept: *const fn (?*anyopaque, server: net.Socket.Handle) net.Server.AcceptError!net.Stream,
     netBindIp: *const fn (?*anyopaque, address: *const net.IpAddress, options: net.IpAddress.BindOptions) net.IpAddress.BindError!net.Socket,
@@ -2241,4 +2243,11 @@ pub fn tryLockStderr(io: Io, buffer: []u8, terminal_mode: ?Terminal.Mode) Cancel
 
 pub fn unlockStderr(io: Io) void {
     return io.vtable.unlockStderr(io.userdata);
+}
+
+pub const RandomError = error{EntropyUnavailable} || Cancelable;
+
+/// Threadsafe.
+pub fn random(io: Io, buffer: []u8) RandomError!void {
+    return io.vtable.random(io.userdata, buffer);
 }

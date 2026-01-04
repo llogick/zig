@@ -1,15 +1,13 @@
 //! The engines provided here should be initialized from an external source.
-//! For a thread-local cryptographically secure pseudo random number generator,
-//! use `std.crypto.random`.
 //! Be sure to use a CSPRNG when required, otherwise using a normal PRNG will
 //! be faster and use substantially less stack space.
+const Random = @This();
 
 const std = @import("std.zig");
 const math = std.math;
 const mem = std.mem;
 const assert = std.debug.assert;
 const maxInt = std.math.maxInt;
-const Random = @This();
 
 /// Fast unbiased random numbers.
 pub const DefaultPrng = Xoshiro256;

@@ -65,6 +65,7 @@ argv0: Argv0,
 environ: Environ,
 
 null_file: NullFile = .{},
+dev_urandom_fd: dev_urandom_fd_t,
 
 pub const Argv0 = switch (native_os) {
     .openbsd, .haiku => struct {
@@ -584,6 +585,10 @@ const Thread = struct {
     cancel_protection: Io.CancelProtection,
     /// Always released when `Status.cancelation` is set to `.parked`.
     futex_waiter: if (use_parking_futex) ?*parking_futex.Waiter else ?noreturn,
+
+    random_buffer: [128]u8,
+    /// How many bytes of `random_buffer` are filled.
+    random_i: usize,
 
     const Handle = Handle: {
         if (std.Thread.use_pthreads) break :Handle std.c.pthread_t;
@@ -1285,6 +1290,9 @@ pub fn deinit(t: *Threaded) void {
         if (have_sig_pipe) posix.sigaction(.PIPE, &t.old_sig_pipe, null);
     }
     t.null_file.deinit();
+    if (use_dev_urandom and t.dev_urandom_fd != -1) {
+        posix.close(t.dev_urandom_fd);
+    }
     t.* = undefined;
 }
 
@@ -1466,6 +1474,8 @@ pub fn io(t: *Threaded) Io {
             .now = now,
             .sleep = sleep,
 
+            .random = random,
+
             .netListenIp = switch (native_os) {
                 .windows => netListenIpWindows,
                 else => netListenIpPosix,
@@ -1614,6 +1624,8 @@ pub fn ioBasic(t: *Threaded) Io {
             .now = now,
             .sleep = sleep,
 
+            .random = random,
+
             .netListenIp = netListenIpUnavailable,
             .netListenUnix = netListenUnixUnavailable,
             .netAccept = netAcceptUnavailable,
@@ -1703,6 +1715,26 @@ const linux_copy_file_range_use_c = std.c.versionCheck(if (builtin.abi.isAndroid
     .patch = 0,
 });
 const linux_copy_file_range_sys = if (linux_copy_file_range_use_c) std.c else std.os.linux;
+
+const statx_use_c = std.c.versionCheck(if (builtin.abi.isAndroid())
+    .{ .major = 30, .minor = 0, .patch = 0 }
+else
+    .{ .major = 2, .minor = 28, .patch = 0 });
+
+const getrandom_use_libc = @TypeOf(posix.system.getrandom) != void and (native_os != .linux or
+    std.c.versionCheck(if (builtin.abi.isAndroid()) .{
+        .major = 28,
+        .minor = 0,
+        .patch = 0,
+    } else .{
+        .major = 2,
+        .minor = 25,
+        .patch = 0,
+    }));
+
+const use_dev_urandom = getrandom_use_libc and native_os == .linux;
+
+const dev_urandom_fd_t = if (use_dev_urandom) posix.fd_t else void;
 
 fn async(
     userdata: ?*anyopaque,
@@ -2538,11 +2570,7 @@ fn dirStatFileLinux(
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     _ = t;
     const linux = std.os.linux;
-    const use_c = std.c.versionCheck(if (builtin.abi.isAndroid())
-        .{ .major = 30, .minor = 0, .patch = 0 }
-    else
-        .{ .major = 2, .minor = 28, .patch = 0 });
-    const sys = if (use_c) std.c else std.os.linux;
+    const sys = if (statx_use_c) std.c else std.os.linux;
 
     var path_buffer: [posix.PATH_MAX]u8 = undefined;
     const sub_path_posix = try pathToPosix(sub_path, &path_buffer);
@@ -2778,11 +2806,7 @@ fn fileStatLinux(userdata: ?*anyopaque, file: File) File.StatError!File.Stat {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     _ = t;
     const linux = std.os.linux;
-    const use_c = std.c.versionCheck(if (builtin.abi.isAndroid())
-        .{ .major = 30, .minor = 0, .patch = 0 }
-    else
-        .{ .major = 2, .minor = 28, .patch = 0 });
-    const sys = if (use_c) std.c else std.os.linux;
+    const sys = if (statx_use_c) std.c else std.os.linux;
 
     const syscall: Syscall = try .start();
     while (true) {
@@ -6318,11 +6342,6 @@ fn fchmodatFallback(
     mode: posix.mode_t,
 ) Dir.SetFilePermissionsError!void {
     comptime assert(native_os == .linux);
-    const use_c = std.c.versionCheck(if (builtin.abi.isAndroid())
-        .{ .major = 30, .minor = 0, .patch = 0 }
-    else
-        .{ .major = 2, .minor = 28, .patch = 0 });
-    const sys = if (use_c) std.c else std.os.linux;
 
     // Fallback to changing permissions using procfs:
     //
@@ -6369,6 +6388,7 @@ fn fchmodatFallback(
     defer posix.close(path_fd);
 
     const path_mode = mode: {
+        const sys = if (statx_use_c) std.c else std.os.linux;
         const syscall: Syscall = try .start();
         while (true) {
             var statx = std.mem.zeroes(std.os.linux.Statx);
@@ -14933,6 +14953,213 @@ fn progressParentFile(userdata: ?*anyopaque) std.Progress.ParentFileError!File {
 pub fn environString(t: *Threaded, comptime name: []const u8) ?[:0]const u8 {
     t.scanEnviron();
     return @field(t.environ.string, name);
+}
+
+fn random(userdata: ?*anyopaque, buffer: []u8) Io.RandomError!void {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+
+    if (is_windows) {
+        // Call RtlGenRandom() instead of CryptGetRandom() on Windows
+        // https://github.com/rust-lang-nursery/rand/issues/111
+        // https://bugzilla.mozilla.org/show_bug.cgi?id=504270
+        const max_read_size: windows.ULONG = std.math.maxInt(windows.ULONG);
+        var i: usize = 0;
+        while (i < buffer.len) {
+            const buf = buffer[i..];
+            const request_n: windows.ULONG = @min(buf.len, max_read_size);
+            const syscall: Syscall = try .start();
+            const result = windows.advapi32.RtlGenRandom(buf.ptr, request_n);
+            syscall.finish();
+            if (result == 0) {
+                // `RtlGenRandom` has been observed to fail in situations where
+                // the system is under heavy load. Unfortunately, it does not
+                // call `SetLastError`, so it is not possible to get more
+                // specific error information; it could actually be due to an
+                // out-of-memory condition, for example.
+                return error.EntropyUnavailable;
+            }
+            i += request_n;
+        }
+        return;
+    }
+
+    if (builtin.link_libc and @TypeOf(posix.system.arc4random_buf) != void) {
+        posix.system.arc4random_buf(buffer.ptr, buffer.len);
+        return;
+    }
+
+    if (native_os == .wasi) {
+        const syscall: Syscall = try .start();
+        while (true) switch (std.os.wasi.random_get(buffer.ptr, buffer.len)) {
+            .SUCCESS => return syscall.finish(),
+            .INTR => {
+                try syscall.checkCancel();
+                continue;
+            },
+            else => return syscall.fail(error.EntropyUnavailable),
+        };
+    }
+
+    if (@TypeOf(posix.system.getrandom) != void) {
+        const getrandom = if (getrandom_use_libc) std.c.getrandom else std.os.linux.getrandom;
+        var i: usize = 0;
+        const syscall: Syscall = try .start();
+        while (i < buffer.len) {
+            const buf = buffer[i..];
+            const rc = getrandom(buf.ptr, buf.len, 0);
+            switch (posix.errno(rc)) {
+                .SUCCESS => {
+                    syscall.finish();
+                    const n: usize = @intCast(rc);
+                    i += n;
+                    continue;
+                },
+                .INTR => {
+                    try syscall.checkCancel();
+                    continue;
+                },
+                else => return syscall.fail(error.EntropyUnavailable),
+            }
+        }
+        return;
+    }
+
+    if (native_os == .emscripten) {
+        const err = posix.errno(std.c.getentropy(buffer.ptr, buffer.len));
+        switch (err) {
+            .SUCCESS => return,
+            else => return error.EntropyUnavailable,
+        }
+    }
+
+    const urandom_fd = try getRandomFd(t);
+
+    var i: usize = 0;
+    while (buffer.len - i != 0) {
+        const syscall: Syscall = try .start();
+        const rc = posix.system.read(urandom_fd, buffer[i..].ptr, buffer.len - i);
+        switch (posix.errno(rc)) {
+            .SUCCESS => {
+                syscall.finish();
+                const n: usize = @intCast(rc);
+                if (n == 0) {
+                    if (buffer.len - i != 0) {
+                        return error.EntropyUnavailable;
+                    } else {
+                        return;
+                    }
+                }
+                i += n;
+                continue;
+            },
+            .INTR => {
+                try syscall.checkCancel();
+                continue;
+            },
+            else => return syscall.fail(error.EntropyUnavailable),
+        }
+    }
+}
+
+fn getRandomFd(t: *Threaded) posix.fd_t {
+    {
+        t.mutex.lock();
+        defer t.mutex.unlock();
+
+        if (t.dev_urandom_fd == -2) return error.EntropyUnavailable;
+        if (t.dev_urandom_fd != -1) return t.dev_urandom_fd;
+    }
+
+    const fd: posix.fd_t = fd: {
+        const syscall: Syscall = try .start();
+        while (true) {
+            const rc = openat_sym(posix.AT.FDCWD, "/dev/urandom", .{
+                .ACCMODE = .RDONLY,
+                .CLOEXEC = true,
+            }, 0);
+            switch (posix.errno(rc)) {
+                .SUCCESS => {
+                    syscall.finish();
+                    break :fd @intCast(rc);
+                },
+                .INTR => {
+                    try syscall.checkCancel();
+                    continue;
+                },
+                else => {
+                    syscall.endSyscall();
+                    t.dev_urandom_fd = -2;
+                    return error.EntropyUnavailable;
+                },
+            }
+        }
+    };
+    errdefer posix.close(fd);
+
+    switch (native_os) {
+        .linux => {
+            const sys = if (statx_use_c) std.c else std.os.linux;
+            const syscall: Syscall = try .start();
+            while (true) {
+                var statx = std.mem.zeroes(std.os.linux.Statx);
+                switch (sys.errno(sys.statx(fd, "", std.os.linux.AT.EMPTY_PATH, .{ .TYPE = true }, &statx))) {
+                    .SUCCESS => {
+                        syscall.finish();
+                        if (!statx.mask.TYPE) return error.Unexpected;
+                        t.mutex.lock(); // Another thread might have won the race.
+                        defer t.mutex.unlock();
+                        if (t.dev_urandom_fd >= 0) {
+                            posix.close(fd);
+                            return t.dev_urandom_fd;
+                        } else if (!posix.S.ISCHR(statx.mode)) {
+                            t.dev_urandom_fd = -2;
+                            return error.EntropyUnavailable;
+                        } else {
+                            t.dev_urandom_fd = fd;
+                            return fd;
+                        }
+                    },
+                    .INTR => {
+                        try syscall.checkCancel();
+                        continue;
+                    },
+                    else => {
+                        t.dev_urandom_fd = -2;
+                        return error.EntropyUnavailable;
+                    },
+                }
+            }
+        },
+        else => {
+            const syscall: Syscall = try .start();
+            while (true) {
+                var stat = std.mem.zeroes(posix.Stat);
+                switch (posix.errno(fstat_sym(fd, &stat))) {
+                    .SUCCESS => {
+                        syscall.finish();
+                        if (t.dev_urandom_fd >= 0) {
+                            posix.close(fd);
+                            return t.dev_urandom_fd;
+                        } else if (!posix.S.ISCHR(stat.mode)) {
+                            t.dev_urandom_fd = -2;
+                            return error.EntropyUnavailable;
+                        } else {
+                            t.dev_urandom_fd = fd;
+                            return fd;
+                        }
+                    },
+                    .INTR => {
+                        try syscall.checkCancel();
+                        continue;
+                    },
+                    else => {
+                        t.dev_urandom_fd = -2;
+                        return error.EntropyUnavailable;
+                    },
+                }
+            }
+        },
+    }
 }
 
 test {
