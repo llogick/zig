@@ -433,37 +433,6 @@ test "sigset add/del" {
     }
 }
 
-test "dup & dup2" {
-    switch (native_os) {
-        .linux, .illumos => {},
-        else => return error.SkipZigTest,
-    }
-
-    const io = testing.io;
-
-    var tmp = tmpDir(.{});
-    defer tmp.cleanup();
-
-    {
-        var file = try tmp.dir.createFile(io, "os_dup_test", .{});
-        defer file.close(io);
-
-        var duped = Io.File{ .handle = try posix.dup(file.handle) };
-        defer duped.close(io);
-        try duped.writeStreamingAll(io, "dup");
-
-        // Tests aren't run in parallel so using the next fd shouldn't be an issue.
-        const new_fd = duped.handle + 1;
-        try posix.dup2(file.handle, new_fd);
-        var dup2ed = Io.File{ .handle = new_fd };
-        defer dup2ed.close(io);
-        try dup2ed.writeStreamingAll(io, "dup2");
-    }
-
-    var buffer: [8]u8 = undefined;
-    try expectEqualStrings("dupdup2", try tmp.dir.readFile(io, "os_dup_test", &buffer));
-}
-
 test "getpid" {
     if (native_os == .wasi) return error.SkipZigTest;
     if (native_os == .windows) return error.SkipZigTest;

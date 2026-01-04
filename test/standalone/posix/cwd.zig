@@ -31,7 +31,7 @@ fn test_chdir_self() !void {
     const old_cwd = try std.posix.getcwd(old_cwd_buf[0..]);
 
     // Try changing to the current directory
-    try std.posix.chdir(old_cwd);
+    try std.Io.Threaded.chdir(old_cwd);
     try expect_cwd(old_cwd);
 }
 
@@ -42,7 +42,7 @@ fn test_chdir_absolute() !void {
     const parent = std.fs.path.dirname(old_cwd) orelse unreachable; // old_cwd should be absolute
 
     // Try changing to the parent via a full path
-    try std.posix.chdir(parent);
+    try std.Io.Threaded.chdir(parent);
 
     try expect_cwd(parent);
 }
@@ -63,7 +63,7 @@ fn test_chdir_relative(gpa: Allocator, io: Io) !void {
     defer gpa.free(expected_path);
 
     // change current working directory to new test directory
-    try std.posix.chdir(relative_dir_name);
+    try std.Io.Threaded.chdir(relative_dir_name);
 
     var new_cwd_buf: [path_max]u8 = undefined;
     const new_cwd = try std.posix.getcwd(new_cwd_buf[0..]);

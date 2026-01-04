@@ -772,29 +772,6 @@ pub fn openatZ(dir_fd: fd_t, file_path: [*:0]const u8, flags: O, mode: mode_t) O
     }
 }
 
-pub fn dup(old_fd: fd_t) !fd_t {
-    const rc = system.dup(old_fd);
-    return switch (errno(rc)) {
-        .SUCCESS => return @intCast(rc),
-        .MFILE => error.ProcessFdQuotaExceeded,
-        .BADF => unreachable, // invalid file descriptor
-        else => |err| return unexpectedErrno(err),
-    };
-}
-
-pub fn dup2(old_fd: fd_t, new_fd: fd_t) !void {
-    while (true) {
-        switch (errno(system.dup2(old_fd, new_fd))) {
-            .SUCCESS => return,
-            .BUSY, .INTR => continue,
-            .MFILE => return error.ProcessFdQuotaExceeded,
-            .INVAL => unreachable, // invalid parameters passed to dup2
-            .BADF => unreachable, // invalid file descriptor
-            else => |err| return unexpectedErrno(err),
-        }
-    }
-}
-
 pub fn getppid() pid_t {
     return system.getppid();
 }
@@ -829,85 +806,6 @@ pub fn getcwd(out_buffer: []u8) GetCwdError![]u8 {
         .NOENT => return error.CurrentWorkingDirectoryUnlinked,
         .RANGE => return error.NameTooLong,
         else => return unexpectedErrno(err),
-    }
-}
-
-/// Same as `mkdir` but the parameter is null-terminated.
-/// On Windows, `dir_path` should be encoded as [WTF-8](https://wtf-8.codeberg.page/).
-/// On WASI, `dir_path` should be encoded as valid UTF-8.
-/// On other platforms, `dir_path` is an opaque sequence of bytes with no particular encoding.
-pub const ChangeCurDirError = error{
-    AccessDenied,
-    FileSystem,
-    SymLinkLoop,
-    NameTooLong,
-    FileNotFound,
-    SystemResources,
-    NotDir,
-    /// WASI: file paths must be valid UTF-8.
-    /// Windows: file paths provided by the user must be valid WTF-8.
-    /// https://wtf-8.codeberg.page/
-    BadPathName,
-} || UnexpectedError;
-
-/// Changes the current working directory of the calling process.
-/// On Windows, `dir_path` should be encoded as [WTF-8](https://wtf-8.codeberg.page/).
-/// On WASI, `dir_path` should be encoded as valid UTF-8.
-/// On other platforms, `dir_path` is an opaque sequence of bytes with no particular encoding.
-pub fn chdir(dir_path: []const u8) ChangeCurDirError!void {
-    if (native_os == .wasi and !builtin.link_libc) {
-        @compileError("unsupported OS");
-    } else if (native_os == .windows) {
-        @compileError("unsupported OS");
-    } else {
-        const dir_path_c = try toPosixPath(dir_path);
-        return chdirZ(&dir_path_c);
-    }
-}
-
-/// Same as `chdir` except the parameter is null-terminated.
-/// On Windows, `dir_path` should be encoded as [WTF-8](https://wtf-8.codeberg.page/).
-/// On WASI, `dir_path` should be encoded as valid UTF-8.
-/// On other platforms, `dir_path` is an opaque sequence of bytes with no particular encoding.
-pub fn chdirZ(dir_path: [*:0]const u8) ChangeCurDirError!void {
-    if (native_os == .windows) {
-        @compileError("unsupported OS");
-    } else if (native_os == .wasi and !builtin.link_libc) {
-        @compileError("unsupported OS");
-    }
-    switch (errno(system.chdir(dir_path))) {
-        .SUCCESS => return,
-        .ACCES => return error.AccessDenied,
-        .FAULT => unreachable,
-        .IO => return error.FileSystem,
-        .LOOP => return error.SymLinkLoop,
-        .NAMETOOLONG => return error.NameTooLong,
-        .NOENT => return error.FileNotFound,
-        .NOMEM => return error.SystemResources,
-        .NOTDIR => return error.NotDir,
-        .ILSEQ => return error.BadPathName,
-        else => |err| return unexpectedErrno(err),
-    }
-}
-
-pub const FchdirError = error{
-    AccessDenied,
-    NotDir,
-    FileSystem,
-} || UnexpectedError;
-
-pub fn fchdir(dirfd: fd_t) FchdirError!void {
-    if (dirfd == AT.FDCWD) return;
-    while (true) {
-        switch (errno(system.fchdir(dirfd))) {
-            .SUCCESS => return,
-            .ACCES => return error.AccessDenied,
-            .BADF => unreachable,
-            .NOTDIR => return error.NotDir,
-            .INTR => continue,
-            .IO => return error.FileSystem,
-            else => |err| return unexpectedErrno(err),
-        }
     }
 }
 
@@ -950,16 +848,6 @@ pub fn setgid(gid: gid_t) SetIdError!void {
 pub fn setegid(uid: uid_t) SetEidError!void {
     switch (errno(system.setegid(uid))) {
         .SUCCESS => return,
-        .INVAL => return error.InvalidUserId,
-        .PERM => return error.PermissionDenied,
-        else => |err| return unexpectedErrno(err),
-    }
-}
-
-pub fn setregid(rgid: gid_t, egid: gid_t) SetIdError!void {
-    switch (errno(system.setregid(rgid, egid))) {
-        .SUCCESS => return,
-        .AGAIN => return error.ResourceLimitReached,
         .INVAL => return error.InvalidUserId,
         .PERM => return error.PermissionDenied,
         else => |err| return unexpectedErrno(err),

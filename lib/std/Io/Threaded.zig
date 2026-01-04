@@ -1456,8 +1456,8 @@ pub fn io(t: *Threaded) Io {
             .processReplacePath = processReplacePath,
             .processSpawn = processSpawn,
             .processSpawnPath = processSpawnPath,
-            .childWait = childWait, // TODO audit for cancelation and unreachable
-            .childKill = childKill, // TODO audit for cancelation and unreachable
+            .childWait = childWait,
+            .childKill = childKill,
 
             .progressParentFile = progressParentFile,
 
@@ -11853,38 +11853,7 @@ fn processSetCurrentDir(userdata: ?*anyopaque, dir: Dir) process.SetCurrentDirEr
         };
     }
 
-    if (dir.handle == posix.AT.FDCWD) return;
-
-    const syscall: Syscall = try .start();
-    while (true) {
-        switch (posix.errno(posix.system.fchdir(dir.handle))) {
-            .SUCCESS => return syscall.finish(),
-            .INTR => {
-                try syscall.checkCancel();
-                continue;
-            },
-            .ACCES => {
-                syscall.finish();
-                return error.AccessDenied;
-            },
-            .BADF => |err| {
-                syscall.finish();
-                return errnoBug(err);
-            },
-            .NOTDIR => {
-                syscall.finish();
-                return error.NotDir;
-            },
-            .IO => {
-                syscall.finish();
-                return error.FileSystem;
-            },
-            else => |err| {
-                syscall.finish();
-                return posix.unexpectedErrno(err);
-            },
-        }
-    }
+    return fchdir(dir.handle);
 }
 
 pub const PosixAddress = extern union {
@@ -12960,57 +12929,64 @@ fn spawnPosix(t: *Threaded, options: process.SpawnOptions) process.SpawnError!Sp
     };
 
     if (pid_result == 0) {
-        // We are the child.
+        defer comptime unreachable; // We are the child.
         if (Thread.current) |current_thread| current_thread.cancel_protection = .blocked;
+        const ep1 = err_pipe[1];
 
-        setUpChildIo(options.stdin, stdin_pipe[0], posix.STDIN_FILENO, dev_null_fd) catch |err| forkBail(err_pipe[1], err);
-        setUpChildIo(options.stdout, stdout_pipe[1], posix.STDOUT_FILENO, dev_null_fd) catch |err| forkBail(err_pipe[1], err);
-        setUpChildIo(options.stderr, stderr_pipe[1], posix.STDERR_FILENO, dev_null_fd) catch |err| forkBail(err_pipe[1], err);
+        setUpChildIo(options.stdin, stdin_pipe[0], posix.STDIN_FILENO, dev_null_fd) catch |err| forkBail(ep1, err);
+        setUpChildIo(options.stdout, stdout_pipe[1], posix.STDOUT_FILENO, dev_null_fd) catch |err| forkBail(ep1, err);
+        setUpChildIo(options.stderr, stderr_pipe[1], posix.STDERR_FILENO, dev_null_fd) catch |err| forkBail(ep1, err);
 
         if (options.cwd_dir) |cwd| {
-            posix.fchdir(cwd.handle) catch |err| forkBail(err_pipe[1], err);
+            fchdir(cwd.handle) catch |err| forkBail(ep1, err);
         } else if (options.cwd) |cwd| {
-            posix.chdir(cwd) catch |err| forkBail(err_pipe[1], err);
+            chdir(cwd) catch |err| forkBail(ep1, err);
         }
 
         // Must happen after fchdir above, the cwd file descriptor might be
         // equal to prog_fileno and be clobbered by this dup2 call.
-        if (prog_pipe[1] != -1) posix.dup2(prog_pipe[1], prog_fileno) catch |err| forkBail(err_pipe[1], err);
+        if (prog_pipe[1] != -1) dup2(prog_pipe[1], prog_fileno) catch |err| forkBail(ep1, err);
 
         if (options.gid) |gid| {
-            posix.setregid(gid, gid) catch |err| forkBail(err_pipe[1], err);
+            switch (posix.errno(posix.system.setregid(gid, gid))) {
+                .SUCCESS => {},
+                .AGAIN => forkBail(ep1, error.ResourceLimitReached),
+                .INVAL => forkBail(ep1, error.InvalidUserId),
+                .PERM => forkBail(ep1, error.PermissionDenied),
+                else => forkBail(ep1, error.Unexpected),
+            }
         }
 
         if (options.uid) |uid| {
             switch (posix.errno(posix.system.setreuid(uid, uid))) {
                 .SUCCESS => {},
-                .AGAIN => forkBail(err_pipe[1], error.ResourceLimitReached),
-                .INVAL => forkBail(err_pipe[1], error.InvalidUserId),
-                .PERM => forkBail(err_pipe[1], error.PermissionDenied),
-                else => forkBail(err_pipe[1], error.Unexpected),
+                .AGAIN => forkBail(ep1, error.ResourceLimitReached),
+                .INVAL => forkBail(ep1, error.InvalidUserId),
+                .PERM => forkBail(ep1, error.PermissionDenied),
+                else => forkBail(ep1, error.Unexpected),
             }
         }
 
         if (options.pgid) |pid| {
             switch (posix.errno(posix.system.setpgid(0, pid))) {
                 .SUCCESS => {},
-                .ACCES => forkBail(err_pipe[1], error.ProcessAlreadyExec),
-                .INVAL => forkBail(err_pipe[1], error.InvalidProcessGroupId),
-                .PERM => forkBail(err_pipe[1], error.PermissionDenied),
-                else => forkBail(err_pipe[1], error.Unexpected),
+                .ACCES => forkBail(ep1, error.ProcessAlreadyExec),
+                .INVAL => forkBail(ep1, error.InvalidProcessGroupId),
+                .PERM => forkBail(ep1, error.PermissionDenied),
+                else => forkBail(ep1, error.Unexpected),
             }
         }
 
         if (options.start_suspended) {
             switch (posix.errno(posix.system.kill(posix.system.getpid(), .STOP))) {
                 .SUCCESS => {},
-                .PERM => forkBail(err_pipe[1], error.PermissionDenied),
-                else => forkBail(err_pipe[1], error.Unexpected),
+                .PERM => forkBail(ep1, error.PermissionDenied),
+                else => forkBail(ep1, error.Unexpected),
             }
         }
 
         const err = posixExecv(options.expand_arg0, argv_buf.ptr[0].?, argv_buf.ptr, envp, PATH);
-        forkBail(err_pipe[1], err);
+        forkBail(ep1, err);
     }
 
     const pid: posix.pid_t = @intCast(pid_result); // We are the parent.
@@ -13050,9 +13026,10 @@ fn getDevNullFd(t: *Threaded) !posix.fd_t {
         defer t.mutex.unlock();
         if (t.null_file.fd != -1) return t.null_file.fd;
     }
+    const mode: u32 = 0;
     const syscall: Syscall = try .start();
     while (true) {
-        const rc = open_sym("/dev/null", .{ .ACCMODE = .RDWR }, 0);
+        const rc = open_sym("/dev/null", .{ .ACCMODE = .RDWR }, mode);
         switch (posix.errno(rc)) {
             .SUCCESS => {
                 syscall.finish();
@@ -13089,10 +13066,15 @@ fn processSpawnPosix(userdata: ?*anyopaque, options: process.SpawnOptions) proce
     defer posix.close(spawned.err_fd);
 
     // Wait for the child to report any errors in or before `execvpe`.
-    if (readIntFd(t, spawned.err_fd)) |child_err_int| {
+    if (readIntFd(spawned.err_fd)) |child_err_int| {
         const child_err: process.SpawnError = @errorCast(@errorFromInt(child_err_int));
         return child_err;
     } else |read_err| switch (read_err) {
+        error.Canceled => {
+            // We don't want to wait for the error to be reported, but we do
+            // need to return the child so that it can be cleaned up.
+            recancelInner();
+        },
         error.EndOfStream => {
             // Write end closed by CLOEXEC at the time of the `execvpe` call,
             // indicating success.
@@ -13159,7 +13141,7 @@ fn childKillWindows(t: *Threaded, child: *process.Child, exit_code: windows.UINT
 fn childWaitWindows(child: *process.Child) process.Child.WaitError!process.Child.Term {
     const handle = child.id.?;
 
-    var syscall: Syscall = try .start();
+    const syscall: Syscall = try .start();
     while (true) switch (windows.kernel32.WaitForSingleObjectEx(handle, windows.INFINITE, windows.FALSE)) {
         windows.WAIT_OBJECT_0 => break syscall.finish(),
         windows.WAIT_ABANDONED, windows.WAIT_TIMEOUT => {
@@ -13393,21 +13375,25 @@ fn writeIntFd(fd: posix.fd_t, value: ErrInt) !void {
     }
 }
 
-fn readIntFd(t: *Threaded, fd: posix.fd_t) !ErrInt {
-    _ = t; // TODO cancelation
+fn readIntFd(fd: posix.fd_t) !ErrInt {
     var buffer: [8]u8 = undefined;
     var i: usize = 0;
+    const syscall: Syscall = try .start();
     while (true) {
         const rc = posix.system.read(fd, buffer[i..].ptr, buffer.len - i);
         switch (posix.errno(rc)) {
             .SUCCESS => {
+                syscall.finish();
                 const n: usize = @intCast(rc);
                 if (n == 0) break;
                 i += n;
                 continue;
             },
-            .INTR => continue,
-            else => |err| return posix.unexpectedErrno(err),
+            .INTR => {
+                try syscall.checkCancel();
+                continue;
+            },
+            else => |err| return syscall.unexpectedErrno(err),
         }
     }
     if (buffer.len - i != 0) return error.EndOfStream;
@@ -13423,10 +13409,10 @@ fn destroyPipe(pipe: [2]posix.fd_t) void {
 
 fn setUpChildIo(stdio: process.SpawnOptions.StdIo, pipe_fd: i32, std_fileno: i32, dev_null_fd: i32) !void {
     switch (stdio) {
-        .pipe => try posix.dup2(pipe_fd, std_fileno),
+        .pipe => try dup2(pipe_fd, std_fileno),
         .close => posix.close(std_fileno),
         .inherit => {},
-        .ignore => try posix.dup2(dev_null_fd, std_fileno),
+        .ignore => try dup2(dev_null_fd, std_fileno),
         .file => @panic("TODO implement setUpChildIo when file is used"),
     }
 }
@@ -15288,4 +15274,82 @@ pub fn pipe2(flags: posix.O) PipeError![2]posix.fd_t {
     };
 
     return fds;
+}
+
+pub const DupError = error{
+    ProcessFdQuotaExceeded,
+    SystemResources,
+} || Io.UnexpectedError || Io.Cancelable;
+
+pub fn dup2(old_fd: posix.fd_t, new_fd: posix.fd_t) DupError!void {
+    const syscall: Syscall = try .start();
+    while (true) switch (posix.errno(posix.system.dup2(old_fd, new_fd))) {
+        .SUCCESS => return syscall.finish(),
+        .BUSY, .INTR => {
+            try syscall.checkCancel();
+            continue;
+        },
+        .INVAL => |err| return syscall.errnoBug(err), // invalid parameters
+        .BADF => |err| return syscall.errnoBug(err), // use after free
+        .MFILE => return syscall.fail(error.ProcessFdQuotaExceeded),
+        .NOMEM => return syscall.fail(error.SystemResources),
+        else => |err| return syscall.unexpectedErrno(err),
+    };
+}
+
+pub const FchdirError = error{
+    AccessDenied,
+    NotDir,
+    FileSystem,
+} || Io.Cancelable || Io.UnexpectedError;
+
+pub fn fchdir(fd: posix.fd_t) FchdirError!void {
+    if (fd == posix.AT.FDCWD) return;
+    const syscall: Syscall = try .start();
+    while (true) switch (posix.errno(posix.system.fchdir(fd))) {
+        .SUCCESS => return syscall.finish(),
+        .INTR => {
+            try syscall.checkCancel();
+            continue;
+        },
+        .ACCES => return syscall.fail(error.AccessDenied),
+        .NOTDIR => return syscall.fail(error.NotDir),
+        .IO => return syscall.fail(error.FileSystem),
+        .BADF => |err| return syscall.errnoBug(err),
+        else => |err| return syscall.unexpectedErrno(err),
+    };
+}
+
+pub const ChdirError = error{
+    AccessDenied,
+    FileSystem,
+    SymLinkLoop,
+    NameTooLong,
+    FileNotFound,
+    SystemResources,
+    NotDir,
+    BadPathName,
+} || Io.Cancelable || Io.UnexpectedError;
+
+pub fn chdir(dir_path: []const u8) ChdirError!void {
+    var path_buffer: [posix.PATH_MAX]u8 = undefined;
+    const dir_path_posix = try pathToPosix(dir_path, &path_buffer);
+    const syscall: Syscall = try .start();
+    while (true) switch (posix.errno(posix.system.chdir(dir_path_posix))) {
+        .SUCCESS => return syscall.finish(),
+        .INTR => {
+            try syscall.checkCancel();
+            continue;
+        },
+        .ACCES => return syscall.fail(error.AccessDenied),
+        .IO => return syscall.fail(error.FileSystem),
+        .LOOP => return syscall.fail(error.SymLinkLoop),
+        .NAMETOOLONG => return syscall.fail(error.NameTooLong),
+        .NOENT => return syscall.fail(error.FileNotFound),
+        .NOMEM => return syscall.fail(error.SystemResources),
+        .NOTDIR => return syscall.fail(error.NotDir),
+        .ILSEQ => return syscall.fail(error.BadPathName),
+        .FAULT => |err| return syscall.errnoBug(err),
+        else => |err| return syscall.unexpectedErrno(err),
+    };
 }
