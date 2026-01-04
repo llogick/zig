@@ -13780,7 +13780,29 @@ fn windowsCreateProcessPathExt(
         const prefixed_path = try windows.wToPrefixedFileW(null, dir_path_z);
         break :dir dirOpenDirWindows(.cwd(), prefixed_path.span(), .{
             .iterate = true,
-        }) catch return error.FileNotFound;
+        }) catch |err| switch (err) {
+            // These errors must not be ignored because they should not be able
+            // to affect which file is chosen to execute. Also `error.Canceled`
+            // must never be swallowed.
+            error.Canceled,
+            error.SystemResources,
+            error.Unexpected,
+            error.ProcessFdQuotaExceeded,
+            error.SystemFdQuotaExceeded,
+            => |e| return e,
+
+            error.AccessDenied,
+            error.PermissionDenied,
+            error.SymLinkLoop,
+            error.FileNotFound,
+            error.NotDir,
+            error.NoDevice,
+            error.NetworkNotFound,
+            error.NameTooLong,
+            error.BadPathName,
+            error.DeviceBusy,
+            => return error.FileNotFound,
+        };
     };
     defer windows.CloseHandle(dir.handle);
 
@@ -13984,55 +14006,67 @@ fn windowsCreateProcess(
     lpStartupInfo: *windows.STARTUPINFOW,
     lpProcessInformation: *windows.PROCESS_INFORMATION,
 ) !void {
-    if (windows.kernel32.CreateProcessW(
-        app_name,
-        cmd_line,
-        null,
-        null,
-        windows.TRUE,
-        flags,
-        env_ptr,
-        cwd_ptr,
-        lpStartupInfo,
-        lpProcessInformation,
-    ) == 0) switch (windows.GetLastError()) {
-        .FILE_NOT_FOUND => return error.FileNotFound,
-        .PATH_NOT_FOUND => return error.FileNotFound,
-        .DIRECTORY => return error.FileNotFound,
-        .ACCESS_DENIED => return error.AccessDenied,
-        .INVALID_PARAMETER => unreachable,
-        .INVALID_NAME => return error.InvalidName,
-        .FILENAME_EXCED_RANGE => return error.NameTooLong,
-        .SHARING_VIOLATION => return error.FileBusy,
+    const syscall: Syscall = try .start();
+    while (true) {
+        if (windows.kernel32.CreateProcessW(
+            app_name,
+            cmd_line,
+            null,
+            null,
+            windows.TRUE,
+            flags,
+            env_ptr,
+            cwd_ptr,
+            lpStartupInfo,
+            lpProcessInformation,
+        ) != 0) {
+            return syscall.finish();
+        } else switch (windows.GetLastError()) {
+            .INVALID_PARAMETER => unreachable,
+            .OPERATION_ABORTED => {
+                try syscall.checkCancel();
+                continue;
+            },
+            .FILE_NOT_FOUND => return syscall.fail(error.FileNotFound),
+            .PATH_NOT_FOUND => return syscall.fail(error.FileNotFound),
+            .DIRECTORY => return syscall.fail(error.FileNotFound),
+            .ACCESS_DENIED => return syscall.fail(error.AccessDenied),
+            .INVALID_NAME => return syscall.fail(error.InvalidName),
+            .FILENAME_EXCED_RANGE => return syscall.fail(error.NameTooLong),
+            .SHARING_VIOLATION => return syscall.fail(error.FileBusy),
+            .COMMITMENT_LIMIT => return syscall.fail(error.SystemResources),
 
-        // These are all the system errors that are mapped to ENOEXEC by
-        // the undocumented _dosmaperr (old CRT) or __acrt_errno_map_os_error
-        // (newer CRT) functions. Their code can be found in crt/src/dosmap.c (old SDK)
-        // or urt/misc/errno.cpp (newer SDK) in the Windows SDK.
-        .BAD_FORMAT,
-        .INVALID_STARTING_CODESEG, // MIN_EXEC_ERROR in errno.cpp
-        .INVALID_STACKSEG,
-        .INVALID_MODULETYPE,
-        .INVALID_EXE_SIGNATURE,
-        .EXE_MARKED_INVALID,
-        .BAD_EXE_FORMAT,
-        .ITERATED_DATA_EXCEEDS_64k,
-        .INVALID_MINALLOCSIZE,
-        .DYNLINK_FROM_INVALID_RING,
-        .IOPL_NOT_ENABLED,
-        .INVALID_SEGDPL,
-        .AUTODATASEG_EXCEEDS_64k,
-        .RING2SEG_MUST_BE_MOVABLE,
-        .RELOC_CHAIN_XEEDS_SEGLIM,
-        .INFLOOP_IN_RELOC_CHAIN, // MAX_EXEC_ERROR in errno.cpp
-        // This one is not mapped to ENOEXEC but it is possible, for example
-        // when calling CreateProcessW on a plain text file with a .exe extension
-        .EXE_MACHINE_TYPE_MISMATCH,
-        => return error.InvalidExe,
+            // These are all the system errors that are mapped to ENOEXEC by
+            // the undocumented _dosmaperr (old CRT) or __acrt_errno_map_os_error
+            // (newer CRT) functions. Their code can be found in crt/src/dosmap.c (old SDK)
+            // or urt/misc/errno.cpp (newer SDK) in the Windows SDK.
+            .BAD_FORMAT,
+            .INVALID_STARTING_CODESEG, // MIN_EXEC_ERROR in errno.cpp
+            .INVALID_STACKSEG,
+            .INVALID_MODULETYPE,
+            .INVALID_EXE_SIGNATURE,
+            .EXE_MARKED_INVALID,
+            .BAD_EXE_FORMAT,
+            .ITERATED_DATA_EXCEEDS_64k,
+            .INVALID_MINALLOCSIZE,
+            .DYNLINK_FROM_INVALID_RING,
+            .IOPL_NOT_ENABLED,
+            .INVALID_SEGDPL,
+            .AUTODATASEG_EXCEEDS_64k,
+            .RING2SEG_MUST_BE_MOVABLE,
+            .RELOC_CHAIN_XEEDS_SEGLIM,
+            .INFLOOP_IN_RELOC_CHAIN, // MAX_EXEC_ERROR in errno.cpp
+            // This one is not mapped to ENOEXEC but it is possible, for example
+            // when calling CreateProcessW on a plain text file with a .exe extension
+            .EXE_MACHINE_TYPE_MISMATCH,
+            => return syscall.fail(error.InvalidExe),
 
-        .COMMITMENT_LIMIT => return error.SystemResources,
-        else => |err| return windows.unexpectedError(err),
-    };
+            else => |err| {
+                syscall.finish();
+                return windows.unexpectedError(err);
+            },
+        }
+    }
 }
 
 /// Case-insensitive WTF-16 lookup
