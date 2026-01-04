@@ -13070,11 +13070,6 @@ fn processSpawnPosix(userdata: ?*anyopaque, options: process.SpawnOptions) proce
         const child_err: process.SpawnError = @errorCast(@errorFromInt(child_err_int));
         return child_err;
     } else |read_err| switch (read_err) {
-        error.Canceled => {
-            // We don't want to wait for the error to be reported, but we do
-            // need to return the child so that it can be cleaned up.
-            recancelInner();
-        },
         error.EndOfStream => {
             // Write end closed by CLOEXEC at the time of the `execvpe` call,
             // indicating success.
@@ -13378,22 +13373,17 @@ fn writeIntFd(fd: posix.fd_t, value: ErrInt) !void {
 fn readIntFd(fd: posix.fd_t) !ErrInt {
     var buffer: [8]u8 = undefined;
     var i: usize = 0;
-    const syscall: Syscall = try .start();
     while (true) {
         const rc = posix.system.read(fd, buffer[i..].ptr, buffer.len - i);
         switch (posix.errno(rc)) {
             .SUCCESS => {
-                syscall.finish();
                 const n: usize = @intCast(rc);
                 if (n == 0) break;
                 i += n;
                 continue;
             },
-            .INTR => {
-                try syscall.checkCancel();
-                continue;
-            },
-            else => |err| return syscall.unexpectedErrno(err),
+            .INTR => continue,
+            else => |err| return posix.unexpectedErrno(err),
         }
     }
     if (buffer.len - i != 0) return error.EndOfStream;
