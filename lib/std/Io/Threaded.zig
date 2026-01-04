@@ -73,7 +73,7 @@ pub const Argv0 = switch (native_os) {
         pub const empty: Argv0 = .{ .value = null };
 
         pub fn init(args: process.Args) Argv0 {
-            return .{ .value = args.value[0] };
+            return .{ .value = args.vector[0] };
         }
     },
     else => struct {
@@ -1181,7 +1181,7 @@ pub const InitOptions = struct {
     concurrent_limit: Io.Limit = .unlimited,
     /// Affects the following operations:
     /// * `processExecutablePath` on OpenBSD and Haiku.
-    argv0: Argv0 = .{},
+    argv0: Argv0 = .empty,
     /// Affects the following operations:
     /// * `fileIsTty`
     /// * `processExecutablePath` on OpenBSD and Haiku (observes "PATH").
@@ -1251,7 +1251,7 @@ pub const init_single_threaded: Threaded = .{
     .old_sig_io = undefined,
     .old_sig_pipe = undefined,
     .have_signal_handler = false,
-    .argv0 = .{},
+    .argv0 = .empty,
     .environ = .{},
     .worker_threads = .init(null),
 };
