@@ -651,10 +651,16 @@ const Date = struct {
 };
 
 pub fn parseTimeDigits(text: *const [2]u8, min: u8, max: u8) !u8 {
-    const nn: @Vector(2, u16) = .{ text[0], text[1] };
-    const zero: @Vector(2, u16) = .{ '0', '0' };
-    const mm: @Vector(2, u16) = .{ 10, 1 };
-    const result = @reduce(.Add, (nn -% zero) *% mm);
+    const V = @Vector(2, u16);
+    const bytes: V = text.*;
+    const zero: V = @splat('0');
+    const mm: V = .{ 10, 1 };
+    const d = bytes -% zero;
+    if (@reduce(.Or, d > @as(V, @splat(9)))) {
+        @branchHint(.unlikely);
+        return error.CertificateTimeInvalid;
+    }
+    const result = @reduce(.Add, d *% mm);
     if (result < min) return error.CertificateTimeInvalid;
     if (result > max) return error.CertificateTimeInvalid;
     return @intCast(result);
@@ -670,14 +676,20 @@ test parseTimeDigits {
     try expectError(error.CertificateTimeInvalid, parseTimeDigits("13", 1, 12));
     try expectError(error.CertificateTimeInvalid, parseTimeDigits("00", 1, 12));
     try expectError(error.CertificateTimeInvalid, parseTimeDigits("Di", 0, 99));
+    try expectError(error.CertificateTimeInvalid, parseTimeDigits("0:", 1, 31));
 }
 
 pub fn parseYear4(text: *const [4]u8) !u16 {
-    const nnnn: @Vector(4, u32) = .{ text[0], text[1], text[2], text[3] };
-    const zero: @Vector(4, u32) = .{ '0', '0', '0', '0' };
-    const mmmm: @Vector(4, u32) = .{ 1000, 100, 10, 1 };
-    const result = @reduce(.Add, (nnnn -% zero) *% mmmm);
-    if (result > 9999) return error.CertificateTimeInvalid;
+    const V = @Vector(4, u32);
+    const bytes: V = text.*;
+    const zero: V = @splat('0');
+    const mmmm: V = .{ 1000, 100, 10, 1 };
+    const d = bytes -% zero;
+    if (@reduce(.Or, d > @as(V, @splat(9)))) {
+        @branchHint(.unlikely);
+        return error.CertificateTimeInvalid;
+    }
+    const result = @reduce(.Add, d *% mmmm);
     return @intCast(result);
 }
 
@@ -691,6 +703,9 @@ test parseYear4 {
     try expectError(error.CertificateTimeInvalid, parseYear4("999b"));
     try expectError(error.CertificateTimeInvalid, parseYear4("crap"));
     try expectError(error.CertificateTimeInvalid, parseYear4("r:bQ"));
+    try expectError(error.CertificateTimeInvalid, parseYear4("000:"));
+    try expectError(error.CertificateTimeInvalid, parseYear4("0???"));
+    try expectError(error.CertificateTimeInvalid, parseYear4("*zig"));
 }
 
 pub fn parseAlgorithm(bytes: []const u8, element: der.Element) ParseEnumError!Algorithm {
