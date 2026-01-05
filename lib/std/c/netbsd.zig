@@ -15,7 +15,7 @@ pub extern "c" fn pthread_setname_np(thread: pthread_t, name: [*:0]const u8, arg
 
 pub extern "c" fn _lwp_self() lwpid_t;
 
-pub extern "c" fn _lwp_park(
+pub extern "c" fn ___lwp_park60(
     clock_id: clockid_t,
     flags: packed struct(u32) {
         ABSTIME: bool = false,
