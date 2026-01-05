@@ -82,7 +82,7 @@ pub fn main(init: process.Init.Minimal) !void {
         .arena = arena,
         .cache = .{
             .io = io,
-            .gpa = arena,
+            .gpa = gpa,
             .manifest_dir = try local_cache_directory.handle.createDirPathOpen(io, "h", .{}),
             .cwd = try process.getCwdAlloc(single_threaded_arena.allocator()),
         },
