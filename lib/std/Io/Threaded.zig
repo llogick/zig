@@ -12661,7 +12661,7 @@ const WindowsEnvironStrings = struct {
 
             inline for (@typeInfo(WindowsEnvironStrings).@"struct".fields) |field| {
                 const field_name_w = comptime std.unicode.wtf8ToWtf16LeStringLiteral(field.name);
-                if (std.mem.eql(u16, key_w, field_name_w)) @field(result, field.name) = value_w;
+                if (std.os.windows.eqlIgnoreCaseWtf16(key_w, field_name_w)) @field(result, field.name) = value_w;
             }
         }
 
