@@ -111,12 +111,7 @@ pub const TestResults = struct {
 pub const MakeOptions = struct {
     progress_node: std.Progress.Node,
     watch: bool,
-    web_server: switch (builtin.target.cpu.arch) {
-        else => ?*Build.WebServer,
-        // WASM code references `Build.abi` which happens to incidentally reference this type, but
-        // it currently breaks because `std.net.Address` doesn't work there. Work around for now.
-        .wasm32 => void,
-    },
+    web_server: ?*Build.WebServer,
     /// If set, this is a timeout to enforce on all individual unit tests, in nanoseconds.
     unit_test_timeout_ns: ?u64,
     /// Not to be confused with `Build.allocator`, which is an alias of `Build.graph.arena`.

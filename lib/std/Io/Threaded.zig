@@ -65,7 +65,7 @@ argv0: Argv0,
 environ: Environ,
 
 null_file: NullFile = .{},
-dev_urandom_fd: dev_urandom_fd_t,
+dev_urandom_fd: dev_urandom_fd_t = if (use_dev_urandom) -1 else {},
 
 pub const Argv0 = switch (native_os) {
     .openbsd, .haiku => struct {
