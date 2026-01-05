@@ -370,7 +370,7 @@ pub const GetRandomError = OpenError;
 /// library implementation.
 pub fn getrandom(buffer: []u8) GetRandomError!void {
     if (native_os == .windows) {
-        return windows.RtlGenRandom(buffer);
+        return windows.ProcessPrng(buffer);
     }
     if (builtin.link_libc and @TypeOf(system.arc4random_buf) != void) {
         system.arc4random_buf(buffer.ptr, buffer.len);

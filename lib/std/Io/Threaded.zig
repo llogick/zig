@@ -13674,7 +13674,7 @@ fn getNulHandle(t: *Threaded) !windows.HANDLE {
     const device_path = [_]u16{ '\\', 'D', 'e', 'v', 'i', 'c', 'e', '\\', 'N', 'u', 'l', 'l' };
     var nt_name: windows.UNICODE_STRING = .{
         .Length = device_path.len * 2,
-        .MaximumLength = device_path.len * 2,
+        .MaximumLength = 0,
         .Buffer = @constCast(&device_path),
     };
     const attr: windows.OBJECT_ATTRIBUTES = .{

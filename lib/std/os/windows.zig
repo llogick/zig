@@ -1080,6 +1080,9 @@ pub const CTL_CODE = packed struct(ULONG) {
 };
 
 pub const IOCTL = struct {
+    pub const KSEC = struct {
+        pub const GEN_RANDOM: CTL_CODE = .{ .DeviceType = .KSEC, .Function = 2, .Method = .BUFFERED, .Access = .ANY };
+    };
     pub const MOUNTMGR = struct {
         pub const QUERY_POINTS: CTL_CODE = .{ .DeviceType = .MOUNTMGRCONTROLTYPE, .Function = 2, .Method = .BUFFERED, .Access = .ANY };
         pub const QUERY_DOS_VOLUME_PATH: CTL_CODE = .{ .DeviceType = .MOUNTMGRCONTROLTYPE, .Function = 12, .Method = .BUFFERED, .Access = .ANY };
@@ -2644,30 +2647,59 @@ pub fn SetHandleInformation(h: HANDLE, mask: DWORD, flags: DWORD) SetHandleInfor
     }
 }
 
-pub const RtlGenRandomError = error{
-    /// `RtlGenRandom` has been known to fail in situations where the system is under heavy load.
-    /// Unfortunately, it does not call `SetLastError`, so it is not possible to get more specific
-    /// error information; it could actually be due to an out-of-memory condition, for example.
-    SystemResources,
-};
-
-/// Call RtlGenRandom() instead of CryptGetRandom() on Windows
-/// https://github.com/rust-lang-nursery/rand/issues/111
-/// https://bugzilla.mozilla.org/show_bug.cgi?id=504270
-pub fn RtlGenRandom(output: []u8) RtlGenRandomError!void {
-    var total_read: usize = 0;
-    var buff: []u8 = output[0..];
-    const max_read_size: ULONG = maxInt(ULONG);
-
-    while (total_read < output.len) {
-        const to_read: ULONG = @min(buff.len, max_read_size);
-
-        if (advapi32.RtlGenRandom(buff.ptr, to_read) == 0) {
-            return error.SystemResources;
-        }
-
-        total_read += to_read;
-        buff = buff[to_read..];
+/// An alternate implementation of ProcessPrng from bcryptprimitives.dll
+/// This one has the following differences:
+/// * does not heap allocate `buffer`
+/// * does not introduce a dependency on bcryptprimitives.dll, which apparently
+///   runs a test suite every time it is loaded
+/// * reads buffer.len bytes from "\\Device\\CNG" rather than seeding a per-CPU
+///   AES csprng with 48 bytes.
+pub fn ProcessPrng(buffer: []u8) error{Unexpected}!void {
+    const device_path = [_]u16{ '\\', 'D', 'e', 'v', 'i', 'c', 'e', '\\', 'C', 'N', 'G' };
+    var nt_name: UNICODE_STRING = .{
+        .Length = device_path.len * 2,
+        .MaximumLength = 0,
+        .Buffer = @constCast(&device_path),
+    };
+    var cng_device: HANDLE = undefined;
+    var io_status_block: IO_STATUS_BLOCK = undefined;
+    switch (ntdll.NtOpenFile(
+        &cng_device,
+        .{
+            .STANDARD = .{ .SYNCHRONIZE = true },
+            .SPECIFIC = .{ .FILE = .{ .READ_DATA = true } },
+        },
+        &.{
+            .Length = @sizeOf(OBJECT_ATTRIBUTES),
+            .RootDirectory = null,
+            .ObjectName = &nt_name,
+            .Attributes = .{},
+            .SecurityDescriptor = null,
+            .SecurityQualityOfService = null,
+        },
+        &io_status_block,
+        .VALID_FLAGS,
+        .{ .IO = .SYNCHRONOUS_NONALERT },
+    )) {
+        .SUCCESS => {},
+        .OBJECT_NAME_NOT_FOUND => return error.Unexpected, // Observed on wine 10.0
+        else => |status| return unexpectedStatus(status),
+    }
+    defer _ = ntdll.NtClose(cng_device);
+    switch (ntdll.NtDeviceIoControlFile(
+        cng_device,
+        null,
+        null,
+        null,
+        &io_status_block,
+        IOCTL.KSEC.GEN_RANDOM,
+        null,
+        0,
+        buffer.ptr,
+        @intCast(buffer.len),
+    )) {
+        .SUCCESS => {},
+        else => |status| return unexpectedStatus(status),
     }
 }
 
