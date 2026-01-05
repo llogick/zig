@@ -135,8 +135,8 @@ pub fn Ecdsa(comptime Curve: type, comptime Hash: type) type {
             /// The function returns a slice, that can be shorter than der_encoded_length_max.
             pub fn toDer(sig: Signature, buf: *[der_encoded_length_max]u8) []u8 {
                 var w: std.Io.Writer = .fixed(buf);
-                const sig_r = mem.trimLeft(u8, &sig.r, &.{0});
-                const sig_s = mem.trimLeft(u8, &sig.s, &.{0});
+                const sig_r = mem.trimStart(u8, &sig.r, &.{0});
+                const sig_s = mem.trimStart(u8, &sig.s, &.{0});
                 const r_len = @as(u8, @intCast(sig_r.len + (sig_r[0] >> 7)));
                 const s_len = @as(u8, @intCast(sig_s.len + (sig_s[0] >> 7)));
                 const seq_len = @as(u8, @intCast(2 + r_len + 2 + s_len));
