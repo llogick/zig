@@ -49,6 +49,7 @@ stage3-release/bin/zig build test docs \
   -Dstatic-llvm \
   -Dskip-non-native \
   -Dtarget=native-native-musl \
+  -Dcpu=native+longcall \
   --search-prefix "$PREFIX" \
   --zig-lib-dir "$PWD/../lib" \
   --test-timeout 4m
