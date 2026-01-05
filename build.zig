@@ -477,7 +477,7 @@ pub fn build(b: *std.Build) !void {
             .linux => switch (b.graph.host.result.cpu.arch) {
                 .aarch64 => 659_809_075,
                 .loongarch64 => 598_902_374,
-                .powerpc64le => 550_656_409,
+                .powerpc64le => 627_431_833,
                 .riscv64 => 827_043_430,
                 .s390x => 580_596_121,
                 .x86_64 => 3_290_894_745,
