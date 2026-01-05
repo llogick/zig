@@ -5154,8 +5154,7 @@ fn fileHardLink(
     options: File.HardLinkOptions,
 ) File.HardLinkError!void {
     _ = userdata;
-    if (is_windows) return error.OperationUnsupported;
-    if (native_os == .wasi and !builtin.link_libc) @panic("TODO");
+    if (native_os != .linux) return error.OperationUnsupported;
 
     var new_path_buffer: [posix.PATH_MAX]u8 = undefined;
     const new_sub_path_posix = try pathToPosix(new_sub_path, &new_path_buffer);
