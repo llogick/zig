@@ -82,7 +82,7 @@ pub fn main(init: process.Init.Minimal) !void {
         .arena = arena,
         .cache = .{
             .io = io,
-            .gpa = arena,
+            .gpa = gpa,
             .manifest_dir = try local_cache_directory.handle.createDirPathOpen(io, "h", .{}),
             .cwd = try process.getCwdAlloc(single_threaded_arena.allocator()),
         },
@@ -783,6 +783,9 @@ fn runStepNames(
     var failure_count: usize = 0;
     var pending_count: usize = 0;
     var total_compile_errors: usize = 0;
+
+    var cleanup_task = io.async(cleanTmpFiles, .{ io, step_stack.keys() });
+    defer cleanup_task.await(io);
 
     for (step_stack.keys()) |s| {
         test_pass_count += s.test_results.passCount();
@@ -1848,4 +1851,15 @@ var stdout_writer_allocation: Io.File.Writer = undefined;
 fn initStdoutWriter(io: Io) *Writer {
     stdout_writer_allocation = Io.File.stdout().writerStreaming(io, &stdio_buffer_allocation);
     return &stdout_writer_allocation.interface;
+}
+
+fn cleanTmpFiles(io: Io, steps: []const *Step) void {
+    for (steps) |step| {
+        const wf = step.cast(std.Build.Step.WriteFile) orelse continue;
+        if (wf.mode != .tmp) continue;
+        const path = wf.generated_directory.path orelse continue;
+        Io.Dir.cwd().deleteTree(io, path) catch |err| {
+            std.log.warn("failed to delete {s}: {t}", .{ path, err });
+        };
+    }
 }

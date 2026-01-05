@@ -2026,13 +2026,12 @@ pub fn addLinkTests(
 pub fn addCliTests(b: *std.Build) *Step {
     const step = b.step("test-cli", "Test the command line interface");
     const s = std.fs.path.sep_str;
-    const io = b.graph.io;
 
     {
         // Test `zig init`.
-        const tmp_path = b.makeTempPath();
+        const tmp_path = b.tmpPath();
         const init_exe = b.addSystemCommand(&.{ b.graph.zig_exe, "init" });
-        init_exe.setCwd(.{ .cwd_relative = tmp_path });
+        init_exe.setCwd(tmp_path);
         init_exe.setName("zig init");
         init_exe.expectStdOutEqual("");
         init_exe.expectStdErrEqual("info: created build.zig\n" ++
@@ -2053,31 +2052,28 @@ pub fn addCliTests(b: *std.Build) *Step {
         run_bad.step.dependOn(&init_exe.step);
 
         const run_test = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "test" });
-        run_test.setCwd(.{ .cwd_relative = tmp_path });
+        run_test.setCwd(tmp_path);
         run_test.setName("zig build test");
         run_test.expectStdOutEqual("");
         run_test.step.dependOn(&init_exe.step);
 
         const run_run = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "run" });
-        run_run.setCwd(.{ .cwd_relative = tmp_path });
+        run_run.setCwd(tmp_path);
         run_run.setName("zig build run");
         run_run.expectStdOutEqual("Run `zig build test` to run the tests.\n");
         run_run.expectStdErrMatch("All your codebase are belong to us.\n");
         run_run.step.dependOn(&init_exe.step);
 
-        const cleanup = b.addRemoveDirTree(.{ .cwd_relative = tmp_path });
-        cleanup.step.dependOn(&run_test.step);
-        cleanup.step.dependOn(&run_run.step);
-        cleanup.step.dependOn(&run_bad.step);
-
-        step.dependOn(&cleanup.step);
+        step.dependOn(&run_test.step);
+        step.dependOn(&run_run.step);
+        step.dependOn(&run_bad.step);
     }
 
     {
         // Test `zig init -m`.
-        const tmp_path = b.makeTempPath();
+        const tmp_path = b.tmpPath();
         const init_exe = b.addSystemCommand(&.{ b.graph.zig_exe, "init", "-m" });
-        init_exe.setCwd(.{ .cwd_relative = tmp_path });
+        init_exe.setCwd(tmp_path);
         init_exe.setName("zig init -m");
         init_exe.expectStdOutEqual("");
         init_exe.expectStdErrEqual("info: successfully populated 'build.zig.zon' and 'build.zig'\n");
@@ -2085,7 +2081,7 @@ pub fn addCliTests(b: *std.Build) *Step {
 
     // Test Godbolt API
     if (builtin.os.tag == .linux and builtin.cpu.arch == .x86_64) {
-        const tmp_path = b.makeTempPath();
+        const tmp_path = b.tmpPath();
 
         const example_zig = b.addWriteFiles().add("example.zig",
             \\// Type your code here, or load an example.
@@ -2101,13 +2097,9 @@ pub fn addCliTests(b: *std.Build) *Step {
         );
 
         // This is intended to be the exact CLI usage used by godbolt.org.
-        const run = b.addSystemCommand(&.{
-            b.graph.zig_exe, "build-obj",
-            "--cache-dir",   tmp_path,
-            "--name",        "example",
-            "-fno-emit-bin", "-fno-emit-h",
-            "-fstrip",       "-OReleaseFast",
-        });
+        const run = b.addSystemCommand(&.{ b.graph.zig_exe, "build-obj", "--cache-dir" });
+        run.addDirectoryArg(tmp_path);
+        run.addArgs(&.{ "--name", "example", "-fno-emit-bin", "-fno-emit-h", "-fstrip", "-OReleaseFast" });
         run.addFileArg(example_zig);
         const example_s = run.addPrefixedOutputFileArg("-femit-asm=", "example.s");
 
@@ -2120,10 +2112,7 @@ pub fn addCliTests(b: *std.Build) *Step {
         });
         checkfile.setName("check godbolt.org CLI usage generating valid asm");
 
-        const cleanup = b.addRemoveDirTree(.{ .cwd_relative = tmp_path });
-        cleanup.step.dependOn(&checkfile.step);
-
-        step.dependOn(&cleanup.step);
+        step.dependOn(&checkfile.step);
     }
 
     {
@@ -2132,22 +2121,19 @@ pub fn addCliTests(b: *std.Build) *Step {
         // directory because this test will be mutating the files. The cache
         // system relies on cache directories being mutated only by their
         // owners.
-        const tmp_path = b.makeTempPath();
+        const tmp_wf = b.addTempFiles();
         const unformatted_code = "    // no reason for indent";
 
-        var dir = std.Io.Dir.cwd().openDir(io, tmp_path, .{}) catch @panic("unhandled");
-        defer dir.close(io);
-        dir.writeFile(io, .{ .sub_path = "fmt1.zig", .data = unformatted_code }) catch @panic("unhandled");
-        dir.writeFile(io, .{ .sub_path = "fmt2.zig", .data = unformatted_code }) catch @panic("unhandled");
-        dir.createDir(io, "subdir", .default_dir) catch @panic("unhandled");
-        var subdir = dir.openDir(io, "subdir", .{}) catch @panic("unhandled");
-        defer subdir.close(io);
-        subdir.writeFile(io, .{ .sub_path = "fmt3.zig", .data = unformatted_code }) catch @panic("unhandled");
+        _ = tmp_wf.add("fmt1.zig", unformatted_code);
+        _ = tmp_wf.add("fmt2.zig", unformatted_code);
+        _ = tmp_wf.add("subdir/fmt3.zig", unformatted_code);
+
+        const tmp_path = tmp_wf.getDirectory();
 
         // Test zig fmt affecting only the appropriate files.
         const run1 = b.addSystemCommand(&.{ b.graph.zig_exe, "fmt", "fmt1.zig" });
         run1.setName("run zig fmt one file");
-        run1.setCwd(.{ .cwd_relative = tmp_path });
+        run1.setCwd(tmp_path);
         run1.has_side_effects = true;
         // stdout should be file path + \n
         run1.expectStdOutEqual("fmt1.zig\n");
@@ -2155,7 +2141,7 @@ pub fn addCliTests(b: *std.Build) *Step {
         // Test excluding files and directories from a run
         const run2 = b.addSystemCommand(&.{ b.graph.zig_exe, "fmt", "--exclude", "fmt2.zig", "--exclude", "subdir", "." });
         run2.setName("run zig fmt on directory with exclusions");
-        run2.setCwd(.{ .cwd_relative = tmp_path });
+        run2.setCwd(tmp_path);
         run2.has_side_effects = true;
         run2.expectStdOutEqual("");
         run2.step.dependOn(&run1.step);
@@ -2163,7 +2149,7 @@ pub fn addCliTests(b: *std.Build) *Step {
         // Test excluding non-existent file
         const run3 = b.addSystemCommand(&.{ b.graph.zig_exe, "fmt", "--exclude", "fmt2.zig", "--exclude", "nonexistent.zig", "." });
         run3.setName("run zig fmt on directory with non-existent exclusion");
-        run3.setCwd(.{ .cwd_relative = tmp_path });
+        run3.setCwd(tmp_path);
         run3.has_side_effects = true;
         run3.expectStdOutEqual("." ++ s ++ "subdir" ++ s ++ "fmt3.zig\n");
         run3.step.dependOn(&run2.step);
@@ -2171,7 +2157,7 @@ pub fn addCliTests(b: *std.Build) *Step {
         // running it on the dir, only the new file should be changed
         const run4 = b.addSystemCommand(&.{ b.graph.zig_exe, "fmt", "." });
         run4.setName("run zig fmt the directory");
-        run4.setCwd(.{ .cwd_relative = tmp_path });
+        run4.setCwd(tmp_path);
         run4.has_side_effects = true;
         run4.expectStdOutEqual("." ++ s ++ "fmt2.zig\n");
         run4.step.dependOn(&run3.step);
@@ -2179,37 +2165,33 @@ pub fn addCliTests(b: *std.Build) *Step {
         // both files have been formatted, nothing should change now
         const run5 = b.addSystemCommand(&.{ b.graph.zig_exe, "fmt", "." });
         run5.setName("run zig fmt with nothing to do");
-        run5.setCwd(.{ .cwd_relative = tmp_path });
+        run5.setCwd(tmp_path);
         run5.has_side_effects = true;
         run5.expectStdOutEqual("");
         run5.step.dependOn(&run4.step);
 
         const unformatted_code_utf16 = "\xff\xfe \x00 \x00 \x00 \x00/\x00/\x00 \x00n\x00o\x00 \x00r\x00e\x00a\x00s\x00o\x00n\x00";
-        const fmt6_path = b.pathJoin(&.{ tmp_path, "fmt6.zig" });
-        const write6 = b.addUpdateSourceFiles();
-        write6.addBytesToSource(unformatted_code_utf16, fmt6_path);
+        const write6 = b.addMutateFiles(tmp_path);
+        const fmt6_path = write6.add("fmt6.zig", unformatted_code_utf16);
         write6.step.dependOn(&run5.step);
 
         // Test `zig fmt` handling UTF-16 decoding.
         const run6 = b.addSystemCommand(&.{ b.graph.zig_exe, "fmt", "." });
         run6.setName("run zig fmt convert UTF-16 to UTF-8");
-        run6.setCwd(.{ .cwd_relative = tmp_path });
+        run6.setCwd(tmp_path);
         run6.has_side_effects = true;
         run6.expectStdOutEqual("." ++ s ++ "fmt6.zig\n");
         run6.step.dependOn(&write6.step);
 
         // TODO change this to an exact match
-        const check6 = b.addCheckFile(.{ .cwd_relative = fmt6_path }, .{
+        const check6 = b.addCheckFile(fmt6_path, .{
             .expected_matches = &.{
                 "// no reason",
             },
         });
         check6.step.dependOn(&run6.step);
 
-        const cleanup = b.addRemoveDirTree(.{ .cwd_relative = tmp_path });
-        cleanup.step.dependOn(&check6.step);
-
-        step.dependOn(&cleanup.step);
+        step.dependOn(&check6.step);
     }
 
     {
