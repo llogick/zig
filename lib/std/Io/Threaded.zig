@@ -3430,6 +3430,17 @@ fn dirCreateFileAtomic(
     // useless when we have to make up a bogus path name to do the rename()
     // anyway.
     if (native_os == .linux and !options.replace) tmpfile: {
+        const flags: posix.O = if (@hasField(posix.O, "TMPFILE")) .{
+            .ACCMODE = .RDWR,
+            .TMPFILE = true,
+            .CLOEXEC = true,
+        } else if (@hasField(posix.O, "TMPFILE0") and !@hasField(posix.O, "TMPFILE2")) .{
+            .ACCMODE = .RDWR,
+            .TMPFILE0 = true,
+            .TMPFILE1 = true,
+            .CLOEXEC = true,
+        } else break :tmpfile;
+
         const dest_dirname = Dir.path.dirname(dest_path);
         if (dest_dirname) |dirname| {
             // This has a nice side effect of preemptively triggering EISDIR or
@@ -3455,12 +3466,6 @@ fn dirCreateFileAtomic(
 
         var path_buffer: [posix.PATH_MAX]u8 = undefined;
         const sub_path_posix = try pathToPosix(dest_dirname orelse ".", &path_buffer);
-
-        const flags: posix.O = .{
-            .ACCMODE = .RDWR,
-            .TMPFILE = true,
-            .CLOEXEC = true,
-        };
 
         const syscall: Syscall = try .start();
         while (true) {

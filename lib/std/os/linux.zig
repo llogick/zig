@@ -459,13 +459,14 @@ pub const O = switch (native_arch) {
         NOFOLLOW: bool = false,
         NOATIME: bool = false,
         CLOEXEC: bool = false,
-        _20: u1 = 0,
+        TMPFILE0: bool = false,
         PATH: bool = false,
-        _22: u10 = 0,
+        _22: u4 = 0,
+        TMPFILE1: bool = false,
+        _27: u5 = 0,
 
         // #define O_RSYNC    04010000
         // #define O_SYNC     04010000
-        // #define O_TMPFILE 020200000
         // #define O_NDELAY O_NONBLOCK
     },
     .m68k => packed struct(u32) {
