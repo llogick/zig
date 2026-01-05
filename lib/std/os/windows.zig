@@ -2647,62 +2647,6 @@ pub fn SetHandleInformation(h: HANDLE, mask: DWORD, flags: DWORD) SetHandleInfor
     }
 }
 
-/// An alternate implementation of ProcessPrng from bcryptprimitives.dll
-/// This one has the following differences:
-/// * does not heap allocate `buffer`
-/// * does not introduce a dependency on bcryptprimitives.dll, which apparently
-///   runs a test suite every time it is loaded
-/// * reads buffer.len bytes from "\\Device\\CNG" rather than seeding a per-CPU
-///   AES csprng with 48 bytes.
-pub fn ProcessPrng(buffer: []u8) error{Unexpected}!void {
-    const device_path = [_]u16{ '\\', 'D', 'e', 'v', 'i', 'c', 'e', '\\', 'C', 'N', 'G' };
-    var nt_name: UNICODE_STRING = .{
-        .Length = device_path.len * 2,
-        .MaximumLength = 0,
-        .Buffer = @constCast(&device_path),
-    };
-    var cng_device: HANDLE = undefined;
-    var io_status_block: IO_STATUS_BLOCK = undefined;
-    switch (ntdll.NtOpenFile(
-        &cng_device,
-        .{
-            .STANDARD = .{ .SYNCHRONIZE = true },
-            .SPECIFIC = .{ .FILE = .{ .READ_DATA = true } },
-        },
-        &.{
-            .Length = @sizeOf(OBJECT_ATTRIBUTES),
-            .RootDirectory = null,
-            .ObjectName = &nt_name,
-            .Attributes = .{},
-            .SecurityDescriptor = null,
-            .SecurityQualityOfService = null,
-        },
-        &io_status_block,
-        .VALID_FLAGS,
-        .{ .IO = .SYNCHRONOUS_NONALERT },
-    )) {
-        .SUCCESS => {},
-        .OBJECT_NAME_NOT_FOUND => return error.Unexpected, // Observed on wine 10.0
-        else => |status| return unexpectedStatus(status),
-    }
-    defer _ = ntdll.NtClose(cng_device);
-    switch (ntdll.NtDeviceIoControlFile(
-        cng_device,
-        null,
-        null,
-        null,
-        &io_status_block,
-        IOCTL.KSEC.GEN_RANDOM,
-        null,
-        0,
-        buffer.ptr,
-        @intCast(buffer.len),
-    )) {
-        .SUCCESS => {},
-        else => |status| return unexpectedStatus(status),
-    }
-}
-
 pub const WaitForSingleObjectError = error{
     WaitAbandoned,
     WaitTimeOut,

@@ -65,7 +65,7 @@ argv0: Argv0,
 environ: Environ,
 
 null_file: NullFile = .{},
-dev_urandom_fd: dev_urandom_fd_t = if (use_dev_urandom) -1 else {},
+random_file: RandomFile = .{},
 
 pub const Argv0 = switch (native_os) {
     .openbsd, .haiku => struct {
@@ -148,6 +148,15 @@ pub const NullFile = switch (native_os) {
                 posix.close(this.fd);
                 this.fd = -1;
             }
+        }
+    },
+};
+
+pub const RandomFile = switch (native_os) {
+    .windows => NullFile,
+    else => if (use_dev_urandom) NullFile else struct {
+        fn deinit(this: @This()) void {
+            _ = this;
         }
     },
 };
@@ -586,9 +595,7 @@ const Thread = struct {
     /// Always released when `Status.cancelation` is set to `.parked`.
     futex_waiter: if (use_parking_futex) ?*parking_futex.Waiter else ?noreturn,
 
-    random_buffer: [128]u8,
-    /// How many bytes of `random_buffer` are filled.
-    random_i: usize,
+    csprng: std.Random.DefaultCsprng,
 
     const Handle = Handle: {
         if (std.Thread.use_pthreads) break :Handle std.c.pthread_t;
@@ -1290,9 +1297,7 @@ pub fn deinit(t: *Threaded) void {
         if (have_sig_pipe) posix.sigaction(.PIPE, &t.old_sig_pipe, null);
     }
     t.null_file.deinit();
-    if (use_dev_urandom and t.dev_urandom_fd != -1) {
-        posix.close(t.dev_urandom_fd);
-    }
+    t.random_file.deinit();
     t.* = undefined;
 }
 
@@ -1321,6 +1326,10 @@ fn worker(t: *Threaded) void {
         }),
         .cancel_protection = .unblocked,
         .futex_waiter = undefined,
+        .csprng = .{
+            .state = undefined,
+            .offset = std.math.maxInt(usize),
+        },
     };
     Thread.current = &thread;
 
@@ -1733,8 +1742,6 @@ const getrandom_use_libc = @TypeOf(posix.system.getrandom) != void and (native_o
     }));
 
 const use_dev_urandom = getrandom_use_libc and native_os == .linux;
-
-const dev_urandom_fd_t = if (use_dev_urandom) posix.fd_t else void;
 
 fn async(
     userdata: ?*anyopaque,
@@ -13873,6 +13880,62 @@ fn processSpawnWindows(userdata: ?*anyopaque, options: process.SpawnOptions) pro
     };
 }
 
+fn getCngHandle(t: *Threaded) !windows.HANDLE {
+    {
+        t.mutex.lock();
+        defer t.mutex.unlock();
+        if (t.random_file.handle) |handle| return handle;
+    }
+
+    const device_path = [_]u16{ '\\', 'D', 'e', 'v', 'i', 'c', 'e', '\\', 'C', 'N', 'G' };
+
+    var nt_name: windows.UNICODE_STRING = .{
+        .Length = device_path.len * 2,
+        .MaximumLength = 0,
+        .Buffer = @constCast(&device_path),
+    };
+    var fresh_handle: windows.HANDLE = undefined;
+    var io_status_block: windows.IO_STATUS_BLOCK = undefined;
+    var syscall: Syscall = try .start();
+    while (true) switch (windows.ntdll.NtOpenFile(
+        &fresh_handle,
+        .{
+            .STANDARD = .{ .SYNCHRONIZE = true },
+            .SPECIFIC = .{ .FILE = .{ .READ_DATA = true } },
+        },
+        &.{
+            .Length = @sizeOf(windows.OBJECT_ATTRIBUTES),
+            .RootDirectory = null,
+            .ObjectName = &nt_name,
+            .Attributes = .{},
+            .SecurityDescriptor = null,
+            .SecurityQualityOfService = null,
+        },
+        &io_status_block,
+        .VALID_FLAGS,
+        .{ .IO = .SYNCHRONOUS_NONALERT },
+    )) {
+        .SUCCESS => {
+            syscall.finish();
+            t.mutex.lock(); // Another thread might have won the race.
+            defer t.mutex.unlock();
+            if (t.random_file.handle) |prev_handle| {
+                _ = windows.ntdll.NtClose(fresh_handle);
+                return prev_handle;
+            } else {
+                t.random_file.handle = fresh_handle;
+                return fresh_handle;
+            }
+        },
+        .CANCELLED => {
+            try syscall.checkCancel();
+            continue;
+        },
+        .OBJECT_NAME_NOT_FOUND => return syscall.fail(error.Unexpected), // Observed on wine 10.0
+        else => |status| return syscall.unexpectedNtstatus(status),
+    };
+}
+
 fn getNulHandle(t: *Threaded) !windows.HANDLE {
     {
         t.mutex.lock();
@@ -14959,28 +15022,48 @@ fn random(userdata: ?*anyopaque, buffer: []u8) Io.RandomError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
 
     if (is_windows) {
-        // Call RtlGenRandom() instead of CryptGetRandom() on Windows
-        // https://github.com/rust-lang-nursery/rand/issues/111
-        // https://bugzilla.mozilla.org/show_bug.cgi?id=504270
-        const max_read_size: windows.ULONG = std.math.maxInt(windows.ULONG);
+        if (buffer.len == 0) return;
+        // ProcessPrng from bcryptprimitives.dll has the following properties:
+        // * introduces a dependency on bcryptprimitives.dll, which apparently
+        //   runs a test suite every time it is loaded
+        // * heap allocates a 48-byte buffer, handling failure by returning NO_MEMORY in a BOOL
+        //   despite the function being documented to always return TRUE
+        // * reads from "\\Device\\CNG" which then seeds a per-CPU AES CSPRNG
+        // Therefore, that function is avoided in favor of using the device directly.
+        const cng_device = try getCngHandle(t);
+        var io_status_block: windows.IO_STATUS_BLOCK = undefined;
         var i: usize = 0;
-        while (i < buffer.len) {
-            const buf = buffer[i..];
-            const request_n: windows.ULONG = @min(buf.len, max_read_size);
-            const syscall: Syscall = try .start();
-            const result = windows.advapi32.RtlGenRandom(buf.ptr, request_n);
-            syscall.finish();
-            if (result == 0) {
-                // `RtlGenRandom` has been observed to fail in situations where
-                // the system is under heavy load. Unfortunately, it does not
-                // call `SetLastError`, so it is not possible to get more
-                // specific error information; it could actually be due to an
-                // out-of-memory condition, for example.
-                return error.EntropyUnavailable;
+        const syscall: Syscall = try .start();
+        while (true) {
+            const remaining_len = std.math.lossyCast(u32, buffer.len - i);
+            switch (windows.ntdll.NtDeviceIoControlFile(
+                cng_device,
+                null,
+                null,
+                null,
+                &io_status_block,
+                windows.IOCTL.KSEC.GEN_RANDOM,
+                null,
+                0,
+                buffer[i..].ptr,
+                remaining_len,
+            )) {
+                .SUCCESS => {
+                    i += remaining_len;
+                    if (buffer.len - i == 0) {
+                        return syscall.finish();
+                    } else {
+                        try syscall.checkCancel();
+                        continue;
+                    }
+                },
+                .CANCELLED => {
+                    try syscall.checkCancel();
+                    continue;
+                },
+                else => return syscall.fail(error.EntropyUnavailable),
             }
-            i += request_n;
         }
-        return;
     }
 
     if (builtin.link_libc and @TypeOf(posix.system.arc4random_buf) != void) {
@@ -15032,6 +15115,7 @@ fn random(userdata: ?*anyopaque, buffer: []u8) Io.RandomError!void {
         }
     }
 
+    if (buffer.len == 0) return;
     const urandom_fd = try getRandomFd(t);
 
     var i: usize = 0;
@@ -15066,8 +15150,8 @@ fn getRandomFd(t: *Threaded) posix.fd_t {
         t.mutex.lock();
         defer t.mutex.unlock();
 
-        if (t.dev_urandom_fd == -2) return error.EntropyUnavailable;
-        if (t.dev_urandom_fd != -1) return t.dev_urandom_fd;
+        if (t.random_file.fd == -2) return error.EntropyUnavailable;
+        if (t.random_file.fd != -1) return t.random_file.fd;
     }
 
     const fd: posix.fd_t = fd: {
@@ -15088,7 +15172,7 @@ fn getRandomFd(t: *Threaded) posix.fd_t {
                 },
                 else => {
                     syscall.endSyscall();
-                    t.dev_urandom_fd = -2;
+                    t.random_file.fd = -2;
                     return error.EntropyUnavailable;
                 },
             }
@@ -15108,14 +15192,14 @@ fn getRandomFd(t: *Threaded) posix.fd_t {
                         if (!statx.mask.TYPE) return error.Unexpected;
                         t.mutex.lock(); // Another thread might have won the race.
                         defer t.mutex.unlock();
-                        if (t.dev_urandom_fd >= 0) {
+                        if (t.random_file.fd >= 0) {
                             posix.close(fd);
-                            return t.dev_urandom_fd;
+                            return t.random_file.fd;
                         } else if (!posix.S.ISCHR(statx.mode)) {
-                            t.dev_urandom_fd = -2;
+                            t.random_file.fd = -2;
                             return error.EntropyUnavailable;
                         } else {
-                            t.dev_urandom_fd = fd;
+                            t.random_file.fd = fd;
                             return fd;
                         }
                     },
@@ -15124,7 +15208,7 @@ fn getRandomFd(t: *Threaded) posix.fd_t {
                         continue;
                     },
                     else => {
-                        t.dev_urandom_fd = -2;
+                        t.random_file.fd = -2;
                         return error.EntropyUnavailable;
                     },
                 }
@@ -15137,14 +15221,14 @@ fn getRandomFd(t: *Threaded) posix.fd_t {
                 switch (posix.errno(fstat_sym(fd, &stat))) {
                     .SUCCESS => {
                         syscall.finish();
-                        if (t.dev_urandom_fd >= 0) {
+                        if (t.random_file.fd >= 0) {
                             posix.close(fd);
-                            return t.dev_urandom_fd;
+                            return t.random_file.fd;
                         } else if (!posix.S.ISCHR(stat.mode)) {
-                            t.dev_urandom_fd = -2;
+                            t.random_file.fd = -2;
                             return error.EntropyUnavailable;
                         } else {
-                            t.dev_urandom_fd = fd;
+                            t.random_file.fd = fd;
                             return fd;
                         }
                     },
@@ -15153,7 +15237,7 @@ fn getRandomFd(t: *Threaded) posix.fd_t {
                         continue;
                     },
                     else => {
-                        t.dev_urandom_fd = -2;
+                        t.random_file.fd = -2;
                         return error.EntropyUnavailable;
                     },
                 }
