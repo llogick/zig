@@ -9,16 +9,19 @@ pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
     const io = init.io;
     const process_cwd_path = try std.process.getCwdAlloc(init.arena.allocator());
+    var initial_process_cwd = try Io.Dir.cwd().openDir(io, ".", .{});
+    defer initial_process_cwd.close(io);
 
     var it = try init.minimal.args.iterateAllocator(gpa);
     defer it.deinit();
     _ = it.next() orelse unreachable; // skip binary name
     const hello_exe_cache_path = it.next() orelse unreachable;
+    const tmp_dir_path = it.next() orelse unreachable;
 
-    var tmp = tmpDir(io, .{});
-    defer tmp.cleanup(io);
+    var tmp_dir = try Io.Dir.cwd().openDir(io, tmp_dir_path, .{});
+    defer tmp_dir.close(io);
 
-    const tmp_absolute_path = try tmp.dir.realPathFileAlloc(io, ".", gpa);
+    const tmp_absolute_path = try tmp_dir.realPathFileAlloc(io, ".", gpa);
     defer gpa.free(tmp_absolute_path);
     const tmp_absolute_path_w = try std.unicode.utf8ToUtf16LeAllocZ(gpa, tmp_absolute_path);
     defer gpa.free(tmp_absolute_path_w);
@@ -51,7 +54,7 @@ pub fn main(init: std.process.Init) !void {
     ) == windows.TRUE);
 
     // Move hello.exe into the tmp dir which is now added to the path
-    try Io.Dir.cwd().copyFile(hello_exe_cache_path, tmp.dir, "hello.exe", io, .{});
+    try Io.Dir.cwd().copyFile(hello_exe_cache_path, tmp_dir, "hello.exe", io, .{});
 
     // with extension should find the .exe (case insensitive)
     try testExec(gpa, io, "HeLLo.exe", "hello from exe\n");
@@ -61,9 +64,9 @@ pub fn main(init: std.process.Init) !void {
     try std.testing.expectError(error.FileNotFound, testExecWithCwd(gpa, io, "hello.exe", "missing_dir", ""));
 
     // now add a .bat
-    try tmp.dir.writeFile(io, .{ .sub_path = "hello.bat", .data = "@echo hello from bat" });
+    try tmp_dir.writeFile(io, .{ .sub_path = "hello.bat", .data = "@echo hello from bat" });
     // and a .cmd
-    try tmp.dir.writeFile(io, .{ .sub_path = "hello.cmd", .data = "@echo hello from cmd" });
+    try tmp_dir.writeFile(io, .{ .sub_path = "hello.cmd", .data = "@echo hello from cmd" });
 
     // with extension should find the .bat (case insensitive)
     try testExec(gpa, io, "heLLo.bat", "hello from bat\r\n");
@@ -73,15 +76,15 @@ pub fn main(init: std.process.Init) !void {
     try testExec(gpa, io, "heLLo", "hello from exe\n");
 
     // now rename the exe to not have an extension
-    try renameExe(tmp.dir, io, "hello.exe", "hello");
+    try renameExe(tmp_dir, io, "hello.exe", "hello");
 
     // with extension should now fail
     try testExecError(error.FileNotFound, gpa, io, "hello.exe");
     // without extension should succeed (case insensitive)
     try testExec(gpa, io, "heLLo", "hello from exe\n");
 
-    try tmp.dir.createDir(io, "something", .default_dir);
-    try renameExe(tmp.dir, io, "hello", "something/hello.exe");
+    try tmp_dir.createDir(io, "something", .default_dir);
+    try renameExe(tmp_dir, io, "hello", "something/hello.exe");
 
     const relative_path_no_ext = try std.fs.path.join(gpa, &.{ tmp_relative_path, "something/hello" });
     defer gpa.free(relative_path_no_ext);
@@ -95,7 +98,7 @@ pub fn main(init: std.process.Init) !void {
     try testExec(gpa, io, "heLLo", "hello from bat\r\n");
 
     // Add a hello.exe that is not a valid executable
-    try tmp.dir.writeFile(io, .{ .sub_path = "hello.exe", .data = "invalid" });
+    try tmp_dir.writeFile(io, .{ .sub_path = "hello.exe", .data = "invalid" });
 
     // Trying to execute it with extension will give InvalidExe. This is a special
     // case for .EXE extensions, where if they ever try to get executed but they are
@@ -108,14 +111,14 @@ pub fn main(init: std.process.Init) !void {
     try testExecError(error.InvalidExe, gpa, io, "hello");
 
     // If we now rename hello.exe to have no extension, it will behave differently
-    try renameExe(tmp.dir, io, "hello.exe", "hello");
+    try renameExe(tmp_dir, io, "hello.exe", "hello");
 
     // Now, trying to execute it without an extension should treat InvalidExe as recoverable
     // and skip over it and find hello.bat and execute that
     try testExec(gpa, io, "hello", "hello from bat\r\n");
 
     // If we rename the invalid exe to something else
-    try renameExe(tmp.dir, io, "hello", "goodbye");
+    try renameExe(tmp_dir, io, "hello", "goodbye");
     // Then we should now get FileNotFound when trying to execute 'goodbye',
     // since that is what the original error will be after searching for 'goodbye'
     // in the cwd. It will try to execute 'goodbye' from the PATH but the InvalidExe error
@@ -123,8 +126,8 @@ pub fn main(init: std.process.Init) !void {
     try testExecError(error.FileNotFound, gpa, io, "goodbye");
 
     // Now let's set the tmp dir as the cwd and set the path only include the "something" sub dir
-    try std.process.setCurrentDir(io, tmp.dir);
-    defer std.process.setCurrentDir(io, tmp.parent_dir) catch {};
+    try std.process.setCurrentDir(io, tmp_dir);
+    defer std.process.setCurrentDir(io, initial_process_cwd) catch {};
     const something_subdir_abs_path = try std.mem.concatWithSentinel(gpa, u16, &.{ tmp_absolute_path_w, utf16Literal("\\something") }, 0);
     defer gpa.free(something_subdir_abs_path);
 
@@ -141,7 +144,7 @@ pub fn main(init: std.process.Init) !void {
     try testExec(gpa, io, "hello", "hello from bat\r\n");
 
     // If we rename something/hello.exe to something/goodbye.exe
-    try renameExe(tmp.dir, io, "something/hello.exe", "something/goodbye.exe");
+    try renameExe(tmp_dir, io, "something/hello.exe", "something/goodbye.exe");
     // And try to execute goodbye, then the one in something should be found
     // since the one in cwd is an invalid executable
     try testExec(gpa, io, "goodbye", "hello from exe\n");
@@ -183,10 +186,10 @@ pub fn main(init: std.process.Init) !void {
     try testExec(gpa, io, "goodbye", "hello from exe\n");
 
     // now make sure we can launch executables "outside" of the cwd
-    var subdir_cwd = try tmp.dir.openDir(io, denormed_something_subdir_wtf8, .{});
+    var subdir_cwd = try tmp_dir.openDir(io, denormed_something_subdir_wtf8, .{});
     defer subdir_cwd.close(io);
 
-    try renameExe(tmp.dir, io, "something/goodbye.exe", "hello.exe");
+    try renameExe(tmp_dir, io, "something/goodbye.exe", "hello.exe");
     try std.process.setCurrentDir(io, subdir_cwd);
 
     // clear the PATH again
@@ -232,41 +235,3 @@ fn renameExe(dir: Io.Dir, io: Io, old_sub_path: []const u8, new_sub_path: []cons
         else => |e| return e,
     };
 }
-
-pub fn tmpDir(io: Io, opts: Io.Dir.OpenOptions) TmpDir {
-    var random_bytes: [TmpDir.random_bytes_count]u8 = undefined;
-    std.crypto.random.bytes(&random_bytes);
-    var sub_path: [TmpDir.sub_path_len]u8 = undefined;
-    _ = std.fs.base64_encoder.encode(&sub_path, &random_bytes);
-
-    const cwd = Io.Dir.cwd();
-    var cache_dir = cwd.createDirPathOpen(io, ".zig-cache", .{}) catch
-        @panic("unable to make tmp dir for testing: unable to make and open .zig-cache dir");
-    defer cache_dir.close(io);
-    const parent_dir = cache_dir.createDirPathOpen(io, "tmp", .{}) catch
-        @panic("unable to make tmp dir for testing: unable to make and open .zig-cache/tmp dir");
-    const dir = parent_dir.createDirPathOpen(io, &sub_path, .{ .open_options = opts }) catch
-        @panic("unable to make tmp dir for testing: unable to make and open the tmp dir");
-
-    return .{
-        .dir = dir,
-        .parent_dir = parent_dir,
-        .sub_path = sub_path,
-    };
-}
-
-pub const TmpDir = struct {
-    dir: Io.Dir,
-    parent_dir: Io.Dir,
-    sub_path: [sub_path_len]u8,
-
-    const random_bytes_count = 12;
-    const sub_path_len = std.fs.base64_encoder.calcSize(random_bytes_count);
-
-    pub fn cleanup(self: *TmpDir, io: Io) void {
-        self.dir.close(io);
-        self.parent_dir.deleteTree(io, &self.sub_path) catch {};
-        self.parent_dir.close(io);
-        self.* = undefined;
-    }
-};

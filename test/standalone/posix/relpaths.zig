@@ -11,16 +11,19 @@ pub fn main(init: std.process.Init) !void {
 
     const io = init.io;
 
-    var tmp = tmpDir(io, .{});
-    defer tmp.cleanup(io);
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
+    const tmp_dir_path = args[1];
+
+    var tmp_dir = try Io.Dir.cwd().openDir(io, tmp_dir_path, .{});
+    defer tmp_dir.close(io);
 
     // Want to test relative paths, so cd into the tmpdir for these tests
-    try std.process.setCurrentDir(io, tmp.dir);
+    try std.process.setCurrentDir(io, tmp_dir);
 
-    try test_link(io, tmp);
+    try test_link(io, tmp_dir);
 }
 
-fn test_link(io: Io, tmp: TmpDir) !void {
+fn test_link(io: Io, tmp_dir: Io.Dir) !void {
     switch (builtin.target.os.tag) {
         .linux, .illumos => {},
         else => return,
@@ -29,16 +32,16 @@ fn test_link(io: Io, tmp: TmpDir) !void {
     const target_name = "link-target";
     const link_name = "newlink";
 
-    try tmp.dir.writeFile(io, .{ .sub_path = target_name, .data = "example" });
+    try tmp_dir.writeFile(io, .{ .sub_path = target_name, .data = "example" });
 
-    // Test 1: create the relative link from inside tmp
+    // Test 1: create the relative link from inside tmp_dir
     try Io.Dir.hardLink(.cwd(), target_name, .cwd(), link_name, io, .{});
 
     // Verify
-    const efd = try tmp.dir.openFile(io, target_name, .{});
+    const efd = try tmp_dir.openFile(io, target_name, .{});
     defer efd.close(io);
 
-    const nfd = try tmp.dir.openFile(io, link_name, .{});
+    const nfd = try tmp_dir.openFile(io, link_name, .{});
     defer nfd.close(io);
 
     {
@@ -55,41 +58,3 @@ fn test_link(io: Io, tmp: TmpDir) !void {
         try std.testing.expectEqual(1, e_stat.nlink);
     }
 }
-
-pub fn tmpDir(io: Io, opts: Io.Dir.OpenOptions) TmpDir {
-    var random_bytes: [TmpDir.random_bytes_count]u8 = undefined;
-    std.crypto.random.bytes(&random_bytes);
-    var sub_path: [TmpDir.sub_path_len]u8 = undefined;
-    _ = std.fs.base64_encoder.encode(&sub_path, &random_bytes);
-
-    const cwd = Io.Dir.cwd();
-    var cache_dir = cwd.createDirPathOpen(io, ".zig-cache", .{}) catch
-        @panic("unable to make tmp dir for testing: unable to make and open .zig-cache dir");
-    defer cache_dir.close(io);
-    const parent_dir = cache_dir.createDirPathOpen(io, "tmp", .{}) catch
-        @panic("unable to make tmp dir for testing: unable to make and open .zig-cache/tmp dir");
-    const dir = parent_dir.createDirPathOpen(io, &sub_path, .{ .open_options = opts }) catch
-        @panic("unable to make tmp dir for testing: unable to make and open the tmp dir");
-
-    return .{
-        .dir = dir,
-        .parent_dir = parent_dir,
-        .sub_path = sub_path,
-    };
-}
-
-pub const TmpDir = struct {
-    dir: Io.Dir,
-    parent_dir: Io.Dir,
-    sub_path: [sub_path_len]u8,
-
-    const random_bytes_count = 12;
-    const sub_path_len = std.fs.base64_encoder.calcSize(random_bytes_count);
-
-    pub fn cleanup(self: *TmpDir, io: Io) void {
-        self.dir.close(io);
-        self.parent_dir.deleteTree(io, &self.sub_path) catch {};
-        self.parent_dir.close(io);
-        self.* = undefined;
-    }
-};

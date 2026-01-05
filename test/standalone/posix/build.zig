@@ -4,11 +4,13 @@ const builtin = @import("builtin");
 const Case = struct {
     src_path: []const u8,
     set_env_vars: bool = false,
+    make_tmp_dir: bool = false,
 };
 
 const cases = [_]Case{
     .{
         .src_path = "cwd.zig",
+        .make_tmp_dir = true,
     },
     .{
         .src_path = "getenv.zig",
@@ -19,6 +21,7 @@ const cases = [_]Case{
     },
     .{
         .src_path = "relpaths.zig",
+        .make_tmp_dir = true,
     },
 };
 
@@ -69,6 +72,9 @@ fn run_exe(b: *std.Build, optimize: std.builtin.OptimizeMode, case: *const Case,
     });
 
     const run_cmd = b.addRunArtifact(exe);
+    if (case.make_tmp_dir) {
+        run_cmd.addDirectoryArg(b.tmpPath());
+    }
 
     if (case.set_env_vars) {
         run_cmd.setEnvironmentVariable("ZIG_TEST_POSIX_1EQ", "test=variable");

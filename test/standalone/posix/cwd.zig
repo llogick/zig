@@ -13,10 +13,15 @@ pub fn main(init: std.process.Init) !void {
         .windows => return, // POSIX is not implemented by Windows
         else => {},
     }
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
+    const tmp_dir_path = args[1];
+
+    var tmp_dir = try Io.Dir.cwd().openDir(init.io, tmp_dir_path, .{});
+    defer tmp_dir.close(init.io);
 
     try test_chdir_self();
     try test_chdir_absolute();
-    try test_chdir_relative(init.gpa, init.io);
+    try test_chdir_relative(init.gpa, init.io, tmp_dir);
 }
 
 // get current working directory and expect it to match given path
@@ -47,23 +52,22 @@ fn test_chdir_absolute() !void {
     try expect_cwd(parent);
 }
 
-fn test_chdir_relative(gpa: Allocator, io: Io) !void {
-    var tmp = tmpDir(io, .{});
-    defer tmp.cleanup(io);
+fn test_chdir_relative(gpa: Allocator, io: Io, tmp_dir: Io.Dir) !void {
+    const subdir_path = "subdir";
+    try tmp_dir.createDir(io, "subdir", .default_dir);
 
-    // Use the tmpDir parent_dir as the "base" for the test. Then cd into the child
-    try std.process.setCurrentDir(io, tmp.parent_dir);
+    // Use the tmp dir as the "base" for the test. Then cd into the child
+    try std.process.setCurrentDir(io, tmp_dir);
 
     // Capture base working directory path, to build expected full path
     var base_cwd_buf: [path_max]u8 = undefined;
     const base_cwd = try std.posix.getcwd(base_cwd_buf[0..]);
 
-    const relative_dir_name = &tmp.sub_path;
-    const expected_path = try std.fs.path.resolve(gpa, &.{ base_cwd, relative_dir_name });
+    const expected_path = try std.fs.path.resolve(gpa, &.{ base_cwd, subdir_path });
     defer gpa.free(expected_path);
 
     // change current working directory to new test directory
-    try std.Io.Threaded.chdir(relative_dir_name);
+    try std.Io.Threaded.chdir(subdir_path);
 
     var new_cwd_buf: [path_max]u8 = undefined;
     const new_cwd = try std.posix.getcwd(new_cwd_buf[0..]);
@@ -74,41 +78,3 @@ fn test_chdir_relative(gpa: Allocator, io: Io) !void {
 
     try std.testing.expectEqualStrings(expected_path, resolved_cwd);
 }
-
-pub fn tmpDir(io: Io, opts: Io.Dir.OpenOptions) TmpDir {
-    var random_bytes: [TmpDir.random_bytes_count]u8 = undefined;
-    std.crypto.random.bytes(&random_bytes);
-    var sub_path: [TmpDir.sub_path_len]u8 = undefined;
-    _ = std.fs.base64_encoder.encode(&sub_path, &random_bytes);
-
-    const cwd = Io.Dir.cwd();
-    var cache_dir = cwd.createDirPathOpen(io, ".zig-cache", .{}) catch
-        @panic("unable to make tmp dir for testing: unable to make and open .zig-cache dir");
-    defer cache_dir.close(io);
-    const parent_dir = cache_dir.createDirPathOpen(io, "tmp", .{}) catch
-        @panic("unable to make tmp dir for testing: unable to make and open .zig-cache/tmp dir");
-    const dir = parent_dir.createDirPathOpen(io, &sub_path, .{ .open_options = opts }) catch
-        @panic("unable to make tmp dir for testing: unable to make and open the tmp dir");
-
-    return .{
-        .dir = dir,
-        .parent_dir = parent_dir,
-        .sub_path = sub_path,
-    };
-}
-
-pub const TmpDir = struct {
-    dir: Io.Dir,
-    parent_dir: Io.Dir,
-    sub_path: [sub_path_len]u8,
-
-    const random_bytes_count = 12;
-    const sub_path_len = std.fs.base64_encoder.calcSize(random_bytes_count);
-
-    pub fn cleanup(self: *TmpDir, io: Io) void {
-        self.dir.close(io);
-        self.parent_dir.deleteTree(io, &self.sub_path) catch {};
-        self.parent_dir.close(io);
-        self.* = undefined;
-    }
-};
