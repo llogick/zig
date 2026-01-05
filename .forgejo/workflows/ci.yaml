@@ -88,7 +88,7 @@ jobs:
           fetch-depth: 0
       - name: Build and Test
         run: sh ci/riscv64-linux-debug.sh
-        timeout-minutes: 600
+        timeout-minutes: 720
   riscv64-linux-release:
     if: github.event_name != 'pull_request'
     runs-on: [self-hosted, riscv64-linux]
@@ -99,7 +99,7 @@ jobs:
           fetch-depth: 0
       - name: Build and Test
         run: sh ci/riscv64-linux-release.sh
-        timeout-minutes: 480
+        timeout-minutes: 600
 
   s390x-linux-debug:
     runs-on: [self-hosted, s390x-linux]
