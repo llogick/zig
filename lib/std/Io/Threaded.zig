@@ -1446,6 +1446,7 @@ pub fn io(t: *Threaded) Io {
             .fileUnlock = fileUnlock,
             .fileDowngradeLock = fileDowngradeLock,
             .fileRealPath = fileRealPath,
+            .fileHardLink = fileHardLink,
 
             .processExecutableOpen = processExecutableOpen,
             .processExecutablePath = processExecutablePath,
@@ -1593,6 +1594,7 @@ pub fn ioBasic(t: *Threaded) Io {
             .fileUnlock = fileUnlock,
             .fileDowngradeLock = fileDowngradeLock,
             .fileRealPath = fileRealPath,
+            .fileHardLink = fileHardLink,
 
             .processExecutableOpen = processExecutableOpen,
             .processExecutablePath = processExecutablePath,
@@ -5144,6 +5146,65 @@ fn realPathPosix(fd: posix.fd_t, out_buffer: []u8) File.RealPathError!usize {
     comptime unreachable;
 }
 
+fn fileHardLink(
+    userdata: ?*anyopaque,
+    file: File,
+    new_dir: Dir,
+    new_sub_path: []const u8,
+    options: File.HardLinkOptions,
+) File.HardLinkError!void {
+    _ = userdata;
+    if (is_windows) return error.OperationUnsupported;
+    if (native_os == .wasi and !builtin.link_libc) @panic("TODO");
+
+    var new_path_buffer: [posix.PATH_MAX]u8 = undefined;
+    const new_sub_path_posix = try pathToPosix(new_sub_path, &new_path_buffer);
+
+    const flags: u32 = if (!options.follow_symlinks)
+        posix.AT.SYMLINK_NOFOLLOW | posix.AT.EMPTY_PATH
+    else
+        posix.AT.EMPTY_PATH;
+
+    return linkat(file.handle, "", new_dir.handle, new_sub_path_posix, flags);
+}
+
+fn linkat(
+    old_dir: posix.fd_t,
+    old_path: [*:0]const u8,
+    new_dir: posix.fd_t,
+    new_path: [*:0]const u8,
+    flags: u32,
+) File.HardLinkError!void {
+    const syscall: Syscall = try .start();
+    while (true) {
+        switch (posix.errno(posix.system.linkat(old_dir, old_path, new_dir, new_path, flags))) {
+            .SUCCESS => return syscall.finish(),
+            .INTR => {
+                try syscall.checkCancel();
+                continue;
+            },
+            .ACCES => return syscall.fail(error.AccessDenied),
+            .DQUOT => return syscall.fail(error.DiskQuota),
+            .EXIST => return syscall.fail(error.PathAlreadyExists),
+            .IO => return syscall.fail(error.HardwareFailure),
+            .LOOP => return syscall.fail(error.SymLinkLoop),
+            .MLINK => return syscall.fail(error.LinkQuotaExceeded),
+            .NAMETOOLONG => return syscall.fail(error.NameTooLong),
+            .NOENT => return syscall.fail(error.FileNotFound),
+            .NOMEM => return syscall.fail(error.SystemResources),
+            .NOSPC => return syscall.fail(error.NoSpaceLeft),
+            .NOTDIR => return syscall.fail(error.NotDir),
+            .PERM => return syscall.fail(error.PermissionDenied),
+            .ROFS => return syscall.fail(error.ReadOnlyFileSystem),
+            .XDEV => return syscall.fail(error.NotSameFileSystem),
+            .ILSEQ => return syscall.fail(error.BadPathName),
+            .FAULT => |err| return syscall.errnoBug(err),
+            .INVAL => |err| return syscall.errnoBug(err),
+            else => |err| return syscall.unexpectedErrno(err),
+        }
+    }
+}
+
 const dirDeleteFile = switch (native_os) {
     .windows => dirDeleteFileWindows,
     .wasi => dirDeleteFileWasi,
@@ -7560,46 +7621,7 @@ fn dirHardLink(
     const new_sub_path_posix = try pathToPosix(new_sub_path, &new_path_buffer);
 
     const flags: u32 = if (!options.follow_symlinks) posix.AT.SYMLINK_NOFOLLOW else 0;
-
-    const syscall: Syscall = try .start();
-    while (true) {
-        switch (posix.errno(posix.system.linkat(
-            old_dir.handle,
-            old_sub_path_posix,
-            new_dir.handle,
-            new_sub_path_posix,
-            flags,
-        ))) {
-            .SUCCESS => return syscall.finish(),
-            .INTR => {
-                try syscall.checkCancel();
-                continue;
-            },
-            else => |e| {
-                syscall.finish();
-                switch (e) {
-                    .ACCES => return error.AccessDenied,
-                    .DQUOT => return error.DiskQuota,
-                    .EXIST => return error.PathAlreadyExists,
-                    .FAULT => |err| return errnoBug(err),
-                    .IO => return error.HardwareFailure,
-                    .LOOP => return error.SymLinkLoop,
-                    .MLINK => return error.LinkQuotaExceeded,
-                    .NAMETOOLONG => return error.NameTooLong,
-                    .NOENT => return error.FileNotFound,
-                    .NOMEM => return error.SystemResources,
-                    .NOSPC => return error.NoSpaceLeft,
-                    .NOTDIR => return error.NotDir,
-                    .PERM => return error.PermissionDenied,
-                    .ROFS => return error.ReadOnlyFileSystem,
-                    .XDEV => return error.NotSameFileSystem,
-                    .INVAL => |err| return errnoBug(err),
-                    .ILSEQ => return error.BadPathName,
-                    else => |err| return posix.unexpectedErrno(err),
-                }
-            },
-        }
-    }
+    return linkat(old_dir.handle, old_sub_path_posix, new_dir.handle, new_sub_path_posix, flags);
 }
 
 fn fileClose(userdata: ?*anyopaque, files: []const File) void {

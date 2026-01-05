@@ -1652,11 +1652,10 @@ test "AtomicFile" {
             ;
 
             {
-                var buffer: [100]u8 = undefined;
-                var af = try ctx.dir.atomicFile(io, test_out_file, .{ .write_buffer = &buffer });
-                defer af.deinit();
-                try af.file_writer.interface.writeAll(test_content);
-                try af.finish();
+                var af = try ctx.dir.createFileAtomic(io, test_out_file, .{ .replace = true });
+                defer af.deinit(io);
+                try af.file.writeStreamingAll(io, test_content);
+                try af.replace(io);
             }
             const content = try ctx.dir.readFileAlloc(io, test_out_file, allocator, .limited(9999));
             try expectEqualStrings(test_content, content);
