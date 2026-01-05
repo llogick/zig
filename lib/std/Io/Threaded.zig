@@ -7545,7 +7545,6 @@ fn dirOpenDirWasi(
                     .NOMEM => return error.SystemResources,
                     .NOTDIR => return error.NotDir,
                     .PERM => return error.PermissionDenied,
-                    .BUSY => return error.DeviceBusy,
                     .NOTCAPABLE => return error.AccessDenied,
                     .ILSEQ => return error.BadPathName,
                     else => |err| return posix.unexpectedErrno(err),
@@ -14012,7 +14011,6 @@ fn windowsCreateProcessPathExt(
             error.NetworkNotFound,
             error.NameTooLong,
             error.BadPathName,
-            error.DeviceBusy,
             => return error.FileNotFound,
         };
     };
