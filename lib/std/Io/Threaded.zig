@@ -1403,6 +1403,7 @@ pub fn io(t: *Threaded) Io {
             .dirStatFile = dirStatFile,
             .dirAccess = dirAccess,
             .dirCreateFile = dirCreateFile,
+            .dirCreateFileAtomic = dirCreateFileAtomic,
             .dirOpenFile = dirOpenFile,
             .dirOpenDir = dirOpenDir,
             .dirClose = dirClose,
@@ -1549,6 +1550,7 @@ pub fn ioBasic(t: *Threaded) Io {
             .dirStatFile = dirStatFile,
             .dirAccess = dirAccess,
             .dirCreateFile = dirCreateFile,
+            .dirCreateFileAtomic = dirCreateFileAtomic,
             .dirOpenFile = dirOpenFile,
             .dirOpenDir = dirOpenDir,
             .dirClose = dirClose,
@@ -3413,6 +3415,163 @@ fn dirCreateFileWasi(
     }
 }
 
+fn dirCreateFileAtomic(
+    userdata: ?*anyopaque,
+    dir: Dir,
+    dest_path: []const u8,
+    options: Dir.CreateFileAtomicOptions,
+) Dir.CreateFileAtomicError!File.Atomic {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const t_io = ioBasic(t);
+
+    // Linux has O_TMPFILE, but linkat() does not support AT_REPLACE, so it's
+    // useless when we have to make up a bogus path name to do the rename()
+    // anyway.
+    if (native_os == .linux and !options.replace) tmpfile: {
+        const dest_dirname = Dir.path.dirname(dest_path);
+        if (dest_dirname) |dirname| {
+            // This has a nice side effect of preemptively triggering EISDIR or
+            // ENOENT, avoiding the ambiguity below.
+            dir.createDirPath(t_io, dirname) catch |err| switch (err) {
+                // None of these make sense in this context.
+                error.IsDir,
+                error.Streaming,
+                error.DiskQuota,
+                error.PathAlreadyExists,
+                error.LinkQuotaExceeded,
+                error.SharingViolation,
+                error.PipeBusy,
+                error.FileTooBig,
+                error.DeviceBusy,
+                error.FileLocksUnsupported,
+                error.FileBusy,
+                => return error.Unexpected,
+
+                else => |e| return e,
+            };
+        }
+
+        var path_buffer: [posix.PATH_MAX]u8 = undefined;
+        const sub_path_posix = try pathToPosix(dest_dirname orelse ".", &path_buffer);
+
+        const flags: posix.O = .{
+            .ACCMODE = .RDWR,
+            .TMPFILE = true,
+            .CLOEXEC = true,
+        };
+
+        const syscall: Syscall = try .start();
+        while (true) {
+            const rc = openat_sym(dir.handle, sub_path_posix, flags, options.permissions.toMode());
+            switch (posix.errno(rc)) {
+                .SUCCESS => {
+                    syscall.finish();
+                    return .{
+                        .file = .{ .handle = @intCast(rc) },
+                        .file_basename_hex = 0,
+                        .dest_sub_path = dest_path,
+                        .file_open = true,
+                        .file_exists = false,
+                        .close_dir_on_deinit = false,
+                        .dir = dir,
+                    };
+                },
+                .INTR => {
+                    try syscall.checkCancel();
+                    continue;
+                },
+                .ISDIR, .NOENT => {
+                    // Ambiguous error code. It might mean the file system
+                    // does not support O_TMPFILE. Therefore, we must fall
+                    // back to not using O_TMPFILE.
+                    syscall.finish();
+                    break :tmpfile;
+                },
+                .INVAL => return syscall.fail(error.BadPathName),
+                .ACCES => return syscall.fail(error.AccessDenied),
+                .LOOP => return syscall.fail(error.SymLinkLoop),
+                .MFILE => return syscall.fail(error.ProcessFdQuotaExceeded),
+                .NAMETOOLONG => return syscall.fail(error.NameTooLong),
+                .NFILE => return syscall.fail(error.SystemFdQuotaExceeded),
+                .NODEV => return syscall.fail(error.NoDevice),
+                .NOMEM => return syscall.fail(error.SystemResources),
+                .NOSPC => return syscall.fail(error.NoSpaceLeft),
+                .NOTDIR => return syscall.fail(error.NotDir),
+                .PERM => return syscall.fail(error.PermissionDenied),
+                .AGAIN => return syscall.fail(error.WouldBlock),
+                .NXIO => return syscall.fail(error.NoDevice),
+                .ILSEQ => return syscall.fail(error.BadPathName),
+                else => |err| return syscall.unexpectedErrno(err),
+            }
+        }
+    }
+
+    if (Dir.path.dirname(dest_path)) |dirname| {
+        const new_dir = if (options.make_path)
+            dir.createDirPathOpen(t_io, dirname, .{}) catch |err| switch (err) {
+                // None of these make sense in this context.
+                error.IsDir,
+                error.Streaming,
+                error.DiskQuota,
+                error.PathAlreadyExists,
+                error.LinkQuotaExceeded,
+                error.SharingViolation,
+                error.PipeBusy,
+                error.FileTooBig,
+                error.FileLocksUnsupported,
+                error.FileBusy,
+                error.DeviceBusy,
+                => return error.Unexpected,
+
+                else => |e| return e,
+            }
+        else
+            try dir.openDir(t_io, dirname, .{});
+
+        return atomicFileInit(t_io, Dir.path.basename(dest_path), options.permissions, new_dir, true);
+    }
+
+    return atomicFileInit(t_io, dest_path, options.permissions, dir, false);
+}
+
+fn atomicFileInit(
+    t_io: Io,
+    dest_basename: []const u8,
+    permissions: File.Permissions,
+    dir: Dir,
+    close_dir_on_deinit: bool,
+) Dir.CreateFileAtomicError!File.Atomic {
+    while (true) {
+        const random_integer = std.crypto.random.int(u64);
+        const tmp_sub_path = std.fmt.hex(random_integer);
+        const file = dir.createFile(t_io, &tmp_sub_path, .{
+            .permissions = permissions,
+            .exclusive = true,
+        }) catch |err| switch (err) {
+            error.PathAlreadyExists => continue,
+            error.DeviceBusy => continue,
+            error.FileBusy => continue,
+            error.SharingViolation => continue,
+
+            error.IsDir => return error.Unexpected, // No path components.
+            error.FileTooBig => return error.Unexpected, // Creating, not opening.
+            error.FileLocksUnsupported => return error.Unexpected, // Not asking for locks.
+            error.PipeBusy => return error.Unexpected, // Not opening a pipe.
+
+            else => |e| return e,
+        };
+        return .{
+            .file = file,
+            .file_basename_hex = random_integer,
+            .dest_sub_path = dest_basename,
+            .file_open = true,
+            .file_exists = true,
+            .close_dir_on_deinit = close_dir_on_deinit,
+            .dir = dir,
+        };
+    }
+}
+
 const dirOpenFile = switch (native_os) {
     .windows => dirOpenFileWindows,
     .wasi => dirOpenFileWasi,
@@ -3925,7 +4084,7 @@ fn dirOpenDirPosix(
                     .NOMEM => return error.SystemResources,
                     .NOTDIR => return error.NotDir,
                     .PERM => return error.PermissionDenied,
-                    .BUSY => return error.DeviceBusy,
+                    .BUSY => |err| return errnoBug(err), // O_EXCL not passed
                     .NXIO => return error.NoDevice,
                     .ILSEQ => return error.BadPathName,
                     else => |err| return posix.unexpectedErrno(err),

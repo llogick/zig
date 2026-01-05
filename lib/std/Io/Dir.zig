@@ -454,7 +454,6 @@ pub const OpenError = error{
     SystemFdQuotaExceeded,
     NoDevice,
     SystemResources,
-    DeviceBusy,
     /// On Windows, `\\server` or `\\server\share` was not found.
     NetworkNotFound,
 } || PathNameError || Io.Cancelable || Io.UnexpectedError;
@@ -598,30 +597,29 @@ pub fn updateFile(
         }
     }
 
-    if (path.dirname(dest_path)) |dirname| {
-        try dest_dir.createDirPath(io, dirname);
-    }
-
-    var buffer: [1000]u8 = undefined; // Used only when direct fd-to-fd is not available.
-    var atomic_file = try dest_dir.atomicFile(io, dest_path, .{
+    var atomic_file = try dest_dir.createFileAtomic(io, dest_path, .{
         .permissions = actual_permissions,
-        .write_buffer = &buffer,
+        .make_path = true,
+        .replace = true,
     });
-    defer atomic_file.deinit();
+    defer atomic_file.deinit(io);
+
+    var buffer: [1024]u8 = undefined; // Used only when direct fd-to-fd is not available.
+    var file_writer = atomic_file.file.writer(io, &buffer);
 
     var src_reader: File.Reader = .initSize(src_file, io, &.{}, src_stat.size);
-    const dest_writer = &atomic_file.file_writer.interface;
+    const dest_writer = &file_writer.interface;
 
     _ = dest_writer.sendFileAll(&src_reader, .unlimited) catch |err| switch (err) {
         error.ReadFailed => return src_reader.err.?,
-        error.WriteFailed => return atomic_file.file_writer.err.?,
+        error.WriteFailed => return file_writer.err.?,
     };
-    try atomic_file.flush();
-    try atomic_file.file_writer.file.setTimestamps(io, .{
+    try file_writer.flush();
+    try file_writer.file.setTimestamps(io, .{
         .access_timestamp = .init(src_stat.atime),
         .modify_timestamp = .init(src_stat.mtime),
     });
-    try atomic_file.renameIntoPlace();
+    try atomic_file.replace(io);
     return .stale;
 }
 
@@ -995,27 +993,9 @@ pub fn renameAbsolute(old_path: []const u8, new_path: []const u8, io: Io) Rename
     return io.vtable.dirRename(io.userdata, my_cwd, old_path, my_cwd, new_path);
 }
 
-pub const HardLinkOptions = struct {
-    follow_symlinks: bool = true,
-};
+pub const HardLinkOptions = File.HardLinkOptions;
 
-pub const HardLinkError = error{
-    AccessDenied,
-    PermissionDenied,
-    DiskQuota,
-    PathAlreadyExists,
-    HardwareFailure,
-    /// Either the OS or the filesystem does not support hard links.
-    OperationUnsupported,
-    SymLinkLoop,
-    LinkQuotaExceeded,
-    FileNotFound,
-    SystemResources,
-    NoSpaceLeft,
-    ReadOnlyFileSystem,
-    NotSameFileSystem,
-    NotDir,
-} || Io.Cancelable || PathNameError || Io.UnexpectedError;
+pub const HardLinkError = File.HardLinkError;
 
 pub fn hardLink(
     old_dir: Dir,
@@ -1251,7 +1231,6 @@ pub const DeleteTreeError = error{
     ReadOnlyFileSystem,
     FileSystem,
     FileBusy,
-    DeviceBusy,
     /// One of the path components was not a directory.
     /// This error is unreachable if `sub_path` does not contain a path separator.
     NotDir,
@@ -1322,7 +1301,6 @@ pub fn deleteTree(dir: Dir, io: Io, sub_path: []const u8) DeleteTreeError!void {
                             error.Unexpected,
                             error.BadPathName,
                             error.NetworkNotFound,
-                            error.DeviceBusy,
                             error.Canceled,
                             => |e| return e,
                         };
@@ -1417,7 +1395,6 @@ pub fn deleteTree(dir: Dir, io: Io, sub_path: []const u8) DeleteTreeError!void {
                             error.Unexpected,
                             error.BadPathName,
                             error.NetworkNotFound,
-                            error.DeviceBusy,
                             error.Canceled,
                             => |e| return e,
                         };
@@ -1522,7 +1499,6 @@ fn deleteTreeMinStackSizeWithKindHint(parent: Dir, io: Io, sub_path: []const u8,
                             error.Unexpected,
                             error.BadPathName,
                             error.NetworkNotFound,
-                            error.DeviceBusy,
                             error.Canceled,
                             => |e| return e,
                         };
@@ -1619,7 +1595,6 @@ fn deleteTreeOpenInitialSubpath(dir: Dir, io: Io, sub_path: []const u8, kind_hin
                     error.SystemResources,
                     error.Unexpected,
                     error.BadPathName,
-                    error.DeviceBusy,
                     error.NetworkNotFound,
                     error.Canceled,
                     => |e| return e,
@@ -1658,15 +1633,18 @@ fn deleteTreeOpenInitialSubpath(dir: Dir, io: Io, sub_path: []const u8, kind_hin
 pub const CopyFileOptions = struct {
     /// When this is `null` the permissions are copied from the source file.
     permissions: ?File.Permissions = null,
+    make_path: bool = false,
+    replace: bool = true,
 };
 
 pub const CopyFileError = File.OpenError || File.StatError ||
-    File.Atomic.InitError || File.Atomic.FinishError ||
+    CreateFileAtomicError || File.Atomic.ReplaceError || File.Atomic.LinkError ||
     File.Reader.Error || File.Writer.Error || error{InvalidFileName};
 
 /// Atomically creates a new file at `dest_path` within `dest_dir` with the
-/// same contents as `source_path` within `source_dir`, overwriting any already
-/// existing file.
+/// same contents as `source_path` within `source_dir`.
+///
+/// Whether to overwrite the existing file is determined by `options`.
 ///
 /// On Linux, until https://patchwork.kernel.org/patch/9636735/ is merged and
 /// readily available, there is a possibility of power loss or application
@@ -1695,19 +1673,27 @@ pub fn copyFile(
         break :blk st.permissions;
     };
 
-    var buffer: [1024]u8 = undefined; // Used only when direct fd-to-fd is not available.
-    var atomic_file = try dest_dir.atomicFile(io, dest_path, .{
+    var atomic_file = try dest_dir.createFileAtomic(io, dest_path, .{
         .permissions = permissions,
-        .write_buffer = &buffer,
+        .make_path = options.make_path,
+        .replace = options.replace,
     });
-    defer atomic_file.deinit();
+    defer atomic_file.deinit(io);
 
-    _ = atomic_file.file_writer.interface.sendFileAll(&file_reader, .unlimited) catch |err| switch (err) {
+    var buffer: [1024]u8 = undefined; // Used only when direct fd-to-fd is not available.
+    var file_writer = atomic_file.file.writer(io, &buffer);
+
+    _ = file_writer.interface.sendFileAll(&file_reader, .unlimited) catch |err| switch (err) {
         error.ReadFailed => return file_reader.err.?,
-        error.WriteFailed => return atomic_file.file_writer.err.?,
+        error.WriteFailed => return file_writer.err.?,
     };
 
-    try atomic_file.finish();
+    try file_writer.flush();
+
+    switch (options.replace) {
+        true => try atomic_file.replace(io),
+        false => try atomic_file.link(io),
+    }
 }
 
 /// Same as `copyFile`, except asserts that both `source_path` and `dest_path`
@@ -1730,33 +1716,65 @@ pub fn copyFileAbsolute(
 
 test copyFileAbsolute {}
 
-pub const AtomicFileOptions = struct {
+pub const CreateFileAtomicOptions = struct {
     permissions: File.Permissions = .default_file,
     make_path: bool = false,
-    write_buffer: []u8,
+    /// Tells whether the unnamed file will be ultimately created with
+    /// `File.Atomic.link` or `File.Atomic.replace`.
+    ///
+    /// If this value is incorrect it will cause an assertion failure in
+    /// `File.Atomic.replace`.
+    replace: bool = false,
 };
 
-/// Directly access the `.file` field, and then call `File.Atomic.finish` to
-/// atomically replace `dest_path` with contents.
-///
-/// Always call `File.Atomic.deinit` to clean up, regardless of whether
-/// `File.Atomic.finish` succeeded. `dest_path` must remain valid until
-/// `File.Atomic.deinit` is called.
-///
-/// On Windows, `dest_path` should be encoded as [WTF-8](https://wtf-8.codeberg.page/).
-/// On WASI, `dest_path` should be encoded as valid UTF-8.
-/// On other platforms, `dest_path` is an opaque sequence of bytes with no particular encoding.
-pub fn atomicFile(parent: Dir, io: Io, dest_path: []const u8, options: AtomicFileOptions) !File.Atomic {
-    if (path.dirname(dest_path)) |dirname| {
-        const dir = if (options.make_path)
-            try parent.createDirPathOpen(io, dirname, .{})
-        else
-            try parent.openDir(io, dirname, .{});
+pub const CreateFileAtomicError = error{
+    NoDevice,
+    /// On Windows, `\\server` or `\\server\share` was not found.
+    NetworkNotFound,
+    /// On Windows, antivirus software is enabled by default. It can be
+    /// disabled, but Windows Update sometimes ignores the user's preference
+    /// and re-enables it. When enabled, antivirus software on Windows
+    /// intercepts file system operations and makes them significantly slower
+    /// in addition to possibly failing with this error code.
+    AntivirusInterference,
+    /// In WASI, this error may occur when the file descriptor does
+    /// not hold the required rights to open a new resource relative to it.
+    AccessDenied,
+    PermissionDenied,
+    SymLinkLoop,
+    ProcessFdQuotaExceeded,
+    SystemFdQuotaExceeded,
+    /// Either:
+    /// * One of the path components does not exist.
+    /// * Cwd was used, but cwd has been deleted.
+    /// * The path associated with the open directory handle has been deleted.
+    FileNotFound,
+    /// Insufficient kernel memory was available.
+    SystemResources,
+    /// A new path cannot be created because the device has no room for the new file.
+    NoSpaceLeft,
+    /// A component used as a directory in the path was not, in fact, a directory.
+    NotDir,
+    WouldBlock,
+    ReadOnlyFileSystem,
+} || Io.Dir.PathNameError || Io.Cancelable || Io.UnexpectedError;
 
-        return .init(io, path.basename(dest_path), options.permissions, dir, true, options.write_buffer);
-    } else {
-        return .init(io, dest_path, options.permissions, parent, false, options.write_buffer);
-    }
+/// Create an unnamed ephemeral file that can eventually be atomically
+/// materialized into `sub_path`.
+///
+/// The returned `File.Atomic` provides API to emulate the behavior in case it
+/// is not directly supported by the underlying operating system.
+///
+/// * On Windows, `sub_path` should be encoded as [WTF-8](https://wtf-8.codeberg.page/).
+/// * On WASI, `sub_path` should be encoded as valid UTF-8.
+/// * On other platforms, `sub_path` is an opaque sequence of bytes with no particular encoding.
+pub fn createFileAtomic(
+    dir: Dir,
+    io: Io,
+    sub_path: []const u8,
+    options: CreateFileAtomicOptions,
+) CreateFileAtomicError!File.Atomic {
+    return io.vtable.dirCreateFileAtomic(io.userdata, dir, sub_path, options);
 }
 
 pub const SetPermissionsError = File.SetPermissionsError;

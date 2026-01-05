@@ -272,3 +272,11 @@ pub fn end(w: *Writer) EndError!void {
         => {},
     }
 }
+
+/// Convenience method for calling `Io.Writer.flush` and returning the
+/// underlying error.
+pub fn flush(w: *Writer) Error!void {
+    w.interface.flush() catch |err| switch (err) {
+        error.WriteFailed => return w.err.?,
+    };
+}

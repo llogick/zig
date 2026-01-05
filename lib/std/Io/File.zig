@@ -278,7 +278,7 @@ pub const OpenError = error{
     FileBusy,
     /// Non-blocking was requested and the operation cannot return immediately.
     WouldBlock,
-} || Io.Dir.PathNameError || Io.Cancelable || Io.UnexpectedError;
+} || Dir.PathNameError || Io.Cancelable || Io.UnexpectedError;
 
 pub fn close(file: File, io: Io) void {
     return io.vtable.fileClose(io.userdata, (&file)[0..1]);
@@ -706,6 +706,38 @@ pub const RealPathError = error{
 /// avoid this function entirely.
 pub fn realPath(file: File, io: Io, out_buffer: []u8) RealPathError!usize {
     return io.vtable.fileRealPath(io.userdata, file, out_buffer);
+}
+
+pub const HardLinkOptions = struct {
+    follow_symlinks: bool = true,
+};
+
+pub const HardLinkError = error{
+    AccessDenied,
+    PermissionDenied,
+    DiskQuota,
+    PathAlreadyExists,
+    HardwareFailure,
+    /// Either the OS or the filesystem does not support hard links.
+    OperationUnsupported,
+    SymLinkLoop,
+    LinkQuotaExceeded,
+    FileNotFound,
+    SystemResources,
+    NoSpaceLeft,
+    ReadOnlyFileSystem,
+    NotSameFileSystem,
+    NotDir,
+} || Io.Cancelable || Dir.PathNameError || Io.UnexpectedError;
+
+pub fn hardLink(
+    file: File,
+    io: Io,
+    new_dir: Dir,
+    new_sub_path: []const u8,
+    options: HardLinkOptions,
+) HardLinkError!void {
+    return io.vtable.fileHardLink(io.userdata, file, new_dir, new_sub_path, options);
 }
 
 test {

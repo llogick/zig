@@ -793,7 +793,6 @@ fn glibcVerFromRPath(io: Io, rpath: []const u8) !std.SemanticVersion {
     var dir = cwd.openDir(io, rpath, .{}) catch |err| switch (err) {
         error.NameTooLong => return error.Unexpected,
         error.BadPathName => return error.Unexpected,
-        error.DeviceBusy => return error.Unexpected,
         error.NetworkNotFound => return error.Unexpected, // Windows-only
 
         error.FileNotFound => return error.GLibCNotFound,
