@@ -8427,6 +8427,7 @@ pub const O = switch (native_os) {
         CLOEXEC: bool = false,
         SYNC: bool = false,
         PATH: bool = false,
+        /// This is typically invalid without also setting `DIRECTORY`.
         TMPFILE: bool = false,
         _: u9 = 0,
     },
@@ -8615,6 +8616,7 @@ pub const O = switch (native_os) {
         _19: u1 = 0,
         CLOEXEC: bool = false,
         PATH: bool = false,
+        /// This is typically invalid without also setting `DIRECTORY`.
         TMPFILE: bool = false,
         _: u9 = 0,
     },

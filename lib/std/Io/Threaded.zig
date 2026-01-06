@@ -3433,11 +3433,13 @@ fn dirCreateFileAtomic(
         const flags: posix.O = if (@hasField(posix.O, "TMPFILE")) .{
             .ACCMODE = .RDWR,
             .TMPFILE = true,
+            .DIRECTORY = true,
             .CLOEXEC = true,
         } else if (@hasField(posix.O, "TMPFILE0") and !@hasField(posix.O, "TMPFILE2")) .{
             .ACCMODE = .RDWR,
             .TMPFILE0 = true,
             .TMPFILE1 = true,
+            .DIRECTORY = true,
             .CLOEXEC = true,
         } else break :tmpfile;
 
