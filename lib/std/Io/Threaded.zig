@@ -15101,6 +15101,7 @@ fn randomMainThread(t: *Threaded, buffer: []u8) void {
                     std.mem.writeInt(usize, seed[seed.len - @sizeOf(usize) ..][0..@sizeOf(usize)], aslr_addr, .native);
                     switch (native_os) {
                         .windows => fallbackSeedWindows(&seed),
+                        .wasi => if (builtin.link_libc) fallbackSeedPosix(&seed) else fallbackSeedWasi(&seed),
                         else => fallbackSeedPosix(&seed),
                     }
                 },
@@ -15133,6 +15134,13 @@ fn fallbackSeedWindows(seed: *[Csprng.seed_len]u8) void {
     var pc: windows.LARGE_INTEGER = undefined;
     _ = windows.ntdll.RtlQueryPerformanceCounter(&pc);
     std.mem.writeInt(windows.LARGE_INTEGER, seed[0..@sizeOf(windows.LARGE_INTEGER)], pc, .native);
+}
+
+fn fallbackSeedWasi(seed: *[Csprng.seed_len]u8) void {
+    var ts: std.os.wasi.timestamp_t = undefined;
+    if (std.os.wasi.clock_time_get(.REALTIME, 1, &ts) == .SUCCESS) {
+        std.mem.writeInt(std.os.wasi.timestamp_t, seed[0..@sizeOf(std.os.wasi.timestamp_t)], ts, .native);
+    }
 }
 
 fn randomSecure(userdata: ?*anyopaque, buffer: []u8) Io.RandomSecureError!void {
