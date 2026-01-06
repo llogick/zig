@@ -2246,13 +2246,14 @@ pub fn unlockStderr(io: Io) void {
     return io.vtable.unlockStderr(io.userdata);
 }
 
-/// Obtains entropy.
+/// Obtains entropy from a cryptographically secure pseudo-random number
+/// generator.
 ///
 /// The implementation *may* store RNG state in process memory and use it to
 /// fill `buffer`.
 ///
-/// The degree to which the entropy is cryptographically secure is determined
-/// by the `Io` implementation.
+/// The randomness is seeded by `randomSecure`, or a less secure mechanism upon
+/// failure.
 ///
 /// Threadsafe.
 ///
