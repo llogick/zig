@@ -1098,8 +1098,10 @@ pub fn symLinkAtomic(
 
     const temp_path = temp_path_buf[0..temp_path_len];
 
+    var random_integer: u64 = undefined;
+
     while (true) {
-        const random_integer = std.crypto.random.int(u64);
+        io.random(@ptrCast(&random_integer));
         temp_path[dirname.len + 1 ..][0..rand_len].* = std.fmt.hex(random_integer);
 
         if (dir.symLink(io, target_path, temp_path, flags)) {

@@ -984,7 +984,8 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
     };
 
     // We do not know the final output paths yet, use temp paths to run the command.
-    const rand_int = std.crypto.random.int(u64);
+    var rand_int: u64 = undefined;
+    io.random(@ptrCast(&rand_int));
     const tmp_dir_path = "tmp" ++ Dir.path.sep_str ++ std.fmt.hex(rand_int);
 
     for (output_placeholders.items) |placeholder| {
@@ -1128,7 +1129,8 @@ pub fn rerunInFuzzMode(
     }
 
     const has_side_effects = false;
-    const rand_int = std.crypto.random.int(u64);
+    var rand_int: u64 = undefined;
+    io.random(@ptrCast(&rand_int));
     const tmp_dir_path = "tmp" ++ Dir.path.sep_str ++ std.fmt.hex(rand_int);
     try runCommand(run, argv_list.items, has_side_effects, tmp_dir_path, .{
         .progress_node = prog_node,

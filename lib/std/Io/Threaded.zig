@@ -67,6 +67,21 @@ environ: Environ,
 null_file: NullFile = .{},
 random_file: RandomFile = .{},
 
+csprng: Csprng = .{},
+
+pub const Csprng = struct {
+    rng: std.Random.DefaultCsprng = .{
+        .state = undefined,
+        .offset = std.math.maxInt(usize),
+    },
+
+    pub const seed_len = std.Random.DefaultCsprng.secret_seed_length;
+
+    pub fn isInitialized(c: *const Csprng) bool {
+        return c.rng.offset == std.math.maxInt(usize);
+    }
+};
+
 pub const Argv0 = switch (native_os) {
     .openbsd, .haiku => struct {
         value: ?[*:0]const u8,
@@ -595,7 +610,7 @@ const Thread = struct {
     /// Always released when `Status.cancelation` is set to `.parked`.
     futex_waiter: if (use_parking_futex) ?*parking_futex.Waiter else ?noreturn,
 
-    csprng: std.Random.DefaultCsprng,
+    csprng: Csprng,
 
     const Handle = Handle: {
         if (std.Thread.use_pthreads) break :Handle std.c.pthread_t;
@@ -1326,10 +1341,7 @@ fn worker(t: *Threaded) void {
         }),
         .cancel_protection = .unblocked,
         .futex_waiter = undefined,
-        .csprng = .{
-            .state = undefined,
-            .offset = std.math.maxInt(usize),
-        },
+        .csprng = .{},
     };
     Thread.current = &thread;
 
@@ -1484,6 +1496,7 @@ pub fn io(t: *Threaded) Io {
             .sleep = sleep,
 
             .random = random,
+            .randomSecure = randomSecure,
 
             .netListenIp = switch (native_os) {
                 .windows => netListenIpWindows,
@@ -1634,6 +1647,7 @@ pub fn ioBasic(t: *Threaded) Io {
             .sleep = sleep,
 
             .random = random,
+            .randomSecure = randomSecure,
 
             .netListenIp = netListenIpUnavailable,
             .netListenUnix = netListenUnixUnavailable,
@@ -3584,8 +3598,9 @@ fn atomicFileInit(
     dir: Dir,
     close_dir_on_deinit: bool,
 ) Dir.CreateFileAtomicError!File.Atomic {
+    var random_integer: u64 = undefined;
     while (true) {
-        const random_integer = std.crypto.random.int(u64);
+        t_io.random(@ptrCast(&random_integer));
         const tmp_sub_path = std.fmt.hex(random_integer);
         const file = dir.createFile(t_io, &tmp_sub_path, .{
             .permissions = permissions,
@@ -12468,7 +12483,8 @@ fn lookupDns(
 
     for (family_records) |fr| {
         if (options.family != fr.af) {
-            const entropy = std.crypto.random.array(u8, 2);
+            var entropy: [2]u8 = undefined;
+            random(t, &entropy);
             const len = writeResolutionQuery(&query_buffers[nq], 0, lookup_canon_name, 1, fr.rr, entropy);
             queries_buffer[nq] = query_buffers[nq][0..len];
             nq += 1;
@@ -15018,7 +15034,62 @@ pub fn environString(t: *Threaded, comptime name: []const u8) ?[:0]const u8 {
     return @field(t.environ.string, name);
 }
 
-fn random(userdata: ?*anyopaque, buffer: []u8) Io.RandomError!void {
+fn random(userdata: ?*anyopaque, buffer: []u8) void {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const thread = Thread.current orelse return randomMainThread(t, buffer);
+    if (!thread.csprng.isInitialized()) {
+        @branchHint(.unlikely);
+        var seed: [Csprng.seed_len]u8 = undefined;
+        randomMainThread(t, &seed);
+        thread.csprng.rng = .init(seed);
+    }
+    thread.csprng.rng.fill(buffer);
+}
+
+fn randomMainThread(t: *Threaded, buffer: []u8) void {
+    t.mutex.lock();
+    defer t.mutex.unlock();
+
+    if (!t.csprng.isInitialized()) {
+        @branchHint(.unlikely);
+        var seed: [Csprng.seed_len]u8 = undefined;
+        {
+            t.mutex.unlock();
+            defer t.mutex.lock();
+
+            const prev = swapCancelProtection(t, .blocked);
+            defer _ = swapCancelProtection(t, prev);
+
+            randomSecure(t, &seed) catch |err| switch (err) {
+                error.Canceled => unreachable,
+                error.EntropyUnavailable => {
+                    seed = @splat(0);
+                    std.mem.writeInt(posix.pid_t, seed[0..@sizeOf(posix.pid_t)], posix.system.getpid(), .native);
+                    const i_1 = @sizeOf(posix.pid_t);
+
+                    var ts: posix.timespec = undefined;
+                    const Sec = @TypeOf(ts.sec);
+                    const Nsec = @TypeOf(ts.nsec);
+                    const i_2 = i_1 + @sizeOf(Sec);
+                    const i_3 = i_2 + @sizeOf(Nsec);
+                    switch (posix.errno(posix.system.clock_gettime(.REALTIME, &ts))) {
+                        .SUCCESS => {
+                            std.mem.writeInt(Sec, seed[i_1..][0..@sizeOf(Sec)], ts.sec, .native);
+                            std.mem.writeInt(Nsec, seed[i_2..][0..@sizeOf(Nsec)], ts.nsec, .native);
+                        },
+                        else => {},
+                    }
+                    std.mem.writeInt(usize, seed[i_3..][0..@sizeOf(usize)], @intFromPtr(t), .native);
+                },
+            };
+        }
+        t.csprng.rng = .init(seed);
+    }
+
+    t.csprng.rng.fill(buffer);
+}
+
+fn randomSecure(userdata: ?*anyopaque, buffer: []u8) Io.RandomSecureError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
 
     if (is_windows) {

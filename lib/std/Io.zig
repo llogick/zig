@@ -731,7 +731,8 @@ pub const VTable = struct {
     now: *const fn (?*anyopaque, Clock) Clock.Error!Timestamp,
     sleep: *const fn (?*anyopaque, Timeout) SleepError!void,
 
-    random: *const fn (?*anyopaque, buffer: []u8) RandomError!void,
+    random: *const fn (?*anyopaque, buffer: []u8) void,
+    randomSecure: *const fn (?*anyopaque, buffer: []u8) RandomSecureError!void,
 
     netListenIp: *const fn (?*anyopaque, address: net.IpAddress, net.IpAddress.ListenOptions) net.IpAddress.ListenError!net.Server,
     netAccept: *const fn (?*anyopaque, server: net.Socket.Handle) net.Server.AcceptError!net.Stream,
@@ -2245,9 +2246,34 @@ pub fn unlockStderr(io: Io) void {
     return io.vtable.unlockStderr(io.userdata);
 }
 
-pub const RandomError = error{EntropyUnavailable} || Cancelable;
-
+/// Obtains entropy.
+///
+/// The implementation *may* store RNG state in process memory and use it to
+/// fill `buffer`.
+///
+/// The degree to which the entropy is cryptographically secure is determined
+/// by the `Io` implementation.
+///
 /// Threadsafe.
-pub fn random(io: Io, buffer: []u8) RandomError!void {
+///
+/// See also `randomSecure`.
+pub fn random(io: Io, buffer: []u8) void {
     return io.vtable.random(io.userdata, buffer);
+}
+
+pub const RandomSecureError = error{EntropyUnavailable} || Cancelable;
+
+/// Obtains cryptographically secure entropy from outside the process.
+///
+/// Always makes a syscall, or otherwise avoids dependency on process memory,
+/// in order to obtain fresh randomness. Does not rely on stored RNG state.
+///
+/// Does not have any fallback mechanisms; returns `error.EntropyUnavailable`
+/// if any problems occur.
+///
+/// Threadsafe.
+///
+/// See also `random`.
+pub fn randomSecure(io: Io, buffer: []u8) RandomSecureError!void {
+    return io.vtable.randomSecure(io.userdata, buffer);
 }

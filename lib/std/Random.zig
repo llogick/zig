@@ -33,6 +33,22 @@ pub const ziggurat = @import("Random/ziggurat.zig");
 ptr: *anyopaque,
 fillFn: *const fn (ptr: *anyopaque, buf: []u8) void,
 
+pub const IoSource = struct {
+    io: std.Io,
+
+    pub fn interface(this: *const @This()) std.Random {
+        return .{
+            .ptr = this,
+            .fillFn = fill,
+        };
+    }
+
+    fn fill(ptr: *anyopaque, buffer: []u8) void {
+        const this: *const @This() = @ptrCast(@alignCast(ptr));
+        this.io.random(buffer);
+    }
+};
+
 pub fn init(pointer: anytype, comptime fillFn: fn (ptr: @TypeOf(pointer), buf: []u8) void) Random {
     const Ptr = @TypeOf(pointer);
     assert(@typeInfo(Ptr) == .pointer); // Must be a pointer
