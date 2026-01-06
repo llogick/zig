@@ -25971,7 +25971,7 @@ fn resolveExternOptions(
     const relocation_val = try sema.resolveConstDefinedValue(block, relocation_src, relocation_ref, .{ .simple = .extern_options });
     const relocation = try sema.interpretBuiltinType(block, relocation_src, relocation_val, std.builtin.ExternOptions.Relocation);
 
-    const decoration_ref = try sema.fieldVal(block, src, options, try ip.getOrPutString(gpa, pt.tid, "decoration", .no_embedded_nulls), decoration_src);
+    const decoration_ref = try sema.fieldVal(block, src, options, try ip.getOrPutString(gpa, io, pt.tid, "decoration", .no_embedded_nulls), decoration_src);
     const decoration_val = try sema.resolveConstDefinedValue(block, decoration_src, decoration_ref, .{ .simple = .extern_options });
     const decoration = try sema.interpretBuiltinType(block, decoration_src, decoration_val, ?std.builtin.ExternOptions.Decoration);
 
