@@ -244,32 +244,41 @@ fn Kyber(comptime p: Params) type {
             /// Size of a serialized representation of the key, in bytes.
             pub const encoded_length = InnerPk.encoded_length;
 
-            /// Generates a shared secret, and encapsulates it for the public key.
-            /// If `seed` is `null`, a random seed is used. This is recommended.
-            /// If `seed` is set, encapsulation is deterministic.
-            pub fn encaps(pk: PublicKey, seed_: ?[encaps_seed_length]u8) EncapsulatedSecret {
+            /// Generates a shared secret, encapsulated for the public key,
+            /// using random bytes.
+            ///
+            /// This is recommended over `encapsDeterministic`.
+            pub fn encaps(pk: PublicKey, io: std.Io) EncapsulatedSecret {
                 var m: [inner_plaintext_length]u8 = undefined;
+                io.random(&m);
+                return encapsInner(pk, &m);
+            }
 
-                if (seed_) |seed| {
-                    if (p.ml_kem) {
-                        @memcpy(&m, &seed);
-                    } else {
-                        // m = H(seed)
-                        sha3.Sha3_256.hash(&seed, &m, .{});
-                    }
+            /// Generates a shared secret, encapsulated for the public key,
+            /// using the provided seed.
+            ///
+            /// Calling `encaps` instead is recommended.
+            pub fn encapsDeterministic(pk: PublicKey, seed: *const [encaps_seed_length]u8) EncapsulatedSecret {
+                var m: [inner_plaintext_length]u8 = undefined;
+                if (p.ml_kem) {
+                    @memcpy(&m, seed);
                 } else {
-                    crypto.random.bytes(&m);
+                    // m = H(seed)
+                    sha3.Sha3_256.hash(seed, &m, .{});
                 }
+                return encapsInner(pk, &m);
+            }
 
+            fn encapsInner(pk: PublicKey, m: *[inner_plaintext_length]u8) EncapsulatedSecret {
                 // (K', r) = G(m ‖ H(pk))
                 var kr: [inner_plaintext_length + h_length]u8 = undefined;
                 var g = sha3.Sha3_512.init(.{});
-                g.update(&m);
+                g.update(m);
                 g.update(&pk.hpk);
                 g.final(&kr);
 
                 // c = innerEncrypt(pk, m, r)
-                const ct = pk.pk.encrypt(&m, kr[32..64]);
+                const ct = pk.pk.encrypt(m, kr[32..64]);
 
                 if (p.ml_kem) {
                     return EncapsulatedSecret{
@@ -398,10 +407,10 @@ fn Kyber(comptime p: Params) type {
             }
 
             /// Generate a new, random key pair.
-            pub fn generate() KeyPair {
+            pub fn generate(io: std.Io) KeyPair {
                 var random_seed: [seed_length]u8 = undefined;
                 while (true) {
-                    crypto.random.bytes(&random_seed);
+                    io.random(&random_seed);
                     return generateDeterministic(random_seed) catch {
                         @branchHint(.unlikely);
                         continue;
@@ -1634,15 +1643,15 @@ test "Test happy flow" {
     }
     inline for (modes) |mode| {
         for (0..10) |i| {
-            seed[0] = @as(u8, @intCast(i));
+            seed[0] = @intCast(i);
             const kp = try mode.KeyPair.generateDeterministic(seed);
             const sk = try mode.SecretKey.fromBytes(&kp.secret_key.toBytes());
             try testing.expectEqual(sk, kp.secret_key);
             const pk = try mode.PublicKey.fromBytes(&kp.public_key.toBytes());
             try testing.expectEqual(pk, kp.public_key);
             for (0..10) |j| {
-                seed[1] = @as(u8, @intCast(j));
-                const e = pk.encaps(seed[0..32].*);
+                seed[1] = @intCast(j);
+                const e = pk.encapsDeterministic(seed[0..32]);
                 try testing.expectEqual(e.shared_secret, try sk.decaps(&e.ciphertext));
             }
         }
@@ -1695,7 +1704,7 @@ fn testNistKat(mode: type, hash: []const u8) !void {
         g2.fill(kseed[32..64]);
         g2.fill(&eseed);
         const kp = try mode.KeyPair.generateDeterministic(kseed);
-        const e = kp.public_key.encaps(eseed);
+        const e = kp.public_key.encapsDeterministic(&eseed);
         const ss2 = try kp.secret_key.decaps(&e.ciphertext);
         try testing.expectEqual(ss2, e.shared_secret);
         try fw.writer.print("pk = {X}\n", .{&kp.public_key.toBytes()});

@@ -174,43 +174,56 @@ pub fn HybridKem(comptime params: Params) type {
                 return .{ .bytes = buf.* };
             }
 
-            /// Generates a shared secret and encapsulates it for the public key.
-            /// If `seed` is `null`, uses random bytes from `std.crypto.random`.
-            /// If `seed` is set, encapsulation is deterministic (for testing only).
-            pub fn encaps(self: PublicKey, seed: ?[]const u8) !EncapsulatedSecret {
-                const pq_nek = params.PqKem.PublicKey.encoded_length;
-                const ek_pq = try params.PqKem.PublicKey.fromBytes(self.bytes[0..pq_nek]);
-                const ek_t = self.bytes[pq_nek..][0..params.Group.element_length];
-
+            /// Generates a shared secret, encapsulated for the public key,
+            /// using random bytes.
+            ///
+            /// This is recommended over `encapsDeterministic`.
+            pub fn encaps(pk: PublicKey, io: std.Io) !EncapsulatedSecret {
                 var seed_pq: [32]u8 = undefined;
+                io.random(&seed_pq);
+                var seed_t: [32]u8 = undefined;
+                io.random(&seed_t);
+                var seed_t_expanded: [params.Group.seed_length]u8 = try expandRandomnessSeed(seed_t);
+                return encapsInner(pk, &seed_pq, &seed_t_expanded);
+            }
+
+            /// Generates a shared secret, encapsulated for the public key,
+            /// using the provided seed.
+            ///
+            /// Calling `encaps` instead is recommended.
+            pub fn encapsDeterministic(pk: PublicKey, seed: []const u8) !EncapsulatedSecret {
+                if (seed.len < 32) return error.InsufficientRandomness;
+                var seed_pq: [32]u8 = seed[0..32].*;
                 var seed_t_expanded: [params.Group.seed_length]u8 = undefined;
 
-                if (seed) |r| {
-                    if (r.len < 32) return error.InsufficientRandomness;
-                    seed_pq = r[0..32].*;
-
-                    const t_randomness = r[32..];
+                const t_randomness = seed[32..];
+                if (t_randomness.len < params.Group.seed_length) {
+                    // Provided randomness is shorter than seed_length, use it directly
+                    // (test vectors provide just enough for randomScalar)
+                    @memcpy(seed_t_expanded[0..t_randomness.len], t_randomness);
+                    // Pad the rest with zeros if needed (shouldn't be used by randomScalar)
                     if (t_randomness.len < params.Group.seed_length) {
-                        // Provided randomness is shorter than seed_length, use it directly
-                        // (test vectors provide just enough for randomScalar)
-                        @memcpy(seed_t_expanded[0..t_randomness.len], t_randomness);
-                        // Pad the rest with zeros if needed (shouldn't be used by randomScalar)
-                        if (t_randomness.len < params.Group.seed_length) {
-                            @memset(seed_t_expanded[t_randomness.len..], 0);
-                        }
-                    } else {
-                        // Full randomness provided
-                        @memcpy(&seed_t_expanded, t_randomness[0..params.Group.seed_length]);
+                        @memset(seed_t_expanded[t_randomness.len..], 0);
                     }
                 } else {
-                    crypto.random.bytes(&seed_pq);
-                    var seed_t: [32]u8 = undefined;
-                    crypto.random.bytes(&seed_t);
-                    seed_t_expanded = try expandRandomnessSeed(seed_t);
+                    // Full randomness provided
+                    @memcpy(&seed_t_expanded, t_randomness[0..params.Group.seed_length]);
                 }
 
-                const pq_encap = ek_pq.encaps(seed_pq);
-                const sk_e = try params.Group.randomScalar(&seed_t_expanded);
+                return encapsInner(pk, &seed_pq, &seed_t_expanded);
+            }
+
+            fn encapsInner(
+                pk: PublicKey,
+                seed_pq: *[32]u8,
+                seed_t_expanded: *[params.Group.seed_length]u8,
+            ) !EncapsulatedSecret {
+                const pq_nek = params.PqKem.PublicKey.encoded_length;
+                const ek_pq = try params.PqKem.PublicKey.fromBytes(pk.bytes[0..pq_nek]);
+                const ek_t = pk.bytes[pq_nek..][0..params.Group.element_length];
+
+                const pq_encap = ek_pq.encapsDeterministic(seed_pq);
+                const sk_e = try params.Group.randomScalar(seed_t_expanded);
                 const ct_t_point = try params.Group.mulBase(sk_e);
                 const ct_t = if (is_nist_curve) params.Group.encodePoint(ct_t_point) else ct_t_point;
 
@@ -280,9 +293,9 @@ pub fn HybridKem(comptime params: Params) type {
             }
 
             /// Generates a new random key pair.
-            pub fn generate() !KeyPair {
+            pub fn generate(io: std.Io) !KeyPair {
                 var seed: [params.Nseed]u8 = undefined;
-                crypto.random.bytes(&seed);
+                io.random(&seed);
                 return generateDeterministic(seed);
             }
         };
@@ -386,7 +399,7 @@ test "MLKEM768-X25519 basic round trip" {
     var enc_seed: [64]u8 = undefined;
     @memset(&enc_seed, 0x43);
 
-    const encap_result = try kp.public_key.encaps(&enc_seed);
+    const encap_result = try kp.public_key.encapsDeterministic(&enc_seed);
     const ss_decap = try kp.secret_key.decaps(&encap_result.ciphertext);
 
     try testing.expectEqualSlices(u8, &encap_result.shared_secret, &ss_decap);
@@ -408,7 +421,7 @@ test "MLKEM768-X25519 test vector 0" {
     const kp = try MlKem768X25519.KeyPair.generateDeterministic(seed);
     try testing.expectEqualSlices(u8, &expected_ek, &kp.public_key.toBytes());
 
-    const enc_result = try kp.public_key.encaps(&randomness);
+    const enc_result = try kp.public_key.encapsDeterministic(&randomness);
     try testing.expectEqualSlices(u8, &expected_ct, &enc_result.ciphertext);
     try testing.expectEqualSlices(u8, &expected_ss, &enc_result.shared_secret);
 
@@ -432,7 +445,7 @@ test "MLKEM768-X25519 test vector 1" {
     const kp = try MlKem768X25519.KeyPair.generateDeterministic(seed);
     try testing.expectEqualSlices(u8, &expected_ek, &kp.public_key.toBytes());
 
-    const enc_result = try kp.public_key.encaps(&randomness);
+    const enc_result = try kp.public_key.encapsDeterministic(&randomness);
     try testing.expectEqualSlices(u8, &expected_ct, &enc_result.ciphertext);
     try testing.expectEqualSlices(u8, &expected_ss, &enc_result.shared_secret);
 
@@ -456,7 +469,7 @@ test "MLKEM768-X25519 test vector 2" {
     const kp = try MlKem768X25519.KeyPair.generateDeterministic(seed);
     try testing.expectEqualSlices(u8, &expected_ek, &kp.public_key.toBytes());
 
-    const enc_result = try kp.public_key.encaps(&randomness);
+    const enc_result = try kp.public_key.encapsDeterministic(&randomness);
     try testing.expectEqualSlices(u8, &expected_ct, &enc_result.ciphertext);
     try testing.expectEqualSlices(u8, &expected_ss, &enc_result.shared_secret);
 
@@ -480,7 +493,7 @@ test "MLKEM768-X25519 test vector 3" {
     const kp = try MlKem768X25519.KeyPair.generateDeterministic(seed);
     try testing.expectEqualSlices(u8, &expected_ek, &kp.public_key.toBytes());
 
-    const enc_result = try kp.public_key.encaps(&randomness);
+    const enc_result = try kp.public_key.encapsDeterministic(&randomness);
     try testing.expectEqualSlices(u8, &expected_ct, &enc_result.ciphertext);
     try testing.expectEqualSlices(u8, &expected_ss, &enc_result.shared_secret);
 
@@ -504,7 +517,7 @@ test "MLKEM768-X25519 test vector 4" {
     const kp = try MlKem768X25519.KeyPair.generateDeterministic(seed);
     try testing.expectEqualSlices(u8, &expected_ek, &kp.public_key.toBytes());
 
-    const enc_result = try kp.public_key.encaps(&randomness);
+    const enc_result = try kp.public_key.encapsDeterministic(&randomness);
     try testing.expectEqualSlices(u8, &expected_ct, &enc_result.ciphertext);
     try testing.expectEqualSlices(u8, &expected_ss, &enc_result.shared_secret);
 
@@ -528,7 +541,7 @@ test "MLKEM768-X25519 test vector 5" {
     const kp = try MlKem768X25519.KeyPair.generateDeterministic(seed);
     try testing.expectEqualSlices(u8, &expected_ek, &kp.public_key.toBytes());
 
-    const enc_result = try kp.public_key.encaps(&randomness);
+    const enc_result = try kp.public_key.encapsDeterministic(&randomness);
     try testing.expectEqualSlices(u8, &expected_ct, &enc_result.ciphertext);
     try testing.expectEqualSlices(u8, &expected_ss, &enc_result.shared_secret);
 
@@ -552,7 +565,7 @@ test "MLKEM768-X25519 test vector 6" {
     const kp = try MlKem768X25519.KeyPair.generateDeterministic(seed);
     try testing.expectEqualSlices(u8, &expected_ek, &kp.public_key.toBytes());
 
-    const enc_result = try kp.public_key.encaps(&randomness);
+    const enc_result = try kp.public_key.encapsDeterministic(&randomness);
     try testing.expectEqualSlices(u8, &expected_ct, &enc_result.ciphertext);
     try testing.expectEqualSlices(u8, &expected_ss, &enc_result.shared_secret);
 
@@ -576,7 +589,7 @@ test "MLKEM768-X25519 test vector 7" {
     const kp = try MlKem768X25519.KeyPair.generateDeterministic(seed);
     try testing.expectEqualSlices(u8, &expected_ek, &kp.public_key.toBytes());
 
-    const enc_result = try kp.public_key.encaps(&randomness);
+    const enc_result = try kp.public_key.encapsDeterministic(&randomness);
     try testing.expectEqualSlices(u8, &expected_ct, &enc_result.ciphertext);
     try testing.expectEqualSlices(u8, &expected_ss, &enc_result.shared_secret);
 
@@ -600,7 +613,7 @@ test "MLKEM768-X25519 test vector 8" {
     const kp = try MlKem768X25519.KeyPair.generateDeterministic(seed);
     try testing.expectEqualSlices(u8, &expected_ek, &kp.public_key.toBytes());
 
-    const enc_result = try kp.public_key.encaps(&randomness);
+    const enc_result = try kp.public_key.encapsDeterministic(&randomness);
     try testing.expectEqualSlices(u8, &expected_ct, &enc_result.ciphertext);
     try testing.expectEqualSlices(u8, &expected_ss, &enc_result.shared_secret);
 
@@ -624,7 +637,7 @@ test "MLKEM768-X25519 test vector 9" {
     const kp = try MlKem768X25519.KeyPair.generateDeterministic(seed);
     try testing.expectEqualSlices(u8, &expected_ek, &kp.public_key.toBytes());
 
-    const enc_result = try kp.public_key.encaps(&randomness);
+    const enc_result = try kp.public_key.encapsDeterministic(&randomness);
     try testing.expectEqualSlices(u8, &expected_ct, &enc_result.ciphertext);
     try testing.expectEqualSlices(u8, &expected_ss, &enc_result.shared_secret);
 
@@ -648,7 +661,7 @@ test "MLKEM768-P256 test vector 0" {
     const kp = try MlKem768P256.KeyPair.generateDeterministic(seed);
     try testing.expectEqualSlices(u8, &expected_ek, &kp.public_key.toBytes());
 
-    const enc_result = try kp.public_key.encaps(&randomness);
+    const enc_result = try kp.public_key.encapsDeterministic(&randomness);
     try testing.expectEqualSlices(u8, &expected_ct, &enc_result.ciphertext);
     try testing.expectEqualSlices(u8, &expected_ss, &enc_result.shared_secret);
 
@@ -672,7 +685,7 @@ test "MLKEM768-P256 test vector 1" {
     const kp = try MlKem768P256.KeyPair.generateDeterministic(seed);
     try testing.expectEqualSlices(u8, &expected_ek, &kp.public_key.toBytes());
 
-    const enc_result = try kp.public_key.encaps(&randomness);
+    const enc_result = try kp.public_key.encapsDeterministic(&randomness);
     try testing.expectEqualSlices(u8, &expected_ct, &enc_result.ciphertext);
     try testing.expectEqualSlices(u8, &expected_ss, &enc_result.shared_secret);
 
@@ -696,7 +709,7 @@ test "MLKEM768-P256 test vector 2" {
     const kp = try MlKem768P256.KeyPair.generateDeterministic(seed);
     try testing.expectEqualSlices(u8, &expected_ek, &kp.public_key.toBytes());
 
-    const enc_result = try kp.public_key.encaps(&randomness);
+    const enc_result = try kp.public_key.encapsDeterministic(&randomness);
     try testing.expectEqualSlices(u8, &expected_ct, &enc_result.ciphertext);
     try testing.expectEqualSlices(u8, &expected_ss, &enc_result.shared_secret);
 
@@ -720,7 +733,7 @@ test "MLKEM768-P256 test vector 3" {
     const kp = try MlKem768P256.KeyPair.generateDeterministic(seed);
     try testing.expectEqualSlices(u8, &expected_ek, &kp.public_key.toBytes());
 
-    const enc_result = try kp.public_key.encaps(&randomness);
+    const enc_result = try kp.public_key.encapsDeterministic(&randomness);
     try testing.expectEqualSlices(u8, &expected_ct, &enc_result.ciphertext);
     try testing.expectEqualSlices(u8, &expected_ss, &enc_result.shared_secret);
 
@@ -744,7 +757,7 @@ test "MLKEM768-P256 test vector 4" {
     const kp = try MlKem768P256.KeyPair.generateDeterministic(seed);
     try testing.expectEqualSlices(u8, &expected_ek, &kp.public_key.toBytes());
 
-    const enc_result = try kp.public_key.encaps(&randomness);
+    const enc_result = try kp.public_key.encapsDeterministic(&randomness);
     try testing.expectEqualSlices(u8, &expected_ct, &enc_result.ciphertext);
     try testing.expectEqualSlices(u8, &expected_ss, &enc_result.shared_secret);
 
@@ -768,7 +781,7 @@ test "MLKEM768-P256 test vector 5" {
     const kp = try MlKem768P256.KeyPair.generateDeterministic(seed);
     try testing.expectEqualSlices(u8, &expected_ek, &kp.public_key.toBytes());
 
-    const enc_result = try kp.public_key.encaps(&randomness);
+    const enc_result = try kp.public_key.encapsDeterministic(&randomness);
     try testing.expectEqualSlices(u8, &expected_ct, &enc_result.ciphertext);
     try testing.expectEqualSlices(u8, &expected_ss, &enc_result.shared_secret);
 
@@ -792,7 +805,7 @@ test "MLKEM768-P256 test vector 6" {
     const kp = try MlKem768P256.KeyPair.generateDeterministic(seed);
     try testing.expectEqualSlices(u8, &expected_ek, &kp.public_key.toBytes());
 
-    const enc_result = try kp.public_key.encaps(&randomness);
+    const enc_result = try kp.public_key.encapsDeterministic(&randomness);
     try testing.expectEqualSlices(u8, &expected_ct, &enc_result.ciphertext);
     try testing.expectEqualSlices(u8, &expected_ss, &enc_result.shared_secret);
 
@@ -816,7 +829,7 @@ test "MLKEM768-P256 test vector 7" {
     const kp = try MlKem768P256.KeyPair.generateDeterministic(seed);
     try testing.expectEqualSlices(u8, &expected_ek, &kp.public_key.toBytes());
 
-    const enc_result = try kp.public_key.encaps(&randomness);
+    const enc_result = try kp.public_key.encapsDeterministic(&randomness);
     try testing.expectEqualSlices(u8, &expected_ct, &enc_result.ciphertext);
     try testing.expectEqualSlices(u8, &expected_ss, &enc_result.shared_secret);
 
@@ -840,7 +853,7 @@ test "MLKEM768-P256 test vector 8" {
     const kp = try MlKem768P256.KeyPair.generateDeterministic(seed);
     try testing.expectEqualSlices(u8, &expected_ek, &kp.public_key.toBytes());
 
-    const enc_result = try kp.public_key.encaps(&randomness);
+    const enc_result = try kp.public_key.encapsDeterministic(&randomness);
     try testing.expectEqualSlices(u8, &expected_ct, &enc_result.ciphertext);
     try testing.expectEqualSlices(u8, &expected_ss, &enc_result.shared_secret);
 
@@ -864,7 +877,7 @@ test "MLKEM768-P256 test vector 9" {
     const kp = try MlKem768P256.KeyPair.generateDeterministic(seed);
     try testing.expectEqualSlices(u8, &expected_ek, &kp.public_key.toBytes());
 
-    const enc_result = try kp.public_key.encaps(&randomness);
+    const enc_result = try kp.public_key.encapsDeterministic(&randomness);
     try testing.expectEqualSlices(u8, &expected_ct, &enc_result.ciphertext);
     try testing.expectEqualSlices(u8, &expected_ss, &enc_result.shared_secret);
 
@@ -888,7 +901,7 @@ test "MLKEM1024-P384 test vector 0" {
     const kp = try MlKem1024P384.KeyPair.generateDeterministic(seed);
     try testing.expectEqualSlices(u8, &expected_ek, &kp.public_key.toBytes());
 
-    const enc_result = try kp.public_key.encaps(&randomness);
+    const enc_result = try kp.public_key.encapsDeterministic(&randomness);
     try testing.expectEqualSlices(u8, &expected_ct, &enc_result.ciphertext);
     try testing.expectEqualSlices(u8, &expected_ss, &enc_result.shared_secret);
 
@@ -912,7 +925,7 @@ test "MLKEM1024-P384 test vector 1" {
     const kp = try MlKem1024P384.KeyPair.generateDeterministic(seed);
     try testing.expectEqualSlices(u8, &expected_ek, &kp.public_key.toBytes());
 
-    const enc_result = try kp.public_key.encaps(&randomness);
+    const enc_result = try kp.public_key.encapsDeterministic(&randomness);
     try testing.expectEqualSlices(u8, &expected_ct, &enc_result.ciphertext);
     try testing.expectEqualSlices(u8, &expected_ss, &enc_result.shared_secret);
 
@@ -936,7 +949,7 @@ test "MLKEM1024-P384 test vector 2" {
     const kp = try MlKem1024P384.KeyPair.generateDeterministic(seed);
     try testing.expectEqualSlices(u8, &expected_ek, &kp.public_key.toBytes());
 
-    const enc_result = try kp.public_key.encaps(&randomness);
+    const enc_result = try kp.public_key.encapsDeterministic(&randomness);
     try testing.expectEqualSlices(u8, &expected_ct, &enc_result.ciphertext);
     try testing.expectEqualSlices(u8, &expected_ss, &enc_result.shared_secret);
 
@@ -960,7 +973,7 @@ test "MLKEM1024-P384 test vector 3" {
     const kp = try MlKem1024P384.KeyPair.generateDeterministic(seed);
     try testing.expectEqualSlices(u8, &expected_ek, &kp.public_key.toBytes());
 
-    const enc_result = try kp.public_key.encaps(&randomness);
+    const enc_result = try kp.public_key.encapsDeterministic(&randomness);
     try testing.expectEqualSlices(u8, &expected_ct, &enc_result.ciphertext);
     try testing.expectEqualSlices(u8, &expected_ss, &enc_result.shared_secret);
 
@@ -984,7 +997,7 @@ test "MLKEM1024-P384 test vector 4" {
     const kp = try MlKem1024P384.KeyPair.generateDeterministic(seed);
     try testing.expectEqualSlices(u8, &expected_ek, &kp.public_key.toBytes());
 
-    const enc_result = try kp.public_key.encaps(&randomness);
+    const enc_result = try kp.public_key.encapsDeterministic(&randomness);
     try testing.expectEqualSlices(u8, &expected_ct, &enc_result.ciphertext);
     try testing.expectEqualSlices(u8, &expected_ss, &enc_result.shared_secret);
 
@@ -1008,7 +1021,7 @@ test "MLKEM1024-P384 test vector 5" {
     const kp = try MlKem1024P384.KeyPair.generateDeterministic(seed);
     try testing.expectEqualSlices(u8, &expected_ek, &kp.public_key.toBytes());
 
-    const enc_result = try kp.public_key.encaps(&randomness);
+    const enc_result = try kp.public_key.encapsDeterministic(&randomness);
     try testing.expectEqualSlices(u8, &expected_ct, &enc_result.ciphertext);
     try testing.expectEqualSlices(u8, &expected_ss, &enc_result.shared_secret);
 
@@ -1032,7 +1045,7 @@ test "MLKEM1024-P384 test vector 6" {
     const kp = try MlKem1024P384.KeyPair.generateDeterministic(seed);
     try testing.expectEqualSlices(u8, &expected_ek, &kp.public_key.toBytes());
 
-    const enc_result = try kp.public_key.encaps(&randomness);
+    const enc_result = try kp.public_key.encapsDeterministic(&randomness);
     try testing.expectEqualSlices(u8, &expected_ct, &enc_result.ciphertext);
     try testing.expectEqualSlices(u8, &expected_ss, &enc_result.shared_secret);
 
@@ -1056,7 +1069,7 @@ test "MLKEM1024-P384 test vector 7" {
     const kp = try MlKem1024P384.KeyPair.generateDeterministic(seed);
     try testing.expectEqualSlices(u8, &expected_ek, &kp.public_key.toBytes());
 
-    const enc_result = try kp.public_key.encaps(&randomness);
+    const enc_result = try kp.public_key.encapsDeterministic(&randomness);
     try testing.expectEqualSlices(u8, &expected_ct, &enc_result.ciphertext);
     try testing.expectEqualSlices(u8, &expected_ss, &enc_result.shared_secret);
 
@@ -1080,7 +1093,7 @@ test "MLKEM1024-P384 test vector 8" {
     const kp = try MlKem1024P384.KeyPair.generateDeterministic(seed);
     try testing.expectEqualSlices(u8, &expected_ek, &kp.public_key.toBytes());
 
-    const enc_result = try kp.public_key.encaps(&randomness);
+    const enc_result = try kp.public_key.encapsDeterministic(&randomness);
     try testing.expectEqualSlices(u8, &expected_ct, &enc_result.ciphertext);
     try testing.expectEqualSlices(u8, &expected_ss, &enc_result.shared_secret);
 

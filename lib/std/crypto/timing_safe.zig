@@ -180,24 +180,24 @@ pub fn declassify(ptr: anytype) void {
 }
 
 test eql {
-    const random = std.crypto.random;
+    const io = std.testing.io;
     const expect = std.testing.expect;
     var a: [100]u8 = undefined;
     var b: [100]u8 = undefined;
-    random.bytes(a[0..]);
-    random.bytes(b[0..]);
+    io.random(&a);
+    io.random(&b);
     try expect(!eql([100]u8, a, b));
     a = b;
     try expect(eql([100]u8, a, b));
 }
 
 test "eql (vectors)" {
-    const random = std.crypto.random;
+    const io = std.testing.io;
     const expect = std.testing.expect;
     var a: [100]u8 = undefined;
     var b: [100]u8 = undefined;
-    random.bytes(a[0..]);
-    random.bytes(b[0..]);
+    io.random(&a);
+    io.random(&b);
     const v1: @Vector(100, u8) = a;
     const v2: @Vector(100, u8) = b;
     try expect(!eql(@Vector(100, u8), v1, v2));
@@ -220,9 +220,10 @@ test compare {
 }
 
 test "add and sub" {
+    const io = std.testing.io;
+
     const expectEqual = std.testing.expectEqual;
     const expectEqualSlices = std.testing.expectEqualSlices;
-    const random = std.crypto.random;
     const len = 32;
     var a: [len]u8 = undefined;
     var b: [len]u8 = undefined;
@@ -230,8 +231,8 @@ test "add and sub" {
     const zero = [_]u8{0} ** len;
     var iterations: usize = 100;
     while (iterations != 0) : (iterations -= 1) {
-        random.bytes(&a);
-        random.bytes(&b);
+        io.random(&a);
+        io.random(&b);
         const endian = if (iterations % 2 == 0) Endian.big else Endian.little;
         _ = sub(u8, &a, &b, &c, endian); // a-b
         _ = add(u8, &c, &b, &c, endian); // (a-b)+b
@@ -243,11 +244,11 @@ test "add and sub" {
 }
 
 test classify {
-    const random = std.crypto.random;
+    const io = std.testing.io;
     const expect = std.testing.expect;
 
     var secret: [32]u8 = undefined;
-    random.bytes(&secret);
+    io.random(&secret);
 
     // Input of the hash function is marked as secret
     classify(&secret);

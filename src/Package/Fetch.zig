@@ -494,7 +494,11 @@ fn runResource(
     const eb = &f.error_bundle;
     const s = fs.path.sep_str;
     const cache_root = f.job_queue.global_cache;
-    const rand_int = std.crypto.random.int(u64);
+    const rand_int = r: {
+        var x: u64 = undefined;
+        io.random(@ptrCast(&x));
+        break :r x;
+    };
     const tmp_dir_sub_path = "tmp" ++ s ++ std.fmt.hex(rand_int);
 
     const package_sub_path = blk: {
@@ -690,7 +694,9 @@ fn loadManifest(f: *Fetch, pkg_root: Cache.Path) RunError!void {
         return error.FetchFailed;
     }
 
-    f.manifest = try Manifest.parse(arena, ast.*, .{
+    const rng: std.Random.IoSource = .{ .io = io };
+
+    f.manifest = try Manifest.parse(arena, ast.*, rng.interface(), .{
         .allow_missing_paths_field = f.allow_missing_paths_field,
         .allow_missing_fingerprint = f.allow_missing_fingerprint,
         .allow_name_string = f.allow_name_string,
@@ -1305,7 +1311,11 @@ fn unzip(
     zip_path[prefix.len + random_len ..].* = suffix.*;
 
     var zip_file = while (true) {
-        const random_integer = std.crypto.random.int(u64);
+        const random_integer = r: {
+            var x: u64 = undefined;
+            io.random(@ptrCast(&x));
+            break :r x;
+        };
         zip_path[prefix.len..][0..random_len].* = std.fmt.hex(random_integer);
 
         break cache_root.handle.createFile(io, &zip_path, .{

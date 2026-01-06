@@ -175,8 +175,8 @@ pub const Secp256k1 = struct {
     }
 
     /// Return a random point.
-    pub fn random() Secp256k1 {
-        const n = scalar.random(.little);
+    pub fn random(io: std.Io) Secp256k1 {
+        const n = scalar.random(io, .little);
         return basePoint.mul(n, .little) catch unreachable;
     }
 

@@ -1636,7 +1636,11 @@ fn spawnLld(comp: *Compilation, arena: Allocator, argv: []const []const u8) !voi
         const err = switch (first_err) {
             error.NameTooLong => err: {
                 const s = fs.path.sep_str;
-                const rand_int = std.crypto.random.int(u64);
+                const rand_int = r: {
+                    var x: u64 = undefined;
+                    io.random(@ptrCast(&x));
+                    break :r x;
+                };
                 const rsp_path = "tmp" ++ s ++ std.fmt.hex(rand_int) ++ ".rsp";
 
                 const rsp_file = try comp.dirs.local_cache.handle.createFile(io, rsp_path, .{});

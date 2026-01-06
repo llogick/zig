@@ -3395,7 +3395,7 @@ fn buildOutputType(
         // "-" is stdin. Dump it to a real file.
         const sep = fs.path.sep_str;
         const dump_path = try std.fmt.allocPrint(arena, "tmp" ++ sep ++ "{x}-dump-stdin{s}", .{
-            std.crypto.random.int(u64), ext.canonicalName(target),
+            randInt(io, u64), ext.canonicalName(target),
         });
         try dirs.local_cache.handle.createDirPath(io, "tmp");
 
@@ -4433,7 +4433,7 @@ fn runOrTest(
         try argv.append(exe_path);
         if (arg_mode == .zig_test) {
             try argv.append(
-                try std.fmt.allocPrint(arena, "--seed=0x{x}", .{std.crypto.random.int(u32)}),
+                try std.fmt.allocPrint(arena, "--seed=0x{x}", .{randInt(io, u32)}),
             );
         }
     } else {
@@ -4763,7 +4763,8 @@ fn cmdInit(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) !
     const cwd_basename = fs.path.basename(cwd_path);
     const sanitized_root_name = try sanitizeExampleName(arena, cwd_basename);
 
-    const fingerprint: Package.Fingerprint = .generate(sanitized_root_name);
+    const rng: std.Random.IoSource = .{ .io = io };
+    const fingerprint: Package.Fingerprint = .generate(rng.interface(), sanitized_root_name);
 
     switch (template) {
         .example => {
@@ -4919,7 +4920,7 @@ fn cmdBuild(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8, 
 
     try child_argv.appendSlice(&.{
         "--seed",
-        try std.fmt.allocPrint(arena, "0x{x}", .{std.crypto.random.int(u32)}),
+        try std.fmt.allocPrint(arena, "0x{x}", .{randInt(io, u32)}),
     });
     const argv_index_seed = child_argv.items.len - 1;
 
@@ -4937,7 +4938,7 @@ fn cmdBuild(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8, 
     // the strategy is to choose a temporary file name ahead of time, and then
     // read this file in the parent to obtain the results, in the case the child
     // exits with code 3.
-    const results_tmp_file_nonce = std.fmt.hex(std.crypto.random.int(u64));
+    const results_tmp_file_nonce = std.fmt.hex(randInt(io, u64));
     try child_argv.append("-Z" ++ results_tmp_file_nonce);
 
     var color: Color = .auto;
@@ -7223,7 +7224,7 @@ fn createDependenciesModule(
 ) !*Package.Module {
     // Atomically create the file in a directory named after the hash of its contents.
     const basename = "dependencies.zig";
-    const rand_int = std.crypto.random.int(u64);
+    const rand_int = randInt(io, u64);
     const tmp_dir_sub_path = "tmp" ++ fs.path.sep_str ++ std.fmt.hex(rand_int);
     {
         var tmp_dir = try dirs.local_cache.handle.createDirPathOpen(io, tmp_dir_sub_path, .{});
@@ -7339,6 +7340,8 @@ fn loadManifest(
     io: Io,
     options: LoadManifestOptions,
 ) !struct { Package.Manifest, Ast } {
+    const rng: std.Random.IoSource = .{ .io = io };
+
     const manifest_bytes = while (true) {
         break options.dir.readFileAllocOptions(
             io,
@@ -7360,15 +7363,13 @@ fn loadManifest(
                 , .{
                     options.root_name,
                     build_options.version,
-                    Package.Fingerprint.generate(options.root_name).int(),
+                    Package.Fingerprint.generate(rng.interface(), options.root_name).int(),
                 }) catch |e| {
-                    fatal("unable to write {s}: {s}", .{ Package.Manifest.basename, @errorName(e) });
+                    fatal("unable to write {s}: {t}", .{ Package.Manifest.basename, e });
                 };
                 continue;
             },
-            else => |e| fatal("unable to load {s}: {s}", .{
-                Package.Manifest.basename, @errorName(e),
-            }),
+            else => |e| fatal("unable to load {s}: {t}", .{ Package.Manifest.basename, e }),
         };
     };
     var ast = try Ast.parse(gpa, manifest_bytes, .zon);
@@ -7379,7 +7380,7 @@ fn loadManifest(
         process.exit(2);
     }
 
-    var manifest = try Package.Manifest.parse(gpa, ast, .{});
+    var manifest = try Package.Manifest.parse(gpa, ast, rng.interface(), .{});
     errdefer manifest.deinit(gpa);
 
     if (manifest.errors.len > 0) {
@@ -7631,4 +7632,10 @@ fn setThreadLimit(n: usize) void {
     const limit: Io.Limit = .limited(n - 1);
     threaded_impl_ptr.setAsyncLimit(limit);
     threaded_impl_ptr.concurrent_limit = limit;
+}
+
+fn randInt(io: Io, comptime T: type) T {
+    var x: T = undefined;
+    io.random(@ptrCast(&x));
+    return x;
 }

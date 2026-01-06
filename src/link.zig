@@ -616,8 +616,13 @@ pub const File = struct {
                         // it will return ETXTBSY. So instead, we copy the file, atomically rename it
                         // over top of the exe path, and then proceed normally. This changes the inode,
                         // avoiding the error.
+                        const random_integer = r: {
+                            var x: u32 = undefined;
+                            io.random(@ptrCast(&x));
+                            break :r x;
+                        };
                         const tmp_sub_path = try std.fmt.allocPrint(gpa, "{s}-{x}", .{
-                            emit.sub_path, std.crypto.random.int(u32),
+                            emit.sub_path, random_integer,
                         });
                         defer gpa.free(tmp_sub_path);
                         try emit.root_dir.handle.copyFile(emit.sub_path, emit.root_dir.handle, tmp_sub_path, io, .{});

@@ -533,7 +533,7 @@ const PhcFormatHasher = struct {
         if (params.secret != null or params.ad != null) return HasherError.InvalidEncoding;
 
         var salt: [default_salt_len]u8 = undefined;
-        crypto.random.bytes(&salt);
+        io.random(&salt);
 
         var hash: [default_hash_len]u8 = undefined;
         try kdf(allocator, &hash, password, &salt, params, mode, io);

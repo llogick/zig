@@ -275,7 +275,7 @@ test "listen on a unix socket, send bytes, receive bytes" {
 
     const io = testing.io;
 
-    const socket_path = try generateFileName("socket.unix");
+    const socket_path = try generateFileName(io, "socket.unix");
     defer testing.allocator.free(socket_path);
 
     const socket_addr = try net.UnixAddress.init(socket_path);
@@ -308,11 +308,11 @@ test "listen on a unix socket, send bytes, receive bytes" {
     try testing.expectEqualSlices(u8, "Hello world!", buf[0..n]);
 }
 
-fn generateFileName(base_name: []const u8) ![]const u8 {
+fn generateFileName(io: Io, base_name: []const u8) ![]const u8 {
     const random_bytes_count = 12;
     const sub_path_len = comptime std.fs.base64_encoder.calcSize(random_bytes_count);
     var random_bytes: [12]u8 = undefined;
-    std.crypto.random.bytes(&random_bytes);
+    io.random(&random_bytes);
     var sub_path: [sub_path_len]u8 = undefined;
     _ = std.fs.base64_encoder.encode(&sub_path, &random_bytes);
     return std.fmt.allocPrint(testing.allocator, "{s}-{s}", .{ sub_path[0..], base_name });

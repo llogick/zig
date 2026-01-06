@@ -2019,12 +2019,9 @@ fn MLDSAImpl(comptime p: Params) type {
             secret_key: SecretKey,
 
             /// Generate a new random key pair.
-            /// This uses the system's cryptographically secure random number generator.
-            ///
-            /// `crypto.random.bytes` must be supported by the target.
-            pub fn generate() KeyPair {
+            pub fn generate(io: std.Io) KeyPair {
                 var seed: [Self.seed_length]u8 = undefined;
-                crypto.random.bytes(&seed);
+                io.random(&seed);
                 return generateDeterministic(seed) catch unreachable;
             }
 
@@ -3198,8 +3195,9 @@ test "ML-DSA-87 KAT test vector 0" {
 }
 
 test "KeyPair API - generate and sign" {
+    const io = std.testing.io;
     // Test the new KeyPair API with random generation
-    const kp = MLDSA44.KeyPair.generate();
+    const kp = MLDSA44.KeyPair.generate(io);
     const msg = "Test message for KeyPair API";
 
     // Sign with deterministic mode (no noise)
@@ -3222,8 +3220,9 @@ test "KeyPair API - generateDeterministic" {
 }
 
 test "KeyPair API - fromSecretKey" {
+    const io = std.testing.io;
     // Generate a key pair
-    const kp1 = MLDSA44.KeyPair.generate();
+    const kp1 = MLDSA44.KeyPair.generate(io);
 
     // Derive public key from secret key
     const kp2 = try MLDSA44.KeyPair.fromSecretKey(kp1.secret_key);
@@ -3235,8 +3234,9 @@ test "KeyPair API - fromSecretKey" {
 }
 
 test "Signature verification with noise" {
+    const io = std.testing.io;
     // Test signing with randomness (hedged signatures)
-    const kp = MLDSA65.KeyPair.generate();
+    const kp = MLDSA65.KeyPair.generate(io);
     const msg = "Message to be signed with randomness";
 
     // Create some noise
@@ -3250,8 +3250,9 @@ test "Signature verification with noise" {
 }
 
 test "Signature verification failure" {
+    const io = std.testing.io;
     // Test that invalid signatures are rejected
-    const kp = MLDSA44.KeyPair.generate();
+    const kp = MLDSA44.KeyPair.generate(io);
     const msg = "Original message";
     const sig = try kp.sign(msg, null);
 

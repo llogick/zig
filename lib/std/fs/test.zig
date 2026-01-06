@@ -1761,7 +1761,7 @@ test "open file with exclusive nonblocking lock twice (absolute paths)" {
     const io = testing.io;
 
     var random_bytes: [12]u8 = undefined;
-    std.crypto.random.bytes(&random_bytes);
+    io.random(&random_bytes);
 
     var random_b64: [std.fs.base64_encoder.calcSize(random_bytes.len)]u8 = undefined;
     _ = std.fs.base64_encoder.encode(&random_b64, &random_bytes);

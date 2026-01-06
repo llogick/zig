@@ -78,7 +78,7 @@ pub const Csprng = struct {
     pub const seed_len = std.Random.DefaultCsprng.secret_seed_length;
 
     pub fn isInitialized(c: *const Csprng) bool {
-        return c.rng.offset == std.math.maxInt(usize);
+        return c.rng.offset != std.math.maxInt(usize);
     }
 };
 
@@ -2395,11 +2395,11 @@ fn dirCreateDirPath(
             status = .created;
         } else |err| switch (err) {
             error.PathAlreadyExists => {
-                // stat the file and return an error if it's not a directory
-                // this is important because otherwise a dangling symlink
-                // could cause an infinite loop
-                const fstat = try dirStatFile(t, dir, component.path, .{});
-                if (fstat.kind != .directory) return error.NotDir;
+                // It is important to return an error if it's not a directory
+                // because otherwise a dangling symlink could cause an infinite
+                // loop.
+                const kind = try filePathKind(t, dir, component.path);
+                if (kind != .directory) return error.NotDir;
             },
             error.FileNotFound => |e| {
                 component = it.previous() orelse return e;
@@ -2738,6 +2738,35 @@ fn dirStatFileWasi(
             },
         }
     }
+}
+
+fn filePathKind(t: *Threaded, dir: Dir, sub_path: []const u8) !File.Kind {
+    if (native_os == .linux) {
+        var path_buffer: [posix.PATH_MAX]u8 = undefined;
+        const sub_path_posix = try pathToPosix(sub_path, &path_buffer);
+
+        const linux = std.os.linux;
+        const syscall: Syscall = try .start();
+        while (true) {
+            var statx = std.mem.zeroes(linux.Statx);
+            switch (linux.errno(linux.statx(dir.handle, sub_path_posix, 0, .{ .TYPE = true }, &statx))) {
+                .SUCCESS => {
+                    syscall.finish();
+                    if (!statx.mask.TYPE) return error.Unexpected;
+                    return statxKind(statx.mode);
+                },
+                .INTR => {
+                    try syscall.checkCancel();
+                    continue;
+                },
+                .NOMEM => return syscall.fail(error.SystemResources),
+                else => |err| return syscall.unexpectedErrno(err),
+            }
+        }
+    }
+
+    const stat = try dirStatFile(t, dir, sub_path, .{});
+    return stat.kind;
 }
 
 fn fileLength(userdata: ?*anyopaque, file: File) File.LengthError!u64 {
@@ -12310,21 +12339,25 @@ fn statFromLinux(stx: *const std.os.linux.Statx) Io.UnexpectedError!File.Stat {
         .nlink = stx.nlink,
         .size = stx.size,
         .permissions = .fromMode(stx.mode),
-        .kind = switch (stx.mode & std.os.linux.S.IFMT) {
-            std.os.linux.S.IFDIR => .directory,
-            std.os.linux.S.IFCHR => .character_device,
-            std.os.linux.S.IFBLK => .block_device,
-            std.os.linux.S.IFREG => .file,
-            std.os.linux.S.IFIFO => .named_pipe,
-            std.os.linux.S.IFLNK => .sym_link,
-            std.os.linux.S.IFSOCK => .unix_domain_socket,
-            else => .unknown,
-        },
+        .kind = statxKind(stx.mode),
         .atime = if (!stx.mask.ATIME) null else .{
             .nanoseconds = @intCast(@as(i128, stx.atime.sec) * std.time.ns_per_s + stx.atime.nsec),
         },
         .mtime = .{ .nanoseconds = @intCast(@as(i128, stx.mtime.sec) * std.time.ns_per_s + stx.mtime.nsec) },
         .ctime = .{ .nanoseconds = @intCast(@as(i128, stx.ctime.sec) * std.time.ns_per_s + stx.ctime.nsec) },
+    };
+}
+
+fn statxKind(stx_mode: u16) File.Kind {
+    return switch (stx_mode & std.os.linux.S.IFMT) {
+        std.os.linux.S.IFDIR => .directory,
+        std.os.linux.S.IFCHR => .character_device,
+        std.os.linux.S.IFBLK => .block_device,
+        std.os.linux.S.IFREG => .file,
+        std.os.linux.S.IFIFO => .named_pipe,
+        std.os.linux.S.IFLNK => .sym_link,
+        std.os.linux.S.IFSOCK => .unix_domain_socket,
+        else => .unknown,
     };
 }
 

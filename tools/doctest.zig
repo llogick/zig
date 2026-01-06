@@ -78,9 +78,10 @@ pub fn main(init: std.process.Init) !void {
     const code = try parseManifest(arena, source_bytes);
     const source = stripManifest(source_bytes);
 
-    const tmp_dir_path = try std.fmt.allocPrint(arena, "{s}/tmp/{x}", .{
-        cache_root, std.crypto.random.int(u64),
-    });
+    var random_integer: u64 = undefined;
+    io.random(@ptrCast(&random_integer));
+
+    const tmp_dir_path = try std.fmt.allocPrint(arena, "{s}/tmp/{x}", .{ cache_root, random_integer });
     Dir.cwd().createDirPath(io, tmp_dir_path) catch |err|
         fatal("unable to create tmp dir '{s}': {t}", .{ tmp_dir_path, err });
     defer Dir.cwd().deleteTree(io, tmp_dir_path) catch |err| std.log.err("unable to delete '{s}': {t}", .{

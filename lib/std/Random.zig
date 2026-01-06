@@ -38,7 +38,7 @@ pub const IoSource = struct {
 
     pub fn interface(this: *const @This()) std.Random {
         return .{
-            .ptr = this,
+            .ptr = @constCast(this),
             .fillFn = fill,
         };
     }

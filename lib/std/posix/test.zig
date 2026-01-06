@@ -33,16 +33,6 @@ test "check WASI CWD" {
     }
 }
 
-test "getrandom" {
-    var buf_a: [50]u8 = undefined;
-    var buf_b: [50]u8 = undefined;
-    try posix.getrandom(&buf_a);
-    try posix.getrandom(&buf_b);
-    // If this test fails the chance is significantly higher that there is a bug than
-    // that two sets of 50 bytes were equal.
-    try expect(!mem.eql(u8, &buf_a, &buf_b));
-}
-
 test "getuid" {
     if (native_os == .windows or native_os == .wasi) return error.SkipZigTest;
     _ = posix.getuid();

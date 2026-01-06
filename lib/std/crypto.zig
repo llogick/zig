@@ -303,6 +303,9 @@ test {
     _ = dh.X25519;
 
     _ = kem.kyber_d00;
+    _ = kem.hybrid;
+    _ = kem.kyber_d00;
+    _ = kem.ml_kem;
 
     _ = ecc.Curve25519;
     _ = ecc.Edwards25519;
@@ -340,6 +343,7 @@ test {
 
     _ = sign.Ed25519;
     _ = sign.ecdsa;
+    _ = sign.mldsa;
 
     _ = stream.chacha.ChaCha20IETF;
     _ = stream.chacha.ChaCha12IETF;

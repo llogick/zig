@@ -575,10 +575,11 @@ test "packing/unpacking" {
 }
 
 test "point addition/subtraction" {
+    const io = std.testing.io;
     var s1: [32]u8 = undefined;
     var s2: [32]u8 = undefined;
-    crypto.random.bytes(&s1);
-    crypto.random.bytes(&s2);
+    io.random(&s1);
+    io.random(&s2);
     const p = try Edwards25519.basePoint.clampedMul(s1);
     const q = try Edwards25519.basePoint.clampedMul(s2);
     const r = p.add(q).add(q).sub(q).sub(q);
@@ -622,9 +623,10 @@ test "implicit reduction of invalid scalars" {
 }
 
 test "subgroup check" {
+    const io = std.testing.io;
     for (0..100) |_| {
         var p = Edwards25519.basePoint;
-        const s = Edwards25519.scalar.random();
+        const s = Edwards25519.scalar.random(io);
         p = try p.mulPublic(s);
         try p.rejectUnexpectedSubgroup();
     }
