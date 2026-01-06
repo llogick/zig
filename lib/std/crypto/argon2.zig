@@ -907,8 +907,6 @@ test "kdf" {
 }
 
 test "phc format hasher" {
-    if (true) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/30682
-
     const allocator = std.testing.allocator;
     const password = "testpass";
     const io = std.testing.io;
