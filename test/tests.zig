@@ -1366,6 +1366,89 @@ const test_targets = blk: {
             .link_libc = true,
         },
 
+        // OpenBSD Targets
+
+        .{
+            .target = .{
+                .cpu_arch = .aarch64,
+                .os_tag = .openbsd,
+                .abi = .none,
+            },
+            .link_libc = true,
+        },
+
+        .{
+            .target = .{
+                .cpu_arch = .arm,
+                .os_tag = .openbsd,
+                .abi = .eabi,
+            },
+            .link_libc = true,
+        },
+
+        .{
+            .target = .{
+                .cpu_arch = .mips64,
+                .os_tag = .openbsd,
+                .abi = .none,
+            },
+            .link_libc = true,
+        },
+
+        .{
+            .target = .{
+                .cpu_arch = .mips64el,
+                .os_tag = .openbsd,
+                .abi = .none,
+            },
+            .link_libc = true,
+        },
+
+        .{
+            .target = .{
+                .cpu_arch = .powerpc,
+                .os_tag = .openbsd,
+                .abi = .eabihf,
+            },
+            .link_libc = true,
+        },
+
+        .{
+            .target = .{
+                .cpu_arch = .powerpc64,
+                .os_tag = .openbsd,
+                .abi = .none,
+            },
+            .link_libc = true,
+        },
+
+        .{
+            .target = .{
+                .cpu_arch = .riscv64,
+                .os_tag = .openbsd,
+                .abi = .none,
+            },
+            .link_libc = true,
+        },
+
+        .{
+            .target = .{
+                .cpu_arch = .x86,
+                .os_tag = .openbsd,
+                .abi = .none,
+            },
+            .link_libc = true,
+        },
+
+        .{
+            .target = .{
+                .cpu_arch = .x86_64,
+                .os_tag = .openbsd,
+                .abi = .none,
+            },
+            .link_libc = true,
+        },
+
         // SPIR-V Targets
 
         // Disabled due to no active maintainer (feel free to fix the failures
@@ -2233,6 +2316,7 @@ const ModuleTestOptions = struct {
     skip_wasm: bool,
     skip_freebsd: bool,
     skip_netbsd: bool,
+    skip_openbsd: bool,
     skip_windows: bool,
     skip_darwin: bool,
     skip_linux: bool,
@@ -2271,6 +2355,7 @@ pub fn addModuleTests(b: *std.Build, options: ModuleTestOptions) *Step {
 
         if (options.skip_freebsd and test_target.target.os_tag == .freebsd) continue;
         if (options.skip_netbsd and test_target.target.os_tag == .netbsd) continue;
+        if (options.skip_openbsd and test_target.target.os_tag == .openbsd) continue;
         if (options.skip_windows and test_target.target.os_tag == .windows) continue;
         if (options.skip_darwin and test_target.target.os_tag != null and test_target.target.os_tag.?.isDarwin()) continue;
         if (options.skip_linux and test_target.target.os_tag == .linux) continue;
@@ -2513,6 +2598,7 @@ const CAbiTestOptions = struct {
     skip_wasm: bool,
     skip_freebsd: bool,
     skip_netbsd: bool,
+    skip_openbsd: bool,
     skip_windows: bool,
     skip_darwin: bool,
     skip_linux: bool,
@@ -2536,6 +2622,7 @@ pub fn addCAbiTests(b: *std.Build, options: CAbiTestOptions) *Step {
 
             if (options.skip_freebsd and c_abi_target.target.os_tag == .freebsd) continue;
             if (options.skip_netbsd and c_abi_target.target.os_tag == .netbsd) continue;
+            if (options.skip_openbsd and c_abi_target.target.os_tag == .openbsd) continue;
             if (options.skip_windows and c_abi_target.target.os_tag == .windows) continue;
             if (options.skip_darwin and c_abi_target.target.os_tag != null and c_abi_target.target.os_tag.?.isDarwin()) continue;
             if (options.skip_linux and c_abi_target.target.os_tag == .linux) continue;

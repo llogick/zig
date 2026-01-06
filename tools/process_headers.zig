@@ -6,8 +6,8 @@
 //! this tool.
 //!
 //! First, use the glibc, musl, FreeBSD, and NetBSD build systems to create installations of all the
-//! targets in the `glibc_targets`, `musl_targets`, `freebsd_targets`, and `netbsd_targets`
-//! variables. Next, run this tool to create a new directory which puts .h files into
+//! targets in the `glibc_targets`, `musl_targets`, `freebsd_targets`, `netbsd_targets`, and
+//! `openbsd_targets` variables. Next, run this tool to create a new directory which puts .h files into
 //! <arch> subdirectories, with `generic` being files that apply to all architectures.
 //! You'll then have to manually update Zig source repo with these new files.
 
@@ -104,6 +104,19 @@ const netbsd_targets = [_]LibCTarget{
     .{ .arch = .x86_64, .abi = .none },
 };
 
+const openbsd_targets = [_]LibCTarget{
+    .{ .arch = .arm, .abi = .eabi },
+    .{ .arch = .aarch64, .abi = .none },
+    .{ .arch = .mips64, .abi = .none },
+    .{ .arch = .mips64el, .abi = .none },
+    .{ .arch = .powerpc, .abi = .eabihf },
+    .{ .arch = .powerpc64, .abi = .none },
+    .{ .arch = .riscv64, .abi = .none },
+    .{ .arch = .sparc64, .abi = .none },
+    .{ .arch = .x86, .abi = .none },
+    .{ .arch = .x86_64, .abi = .none },
+};
+
 const Contents = struct {
     bytes: []const u8,
     hit_count: usize,
@@ -125,6 +138,7 @@ const LibCVendor = enum {
     glibc,
     freebsd,
     netbsd,
+    openbsd,
 };
 
 pub fn main(init: std.process.Init) !void {
@@ -176,6 +190,7 @@ pub fn main(init: std.process.Init) !void {
         .musl => &musl_targets,
         .freebsd => &freebsd_targets,
         .netbsd => &netbsd_targets,
+        .openbsd => &openbsd_targets,
     };
 
     var path_table = PathTable.init(arena);
@@ -217,6 +232,22 @@ pub fn main(init: std.process.Init) !void {
 
                 else => unreachable,
             },
+            .openbsd => switch (libc_target.arch) {
+                .arm => "armv7",
+                .aarch64 => "arm64",
+                .mips64 => "octeon",
+                .mips64el => "loongson",
+                .powerpc => "macppc",
+                .x86 => "i386",
+                .x86_64 => "amd64",
+
+                .powerpc64,
+                .riscv64,
+                .sparc64,
+                => |a| @tagName(a),
+
+                else => unreachable,
+            },
         };
 
         const dest_target = if (libc_target.dest) |dest| dest else try std.fmt.allocPrint(arena, "{s}-{s}-{s}", .{
@@ -225,6 +256,7 @@ pub fn main(init: std.process.Init) !void {
                 .musl, .glibc => "linux",
                 .freebsd => "freebsd",
                 .netbsd => "netbsd",
+                .openbsd => "openbsd",
             },
             @tagName(libc_target.abi),
         });
@@ -234,6 +266,7 @@ pub fn main(init: std.process.Init) !void {
                 .glibc,
                 .freebsd,
                 .netbsd,
+                .openbsd,
                 => &[_][]const u8{ search_path, libc_dir, "usr", "include" },
                 .musl => &[_][]const u8{ search_path, libc_dir, "usr", "local", "musl", "include" },
             };
@@ -370,6 +403,6 @@ fn usageAndExit(arg0: []const u8) noreturn {
     std.debug.print("--search-path can be used any number of times.\n", .{});
     std.debug.print("    subdirectories of search paths look like, e.g. x86_64-linux-gnu\n", .{});
     std.debug.print("--out is a dir that will be created, and populated with the results\n", .{});
-    std.debug.print("--abi is either glibc, musl, freebsd, or netbsd\n", .{});
+    std.debug.print("--abi is either glibc, musl, freebsd, netbsd, or openbsd\n", .{});
     std.process.exit(1);
 }

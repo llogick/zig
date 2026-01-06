@@ -50,6 +50,7 @@ pub fn build(b: *std.Build) void {
         "../../tools/update_glibc.zig",
         "../../tools/update_mingw.zig",
         "../../tools/update_netbsd_libc.zig",
+        "../../tools/update_openbsd_libc.zig",
     }) |tool_src_path| {
         if (std.mem.endsWith(u8, tool_src_path, "dump-cov.zig") and tools_target.result.os.tag == .windows) continue;
 

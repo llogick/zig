@@ -137,7 +137,6 @@ pub const ResolveError = error{
     SanitizeThreadRequiresLibCpp,
     LibCRequiresLibUnwind,
     LibCppRequiresLibUnwind,
-    OsRequiresLibC,
     LibCppRequiresLibC,
     LibUnwindRequiresLibC,
     TargetCannotDynamicLink,
@@ -226,10 +225,6 @@ pub fn resolve(options: Options) ResolveError!Config {
     };
 
     const link_libc = b: {
-        if (target_util.osRequiresLibC(target)) {
-            if (options.link_libc == false) return error.OsRequiresLibC;
-            break :b true;
-        }
         if (link_libcpp) {
             if (options.link_libc == false) return error.LibCppRequiresLibC;
             break :b true;
@@ -250,7 +245,7 @@ pub fn resolve(options: Options) ResolveError!Config {
         if (options.ensure_libc_on_non_freestanding and target.os.tag != .freestanding)
             break :b true;
 
-        break :b false;
+        break :b target.requiresLibC();
     };
 
     const link_mode = b: {
@@ -269,7 +264,7 @@ pub fn resolve(options: Options) ResolveError!Config {
             break :b .dynamic;
         }
         if (explicitly_exe_or_dyn_lib and link_libc and
-            (target_util.osRequiresLibC(target) or
+            (target.requiresLibC() or
                 // For these libcs, Zig can only provide dynamic libc when cross-compiling.
                 ((target.isGnuLibC() or target.isFreeBSDLibC() or target.isNetBSDLibC()) and
                     !options.resolved_target.is_native_abi)))

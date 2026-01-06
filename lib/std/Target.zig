@@ -533,7 +533,19 @@ pub const Os = struct {
                 },
                 .openbsd => .{
                     .semver = .{
-                        .min = .{ .major = 7, .minor = 7, .patch = 0 },
+                        .min = blk: {
+                            const default_min: std.SemanticVersion = .{ .major = 7, .minor = 8, .patch = 0 };
+
+                            for (std.zig.target.available_libcs) |libc| {
+                                if (libc.arch != arch or libc.os != tag or libc.abi != abi) continue;
+
+                                if (libc.os_ver) |min| {
+                                    if (min.order(default_min) == .gt) break :blk min;
+                                }
+                            }
+
+                            break :blk default_min;
+                        },
                         .max = .{ .major = 7, .minor = 8, .patch = 0 },
                     },
                 },
@@ -2136,6 +2148,13 @@ pub inline fn isFreeBSDLibC(target: *const Target) bool {
 pub inline fn isNetBSDLibC(target: *const Target) bool {
     return switch (target.abi) {
         .none, .eabi, .eabihf => target.os.tag == .netbsd,
+        else => false,
+    };
+}
+
+pub inline fn isOpenBSDLibC(target: *const Target) bool {
+    return switch (target.abi) {
+        .none, .eabi, .eabihf => target.os.tag == .openbsd,
         else => false,
     };
 }

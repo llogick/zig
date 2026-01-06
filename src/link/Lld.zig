@@ -1210,6 +1210,13 @@ fn elfLink(lld: *Lld, arena: Allocator) !void {
                         });
                         try argv.append(lib_path);
                     }
+                } else if (target.isOpenBSDLibC()) {
+                    for (openbsd.libs) |lib| {
+                        const lib_path = try std.fmt.allocPrint(arena, "{f}{c}lib{s}.so", .{
+                            comp.openbsd_so_files.?.dir_path, fs.path.sep, lib.name,
+                        });
+                        try argv.append(lib_path);
+                    }
                 } else {
                     diags.flags.missing_libc = true;
                 }
@@ -1713,6 +1720,7 @@ const dev = @import("../dev.zig");
 const freebsd = @import("../libs/freebsd.zig");
 const glibc = @import("../libs/glibc.zig");
 const netbsd = @import("../libs/netbsd.zig");
+const openbsd = @import("../libs/openbsd.zig");
 const wasi_libc = @import("../libs/wasi_libc.zig");
 const link = @import("../link.zig");
 const lldMain = @import("../main.zig").lldMain;
