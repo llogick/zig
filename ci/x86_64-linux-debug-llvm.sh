@@ -66,3 +66,14 @@ stage3-debug/bin/zig build test docs \
   --zig-lib-dir "$PWD/../lib" \
   -Denable-superhtml \
   --test-timeout 12m
+
+stage3-debug/bin/zig build \
+  --prefix stage4-debug \
+  -Duse-llvm \
+  -Denable-llvm \
+  -Dno-lib \
+  -Dtarget=$TARGET \
+  -Duse-zig-libcxx \
+  -Dversion-string="$(stage3-debug/bin/zig version)"
+
+stage4-debug/bin/zig test ../test/behavior.zig
