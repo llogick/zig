@@ -627,6 +627,8 @@ pub fn strVerify(
 }
 
 test "argon2d" {
+    if (true) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/30074
+
     const password = [_]u8{0x01} ** 32;
     const salt = [_]u8{0x02} ** 16;
     const secret = [_]u8{0x03} ** 8;
