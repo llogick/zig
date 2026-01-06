@@ -1,3 +1,16 @@
+//! A cross-platform interface that abstracts all I/O operations and
+//! concurrency. It includes:
+//! * file system
+//! * networking
+//! * processes
+//! * time and sleeping
+//! * randomness
+//! * async, await, concurrent, and cancel
+//! * concurrent queues
+//! * wait groups and select
+//! * mutexes, futexes, events, and conditions
+//! This interface allows programmers to write optimal, reusable code while
+//! participating in these operations.
 const Io = @This();
 
 const builtin = @import("builtin");
