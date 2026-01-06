@@ -8084,8 +8084,8 @@ fn buildOutputFromZig(
 }
 
 pub const CrtFileOptions = struct {
-    function_sections: ?bool = null,
-    data_sections: ?bool = null,
+    function_sections: bool = true,
+    data_sections: bool = true,
     omit_frame_pointer: ?bool = null,
     unwind_tables: ?std.builtin.UnwindTables = null,
     pic: ?bool = null,
@@ -8188,8 +8188,8 @@ pub fn build_crt_file(
         .root_name = root_name,
         .libc_installation = comp.libc_installation,
         .emit_bin = .yes_cache,
-        .function_sections = options.function_sections orelse false,
-        .data_sections = options.data_sections orelse false,
+        .function_sections = options.function_sections,
+        .data_sections = options.data_sections,
         .c_source_files = c_source_files,
         .verbose_cc = comp.verbose_cc,
         .verbose_link = comp.verbose_link,

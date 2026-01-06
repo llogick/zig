@@ -56,6 +56,7 @@ pub fn buildCrtFile(comp: *Compilation, crt_file: CrtFile, prog_node: std.Progre
                 },
             };
             return comp.build_crt_file("crt2", .Obj, .@"mingw-w64 crt2.o", prog_node, &files, .{
+                .function_sections = false, // https://codeberg.org/ziglang/zig/issues/30702
                 .unwind_tables = unwind_tables,
             });
         },

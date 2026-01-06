@@ -477,7 +477,7 @@ pub fn build(b: *std.Build) !void {
             .linux => switch (b.graph.host.result.cpu.arch) {
                 .aarch64 => 659_809_075,
                 .loongarch64 => 598_902_374,
-                .powerpc64le => 550_656_409,
+                .powerpc64le => 627_431_833,
                 .riscv64 => 827_043_430,
                 .s390x => 580_596_121,
                 .x86_64 => 3_290_894_745,
@@ -837,6 +837,12 @@ fn addCompilerStep(b: *std.Build, options: AddCompilerModOptions) *std.Build.Ste
         .root_module = addCompilerMod(b, options),
     });
     exe.stack_size = stack_size;
+
+    // Must match the condition in CMakeLists.txt.
+    const function_data_sections = options.target.result.cpu.arch.isPowerPC();
+
+    exe.link_function_sections = function_data_sections;
+    exe.link_data_sections = function_data_sections;
 
     return exe;
 }

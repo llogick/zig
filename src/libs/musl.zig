@@ -43,8 +43,6 @@ pub fn buildCrtFile(comp: *Compilation, in_crt_file: CrtFile, prog_node: std.Pro
                 },
             };
             return comp.build_crt_file("crt1", .Obj, .@"musl crt1.o", prog_node, &files, .{
-                .function_sections = true,
-                .data_sections = true,
                 .omit_frame_pointer = true,
                 .no_builtin = true,
             });
@@ -63,8 +61,6 @@ pub fn buildCrtFile(comp: *Compilation, in_crt_file: CrtFile, prog_node: std.Pro
                 },
             };
             return comp.build_crt_file("rcrt1", .Obj, .@"musl rcrt1.o", prog_node, &files, .{
-                .function_sections = true,
-                .data_sections = true,
                 .omit_frame_pointer = true,
                 .pic = true,
                 .no_builtin = true,
@@ -84,8 +80,6 @@ pub fn buildCrtFile(comp: *Compilation, in_crt_file: CrtFile, prog_node: std.Pro
                 },
             };
             return comp.build_crt_file("Scrt1", .Obj, .@"musl Scrt1.o", prog_node, &files, .{
-                .function_sections = true,
-                .data_sections = true,
                 .omit_frame_pointer = true,
                 .pic = true,
                 .no_builtin = true,
@@ -172,8 +166,6 @@ pub fn buildCrtFile(comp: *Compilation, in_crt_file: CrtFile, prog_node: std.Pro
                 };
             }
             return comp.build_crt_file("c", .Lib, .@"musl libc.a", prog_node, c_source_files.items, .{
-                .function_sections = true,
-                .data_sections = true,
                 .omit_frame_pointer = true,
                 .no_builtin = true,
             });
