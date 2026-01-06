@@ -1,3 +1,5 @@
+const Io = @This();
+
 const builtin = @import("builtin");
 const is_windows = builtin.os.tag == .windows;
 
@@ -8,79 +10,6 @@ const math = std.math;
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const Alignment = std.mem.Alignment;
-
-pub const Limit = enum(usize) {
-    nothing = 0,
-    unlimited = std.math.maxInt(usize),
-    _,
-
-    /// `std.math.maxInt(usize)` is interpreted to mean `.unlimited`.
-    pub fn limited(n: usize) Limit {
-        return @enumFromInt(n);
-    }
-
-    /// Any value grater than `std.math.maxInt(usize)` is interpreted to mean
-    /// `.unlimited`.
-    pub fn limited64(n: u64) Limit {
-        return @enumFromInt(@min(n, std.math.maxInt(usize)));
-    }
-
-    pub fn countVec(data: []const []const u8) Limit {
-        var total: usize = 0;
-        for (data) |d| total += d.len;
-        return .limited(total);
-    }
-
-    pub fn min(a: Limit, b: Limit) Limit {
-        return @enumFromInt(@min(@intFromEnum(a), @intFromEnum(b)));
-    }
-
-    pub fn minInt(l: Limit, n: usize) usize {
-        return @min(n, @intFromEnum(l));
-    }
-
-    pub fn minInt64(l: Limit, n: u64) usize {
-        return @min(n, @intFromEnum(l));
-    }
-
-    pub fn slice(l: Limit, s: []u8) []u8 {
-        return s[0..l.minInt(s.len)];
-    }
-
-    pub fn sliceConst(l: Limit, s: []const u8) []const u8 {
-        return s[0..l.minInt(s.len)];
-    }
-
-    pub fn toInt(l: Limit) ?usize {
-        return switch (l) {
-            else => @intFromEnum(l),
-            .unlimited => null,
-        };
-    }
-
-    /// Reduces a slice to account for the limit, leaving room for one extra
-    /// byte above the limit, allowing for the use case of differentiating
-    /// between end-of-stream and reaching the limit.
-    pub fn slice1(l: Limit, non_empty_buffer: []u8) []u8 {
-        assert(non_empty_buffer.len >= 1);
-        return non_empty_buffer[0..@min(@intFromEnum(l) +| 1, non_empty_buffer.len)];
-    }
-
-    pub fn nonzero(l: Limit) bool {
-        return @intFromEnum(l) > 0;
-    }
-
-    /// Return a new limit reduced by `amount` or return `null` indicating
-    /// limit would be exceeded.
-    pub fn subtract(l: Limit, amount: usize) ?Limit {
-        if (l == .unlimited) return .unlimited;
-        if (amount > @intFromEnum(l)) return null;
-        return @enumFromInt(@intFromEnum(l) - amount);
-    }
-};
-
-pub const Reader = @import("Io/Reader.zig");
-pub const Writer = @import("Io/Writer.zig");
 
 pub fn poll(
     gpa: Allocator,
@@ -529,16 +458,8 @@ pub fn PollFiles(comptime StreamEnum: type) type {
     return @Struct(.auto, null, std.meta.fieldNames(StreamEnum), &@splat(Io.File), &@splat(.{}));
 }
 
-test {
-    _ = net;
-    _ = Reader;
-    _ = Writer;
-    _ = Evented;
-    _ = Threaded;
-    _ = @import("Io/test.zig");
-}
-
-const Io = @This();
+userdata: ?*anyopaque,
+vtable: *const VTable,
 
 pub const Threaded = @import("Io/Threaded.zig");
 pub const Evented = switch (builtin.os.tag) {
@@ -554,10 +475,13 @@ pub const Evented = switch (builtin.os.tag) {
 };
 pub const Kqueue = @import("Io/Kqueue.zig");
 pub const IoUring = @import("Io/IoUring.zig");
-pub const net = @import("Io/net.zig");
 
-userdata: ?*anyopaque,
-vtable: *const VTable,
+pub const Reader = @import("Io/Reader.zig");
+pub const Writer = @import("Io/Writer.zig");
+pub const net = @import("Io/net.zig");
+pub const Dir = @import("Io/Dir.zig");
+pub const File = @import("Io/File.zig");
+pub const Terminal = @import("Io/Terminal.zig");
 
 pub const VTable = struct {
     /// If it returns `null` it means `result` has been already populated and
@@ -756,6 +680,76 @@ pub const VTable = struct {
     netLookup: *const fn (?*anyopaque, net.HostName, *Queue(net.HostName.LookupResult), net.HostName.LookupOptions) net.HostName.LookupError!void,
 };
 
+pub const Limit = enum(usize) {
+    nothing = 0,
+    unlimited = std.math.maxInt(usize),
+    _,
+
+    /// `std.math.maxInt(usize)` is interpreted to mean `.unlimited`.
+    pub fn limited(n: usize) Limit {
+        return @enumFromInt(n);
+    }
+
+    /// Any value grater than `std.math.maxInt(usize)` is interpreted to mean
+    /// `.unlimited`.
+    pub fn limited64(n: u64) Limit {
+        return @enumFromInt(@min(n, std.math.maxInt(usize)));
+    }
+
+    pub fn countVec(data: []const []const u8) Limit {
+        var total: usize = 0;
+        for (data) |d| total += d.len;
+        return .limited(total);
+    }
+
+    pub fn min(a: Limit, b: Limit) Limit {
+        return @enumFromInt(@min(@intFromEnum(a), @intFromEnum(b)));
+    }
+
+    pub fn minInt(l: Limit, n: usize) usize {
+        return @min(n, @intFromEnum(l));
+    }
+
+    pub fn minInt64(l: Limit, n: u64) usize {
+        return @min(n, @intFromEnum(l));
+    }
+
+    pub fn slice(l: Limit, s: []u8) []u8 {
+        return s[0..l.minInt(s.len)];
+    }
+
+    pub fn sliceConst(l: Limit, s: []const u8) []const u8 {
+        return s[0..l.minInt(s.len)];
+    }
+
+    pub fn toInt(l: Limit) ?usize {
+        return switch (l) {
+            else => @intFromEnum(l),
+            .unlimited => null,
+        };
+    }
+
+    /// Reduces a slice to account for the limit, leaving room for one extra
+    /// byte above the limit, allowing for the use case of differentiating
+    /// between end-of-stream and reaching the limit.
+    pub fn slice1(l: Limit, non_empty_buffer: []u8) []u8 {
+        assert(non_empty_buffer.len >= 1);
+        return non_empty_buffer[0..@min(@intFromEnum(l) +| 1, non_empty_buffer.len)];
+    }
+
+    pub fn nonzero(l: Limit) bool {
+        return @intFromEnum(l) > 0;
+    }
+
+    /// Return a new limit reduced by `amount` or return `null` indicating
+    /// limit would be exceeded.
+    pub fn subtract(l: Limit, amount: usize) ?Limit {
+        if (l == .unlimited) return .unlimited;
+        if (amount > @intFromEnum(l)) return null;
+        return @enumFromInt(@intFromEnum(l) - amount);
+    }
+};
+
 pub const Cancelable = error{
     /// Caller has requested the async operation to stop.
     Canceled,
@@ -772,10 +766,6 @@ pub const UnexpectedError = error{
     /// the respective function.
     Unexpected,
 };
-
-pub const Dir = @import("Io/Dir.zig");
-pub const File = @import("Io/File.zig");
-pub const Terminal = @import("Io/Terminal.zig");
 
 pub const Clock = enum {
     /// A settable system-wide clock that measures real (i.e. wall-clock)
@@ -2280,4 +2270,15 @@ pub const RandomSecureError = error{EntropyUnavailable} || Cancelable;
 /// See also `random`.
 pub fn randomSecure(io: Io, buffer: []u8) RandomSecureError!void {
     return io.vtable.randomSecure(io.userdata, buffer);
+}
+
+test {
+    _ = net;
+    _ = File;
+    _ = Dir;
+    _ = Reader;
+    _ = Writer;
+    _ = Evented;
+    _ = Threaded;
+    _ = @import("Io/test.zig");
 }
