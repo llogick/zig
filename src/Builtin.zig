@@ -343,10 +343,10 @@ pub fn updateFileOnDisk(file: *File, comp: *Compilation) !void {
     }
 
     // `make_path` matters because the dir hasn't actually been created yet.
-    var af = try root_dir.atomicFile(io, sub_path, .{ .make_path = true, .write_buffer = &.{} });
-    defer af.deinit();
-    try af.file_writer.interface.writeAll(file.source.?);
-    af.finish() catch |err| switch (err) {
+    var af = try root_dir.createFileAtomic(io, sub_path, .{ .make_path = true, .replace = true });
+    defer af.deinit(io);
+    try af.file.writeStreamingAll(io, file.source.?);
+    af.replace(io) catch |err| switch (err) {
         error.AccessDenied => switch (builtin.os.tag) {
             .windows => {
                 // Very likely happened due to another process or thread

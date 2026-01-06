@@ -3916,11 +3916,14 @@ pub fn saveState(comp: *Compilation) !void {
 
     // Using an atomic file prevents a crash or power failure from corrupting
     // the previous incremental compilation state.
+    var af = try lf.emit.root_dir.handle.createFileAtomic(io, basename, .{ .replace = true });
+    defer af.deinit(io);
+
     var write_buffer: [1024]u8 = undefined;
-    var af = try lf.emit.root_dir.handle.atomicFile(io, basename, .{ .write_buffer = &write_buffer });
-    defer af.deinit();
-    try af.file_writer.interface.writeVecAll(bufs.items);
-    try af.finish();
+    var file_writer = af.file.writer(io, &write_buffer);
+    try file_writer.interface.writeVecAll(bufs.items);
+    try file_writer.interface.flush();
+    try af.replace(io);
 }
 
 fn addBuf(list: *std.array_list.Managed([]const u8), buf: []const u8) void {
@@ -5244,26 +5247,31 @@ fn processOneJob(
     }
 }
 
-fn createDepFile(comp: *Compilation, depfile: []const u8, binfile: Cache.Path) anyerror!void {
+fn createDepFile(comp: *Compilation, dep_file: []const u8, bin_file: Cache.Path) anyerror!void {
     const io = comp.io;
+
+    var af = try Io.Dir.cwd().createFileAtomic(io, dep_file, .{ .replace = true });
+    defer af.deinit(io);
+
     var buf: [4096]u8 = undefined;
-    var af = try Io.Dir.cwd().atomicFile(io, depfile, .{ .write_buffer = &buf });
-    defer af.deinit();
+    var file_writer = af.file.writer(io, &buf);
 
-    comp.writeDepFile(binfile, &af.file_writer.interface) catch return af.file_writer.err.?;
-
-    try af.finish();
+    comp.writeDepFile(bin_file, &file_writer.interface) catch |err| switch (err) {
+        error.WriteFailed => return file_writer.err.?,
+    };
+    try file_writer.flush();
+    try af.replace(io);
 }
 
 fn writeDepFile(
     comp: *Compilation,
-    binfile: Cache.Path,
+    bin_file: Cache.Path,
     w: *std.Io.Writer,
 ) std.Io.Writer.Error!void {
     const prefixes = comp.cache_parent.prefixes();
     const fsi = comp.file_system_inputs.?.items;
 
-    try w.print("{f}:", .{binfile});
+    try w.print("{f}:", .{bin_file});
 
     {
         var it = std.mem.splitScalar(u8, fsi, 0);

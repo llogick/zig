@@ -324,6 +324,7 @@ pub const O = switch (native_arch) {
         CLOEXEC: bool = false,
         SYNC: bool = false,
         PATH: bool = false,
+        /// This is typically invalid without also setting `DIRECTORY`.
         TMPFILE: bool = false,
         _23: u9 = 0,
     },
@@ -346,6 +347,7 @@ pub const O = switch (native_arch) {
         CLOEXEC: bool = false,
         SYNC: bool = false,
         PATH: bool = false,
+        /// This is typically invalid without also setting `DIRECTORY`.
         TMPFILE: bool = false,
         _23: u9 = 0,
     },
@@ -368,6 +370,7 @@ pub const O = switch (native_arch) {
         CLOEXEC: bool = false,
         SYNC: bool = false,
         PATH: bool = false,
+        /// This is typically invalid without also setting `DIRECTORY`.
         TMPFILE: bool = false,
         _23: u9 = 0,
     },
@@ -393,6 +396,7 @@ pub const O = switch (native_arch) {
         CLOEXEC: bool = false,
         SYNC: bool = false,
         PATH: bool = false,
+        /// This is typically invalid without also setting `DIRECTORY`.
         TMPFILE: bool = false,
         _27: u6 = 0,
     },
@@ -417,6 +421,7 @@ pub const O = switch (native_arch) {
         CLOEXEC: bool = false,
         _20: u1 = 0,
         PATH: bool = false,
+        /// This is typically invalid without also setting `DIRECTORY`.
         TMPFILE: bool = false,
         _23: u9 = 0,
     },
@@ -439,6 +444,7 @@ pub const O = switch (native_arch) {
         CLOEXEC: bool = false,
         SYNC: bool = false,
         PATH: bool = false,
+        /// This is typically invalid without also setting `DIRECTORY`.
         TMPFILE: bool = false,
         _23: u9 = 0,
     },
@@ -459,13 +465,16 @@ pub const O = switch (native_arch) {
         NOFOLLOW: bool = false,
         NOATIME: bool = false,
         CLOEXEC: bool = false,
-        _20: u1 = 0,
+        /// This is typically invalid without also setting `TMPFILE1` and `DIRECTORY`.
+        TMPFILE0: bool = false,
         PATH: bool = false,
-        _22: u10 = 0,
+        _22: u4 = 0,
+        /// This is typically invalid without also setting `TMPFILE0` and `DIRECTORY`.
+        TMPFILE1: bool = false,
+        _27: u5 = 0,
 
         // #define O_RSYNC    04010000
         // #define O_SYNC     04010000
-        // #define O_TMPFILE 020200000
         // #define O_NDELAY O_NONBLOCK
     },
     .m68k => packed struct(u32) {

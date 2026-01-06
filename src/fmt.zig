@@ -355,11 +355,11 @@ fn fmtPathFile(
         try fmt.stdout_writer.interface.print("{s}\n", .{file_path});
         fmt.any_error = true;
     } else {
-        var af = try dir.atomicFile(io, sub_path, .{ .permissions = stat.permissions, .write_buffer = &.{} });
-        defer af.deinit();
+        var af = try dir.createFileAtomic(io, sub_path, .{ .permissions = stat.permissions, .replace = true });
+        defer af.deinit(io);
 
-        try af.file_writer.interface.writeAll(fmt.out_buffer.written());
-        try af.finish();
+        try af.file.writeStreamingAll(io, fmt.out_buffer.written());
+        try af.replace(io);
         try fmt.stdout_writer.interface.print("{s}\n", .{file_path});
     }
 }

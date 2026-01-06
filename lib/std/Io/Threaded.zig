@@ -1403,6 +1403,7 @@ pub fn io(t: *Threaded) Io {
             .dirStatFile = dirStatFile,
             .dirAccess = dirAccess,
             .dirCreateFile = dirCreateFile,
+            .dirCreateFileAtomic = dirCreateFileAtomic,
             .dirOpenFile = dirOpenFile,
             .dirOpenDir = dirOpenDir,
             .dirClose = dirClose,
@@ -1445,6 +1446,7 @@ pub fn io(t: *Threaded) Io {
             .fileUnlock = fileUnlock,
             .fileDowngradeLock = fileDowngradeLock,
             .fileRealPath = fileRealPath,
+            .fileHardLink = fileHardLink,
 
             .processExecutableOpen = processExecutableOpen,
             .processExecutablePath = processExecutablePath,
@@ -1549,6 +1551,7 @@ pub fn ioBasic(t: *Threaded) Io {
             .dirStatFile = dirStatFile,
             .dirAccess = dirAccess,
             .dirCreateFile = dirCreateFile,
+            .dirCreateFileAtomic = dirCreateFileAtomic,
             .dirOpenFile = dirOpenFile,
             .dirOpenDir = dirOpenDir,
             .dirClose = dirClose,
@@ -1591,6 +1594,7 @@ pub fn ioBasic(t: *Threaded) Io {
             .fileUnlock = fileUnlock,
             .fileDowngradeLock = fileDowngradeLock,
             .fileRealPath = fileRealPath,
+            .fileHardLink = fileHardLink,
 
             .processExecutableOpen = processExecutableOpen,
             .processExecutablePath = processExecutablePath,
@@ -3413,6 +3417,170 @@ fn dirCreateFileWasi(
     }
 }
 
+fn dirCreateFileAtomic(
+    userdata: ?*anyopaque,
+    dir: Dir,
+    dest_path: []const u8,
+    options: Dir.CreateFileAtomicOptions,
+) Dir.CreateFileAtomicError!File.Atomic {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const t_io = ioBasic(t);
+
+    // Linux has O_TMPFILE, but linkat() does not support AT_REPLACE, so it's
+    // useless when we have to make up a bogus path name to do the rename()
+    // anyway.
+    if (native_os == .linux and !options.replace) tmpfile: {
+        const flags: posix.O = if (@hasField(posix.O, "TMPFILE")) .{
+            .ACCMODE = .RDWR,
+            .TMPFILE = true,
+            .DIRECTORY = true,
+            .CLOEXEC = true,
+        } else if (@hasField(posix.O, "TMPFILE0") and !@hasField(posix.O, "TMPFILE2")) .{
+            .ACCMODE = .RDWR,
+            .TMPFILE0 = true,
+            .TMPFILE1 = true,
+            .DIRECTORY = true,
+            .CLOEXEC = true,
+        } else break :tmpfile;
+
+        const dest_dirname = Dir.path.dirname(dest_path);
+        if (dest_dirname) |dirname| {
+            // This has a nice side effect of preemptively triggering EISDIR or
+            // ENOENT, avoiding the ambiguity below.
+            dir.createDirPath(t_io, dirname) catch |err| switch (err) {
+                // None of these make sense in this context.
+                error.IsDir,
+                error.Streaming,
+                error.DiskQuota,
+                error.PathAlreadyExists,
+                error.LinkQuotaExceeded,
+                error.SharingViolation,
+                error.PipeBusy,
+                error.FileTooBig,
+                error.DeviceBusy,
+                error.FileLocksUnsupported,
+                error.FileBusy,
+                => return error.Unexpected,
+
+                else => |e| return e,
+            };
+        }
+
+        var path_buffer: [posix.PATH_MAX]u8 = undefined;
+        const sub_path_posix = try pathToPosix(dest_dirname orelse ".", &path_buffer);
+
+        const syscall: Syscall = try .start();
+        while (true) {
+            const rc = openat_sym(dir.handle, sub_path_posix, flags, options.permissions.toMode());
+            switch (posix.errno(rc)) {
+                .SUCCESS => {
+                    syscall.finish();
+                    return .{
+                        .file = .{ .handle = @intCast(rc) },
+                        .file_basename_hex = 0,
+                        .dest_sub_path = dest_path,
+                        .file_open = true,
+                        .file_exists = false,
+                        .close_dir_on_deinit = false,
+                        .dir = dir,
+                    };
+                },
+                .INTR => {
+                    try syscall.checkCancel();
+                    continue;
+                },
+                .ISDIR, .NOENT => {
+                    // Ambiguous error code. It might mean the file system
+                    // does not support O_TMPFILE. Therefore, we must fall
+                    // back to not using O_TMPFILE.
+                    syscall.finish();
+                    break :tmpfile;
+                },
+                .INVAL => return syscall.fail(error.BadPathName),
+                .ACCES => return syscall.fail(error.AccessDenied),
+                .LOOP => return syscall.fail(error.SymLinkLoop),
+                .MFILE => return syscall.fail(error.ProcessFdQuotaExceeded),
+                .NAMETOOLONG => return syscall.fail(error.NameTooLong),
+                .NFILE => return syscall.fail(error.SystemFdQuotaExceeded),
+                .NODEV => return syscall.fail(error.NoDevice),
+                .NOMEM => return syscall.fail(error.SystemResources),
+                .NOSPC => return syscall.fail(error.NoSpaceLeft),
+                .NOTDIR => return syscall.fail(error.NotDir),
+                .PERM => return syscall.fail(error.PermissionDenied),
+                .AGAIN => return syscall.fail(error.WouldBlock),
+                .NXIO => return syscall.fail(error.NoDevice),
+                .ILSEQ => return syscall.fail(error.BadPathName),
+                else => |err| return syscall.unexpectedErrno(err),
+            }
+        }
+    }
+
+    if (Dir.path.dirname(dest_path)) |dirname| {
+        const new_dir = if (options.make_path)
+            dir.createDirPathOpen(t_io, dirname, .{}) catch |err| switch (err) {
+                // None of these make sense in this context.
+                error.IsDir,
+                error.Streaming,
+                error.DiskQuota,
+                error.PathAlreadyExists,
+                error.LinkQuotaExceeded,
+                error.SharingViolation,
+                error.PipeBusy,
+                error.FileTooBig,
+                error.FileLocksUnsupported,
+                error.FileBusy,
+                error.DeviceBusy,
+                => return error.Unexpected,
+
+                else => |e| return e,
+            }
+        else
+            try dir.openDir(t_io, dirname, .{});
+
+        return atomicFileInit(t_io, Dir.path.basename(dest_path), options.permissions, new_dir, true);
+    }
+
+    return atomicFileInit(t_io, dest_path, options.permissions, dir, false);
+}
+
+fn atomicFileInit(
+    t_io: Io,
+    dest_basename: []const u8,
+    permissions: File.Permissions,
+    dir: Dir,
+    close_dir_on_deinit: bool,
+) Dir.CreateFileAtomicError!File.Atomic {
+    while (true) {
+        const random_integer = std.crypto.random.int(u64);
+        const tmp_sub_path = std.fmt.hex(random_integer);
+        const file = dir.createFile(t_io, &tmp_sub_path, .{
+            .permissions = permissions,
+            .exclusive = true,
+        }) catch |err| switch (err) {
+            error.PathAlreadyExists => continue,
+            error.DeviceBusy => continue,
+            error.FileBusy => continue,
+            error.SharingViolation => continue,
+
+            error.IsDir => return error.Unexpected, // No path components.
+            error.FileTooBig => return error.Unexpected, // Creating, not opening.
+            error.FileLocksUnsupported => return error.Unexpected, // Not asking for locks.
+            error.PipeBusy => return error.Unexpected, // Not opening a pipe.
+
+            else => |e| return e,
+        };
+        return .{
+            .file = file,
+            .file_basename_hex = random_integer,
+            .dest_sub_path = dest_basename,
+            .file_open = true,
+            .file_exists = true,
+            .close_dir_on_deinit = close_dir_on_deinit,
+            .dir = dir,
+        };
+    }
+}
+
 const dirOpenFile = switch (native_os) {
     .windows => dirOpenFileWindows,
     .wasi => dirOpenFileWasi,
@@ -3925,7 +4093,7 @@ fn dirOpenDirPosix(
                     .NOMEM => return error.SystemResources,
                     .NOTDIR => return error.NotDir,
                     .PERM => return error.PermissionDenied,
-                    .BUSY => return error.DeviceBusy,
+                    .BUSY => |err| return errnoBug(err), // O_EXCL not passed
                     .NXIO => return error.NoDevice,
                     .ILSEQ => return error.BadPathName,
                     else => |err| return posix.unexpectedErrno(err),
@@ -4983,6 +5151,64 @@ fn realPathPosix(fd: posix.fd_t, out_buffer: []u8) File.RealPathError!usize {
         else => return error.OperationUnsupported,
     }
     comptime unreachable;
+}
+
+fn fileHardLink(
+    userdata: ?*anyopaque,
+    file: File,
+    new_dir: Dir,
+    new_sub_path: []const u8,
+    options: File.HardLinkOptions,
+) File.HardLinkError!void {
+    _ = userdata;
+    if (native_os != .linux) return error.OperationUnsupported;
+
+    var new_path_buffer: [posix.PATH_MAX]u8 = undefined;
+    const new_sub_path_posix = try pathToPosix(new_sub_path, &new_path_buffer);
+
+    const flags: u32 = if (!options.follow_symlinks)
+        posix.AT.SYMLINK_NOFOLLOW | posix.AT.EMPTY_PATH
+    else
+        posix.AT.EMPTY_PATH;
+
+    return linkat(file.handle, "", new_dir.handle, new_sub_path_posix, flags);
+}
+
+fn linkat(
+    old_dir: posix.fd_t,
+    old_path: [*:0]const u8,
+    new_dir: posix.fd_t,
+    new_path: [*:0]const u8,
+    flags: u32,
+) File.HardLinkError!void {
+    const syscall: Syscall = try .start();
+    while (true) {
+        switch (posix.errno(posix.system.linkat(old_dir, old_path, new_dir, new_path, flags))) {
+            .SUCCESS => return syscall.finish(),
+            .INTR => {
+                try syscall.checkCancel();
+                continue;
+            },
+            .ACCES => return syscall.fail(error.AccessDenied),
+            .DQUOT => return syscall.fail(error.DiskQuota),
+            .EXIST => return syscall.fail(error.PathAlreadyExists),
+            .IO => return syscall.fail(error.HardwareFailure),
+            .LOOP => return syscall.fail(error.SymLinkLoop),
+            .MLINK => return syscall.fail(error.LinkQuotaExceeded),
+            .NAMETOOLONG => return syscall.fail(error.NameTooLong),
+            .NOENT => return syscall.fail(error.FileNotFound),
+            .NOMEM => return syscall.fail(error.SystemResources),
+            .NOSPC => return syscall.fail(error.NoSpaceLeft),
+            .NOTDIR => return syscall.fail(error.NotDir),
+            .PERM => return syscall.fail(error.PermissionDenied),
+            .ROFS => return syscall.fail(error.ReadOnlyFileSystem),
+            .XDEV => return syscall.fail(error.NotSameFileSystem),
+            .ILSEQ => return syscall.fail(error.BadPathName),
+            .FAULT => |err| return syscall.errnoBug(err),
+            .INVAL => |err| return syscall.errnoBug(err),
+            else => |err| return syscall.unexpectedErrno(err),
+        }
+    }
 }
 
 const dirDeleteFile = switch (native_os) {
@@ -7325,7 +7551,6 @@ fn dirOpenDirWasi(
                     .NOMEM => return error.SystemResources,
                     .NOTDIR => return error.NotDir,
                     .PERM => return error.PermissionDenied,
-                    .BUSY => return error.DeviceBusy,
                     .NOTCAPABLE => return error.AccessDenied,
                     .ILSEQ => return error.BadPathName,
                     else => |err| return posix.unexpectedErrno(err),
@@ -7401,46 +7626,7 @@ fn dirHardLink(
     const new_sub_path_posix = try pathToPosix(new_sub_path, &new_path_buffer);
 
     const flags: u32 = if (!options.follow_symlinks) posix.AT.SYMLINK_NOFOLLOW else 0;
-
-    const syscall: Syscall = try .start();
-    while (true) {
-        switch (posix.errno(posix.system.linkat(
-            old_dir.handle,
-            old_sub_path_posix,
-            new_dir.handle,
-            new_sub_path_posix,
-            flags,
-        ))) {
-            .SUCCESS => return syscall.finish(),
-            .INTR => {
-                try syscall.checkCancel();
-                continue;
-            },
-            else => |e| {
-                syscall.finish();
-                switch (e) {
-                    .ACCES => return error.AccessDenied,
-                    .DQUOT => return error.DiskQuota,
-                    .EXIST => return error.PathAlreadyExists,
-                    .FAULT => |err| return errnoBug(err),
-                    .IO => return error.HardwareFailure,
-                    .LOOP => return error.SymLinkLoop,
-                    .MLINK => return error.LinkQuotaExceeded,
-                    .NAMETOOLONG => return error.NameTooLong,
-                    .NOENT => return error.FileNotFound,
-                    .NOMEM => return error.SystemResources,
-                    .NOSPC => return error.NoSpaceLeft,
-                    .NOTDIR => return error.NotDir,
-                    .PERM => return error.PermissionDenied,
-                    .ROFS => return error.ReadOnlyFileSystem,
-                    .XDEV => return error.NotSameFileSystem,
-                    .INVAL => |err| return errnoBug(err),
-                    .ILSEQ => return error.BadPathName,
-                    else => |err| return posix.unexpectedErrno(err),
-                }
-            },
-        }
-    }
+    return linkat(old_dir.handle, old_sub_path_posix, new_dir.handle, new_sub_path_posix, flags);
 }
 
 fn fileClose(userdata: ?*anyopaque, files: []const File) void {
@@ -13831,7 +14017,6 @@ fn windowsCreateProcessPathExt(
             error.NetworkNotFound,
             error.NameTooLong,
             error.BadPathName,
-            error.DeviceBusy,
             => return error.FileNotFound,
         };
     };
