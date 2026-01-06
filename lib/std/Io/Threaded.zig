@@ -13929,7 +13929,7 @@ fn processSpawnWindows(userdata: ?*anyopaque, options: process.SpawnOptions) pro
     };
 }
 
-fn getCngHandle(t: *Threaded) !windows.HANDLE {
+fn getCngHandle(t: *Threaded) Io.RandomSecureError!windows.HANDLE {
     {
         t.mutex.lock();
         defer t.mutex.unlock();
@@ -13980,8 +13980,8 @@ fn getCngHandle(t: *Threaded) !windows.HANDLE {
             try syscall.checkCancel();
             continue;
         },
-        .OBJECT_NAME_NOT_FOUND => return syscall.fail(error.Unexpected), // Observed on wine 10.0
-        else => |status| return syscall.unexpectedNtstatus(status),
+        .OBJECT_NAME_NOT_FOUND => return syscall.fail(error.EntropyUnavailable), // Observed on wine 10.0
+        else => return syscall.fail(error.EntropyUnavailable),
     };
 }
 
@@ -15096,23 +15096,13 @@ fn randomMainThread(t: *Threaded, buffer: []u8) void {
             randomSecure(t, &seed) catch |err| switch (err) {
                 error.Canceled => unreachable,
                 error.EntropyUnavailable => {
-                    seed = @splat(0);
-                    std.mem.writeInt(posix.pid_t, seed[0..@sizeOf(posix.pid_t)], posix.system.getpid(), .native);
-                    const i_1 = @sizeOf(posix.pid_t);
-
-                    var ts: posix.timespec = undefined;
-                    const Sec = @TypeOf(ts.sec);
-                    const Nsec = @TypeOf(ts.nsec);
-                    const i_2 = i_1 + @sizeOf(Sec);
-                    const i_3 = i_2 + @sizeOf(Nsec);
-                    switch (posix.errno(posix.system.clock_gettime(.REALTIME, &ts))) {
-                        .SUCCESS => {
-                            std.mem.writeInt(Sec, seed[i_1..][0..@sizeOf(Sec)], ts.sec, .native);
-                            std.mem.writeInt(Nsec, seed[i_2..][0..@sizeOf(Nsec)], ts.nsec, .native);
-                        },
-                        else => {},
+                    @memset(&seed, 0);
+                    const aslr_addr = @intFromPtr(t);
+                    std.mem.writeInt(usize, seed[seed.len - @sizeOf(usize) ..][0..@sizeOf(usize)], aslr_addr, .native);
+                    switch (native_os) {
+                        .windows => fallbackSeedWindows(&seed),
+                        else => fallbackSeedPosix(&seed),
                     }
-                    std.mem.writeInt(usize, seed[i_3..][0..@sizeOf(usize)], @intFromPtr(t), .native);
                 },
             };
         }
@@ -15120,6 +15110,29 @@ fn randomMainThread(t: *Threaded, buffer: []u8) void {
     }
 
     t.csprng.rng.fill(buffer);
+}
+
+fn fallbackSeedPosix(seed: *[Csprng.seed_len]u8) void {
+    std.mem.writeInt(posix.pid_t, seed[0..@sizeOf(posix.pid_t)], posix.system.getpid(), .native);
+    const i_1 = @sizeOf(posix.pid_t);
+
+    var ts: posix.timespec = undefined;
+    const Sec = @TypeOf(ts.sec);
+    const Nsec = @TypeOf(ts.nsec);
+    const i_2 = i_1 + @sizeOf(Sec);
+    switch (posix.errno(posix.system.clock_gettime(.REALTIME, &ts))) {
+        .SUCCESS => {
+            std.mem.writeInt(Sec, seed[i_1..][0..@sizeOf(Sec)], ts.sec, .native);
+            std.mem.writeInt(Nsec, seed[i_2..][0..@sizeOf(Nsec)], ts.nsec, .native);
+        },
+        else => {},
+    }
+}
+
+fn fallbackSeedWindows(seed: *[Csprng.seed_len]u8) void {
+    var pc: windows.LARGE_INTEGER = undefined;
+    _ = windows.ntdll.RtlQueryPerformanceCounter(&pc);
+    std.mem.writeInt(windows.LARGE_INTEGER, seed[0..@sizeOf(windows.LARGE_INTEGER)], pc, .native);
 }
 
 fn randomSecure(userdata: ?*anyopaque, buffer: []u8) Io.RandomSecureError!void {
