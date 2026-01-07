@@ -619,42 +619,6 @@ pub fn socketpair(domain: u32, socket_type: u32, protocol: u32) SocketError![2]s
     }
 }
 
-pub const BindError = error{
-    SymLinkLoop,
-    NameTooLong,
-    FileNotFound,
-    NotDir,
-    ReadOnlyFileSystem,
-    AccessDenied,
-} || std.Io.net.IpAddress.BindError;
-
-pub fn bind(sock: socket_t, addr: *const sockaddr, len: socklen_t) BindError!void {
-    if (native_os == .windows) {
-        @compileError("use std.Io instead");
-    } else {
-        const rc = system.bind(sock, addr, len);
-        switch (errno(rc)) {
-            .SUCCESS => return,
-            .ACCES, .PERM => return error.AccessDenied,
-            .ADDRINUSE => return error.AddressInUse,
-            .BADF => unreachable, // always a race condition if this error is returned
-            .INVAL => unreachable, // invalid parameters
-            .NOTSOCK => unreachable, // invalid `sockfd`
-            .AFNOSUPPORT => return error.AddressFamilyUnsupported,
-            .ADDRNOTAVAIL => return error.AddressUnavailable,
-            .FAULT => unreachable, // invalid `addr` pointer
-            .LOOP => return error.SymLinkLoop,
-            .NAMETOOLONG => return error.NameTooLong,
-            .NOENT => return error.FileNotFound,
-            .NOMEM => return error.SystemResources,
-            .NOTDIR => return error.NotDir,
-            .ROFS => return error.ReadOnlyFileSystem,
-            else => |err| return unexpectedErrno(err),
-        }
-    }
-    unreachable;
-}
-
 pub const ListenError = error{
     FileDescriptorNotASocket,
     OperationUnsupported,

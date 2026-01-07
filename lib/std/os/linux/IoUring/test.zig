@@ -533,7 +533,7 @@ test "sendmsg/recvmsg" {
     defer posix.close(server);
     try posix.setsockopt(server, posix.SOL.SOCKET, posix.SO.REUSEPORT, &mem.toBytes(@as(c_int, 1)));
     try posix.setsockopt(server, posix.SOL.SOCKET, posix.SO.REUSEADDR, &mem.toBytes(@as(c_int, 1)));
-    try posix.bind(server, addrAny(&address_server), @sizeOf(linux.sockaddr.in));
+    try bind(server, addrAny(&address_server), @sizeOf(linux.sockaddr.in));
 
     // set address_server to the OS-chosen IP/port.
     var slen: posix.socklen_t = @sizeOf(linux.sockaddr.in);
@@ -1036,7 +1036,7 @@ test "shutdown" {
         const server = try socket(address.family, posix.SOCK.STREAM | posix.SOCK.CLOEXEC, 0);
         defer posix.close(server);
         try posix.setsockopt(server, posix.SOL.SOCKET, posix.SO.REUSEADDR, &mem.toBytes(@as(c_int, 1)));
-        try posix.bind(server, addrAny(&address), @sizeOf(linux.sockaddr.in));
+        try bind(server, addrAny(&address), @sizeOf(linux.sockaddr.in));
         try posix.listen(server, 1);
 
         // set address to the OS-chosen IP/port.
@@ -2661,7 +2661,7 @@ fn createListenerSocket(address: *linux.sockaddr.in) !posix.socket_t {
     errdefer posix.close(listener_socket);
 
     try posix.setsockopt(listener_socket, posix.SOL.SOCKET, posix.SO.REUSEADDR, &mem.toBytes(@as(c_int, 1)));
-    try posix.bind(listener_socket, addrAny(address), @sizeOf(linux.sockaddr.in));
+    try bind(listener_socket, addrAny(address), @sizeOf(linux.sockaddr.in));
     try posix.listen(listener_socket, kernel_backlog);
 
     // set address to the OS-chosen IP/port.
@@ -2701,5 +2701,12 @@ fn socket(domain: u32, socket_type: u32, protocol: u32) !posix.socket_t {
     switch (posix.errno(rc)) {
         .SUCCESS => return @intCast(rc),
         else => return error.SocketCreationFailure,
+    }
+}
+
+fn bind(sock: posix.socket_t, addr: *const posix.sockaddr, len: posix.socklen_t) !void {
+    switch (posix.errno(posix.system.bind(sock, addr, len))) {
+        .SUCCESS => return,
+        else => return error.BindFailure,
     }
 }
