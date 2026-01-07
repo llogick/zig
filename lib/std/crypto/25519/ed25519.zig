@@ -392,16 +392,17 @@ pub const Ed25519 = struct {
             /// If set, should be something unique for each message, such as a
             /// random nonce, or a counter.
             noise: ?[noise_length]u8,
-            /// Filled with cryptographically secure randomness.
-            entropy: *const [noise_length]u8,
+            io: std.Io,
         ) (IdentityElementError || KeyMismatchError || NonCanonicalError || WeakPublicKeyError)!Signer {
             if (!mem.eql(u8, &key_pair.secret_key.publicKeyBytes(), &key_pair.public_key.toBytes())) {
                 return error.KeyMismatch;
             }
             const scalar_and_prefix = key_pair.secret_key.scalarAndPrefix();
+            var entropy: [noise_length]u8 = undefined;
+            io.random(&entropy);
             var h = Sha512.init(.{});
             h.update(&scalar_and_prefix.prefix);
-            h.update(entropy);
+            h.update(&entropy);
             if (noise) |*z| {
                 h.update(z);
             }
@@ -748,9 +749,7 @@ test "signatures with streaming" {
     const io = std.testing.io;
     const kp = Ed25519.KeyPair.generate(io);
 
-    var entropy: [Ed25519.noise_length]u8 = undefined;
-    io.random(&entropy);
-    var signer = try kp.signer(null, &entropy);
+    var signer = try kp.signer(null, io);
     signer.update("mes");
     signer.update("sage");
     const sig = signer.finalize();
