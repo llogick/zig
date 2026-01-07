@@ -4,7 +4,6 @@ const std = @import("std.zig");
 
 /// Deprecated, use `std.Io.Dir.path`.
 pub const path = @import("fs/path.zig");
-pub const wasi = @import("fs/wasi.zig");
 
 pub const base64_alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_".*;
 
