@@ -385,6 +385,33 @@ pub const Ed25519 = struct {
             );
         }
 
+        /// Create a signer that can be used for incremental signing, using a custom base nonce.
+        /// `base_nonce` must be unique for each signed message; otherwise, the secret key can
+        /// be trivially recovered by an attacker.
+        /// It can be generated using a cryptographically secure random number generator.
+        pub fn signerWithBaseNonce(
+            key_pair: KeyPair,
+            base_nonce: [32]u8,
+            /// If set, should be something unique for each message, such as a counter.
+            noise: ?[noise_length]u8,
+        ) (IdentityElementError || KeyMismatchError || NonCanonicalError || WeakPublicKeyError)!Signer {
+            if (!mem.eql(u8, &key_pair.secret_key.publicKeyBytes(), &key_pair.public_key.toBytes())) {
+                return error.KeyMismatch;
+            }
+            const scalar_and_prefix = key_pair.secret_key.scalarAndPrefix();
+            var h = Sha512.init(.{});
+            h.update(&scalar_and_prefix.prefix);
+            h.update(&base_nonce);
+            if (noise) |*z| {
+                h.update(z);
+            }
+            var nonce64: [64]u8 = undefined;
+            h.final(&nonce64);
+            const nonce = Curve.scalar.reduce64(nonce64);
+
+            return Signer.init(scalar_and_prefix.scalar, nonce, key_pair.public_key);
+        }
+
         /// Create a Signer, that can be used for incremental signing.
         /// Note that the signature is not deterministic.
         pub fn signer(
@@ -394,23 +421,9 @@ pub const Ed25519 = struct {
             noise: ?[noise_length]u8,
             io: std.Io,
         ) (IdentityElementError || KeyMismatchError || NonCanonicalError || WeakPublicKeyError)!Signer {
-            if (!mem.eql(u8, &key_pair.secret_key.publicKeyBytes(), &key_pair.public_key.toBytes())) {
-                return error.KeyMismatch;
-            }
-            const scalar_and_prefix = key_pair.secret_key.scalarAndPrefix();
-            var entropy: [noise_length]u8 = undefined;
-            io.random(&entropy);
-            var h = Sha512.init(.{});
-            h.update(&scalar_and_prefix.prefix);
-            h.update(&entropy);
-            if (noise) |*z| {
-                h.update(z);
-            }
-            var nonce64: [64]u8 = undefined;
-            h.final(&nonce64);
-            const nonce = Curve.scalar.reduce64(nonce64);
-
-            return Signer.init(scalar_and_prefix.scalar, nonce, key_pair.public_key);
+            var base_nonce: [32]u8 = undefined;
+            io.random(&base_nonce);
+            return key_pair.signerWithBaseNonce(base_nonce, noise);
         }
     };
 
