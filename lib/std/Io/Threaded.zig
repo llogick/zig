@@ -1755,7 +1755,7 @@ const getrandom_use_libc = @TypeOf(posix.system.getrandom) != void and (native_o
         .patch = 0,
     }));
 
-const use_dev_urandom = getrandom_use_libc and native_os == .linux;
+const use_dev_urandom = !getrandom_use_libc and native_os == .linux;
 
 fn async(
     userdata: ?*anyopaque,
@@ -3711,10 +3711,12 @@ fn dirOpenFilePosix(
         },
     };
 
+    const mode: posix.mode_t = 0;
+
     const fd: posix.fd_t = fd: {
         const syscall: Syscall = try .start();
         while (true) {
-            const rc = openat_sym(dir.handle, sub_path_posix, os_flags, @as(posix.mode_t, 0));
+            const rc = openat_sym(dir.handle, sub_path_posix, os_flags, mode);
             switch (posix.errno(rc)) {
                 .SUCCESS => {
                     syscall.finish();
@@ -4143,9 +4145,11 @@ fn dirOpenDirPosix(
     if (@hasField(posix.O, "PATH") and !options.iterate)
         flags.PATH = true;
 
+    const mode: posix.mode_t = 0;
+
     const syscall: Syscall = try .start();
     while (true) {
-        const rc = openat_sym(dir.handle, sub_path_posix, flags, @as(usize, 0));
+        const rc = openat_sym(dir.handle, sub_path_posix, flags, mode);
         switch (posix.errno(rc)) {
             .SUCCESS => {
                 syscall.finish();
@@ -15270,7 +15274,7 @@ fn randomSecure(userdata: ?*anyopaque, buffer: []u8) Io.RandomSecureError!void {
     }
 }
 
-fn getRandomFd(t: *Threaded) posix.fd_t {
+fn getRandomFd(t: *Threaded) Io.RandomSecureError!posix.fd_t {
     {
         t.mutex.lock();
         defer t.mutex.unlock();
@@ -15279,13 +15283,15 @@ fn getRandomFd(t: *Threaded) posix.fd_t {
         if (t.random_file.fd != -1) return t.random_file.fd;
     }
 
+    const mode: posix.mode_t = 0;
+
     const fd: posix.fd_t = fd: {
         const syscall: Syscall = try .start();
         while (true) {
             const rc = openat_sym(posix.AT.FDCWD, "/dev/urandom", .{
                 .ACCMODE = .RDONLY,
                 .CLOEXEC = true,
-            }, 0);
+            }, mode);
             switch (posix.errno(rc)) {
                 .SUCCESS => {
                     syscall.finish();
@@ -15295,11 +15301,7 @@ fn getRandomFd(t: *Threaded) posix.fd_t {
                     try syscall.checkCancel();
                     continue;
                 },
-                else => {
-                    syscall.endSyscall();
-                    t.random_file.fd = -2;
-                    return error.EntropyUnavailable;
-                },
+                else => return syscall.fail(error.EntropyUnavailable),
             }
         }
     };
@@ -15314,7 +15316,7 @@ fn getRandomFd(t: *Threaded) posix.fd_t {
                 switch (sys.errno(sys.statx(fd, "", std.os.linux.AT.EMPTY_PATH, .{ .TYPE = true }, &statx))) {
                     .SUCCESS => {
                         syscall.finish();
-                        if (!statx.mask.TYPE) return error.Unexpected;
+                        if (!statx.mask.TYPE) return error.EntropyUnavailable;
                         t.mutex.lock(); // Another thread might have won the race.
                         defer t.mutex.unlock();
                         if (t.random_file.fd >= 0) {
@@ -15332,10 +15334,7 @@ fn getRandomFd(t: *Threaded) posix.fd_t {
                         try syscall.checkCancel();
                         continue;
                     },
-                    else => {
-                        t.random_file.fd = -2;
-                        return error.EntropyUnavailable;
-                    },
+                    else => return syscall.fail(error.EntropyUnavailable),
                 }
             }
         },
@@ -15346,6 +15345,8 @@ fn getRandomFd(t: *Threaded) posix.fd_t {
                 switch (posix.errno(fstat_sym(fd, &stat))) {
                     .SUCCESS => {
                         syscall.finish();
+                        t.mutex.lock(); // Another thread might have won the race.
+                        defer t.mutex.unlock();
                         if (t.random_file.fd >= 0) {
                             posix.close(fd);
                             return t.random_file.fd;
@@ -15361,10 +15362,7 @@ fn getRandomFd(t: *Threaded) posix.fd_t {
                         try syscall.checkCancel();
                         continue;
                     },
-                    else => {
-                        t.random_file.fd = -2;
-                        return error.EntropyUnavailable;
-                    },
+                    else => return syscall.fail(error.EntropyUnavailable),
                 }
             }
         },
