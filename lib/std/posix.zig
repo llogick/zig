@@ -619,57 +619,6 @@ pub fn socketpair(domain: u32, socket_type: u32, protocol: u32) SocketError![2]s
     }
 }
 
-pub const AcceptError = std.Io.net.Server.AcceptError;
-
-pub fn accept(
-    sock: socket_t,
-    addr: ?*sockaddr,
-    addr_size: ?*socklen_t,
-    flags: u32,
-) AcceptError!socket_t {
-    const have_accept4 = !(builtin.target.os.tag.isDarwin() or native_os == .windows or native_os == .haiku);
-    assert(0 == (flags & ~@as(u32, SOCK.NONBLOCK | SOCK.CLOEXEC))); // Unsupported flag(s)
-
-    const accepted_sock: socket_t = while (true) {
-        const rc = if (have_accept4)
-            system.accept4(sock, addr, addr_size, flags)
-        else
-            system.accept(sock, addr, addr_size);
-
-        if (native_os == .windows) {
-            @compileError("use std.Io instead");
-        } else {
-            switch (errno(rc)) {
-                .SUCCESS => break @intCast(rc),
-                .INTR => continue,
-                .AGAIN => return error.WouldBlock,
-                .BADF => unreachable, // always a race condition
-                .CONNABORTED => return error.ConnectionAborted,
-                .FAULT => unreachable,
-                .INVAL => return error.SocketNotListening,
-                .NOTSOCK => unreachable,
-                .MFILE => return error.ProcessFdQuotaExceeded,
-                .NFILE => return error.SystemFdQuotaExceeded,
-                .NOBUFS => return error.SystemResources,
-                .NOMEM => return error.SystemResources,
-                .OPNOTSUPP => unreachable,
-                .PROTO => return error.ProtocolFailure,
-                .PERM => return error.BlockedByFirewall,
-                else => |err| return unexpectedErrno(err),
-            }
-        }
-    };
-
-    errdefer switch (native_os) {
-        .windows => windows.closesocket(accepted_sock) catch unreachable,
-        else => close(accepted_sock),
-    };
-    if (!have_accept4) {
-        try setSockFlags(accepted_sock, flags);
-    }
-    return accepted_sock;
-}
-
 fn setSockFlags(sock: socket_t, flags: u32) !void {
     if ((flags & SOCK.CLOEXEC) != 0) {
         if (native_os == .windows) {
