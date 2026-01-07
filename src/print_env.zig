@@ -14,10 +14,7 @@ pub fn cmdEnv(
     io: Io,
     out: *std.Io.Writer,
     args: []const []const u8,
-    wasi_preopens: switch (builtin.target.os.tag) {
-        .wasi => std.fs.wasi.Preopens,
-        else => void,
-    },
+    preopens: std.process.Preopens,
     host: *const std.Target,
     environ_map: *std.process.Environ.Map,
 ) !void {
@@ -37,7 +34,7 @@ pub fn cmdEnv(
         override_lib_dir,
         override_global_cache_dir,
         .global,
-        if (builtin.target.os.tag == .wasi) wasi_preopens,
+        preopens,
         if (builtin.target.os.tag != .wasi) self_exe_path,
         environ_map,
     );

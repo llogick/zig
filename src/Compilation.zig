@@ -758,10 +758,7 @@ pub const Directories = struct {
             search,
             global,
         },
-        wasi_preopens: switch (builtin.target.os.tag) {
-            .wasi => fs.wasi.Preopens,
-            else => void,
-        },
+        preopens: std.process.Preopens,
         self_exe_path: switch (builtin.target.os.tag) {
             .wasi => void,
             else => []const u8,
@@ -776,7 +773,7 @@ pub const Directories = struct {
 
         const zig_lib: Cache.Directory = d: {
             if (override_zig_lib) |path| break :d openUnresolved(arena, io, cwd, path, .@"zig lib");
-            if (wasi) break :d openWasiPreopen(wasi_preopens, "/lib");
+            if (wasi) break :d getPreopen(preopens, "/lib");
             break :d introspect.findZigLibDirFromSelfExe(arena, io, cwd, self_exe_path) catch |err| {
                 fatal("unable to find zig installation directory '{s}': {t}", .{ self_exe_path, err });
             };
@@ -784,7 +781,7 @@ pub const Directories = struct {
 
         const global_cache: Cache.Directory = d: {
             if (override_global_cache) |path| break :d openUnresolved(arena, io, cwd, path, .@"global cache");
-            if (wasi) break :d openWasiPreopen(wasi_preopens, "/cache");
+            if (wasi) break :d getPreopen(preopens, "/cache");
             const path = introspect.resolveGlobalCacheDir(arena, environ_map) catch |err| {
                 fatal("unable to resolve zig cache directory: {t}", .{err});
             };
@@ -817,11 +814,12 @@ pub const Directories = struct {
             .local_cache = local_cache,
         };
     }
-    fn openWasiPreopen(preopens: fs.wasi.Preopens, name: []const u8) Cache.Directory {
+    fn getPreopen(preopens: std.process.Preopens, name: []const u8) Cache.Directory {
         return .{
             .path = if (std.mem.eql(u8, name, ".")) null else name,
-            .handle = .{
-                .handle = preopens.find(name) orelse fatal("WASI preopen not found: '{s}'", .{name}),
+            .handle = switch (preopens.get(name) orelse fatal("preopen not found: '{s}'", .{name})) {
+                .file => fatal("preopen {s} is not a directory", .{name}),
+                .dir => |d| d,
             },
         };
     }

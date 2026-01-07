@@ -708,6 +708,9 @@ inline fn callMain(args: std.process.Args.Vector, environ: std.process.Environ.B
         std.process.fatal("failed to parse environment variables: {t}", .{err});
     defer environ_map.deinit();
 
+    const preopens = std.process.Preopens.init(arena_allocator.allocator()) catch |err|
+        std.process.fatal("failed to init preopens: {t}", .{err});
+
     return wrapMain(root.main(.{
         .minimal = .{
             .args = .{ .vector = args },
@@ -717,6 +720,7 @@ inline fn callMain(args: std.process.Args.Vector, environ: std.process.Environ.B
         .gpa = gpa,
         .io = threaded.io(),
         .environ_map = &environ_map,
+        .preopens = preopens,
     }));
 }
 

@@ -18,6 +18,7 @@ const max_path_bytes = std.fs.max_path_bytes;
 pub const Child = @import("process/Child.zig");
 pub const Args = @import("process/Args.zig");
 pub const Environ = @import("process/Environ.zig");
+pub const Preopens = @import("process/Preopens.zig");
 
 /// This is the global, process-wide protection to coordinate stderr writes.
 ///
@@ -48,6 +49,10 @@ pub const Init = struct {
     io: Io,
     /// Environment variables, initialized with `gpa`. Not threadsafe.
     environ_map: *Environ.Map,
+    /// Named files that have been provided by the parent process. This is
+    /// mainly useful on WASI, but can be used on other systems to mimic the
+    /// behavior with respect to stdio.
+    preopens: Preopens,
 
     /// Alternative to `Init` as the first parameter of the main function.
     pub const Minimal = struct {

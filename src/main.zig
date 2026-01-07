@@ -55,11 +55,11 @@ pub const std_options_cwd = if (native_os == .wasi) wasi_cwd else null;
 pub const panic = crash_report.panic;
 pub const debug = crash_report.debug;
 
-var wasi_preopens: fs.wasi.Preopens = undefined;
+var preopens: std.process.Preopens = .empty;
 pub fn wasi_cwd() Io.Dir {
     // Expect the first preopen to be current working directory.
     const cwd_fd: std.posix.fd_t = 3;
-    assert(mem.eql(u8, wasi_preopens.names[cwd_fd], "."));
+    assert(mem.eql(u8, preopens.map.keys()[cwd_fd], "."));
     return .{ .handle = cwd_fd };
 }
 
@@ -210,7 +210,7 @@ pub fn main(init: std.process.Init.Minimal) anyerror!void {
     }
 
     if (native_os == .wasi) {
-        wasi_preopens = try fs.wasi.preopensAlloc(arena);
+        preopens = try .init(arena);
     }
 
     return mainArgs(gpa, arena, io, args, &environ_map);
@@ -360,7 +360,7 @@ fn mainArgs(
             io,
             &stdout_writer.interface,
             args,
-            if (native_os == .wasi) wasi_preopens,
+            preopens,
             &host,
             environ_map,
         );
@@ -3107,7 +3107,7 @@ fn buildOutputType(
                 else => .search,
             };
         },
-        if (native_os == .wasi) wasi_preopens,
+        preopens,
         self_exe_path,
         environ_map,
     );
@@ -5141,7 +5141,7 @@ fn cmdBuild(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8, 
             if (override_local_cache_dir) |d| break :path d;
             break :path try build_root.directory.join(arena, &.{introspect.default_local_zig_cache_basename});
         } },
-        {},
+        .empty,
         self_exe_path,
         environ_map,
     );
@@ -5556,7 +5556,7 @@ fn jitCmd(
         override_lib_dir,
         override_global_cache_dir,
         .global,
-        if (native_os == .wasi) wasi_preopens,
+        preopens,
         self_exe_path,
         environ_map,
     );
