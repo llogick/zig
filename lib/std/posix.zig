@@ -619,27 +619,6 @@ pub fn socketpair(domain: u32, socket_type: u32, protocol: u32) SocketError![2]s
     }
 }
 
-pub const ListenError = error{
-    FileDescriptorNotASocket,
-    OperationUnsupported,
-} || std.Io.net.IpAddress.ListenError || std.Io.net.UnixAddress.ListenError;
-
-pub fn listen(sock: socket_t, backlog: u31) ListenError!void {
-    if (native_os == .windows) {
-        @compileError("use std.Io instead");
-    } else {
-        const rc = system.listen(sock, backlog);
-        switch (errno(rc)) {
-            .SUCCESS => return,
-            .ADDRINUSE => return error.AddressInUse,
-            .BADF => unreachable,
-            .NOTSOCK => return error.FileDescriptorNotASocket,
-            .OPNOTSUPP => return error.OperationUnsupported,
-            else => |err| return unexpectedErrno(err),
-        }
-    }
-}
-
 pub const AcceptError = std.Io.net.Server.AcceptError;
 
 pub fn accept(

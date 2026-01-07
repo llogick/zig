@@ -1037,7 +1037,7 @@ test "shutdown" {
         defer posix.close(server);
         try posix.setsockopt(server, posix.SOL.SOCKET, posix.SO.REUSEADDR, &mem.toBytes(@as(c_int, 1)));
         try bind(server, addrAny(&address), @sizeOf(linux.sockaddr.in));
-        try posix.listen(server, 1);
+        try listen(server, 1);
 
         // set address to the OS-chosen IP/port.
         var slen: posix.socklen_t = @sizeOf(linux.sockaddr.in);
@@ -2662,7 +2662,7 @@ fn createListenerSocket(address: *linux.sockaddr.in) !posix.socket_t {
 
     try posix.setsockopt(listener_socket, posix.SOL.SOCKET, posix.SO.REUSEADDR, &mem.toBytes(@as(c_int, 1)));
     try bind(listener_socket, addrAny(address), @sizeOf(linux.sockaddr.in));
-    try posix.listen(listener_socket, kernel_backlog);
+    try listen(listener_socket, kernel_backlog);
 
     // set address to the OS-chosen IP/port.
     var slen: posix.socklen_t = @sizeOf(linux.sockaddr.in);
@@ -2708,5 +2708,12 @@ fn bind(sock: posix.socket_t, addr: *const posix.sockaddr, len: posix.socklen_t)
     switch (posix.errno(posix.system.bind(sock, addr, len))) {
         .SUCCESS => return,
         else => return error.BindFailure,
+    }
+}
+
+fn listen(sock: posix.socket_t, backlog: u31) !void {
+    switch (posix.errno(posix.system.listen(sock, backlog))) {
+        .SUCCESS => return,
+        else => return error.ListenFailure,
     }
 }
