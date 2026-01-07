@@ -37,7 +37,7 @@ pub fn deinit(af: *Atomic, io: Io) void {
     af.* = undefined;
 }
 
-pub const LinkError = Dir.HardLinkError || Dir.RenamePreserveError;
+pub const LinkError = File.HardLinkError || Dir.RenamePreserveError;
 
 /// Atomically materializes the file into place, failing with
 /// `error.PathAlreadyExists` if something already exists there.

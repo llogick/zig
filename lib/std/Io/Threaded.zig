@@ -3525,7 +3525,7 @@ fn dirCreateFileAtomic(
         if (dest_dirname) |dirname| {
             // This has a nice side effect of preemptively triggering EISDIR or
             // ENOENT, avoiding the ambiguity below.
-            dir.createDirPath(t_io, dirname) catch |err| switch (err) {
+            if (options.make_path) dir.createDirPath(t_io, dirname) catch |err| switch (err) {
                 // None of these make sense in this context.
                 error.IsDir,
                 error.Streaming,
@@ -5254,7 +5254,16 @@ fn fileHardLink(
     else
         posix.AT.EMPTY_PATH;
 
-    return linkat(file.handle, "", new_dir.handle, new_sub_path_posix, flags);
+    return linkat(file.handle, "", new_dir.handle, new_sub_path_posix, flags) catch |err| switch (err) {
+        error.FileNotFound => {
+            if (options.follow_symlinks) return error.FileNotFound;
+            var proc_buf: ["/proc/self/fd/-2147483648\x00".len]u8 = undefined;
+            const proc_path = std.fmt.bufPrintSentinel(&proc_buf, "/proc/self/fd/{d}", .{file.handle}, 0) catch
+                unreachable;
+            return linkat(posix.AT.FDCWD, proc_path, new_dir.handle, new_sub_path_posix, posix.AT.SYMLINK_FOLLOW);
+        },
+        else => |e| return e,
+    };
 }
 
 fn linkat(
