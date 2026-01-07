@@ -1651,6 +1651,21 @@ test "AtomicFile" {
                 \\ this is a test file
             ;
 
+            // link() succeeds with no file already present
+            {
+                var af = try ctx.dir.createFileAtomic(io, test_out_file, .{ .replace = false });
+                defer af.deinit(io);
+                try af.file.writeStreamingAll(io, test_content);
+                try af.link(io);
+            }
+            // link() returns error.PathAlreadyExists if file already present
+            {
+                var af = try ctx.dir.createFileAtomic(io, test_out_file, .{ .replace = false });
+                defer af.deinit(io);
+                try af.file.writeStreamingAll(io, test_content);
+                try expectError(error.PathAlreadyExists, af.link(io));
+            }
+            // replace() succeeds if file already present
             {
                 var af = try ctx.dir.createFileAtomic(io, test_out_file, .{ .replace = true });
                 defer af.deinit(io);
