@@ -662,15 +662,27 @@ const PhcFormatHasher = struct {
         password: []const u8,
         params: Params,
         buf: []u8,
-        /// Filled with cryptographically secure entropy.
-        salt: *const [salt_length]u8,
+        io: std.Io,
     ) HasherError![]const u8 {
-        const hash = bcrypt(password, salt, params);
+        var salt: [salt_length]u8 = undefined;
+        io.random(&salt);
+        return createWithSalt(password, params, buf, salt);
+    }
+
+    /// Return a deterministic hash of the password encoded as a PHC-format string.
+    /// Uses the provided salt instead of generating one randomly.
+    fn createWithSalt(
+        password: []const u8,
+        params: Params,
+        buf: []u8,
+        salt: [salt_length]u8,
+    ) HasherError![]const u8 {
+        const hash = bcrypt(password, &salt, params);
 
         return phc_format.serialize(HashResult{
             .alg_id = alg_id,
             .r = params.rounds_log,
-            .salt = try BinValue(salt_length).fromSlice(salt),
+            .salt = try BinValue(salt_length).fromSlice(&salt),
             .hash = try BinValue(dk_length).fromSlice(&hash),
         }, buf);
     }
@@ -708,7 +720,19 @@ const CryptFormatHasher = struct {
         password: []const u8,
         params: Params,
         buf: []u8,
-        /// Filled with cryptographically secure entropy.
+        io: std.Io,
+    ) HasherError![]const u8 {
+        var salt: [salt_length]u8 = undefined;
+        io.random(&salt);
+        return createWithSalt(password, params, buf, &salt);
+    }
+
+    /// Return a deterministic hash of the password encoded into the modular crypt format.
+    /// Uses the provided salt instead of generating one randomly.
+    fn createWithSalt(
+        password: []const u8,
+        params: Params,
+        buf: []u8,
         salt: *const [salt_length]u8,
     ) HasherError![]const u8 {
         if (buf.len < pwhash_str_length) return HasherError.NoSpaceLeft;
@@ -770,12 +794,26 @@ pub fn strHash(
     password: []const u8,
     options: HashOptions,
     out: []u8,
-    /// Filled with cryptographically secure entropy.
-    salt: *const [salt_length]u8,
+    io: std.Io,
 ) Error![]const u8 {
     switch (options.encoding) {
-        .phc => return PhcFormatHasher.create(password, options.params, out, salt),
-        .crypt => return CryptFormatHasher.create(password, options.params, out, salt),
+        .phc => return PhcFormatHasher.create(password, options.params, out, io),
+        .crypt => return CryptFormatHasher.create(password, options.params, out, io),
+    }
+}
+
+/// Compute a deterministic hash of a password using the bcrypt key derivation function.
+/// The function returns a string that includes all the parameters required for verification.
+/// Uses the provided salt instead of generating one randomly.
+pub fn strHashWithSalt(
+    password: []const u8,
+    options: HashOptions,
+    out: []u8,
+    salt: [salt_length]u8,
+) Error![]const u8 {
+    switch (options.encoding) {
+        .phc => return PhcFormatHasher.createWithSalt(password, options.params, out, salt),
+        .crypt => return CryptFormatHasher.createWithSalt(password, options.params, out, &salt),
     }
 }
 
@@ -821,11 +859,7 @@ test "bcrypt crypt format" {
     var verify_options: VerifyOptions = .{ .silently_truncate_password = false };
 
     var buf: [hash_length]u8 = undefined;
-    const s = s: {
-        var salt: [salt_length]u8 = undefined;
-        io.random(&salt);
-        break :s try strHash("password", hash_options, &buf, &salt);
-    };
+    const s = try strHash("password", hash_options, &buf, io);
 
     try testing.expect(mem.startsWith(u8, s, crypt_format.prefix));
     try strVerify(s, "password", verify_options);
@@ -835,11 +869,7 @@ test "bcrypt crypt format" {
     );
 
     var long_buf: [hash_length]u8 = undefined;
-    var long_s = s: {
-        var salt: [salt_length]u8 = undefined;
-        io.random(&salt);
-        break :s try strHash("password" ** 100, hash_options, &long_buf, &salt);
-    };
+    var long_s = try strHash("password" ** 100, hash_options, &long_buf, io);
 
     try testing.expect(mem.startsWith(u8, long_s, crypt_format.prefix));
     try strVerify(long_s, "password" ** 100, verify_options);
@@ -850,11 +880,7 @@ test "bcrypt crypt format" {
 
     hash_options.params.silently_truncate_password = true;
     verify_options.silently_truncate_password = true;
-    long_s = s: {
-        var salt: [salt_length]u8 = undefined;
-        io.random(&salt);
-        break :s try strHash("password" ** 100, hash_options, &long_buf, &salt);
-    };
+    long_s = try strHash("password" ** 100, hash_options, &long_buf, io);
     try strVerify(long_s, "password" ** 101, verify_options);
 
     try strVerify(
@@ -874,11 +900,7 @@ test "bcrypt phc format" {
     const prefix = "$bcrypt$";
 
     var buf: [hash_length * 2]u8 = undefined;
-    const s = s: {
-        var salt: [salt_length]u8 = undefined;
-        io.random(&salt);
-        break :s try strHash("password", hash_options, &buf, &salt);
-    };
+    const s = try strHash("password", hash_options, &buf, io);
 
     try testing.expect(mem.startsWith(u8, s, prefix));
     try strVerify(s, "password", verify_options);
@@ -888,11 +910,7 @@ test "bcrypt phc format" {
     );
 
     var long_buf: [hash_length * 2]u8 = undefined;
-    var long_s = s: {
-        var salt: [salt_length]u8 = undefined;
-        io.random(&salt);
-        break :s try strHash("password" ** 100, hash_options, &long_buf, &salt);
-    };
+    var long_s = try strHash("password" ** 100, hash_options, &long_buf, io);
 
     try testing.expect(mem.startsWith(u8, long_s, prefix));
     try strVerify(long_s, "password" ** 100, verify_options);
@@ -903,11 +921,7 @@ test "bcrypt phc format" {
 
     hash_options.params.silently_truncate_password = true;
     verify_options.silently_truncate_password = true;
-    long_s = s: {
-        var salt: [salt_length]u8 = undefined;
-        io.random(&salt);
-        break :s try strHash("password" ** 100, hash_options, &long_buf, &salt);
-    };
+    long_s = try strHash("password" ** 100, hash_options, &long_buf, io);
     try strVerify(long_s, "password" ** 101, verify_options);
 
     try strVerify(
@@ -915,6 +929,25 @@ test "bcrypt phc format" {
         "The devil himself",
         verify_options,
     );
+}
+
+test "strHashWithSalt deterministic" {
+    const password = "testpass";
+    const salt: [salt_length]u8 = "0123456789abcdef".*;
+    const params: Params = .{ .rounds_log = 5, .silently_truncate_password = false };
+
+    var buf1: [hash_length * 2]u8 = undefined;
+    var buf2: [hash_length * 2]u8 = undefined;
+
+    const str1 = try strHashWithSalt(password, .{ .params = params, .encoding = .phc }, &buf1, salt);
+    const str2 = try strHashWithSalt(password, .{ .params = params, .encoding = .phc }, &buf2, salt);
+    try testing.expectEqualStrings(str1, str2);
+    try strVerify(str1, password, .{ .silently_truncate_password = false });
+
+    const str3 = try strHashWithSalt(password, .{ .params = params, .encoding = .crypt }, &buf1, salt);
+    const str4 = try strHashWithSalt(password, .{ .params = params, .encoding = .crypt }, &buf2, salt);
+    try testing.expectEqualStrings(str3, str4);
+    try strVerify(str3, password, .{ .silently_truncate_password = false });
 }
 
 test "openssh kdf" {
