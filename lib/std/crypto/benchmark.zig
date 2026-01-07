@@ -173,9 +173,9 @@ const signatures = [_]Crypto{
     Crypto{ .ty = crypto.sign.mldsa.MLDSA87, .name = "ml-dsa-87" },
 };
 
-pub fn benchmarkSignature(comptime Signature: anytype, comptime signatures_count: comptime_int) !u64 {
+pub fn benchmarkSignature(comptime Signature: anytype, comptime signatures_count: comptime_int, io: std.Io) !u64 {
     const msg = [_]u8{0} ** 64;
-    const key_pair = Signature.KeyPair.generate();
+    const key_pair = Signature.KeyPair.generate(io);
 
     var timer = try Timer.start();
     const start = timer.lap();
@@ -201,9 +201,9 @@ const signature_verifications = [_]Crypto{
     Crypto{ .ty = crypto.sign.mldsa.MLDSA87, .name = "ml-dsa-87" },
 };
 
-pub fn benchmarkSignatureVerification(comptime Signature: anytype, comptime signatures_count: comptime_int) !u64 {
+pub fn benchmarkSignatureVerification(comptime Signature: anytype, comptime signatures_count: comptime_int, io: std.Io) !u64 {
     const msg = [_]u8{0} ** 64;
-    const key_pair = Signature.KeyPair.generate();
+    const key_pair = Signature.KeyPair.generate(io);
     const sig = try key_pair.sign(&msg, null);
 
     var timer = try Timer.start();
@@ -225,9 +225,9 @@ pub fn benchmarkSignatureVerification(comptime Signature: anytype, comptime sign
 
 const batch_signature_verifications = [_]Crypto{Crypto{ .ty = crypto.sign.Ed25519, .name = "ed25519" }};
 
-pub fn benchmarkBatchSignatureVerification(comptime Signature: anytype, comptime signatures_count: comptime_int) !u64 {
+pub fn benchmarkBatchSignatureVerification(comptime Signature: anytype, comptime signatures_count: comptime_int, io: std.Io) !u64 {
     const msg = [_]u8{0} ** 64;
-    const key_pair = Signature.KeyPair.generate();
+    const key_pair = Signature.KeyPair.generate(io);
     const sig = try key_pair.sign(&msg, null);
 
     var batch: [64]Signature.BatchElement = undefined;
@@ -240,7 +240,7 @@ pub fn benchmarkBatchSignatureVerification(comptime Signature: anytype, comptime
     {
         var i: usize = 0;
         while (i < signatures_count) : (i += 1) {
-            try Signature.verifyBatch(batch.len, batch);
+            try Signature.verifyBatch(io, batch.len, batch);
             mem.doNotOptimizeAway(&sig);
         }
     }
@@ -258,15 +258,15 @@ const kems = [_]Crypto{
     Crypto{ .ty = crypto.kem.kyber_d00.Kyber1024, .name = "kyber1024d00" },
 };
 
-pub fn benchmarkKem(comptime Kem: anytype, comptime kems_count: comptime_int) !u64 {
-    const key_pair = Kem.KeyPair.generate();
+pub fn benchmarkKem(comptime Kem: anytype, comptime kems_count: comptime_int, io: std.Io) !u64 {
+    const key_pair = Kem.KeyPair.generate(io);
 
     var timer = try Timer.start();
     const start = timer.lap();
     {
         var i: usize = 0;
         while (i < kems_count) : (i += 1) {
-            const e = key_pair.public_key.encaps(null);
+            const e = key_pair.public_key.encaps(io);
             mem.doNotOptimizeAway(&e);
         }
     }
@@ -278,10 +278,10 @@ pub fn benchmarkKem(comptime Kem: anytype, comptime kems_count: comptime_int) !u
     return throughput;
 }
 
-pub fn benchmarkKemDecaps(comptime Kem: anytype, comptime kems_count: comptime_int) !u64 {
-    const key_pair = Kem.KeyPair.generate();
+pub fn benchmarkKemDecaps(comptime Kem: anytype, comptime kems_count: comptime_int, io: std.Io) !u64 {
+    const key_pair = Kem.KeyPair.generate(io);
 
-    const e = key_pair.public_key.encaps(null);
+    const e = key_pair.public_key.encaps(io);
 
     var timer = try Timer.start();
     const start = timer.lap();
@@ -300,13 +300,13 @@ pub fn benchmarkKemDecaps(comptime Kem: anytype, comptime kems_count: comptime_i
     return throughput;
 }
 
-pub fn benchmarkKemKeyGen(comptime Kem: anytype, comptime kems_count: comptime_int) !u64 {
+pub fn benchmarkKemKeyGen(comptime Kem: anytype, comptime kems_count: comptime_int, io: std.Io) !u64 {
     var timer = try Timer.start();
     const start = timer.lap();
     {
         var i: usize = 0;
         while (i < kems_count) : (i += 1) {
-            const key_pair = Kem.KeyPair.generate();
+            const key_pair = Kem.KeyPair.generate(io);
             mem.doNotOptimizeAway(&key_pair);
         }
     }
@@ -464,7 +464,9 @@ fn benchmarkPwhash(
 
     const strHash = ty.strHash;
     const strHashFnInfo = @typeInfo(@TypeOf(strHash)).@"fn";
-    const needs_io = strHashFnInfo.params.len == 4;
+    const needs_io = strHashFnInfo.params.len == 4 and strHashFnInfo.params[3].type == std.Io;
+    const needs_salt = strHashFnInfo.params.len == 4 and strHashFnInfo.params[3].type != std.Io;
+    const salt: [16]u8 = .{0} ** 16;
 
     var timer = try Timer.start();
     const start = timer.lap();
@@ -473,6 +475,8 @@ fn benchmarkPwhash(
         while (i < count) : (i += 1) {
             if (needs_io) {
                 _ = try strHash(password, opts, &buf, io);
+            } else if (needs_salt) {
+                _ = try strHash(password, opts, &buf, &salt);
             } else {
                 _ = try strHash(password, opts, &buf);
             }
@@ -514,7 +518,7 @@ pub fn main(init: std.process.Init) !void {
 
     const args = try init.minimal.args.toSlice(arena);
 
-    var filter: ?[]u8 = "";
+    var filter: ?[]const u8 = null;
 
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
@@ -582,7 +586,7 @@ pub fn main(init: std.process.Init) !void {
 
     inline for (signatures) |E| {
         if (filter == null or std.mem.find(u8, E.name, filter.?) != null) {
-            const throughput = try benchmarkSignature(E.ty, mode(1000));
+            const throughput = try benchmarkSignature(E.ty, mode(1000), io);
             try stdout.print("{s:>17}: {:10} signatures/s\n", .{ E.name, throughput });
             try stdout.flush();
         }
@@ -590,7 +594,7 @@ pub fn main(init: std.process.Init) !void {
 
     inline for (signature_verifications) |E| {
         if (filter == null or std.mem.find(u8, E.name, filter.?) != null) {
-            const throughput = try benchmarkSignatureVerification(E.ty, mode(1000));
+            const throughput = try benchmarkSignatureVerification(E.ty, mode(1000), io);
             try stdout.print("{s:>17}: {:10} verifications/s\n", .{ E.name, throughput });
             try stdout.flush();
         }
@@ -598,7 +602,7 @@ pub fn main(init: std.process.Init) !void {
 
     inline for (batch_signature_verifications) |E| {
         if (filter == null or std.mem.find(u8, E.name, filter.?) != null) {
-            const throughput = try benchmarkBatchSignatureVerification(E.ty, mode(1000));
+            const throughput = try benchmarkBatchSignatureVerification(E.ty, mode(1000), io);
             try stdout.print("{s:>17}: {:10} verifications/s (batch)\n", .{ E.name, throughput });
             try stdout.flush();
         }
@@ -638,7 +642,7 @@ pub fn main(init: std.process.Init) !void {
 
     inline for (kems) |E| {
         if (filter == null or std.mem.find(u8, E.name, filter.?) != null) {
-            const throughput = try benchmarkKem(E.ty, mode(1000));
+            const throughput = try benchmarkKem(E.ty, mode(1000), io);
             try stdout.print("{s:>17}: {:10} encaps/s\n", .{ E.name, throughput });
             try stdout.flush();
         }
@@ -646,7 +650,7 @@ pub fn main(init: std.process.Init) !void {
 
     inline for (kems) |E| {
         if (filter == null or std.mem.find(u8, E.name, filter.?) != null) {
-            const throughput = try benchmarkKemDecaps(E.ty, mode(25000));
+            const throughput = try benchmarkKemDecaps(E.ty, mode(25000), io);
             try stdout.print("{s:>17}: {:10} decaps/s\n", .{ E.name, throughput });
             try stdout.flush();
         }
@@ -654,7 +658,7 @@ pub fn main(init: std.process.Init) !void {
 
     inline for (kems) |E| {
         if (filter == null or std.mem.find(u8, E.name, filter.?) != null) {
-            const throughput = try benchmarkKemKeyGen(E.ty, mode(25000));
+            const throughput = try benchmarkKemKeyGen(E.ty, mode(25000), io);
             try stdout.print("{s:>17}: {:10} keygen/s\n", .{ E.name, throughput });
             try stdout.flush();
         }

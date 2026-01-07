@@ -133,7 +133,7 @@ pub fn main(init: std.process.Init) !void {
 
     const args = try init.minimal.args.toSlice(arena);
 
-    var filter: ?[]u8 = "";
+    var filter: ?[]const u8 = null;
     var count: usize = mode(128 * MiB);
     var bench_prngs = true;
     var bench_csprngs = true;
