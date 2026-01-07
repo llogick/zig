@@ -35,14 +35,14 @@ test "check WASI CWD" {
 
 test "getuid" {
     if (native_os == .windows or native_os == .wasi) return error.SkipZigTest;
-    _ = posix.getuid();
-    _ = posix.geteuid();
+    _ = posix.system.getuid();
+    _ = posix.system.geteuid();
 }
 
 test "getgid" {
     if (native_os == .windows or native_os == .wasi) return error.SkipZigTest;
-    _ = posix.getgid();
-    _ = posix.getegid();
+    _ = posix.system.getgid();
+    _ = posix.system.getegid();
 }
 
 test "sigaltstack" {

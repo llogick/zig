@@ -551,67 +551,6 @@ pub fn getcwd(out_buffer: []u8) GetCwdError![]u8 {
     }
 }
 
-pub const SetEidError = error{
-    InvalidUserId,
-    PermissionDenied,
-} || UnexpectedError;
-
-pub const SetIdError = error{ResourceLimitReached} || SetEidError;
-
-pub fn setuid(uid: uid_t) SetIdError!void {
-    switch (errno(system.setuid(uid))) {
-        .SUCCESS => return,
-        .AGAIN => return error.ResourceLimitReached,
-        .INVAL => return error.InvalidUserId,
-        .PERM => return error.PermissionDenied,
-        else => |err| return unexpectedErrno(err),
-    }
-}
-
-pub fn seteuid(uid: uid_t) SetEidError!void {
-    switch (errno(system.seteuid(uid))) {
-        .SUCCESS => return,
-        .INVAL => return error.InvalidUserId,
-        .PERM => return error.PermissionDenied,
-        else => |err| return unexpectedErrno(err),
-    }
-}
-
-pub fn setgid(gid: gid_t) SetIdError!void {
-    switch (errno(system.setgid(gid))) {
-        .SUCCESS => return,
-        .AGAIN => return error.ResourceLimitReached,
-        .INVAL => return error.InvalidUserId,
-        .PERM => return error.PermissionDenied,
-        else => |err| return unexpectedErrno(err),
-    }
-}
-
-pub fn setegid(uid: uid_t) SetEidError!void {
-    switch (errno(system.setegid(uid))) {
-        .SUCCESS => return,
-        .INVAL => return error.InvalidUserId,
-        .PERM => return error.PermissionDenied,
-        else => |err| return unexpectedErrno(err),
-    }
-}
-
-pub fn getuid() uid_t {
-    return system.getuid();
-}
-
-pub fn geteuid() uid_t {
-    return system.geteuid();
-}
-
-pub fn getgid() gid_t {
-    return system.getgid();
-}
-
-pub fn getegid() gid_t {
-    return system.getegid();
-}
-
 pub const SocketError = error{
     /// Permission to create a socket of the specified type and/or
     /// pro‐tocol is denied.
@@ -2797,20 +2736,6 @@ pub fn tcsetpgrp(handle: fd_t, pgrp: pid_t) TermioSetPgrpError!void {
             .PERM => return TermioSetPgrpError.NotAPgrpMember,
             else => |err| return unexpectedErrno(err),
         }
-    }
-}
-
-pub const SetSidError = error{
-    /// The calling process is already a process group leader, or the process group ID of a process other than the calling process matches the process ID of the calling process.
-    PermissionDenied,
-} || UnexpectedError;
-
-pub fn setsid() SetSidError!pid_t {
-    const rc = system.setsid();
-    switch (errno(rc)) {
-        .SUCCESS => return @intCast(rc),
-        .PERM => return error.PermissionDenied,
-        else => |err| return unexpectedErrno(err),
     }
 }
 
