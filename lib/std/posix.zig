@@ -792,54 +792,6 @@ pub fn fstat(fd: fd_t) FStatError!Stat {
     }
 }
 
-pub const FStatAtError = FStatError || error{
-    NameTooLong,
-    FileNotFound,
-    SymLinkLoop,
-    BadPathName,
-};
-
-/// Similar to `fstat`, but returns stat of a resource pointed to by `pathname`
-/// which is relative to `dirfd` handle.
-/// On WASI, `pathname` should be encoded as valid UTF-8.
-/// On other platforms, `pathname` is an opaque sequence of bytes with no particular encoding.
-/// See also `fstatatZ`.
-pub fn fstatat(dirfd: fd_t, pathname: []const u8, flags: u32) FStatAtError!Stat {
-    if (native_os == .wasi and !builtin.link_libc) {
-        @compileError("use std.Io instead");
-    } else if (native_os == .windows) {
-        @compileError("fstatat is not yet implemented on Windows");
-    } else {
-        const pathname_c = try toPosixPath(pathname);
-        return fstatatZ(dirfd, &pathname_c, flags);
-    }
-}
-
-/// Same as `fstatat` but `pathname` is null-terminated.
-/// See also `fstatat`.
-pub fn fstatatZ(dirfd: fd_t, pathname: [*:0]const u8, flags: u32) FStatAtError!Stat {
-    if (native_os == .wasi and !builtin.link_libc) {
-        @compileError("use std.Io instead");
-    }
-
-    var stat = mem.zeroes(Stat);
-    switch (errno(system.fstatat(dirfd, pathname, &stat, flags))) {
-        .SUCCESS => return stat,
-        .INVAL => unreachable,
-        .BADF => unreachable, // Always a race condition.
-        .NOMEM => return error.SystemResources,
-        .ACCES => return error.AccessDenied,
-        .PERM => return error.PermissionDenied,
-        .FAULT => unreachable,
-        .NAMETOOLONG => return error.NameTooLong,
-        .LOOP => return error.SymLinkLoop,
-        .NOENT => return error.FileNotFound,
-        .NOTDIR => return error.FileNotFound,
-        .ILSEQ => return error.BadPathName,
-        else => |err| return unexpectedErrno(err),
-    }
-}
-
 pub const KQueueError = error{
     /// The per-process limit on the number of open file descriptors has been reached.
     ProcessFdQuotaExceeded,
