@@ -1927,9 +1927,8 @@ fn analyzeBodyInner(
                         break :msg msg;
                     });
                 }
-                const is_non_err = try sema.analyzeIsNonErrComptimeOnly(block, operand_src, err_union);
-                assert(is_non_err != .none);
-                const is_non_err_val = try sema.resolveConstDefinedValue(block, operand_src, is_non_err, null);
+                const is_non_err_val = (try sema.resolveIsNonErrVal(block, operand_src, err_union)).?;
+                if (is_non_err_val.isUndef(zcu)) return sema.failWithUseOfUndef(block, operand_src, null);
                 if (is_non_err_val.toBool()) {
                     break :blk try sema.analyzeErrUnionPayload(block, src, err_union_ty, err_union, operand_src, false);
                 }
@@ -1945,9 +1944,8 @@ fn analyzeBodyInner(
                 const inline_body = sema.code.bodySlice(extra.end, extra.data.body_len);
                 const operand = try sema.resolveInst(extra.data.operand);
                 const err_union = try sema.analyzeLoad(block, src, operand, operand_src);
-                const is_non_err = try sema.analyzeIsNonErrComptimeOnly(block, operand_src, err_union);
-                assert(is_non_err != .none);
-                const is_non_err_val = try sema.resolveConstDefinedValue(block, operand_src, is_non_err, null);
+                const is_non_err_val = (try sema.resolveIsNonErrVal(block, operand_src, err_union)).?;
+                if (is_non_err_val.isUndef(zcu)) return sema.failWithUseOfUndef(block, operand_src, null);
                 if (is_non_err_val.toBool()) {
                     break :blk try sema.analyzeErrUnionPayloadPtr(block, src, operand, false, false);
                 }
@@ -8960,6 +8958,7 @@ fn analyzeErrUnionCode(sema: *Sema, block: *Block, src: LazySrcLoc, operand: Air
     const result_ty = operand_ty.errorUnionSet(zcu);
 
     if (try sema.resolveDefinedValue(block, src, operand)) |val| {
+        if (val.getErrorName(zcu) == .none) return .unreachable_value;
         return Air.internedToRef((try pt.intern(.{ .err = .{
             .ty = result_ty.toIntern(),
             .name = zcu.intern_pool.indexToKey(val.toIntern()).error_union.val.err_name,
@@ -8997,7 +8996,7 @@ fn analyzeErrUnionCodePtr(sema: *Sema, block: *Block, src: LazySrcLoc, operand: 
 
     if (try sema.resolveDefinedValue(block, src, operand)) |pointer_val| {
         if (try sema.pointerDeref(block, src, pointer_val, operand_ty)) |val| {
-            assert(val.getErrorName(zcu) != .none);
+            if (val.getErrorName(zcu) == .none) return .unreachable_value;
             return Air.internedToRef((try pt.intern(.{ .err = .{
                 .ty = result_ty.toIntern(),
                 .name = zcu.intern_pool.indexToKey(val.toIntern()).error_union.val.err_name,
@@ -18689,14 +18688,13 @@ fn zirTry(sema: *Sema, parent_block: *Block, inst: Zir.Inst.Index) CompileError!
             break :msg msg;
         });
     }
-    const is_non_err = try sema.analyzeIsNonErrComptimeOnly(parent_block, operand_src, err_union);
-    if (is_non_err != .none) {
+    if (try sema.resolveIsNonErrVal(parent_block, operand_src, err_union)) |is_non_err_val| {
         // We can propagate `.cold` hints from this branch since it's comptime-known
         // to be taken from the parent branch.
         const parent_hint = sema.branch_hint;
         defer sema.branch_hint = parent_hint orelse if (sema.branch_hint == .cold) .cold else null;
 
-        const is_non_err_val = (try sema.resolveDefinedValue(parent_block, operand_src, is_non_err)).?;
+        if (is_non_err_val.isUndef(zcu)) return sema.failWithUseOfUndef(parent_block, operand_src, null);
         if (is_non_err_val.toBool()) {
             return sema.analyzeErrUnionPayload(parent_block, src, err_union_ty, err_union, operand_src, false);
         }
@@ -18753,14 +18751,13 @@ fn zirTryPtr(sema: *Sema, parent_block: *Block, inst: Zir.Inst.Index) CompileErr
             break :msg msg;
         });
     }
-    const is_non_err = try sema.analyzeIsNonErrComptimeOnly(parent_block, operand_src, err_union);
-    if (is_non_err != .none) {
+    if (try sema.resolveIsNonErrVal(parent_block, operand_src, err_union)) |is_non_err_val| {
         // We can propagate `.cold` hints from this branch since it's comptime-known
         // to be taken from the parent branch.
         const parent_hint = sema.branch_hint;
         defer sema.branch_hint = parent_hint orelse if (sema.branch_hint == .cold) .cold else null;
 
-        const is_non_err_val = (try sema.resolveDefinedValue(parent_block, operand_src, is_non_err)).?;
+        if (is_non_err_val.isUndef(zcu)) return sema.failWithUseOfUndef(parent_block, operand_src, null);
         if (is_non_err_val.toBool()) {
             return sema.analyzeErrUnionPayloadPtr(parent_block, src, operand, false, false);
         }
@@ -31800,12 +31797,12 @@ fn analyzeIsNull(
     return block.addUnOp(air_tag, operand);
 }
 
-fn analyzePtrIsNonErrComptimeOnly(
+fn resolvePtrIsNonErrVal(
     sema: *Sema,
     block: *Block,
     src: LazySrcLoc,
     operand: Air.Inst.Ref,
-) CompileError!Air.Inst.Ref {
+) CompileError!?Value {
     const pt = sema.pt;
     const zcu = pt.zcu;
     const ptr_ty = sema.typeOf(operand);
@@ -31813,41 +31810,44 @@ fn analyzePtrIsNonErrComptimeOnly(
     const child_ty = ptr_ty.childType(zcu);
 
     const child_tag = child_ty.zigTypeTag(zcu);
-    if (child_tag != .error_set and child_tag != .error_union) return .bool_true;
-    if (child_tag == .error_set) return .bool_false;
+    if (child_tag != .error_set and child_tag != .error_union) return .true;
+    if (child_tag == .error_set) return .false;
     assert(child_tag == .error_union);
 
-    _ = block;
-    _ = src;
-
-    return .none;
+    if (try sema.resolveValue(operand)) |ptr_val| {
+        if (ptr_val.isUndef(zcu)) return .undef_bool;
+        if (try sema.pointerDeref(block, src, ptr_val, ptr_ty)) |val| {
+            return try sema.resolveIsNonErrVal(block, src, .fromValue(val));
+        }
+    }
+    return null;
 }
 
-fn analyzeIsNonErrComptimeOnly(
+fn resolveIsNonErrVal(
     sema: *Sema,
     block: *Block,
     src: LazySrcLoc,
     operand: Air.Inst.Ref,
-) CompileError!Air.Inst.Ref {
+) CompileError!?Value {
     const pt = sema.pt;
     const zcu = pt.zcu;
     const ip = &zcu.intern_pool;
     const operand_ty = sema.typeOf(operand);
     const ot = operand_ty.zigTypeTag(zcu);
-    if (ot != .error_set and ot != .error_union) return .bool_true;
-    if (ot == .error_set) return .bool_false;
+    if (ot != .error_set and ot != .error_union) return .true;
+    if (ot == .error_set) return .false;
     assert(ot == .error_union);
 
     const payload_ty = operand_ty.errorUnionPayload(zcu);
     if (payload_ty.zigTypeTag(zcu) == .noreturn) {
-        return .bool_false;
+        return .false;
     }
 
     if (operand == .undef) {
         return .undef_bool;
     } else if (@intFromEnum(operand) < InternPool.static_len) {
         // None of the ref tags can be errors.
-        return .bool_true;
+        return .true;
     }
 
     const maybe_operand_val = try sema.resolveValue(operand);
@@ -31870,23 +31870,23 @@ fn analyzeIsNonErrComptimeOnly(
             if (maybe_operand_val != null) break :blk;
 
             // Try to avoid resolving inferred error set if possible.
-            if (ies.errors.count() != 0) return .none;
+            if (ies.errors.count() != 0) return null;
             switch (ies.resolved) {
-                .anyerror_type => return .none,
+                .anyerror_type => return null,
                 .none => {},
                 else => switch (ip.indexToKey(ies.resolved).error_set_type.names.len) {
-                    0 => return .bool_true,
-                    else => return .none,
+                    0 => return .true,
+                    else => return null,
                 },
             }
             // We do not have a comptime answer because this inferred error
             // set is not resolved, and an instruction later in this function
             // body may or may not cause an error to be added to this set.
-            return .none;
+            return null;
         },
         else => switch (ip.indexToKey(set_ty)) {
             .error_set_type => |error_set_type| {
-                if (error_set_type.names.len == 0) return .bool_true;
+                if (error_set_type.names.len == 0) return .true;
             },
             .inferred_error_set_type => |func_index| blk: {
                 // If the error set is empty, we must return a comptime true or false.
@@ -31902,35 +31902,35 @@ fn analyzeIsNonErrComptimeOnly(
                 if (sema.fn_ret_ty_ies) |ies| {
                     if (ies.func == func_index) {
                         // Try to avoid resolving inferred error set if possible.
-                        if (ies.errors.count() != 0) return .none;
+                        if (ies.errors.count() != 0) return null;
                         switch (ies.resolved) {
-                            .anyerror_type => return .none,
+                            .anyerror_type => return null,
                             .none => {},
                             else => switch (ip.indexToKey(ies.resolved).error_set_type.names.len) {
-                                0 => return .bool_true,
-                                else => return .none,
+                                0 => return .true,
+                                else => return null,
                             },
                         }
                         // We do not have a comptime answer because this inferred error
                         // set is not resolved, and an instruction later in this function
                         // body may or may not cause an error to be added to this set.
-                        return .none;
+                        return null;
                     }
                 }
                 const resolved_ty = try sema.resolveInferredErrorSet(block, src, set_ty);
                 if (resolved_ty == .anyerror_type)
                     break :blk;
                 if (ip.indexToKey(resolved_ty).error_set_type.names.len == 0)
-                    return .bool_true;
+                    return .true;
             },
             else => unreachable,
         },
     }
 
     if (maybe_operand_val) |err_union| {
-        return if (err_union.isUndef(zcu)) .undef_bool else if (err_union.getErrorName(zcu) == .none) .bool_true else .bool_false;
+        return if (err_union.isUndef(zcu)) .undef_bool else if (err_union.getErrorName(zcu) == .none) .true else .false;
     }
-    return .none;
+    return null;
 }
 
 fn analyzeIsNonErr(
@@ -31939,12 +31939,10 @@ fn analyzeIsNonErr(
     src: LazySrcLoc,
     operand: Air.Inst.Ref,
 ) CompileError!Air.Inst.Ref {
-    const result = try sema.analyzeIsNonErrComptimeOnly(block, src, operand);
-    if (result == .none) {
-        try sema.requireRuntimeBlock(block, src, null);
-        return block.addUnOp(.is_non_err, operand);
+    if (try sema.resolveIsNonErrVal(block, src, operand)) |val| {
+        return .fromValue(val);
     } else {
-        return result;
+        return block.addUnOp(.is_non_err, operand);
     }
 }
 
@@ -31954,12 +31952,10 @@ fn analyzePtrIsNonErr(
     src: LazySrcLoc,
     operand: Air.Inst.Ref,
 ) CompileError!Air.Inst.Ref {
-    const result = try sema.analyzePtrIsNonErrComptimeOnly(block, src, operand);
-    if (result == .none) {
-        try sema.requireRuntimeBlock(block, src, null);
-        return block.addUnOp(.is_non_err_ptr, operand);
+    if (try sema.resolvePtrIsNonErrVal(block, src, operand)) |val| {
+        return .fromValue(val);
     } else {
-        return result;
+        return block.addUnOp(.is_non_err_ptr, operand);
     }
 }
 
