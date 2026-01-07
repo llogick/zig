@@ -417,9 +417,11 @@ const PhcFormatHasher = struct {
         password: []const u8,
         params: Params,
         buf: []u8,
-        /// Filled with cryptographically secure entropy.
-        salt: []const u8,
+        io: std.Io,
     ) HasherError![]const u8 {
+        var salt: [default_salt_len]u8 = undefined;
+        io.random(&salt);
+
         var hash: [default_hash_len]u8 = undefined;
         try kdf(allocator, &hash, password, &salt, params);
 
@@ -465,9 +467,10 @@ const CryptFormatHasher = struct {
         password: []const u8,
         params: Params,
         buf: []u8,
-        /// Filled with cryptographically secure entropy.
-        salt_bin: []const u8,
+        io: std.Io,
     ) HasherError![]const u8 {
+        var salt_bin: [default_salt_len]u8 = undefined;
+        io.random(&salt_bin);
         const salt = crypt_format.saltFromBin(salt_bin.len, salt_bin);
 
         var hash: [default_hash_len]u8 = undefined;
@@ -514,11 +517,12 @@ pub fn strHash(
     password: []const u8,
     options: HashOptions,
     out: []u8,
+    io: std.Io,
 ) Error![]const u8 {
     const allocator = options.allocator orelse return Error.AllocatorRequired;
     switch (options.encoding) {
-        .phc => return PhcFormatHasher.create(allocator, password, options.params, out),
-        .crypt => return CryptFormatHasher.create(allocator, password, options.params, out),
+        .phc => return PhcFormatHasher.create(allocator, password, options.params, out, io),
+        .crypt => return CryptFormatHasher.create(allocator, password, options.params, out, io),
     }
 }
 
@@ -630,6 +634,7 @@ test "password hashing (crypt format)" {
     if (!run_long_tests) return error.SkipZigTest;
 
     const alloc = std.testing.allocator;
+    const io = std.testing.io;
 
     const str = "$7$A6....1....TrXs5Zk6s8sWHpQgWDIXTR8kUU3s6Jc3s.DtdS8M2i4$a4ik5hGDN7foMuHOW.cp.CtX01UyCeO0.JAG.AHPpx5";
     const password = "Y0!?iQa9M%5ekffW(`";
@@ -637,7 +642,7 @@ test "password hashing (crypt format)" {
 
     const params = Params.interactive;
     var buf: [CryptFormatHasher.pwhash_str_length]u8 = undefined;
-    const str2 = try CryptFormatHasher.create(alloc, password, params, &buf);
+    const str2 = try CryptFormatHasher.create(alloc, password, params, &buf, io);
     try CryptFormatHasher.verify(alloc, str2, password);
 }
 
@@ -645,6 +650,7 @@ test "strHash and strVerify" {
     if (!run_long_tests) return error.SkipZigTest;
 
     const alloc = std.testing.allocator;
+    const io = std.testing.io;
 
     const password = "testpass";
     const params = Params.interactive;
@@ -656,6 +662,7 @@ test "strHash and strVerify" {
             password,
             .{ .allocator = alloc, .params = params, .encoding = .crypt },
             &buf,
+            io,
         );
         try strVerify(str, password, verify_options);
     }
@@ -664,6 +671,7 @@ test "strHash and strVerify" {
             password,
             .{ .allocator = alloc, .params = params, .encoding = .phc },
             &buf,
+            io,
         );
         try strVerify(str, password, verify_options);
     }
