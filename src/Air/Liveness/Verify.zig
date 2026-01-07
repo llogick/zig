@@ -73,7 +73,7 @@ fn verifyBody(self: *Verify, body: []const Air.Inst.Index) Error!void {
             .trap, .unreach => {
                 try self.verifyInstOperands(inst, .{ .none, .none, .none });
                 // This instruction terminates the function, so everything should be dead
-                if (self.live.count() > 0) return invalid("%{f}: instructions still alive", .{inst});
+                if (self.live.count() > 0) return invalid("{f}: instructions still alive", .{inst});
             },
 
             // unary
@@ -166,7 +166,7 @@ fn verifyBody(self: *Verify, body: []const Air.Inst.Index) Error!void {
                 const un_op = data[@intFromEnum(inst)].un_op;
                 try self.verifyInstOperands(inst, .{ un_op, .none, .none });
                 // This instruction terminates the function, so everything should be dead
-                if (self.live.count() > 0) return invalid("%{f}: instructions still alive", .{inst});
+                if (self.live.count() > 0) return invalid("{f}: instructions still alive", .{inst});
             },
             .dbg_var_ptr,
             .dbg_var_val,
@@ -441,7 +441,7 @@ fn verifyBody(self: *Verify, body: []const Air.Inst.Index) Error!void {
             .repeat => {
                 const repeat = data[@intFromEnum(inst)].repeat;
                 const expected_live = self.loops.get(repeat.loop_inst) orelse
-                    return invalid("%{d}: loop %{d} not in scope", .{ @intFromEnum(inst), @intFromEnum(repeat.loop_inst) });
+                    return invalid("{f}: loop {f} not in scope", .{ inst, repeat.loop_inst });
 
                 try self.verifyMatchingLiveness(repeat.loop_inst, expected_live);
             },
@@ -451,7 +451,7 @@ fn verifyBody(self: *Verify, body: []const Air.Inst.Index) Error!void {
                 try self.verifyOperand(inst, br.operand, self.liveness.operandDies(inst, 0));
 
                 const expected_live = self.loops.get(br.block_inst) orelse
-                    return invalid("%{d}: loop %{d} not in scope", .{ @intFromEnum(inst), @intFromEnum(br.block_inst) });
+                    return invalid("{f}: loop {f} not in scope", .{ inst, br.block_inst });
 
                 try self.verifyMatchingLiveness(br.block_inst, expected_live);
             },
@@ -487,7 +487,12 @@ fn verifyBody(self: *Verify, body: []const Air.Inst.Index) Error!void {
                 if (ip.isNoReturn(block_ty.toIntern())) {
                     assert(!self.blocks.contains(inst));
                 } else {
-                    var live = self.blocks.fetchRemove(inst).?.value;
+                    var live = if (self.blocks.fetchRemove(inst)) |kv| kv.value else {
+                        return invalid(
+                            "{f}: block of type '{f}' not terminated correctly",
+                            .{ inst, block_ty.fmtDebug() },
+                        );
+                    };
                     defer live.deinit(self.gpa);
 
                     try self.verifyMatchingLiveness(inst, live);
@@ -502,7 +507,7 @@ fn verifyBody(self: *Verify, body: []const Air.Inst.Index) Error!void {
 
                 // The same stuff should be alive after the loop as before it.
                 const gop = try self.loops.getOrPut(self.gpa, inst);
-                if (gop.found_existing) return invalid("%{d}: loop already exists", .{@intFromEnum(inst)});
+                if (gop.found_existing) return invalid("{f}: loop already exists", .{inst});
                 defer {
                     var live = self.loops.fetchRemove(inst).?;
                     live.value.deinit(self.gpa);
@@ -551,7 +556,7 @@ fn verifyBody(self: *Verify, body: []const Air.Inst.Index) Error!void {
                 // after the loop as before it.
                 {
                     const gop = try self.loops.getOrPut(self.gpa, inst);
-                    if (gop.found_existing) return invalid("%{d}: loop already exists", .{@intFromEnum(inst)});
+                    if (gop.found_existing) return invalid("{f}: loop already exists", .{inst});
                     gop.value_ptr.* = self.live.move();
                 }
                 defer {
@@ -606,11 +611,11 @@ fn verifyOperand(self: *Verify, inst: Air.Inst.Index, op_ref: Air.Inst.Ref, dies
         return;
     };
     if (dies) {
-        if (!self.live.remove(operand)) return invalid("%{f}: dead operand %{f} reused and killed again", .{
+        if (!self.live.remove(operand)) return invalid("{f}: dead operand {f} reused and killed again", .{
             inst, operand,
         });
     } else {
-        if (!self.live.contains(operand)) return invalid("%{f}: dead operand %{f} reused", .{ inst, operand });
+        if (!self.live.contains(operand)) return invalid("{f}: dead operand {f} reused", .{ inst, operand });
     }
 }
 
@@ -635,9 +640,9 @@ fn verifyInst(self: *Verify, inst: Air.Inst.Index) Error!void {
 }
 
 fn verifyMatchingLiveness(self: *Verify, block: Air.Inst.Index, live: LiveMap) Error!void {
-    if (self.live.count() != live.count()) return invalid("%{f}: different deaths across branches", .{block});
+    if (self.live.count() != live.count()) return invalid("{f}: different deaths across branches", .{block});
     var live_it = self.live.keyIterator();
-    while (live_it.next()) |live_inst| if (!live.contains(live_inst.*)) return invalid("%{f}: different deaths across branches", .{block});
+    while (live_it.next()) |live_inst| if (!live.contains(live_inst.*)) return invalid("{f}: different deaths across branches", .{block});
 }
 
 fn invalid(comptime fmt: []const u8, args: anytype) error{LivenessInvalid} {
