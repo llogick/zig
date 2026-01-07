@@ -618,7 +618,7 @@ pub const TmpDir = struct {
     sub_path: [sub_path_len]u8,
 
     const random_bytes_count = 12;
-    const sub_path_len = std.fs.base64_encoder.calcSize(random_bytes_count);
+    const sub_path_len = std.base64.url_safe.Encoder.calcSize(random_bytes_count);
 
     pub fn cleanup(self: *TmpDir) void {
         self.dir.close(io);
@@ -633,7 +633,7 @@ pub fn tmpDir(opts: Io.Dir.OpenOptions) TmpDir {
     var random_bytes: [TmpDir.random_bytes_count]u8 = undefined;
     io.random(&random_bytes);
     var sub_path: [TmpDir.sub_path_len]u8 = undefined;
-    _ = std.fs.base64_encoder.encode(&sub_path, &random_bytes);
+    _ = std.base64.url_safe.Encoder.encode(&sub_path, &random_bytes);
 
     const cwd = Io.Dir.cwd();
     var cache_dir = cwd.createDirPathOpen(io, ".zig-cache", .{}) catch
