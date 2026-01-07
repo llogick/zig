@@ -2109,25 +2109,28 @@ fn await(
                     .tag = .pending_canceled,
                     .thread = .null,
                 }, .acq_rel); // acquire results if complete; release `future.awaiter`
-                switch (pre_cancel_status.tag) {
+                const done_status = switch (pre_cancel_status.tag) {
                     .pending => unreachable, // invalid state: we already awaited
-                    .pending_awaited => {
+                    .pending_awaited => done_status: {
                         const working_thread = pre_cancel_status.thread.unpack();
                         future.waitForCancelWithSignaling(t, &num_completed, @alignCast(working_thread));
+                        break :done_status future.status.load(.monotonic);
                     },
                     .pending_canceled => unreachable, // `await` raced with `cancel`
-                    .done => {
+                    .done => done_status: {
                         // The task just finished, but we still need to wait for the signal, because the
                         // task thread already figured out that they need to update `future.awaiter`.
                         future.waitForCancelWithSignaling(t, &num_completed, null);
+                        // Also, we have clobbered `future.status.tag` to `.pending_canceled`, but that's
+                        // not actually a problem for the logic below.
+                        break :done_status pre_cancel_status;
                     },
-                }
+                };
                 // If the future did not acknowledge the cancelation, we need to mark it outstanding
-                // for us. Because `future.status.tag == .done`, the information about whether there
-                // was an acknowledged cancelation is encoded in `future.status.thread`.
-                const final_status = future.status.load(.monotonic);
-                assert(final_status.tag == .done);
-                switch (final_status.thread) {
+                // for us. Because `done_status.tag == .done`, the information about whether there
+                // was an acknowledged cancelation is encoded in `done_status.thread`.
+                assert(done_status.tag == .done);
+                switch (done_status.thread) {
                     .null => recancelInner(), // cancelation was not acknowledged, so it's ours
                     .all_ones => {}, // cancelation was acknowledged, so it was this task's job to propagate it
                     _ => unreachable,
