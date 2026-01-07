@@ -5249,8 +5249,8 @@ fn fileHardLink(
     var new_path_buffer: [posix.PATH_MAX]u8 = undefined;
     const new_sub_path_posix = try pathToPosix(new_sub_path, &new_path_buffer);
 
-    const flags: u32 = if (!options.follow_symlinks)
-        posix.AT.SYMLINK_NOFOLLOW | posix.AT.EMPTY_PATH
+    const flags: u32 = if (options.follow_symlinks)
+        posix.AT.SYMLINK_FOLLOW | posix.AT.EMPTY_PATH
     else
         posix.AT.EMPTY_PATH;
 
@@ -7829,7 +7829,7 @@ fn dirHardLink(
     const old_sub_path_posix = try pathToPosix(old_sub_path, &old_path_buffer);
     const new_sub_path_posix = try pathToPosix(new_sub_path, &new_path_buffer);
 
-    const flags: u32 = if (!options.follow_symlinks) posix.AT.SYMLINK_NOFOLLOW else 0;
+    const flags: u32 = if (options.follow_symlinks) posix.AT.SYMLINK_FOLLOW else 0;
     return linkat(old_dir.handle, old_sub_path_posix, new_dir.handle, new_sub_path_posix, flags);
 }
 

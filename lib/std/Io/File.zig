@@ -709,7 +709,7 @@ pub fn realPath(file: File, io: Io, out_buffer: []u8) RealPathError!usize {
 }
 
 pub const HardLinkOptions = struct {
-    follow_symlinks: bool = true,
+    follow_symlinks: bool = false,
 };
 
 pub const HardLinkError = error{
