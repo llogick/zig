@@ -109,7 +109,7 @@ pub const Options = struct {
     read_buffer: []u8,
     /// Cryptographically secure random bytes. The pointer is not captured; data is only
     /// read during `init`.
-    entropy: *const [240]u8,
+    entropy: *const [entropy_len]u8,
     /// Current time according to the wall clock / calendar, in seconds.
     realtime_now_seconds: i64,
 
@@ -130,6 +130,8 @@ pub const Options = struct {
     allow_truncation_attacks: bool = false,
     /// Populated when `error.TlsAlert` is returned from `init`.
     alert: ?*tls.Alert = null,
+
+    pub const entropy_len = 240;
 };
 
 const InitError = error{

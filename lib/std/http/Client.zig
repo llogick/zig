@@ -321,7 +321,7 @@ pub const Connection = struct {
             assert(base.ptr + alloc_len == socket_read_buffer.ptr + socket_read_buffer.len);
             @memcpy(host_buffer, remote_host.bytes);
             const tls: *Tls = @ptrCast(base);
-            var random_buffer: [240]u8 = undefined;
+            var random_buffer: [std.crypto.tls.Client.Options.entropy_len]u8 = undefined;
             io.random(&random_buffer);
             tls.* = .{
                 .connection = .{
