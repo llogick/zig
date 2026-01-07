@@ -2256,20 +2256,20 @@ test writeVarPackedInt {
 /// Swap the byte order of all the members of the fields of a struct
 /// (Changing their endianness)
 pub fn byteSwapAllFields(comptime S: type, ptr: *S) void {
-    byteSwapAllFieldsAligned(S, @alignOf(S), ptr);
+    byteSwapAllFieldsAligned(S, .of(S), ptr);
 }
 
 /// Swap the byte order of all the members of the fields of a struct
 /// (Changing their endianness)
-pub fn byteSwapAllFieldsAligned(comptime S: type, comptime A: comptime_int, ptr: *align(A) S) void {
+pub fn byteSwapAllFieldsAligned(comptime S: type, comptime a: Alignment, ptr: *align(a.toByteUnits()) S) void {
     switch (@typeInfo(S)) {
         .@"struct" => |struct_info| {
             if (struct_info.backing_integer) |Int| {
                 ptr.* = @bitCast(@byteSwap(@as(Int, @bitCast(ptr.*))));
             } else inline for (std.meta.fields(S)) |f| {
                 switch (@typeInfo(f.type)) {
-                    .@"struct" => byteSwapAllFieldsAligned(f.type, f.alignment, &@field(ptr, f.name)),
-                    .@"union", .array => byteSwapAllFieldsAligned(f.type, f.alignment, &@field(ptr, f.name)),
+                    .@"struct" => byteSwapAllFieldsAligned(f.type, .fromByteUnits(f.alignment), &@field(ptr, f.name)),
+                    .@"union", .array => byteSwapAllFieldsAligned(f.type, .fromByteUnits(f.alignment), &@field(ptr, f.name)),
                     .@"enum" => {
                         @field(ptr, f.name) = @enumFromInt(@byteSwap(@intFromEnum(@field(ptr, f.name))));
                     },
