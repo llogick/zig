@@ -619,60 +619,6 @@ pub fn socketpair(domain: u32, socket_type: u32, protocol: u32) SocketError![2]s
     }
 }
 
-pub const ShutdownError = error{
-    ConnectionAborted,
-
-    /// Connection was reset by peer, application should close socket as it is no longer usable.
-    ConnectionResetByPeer,
-    BlockingOperationInProgress,
-
-    /// The network subsystem has failed.
-    NetworkDown,
-
-    /// The socket is not connected (connection-oriented sockets only).
-    SocketUnconnected,
-    SystemResources,
-} || UnexpectedError;
-
-pub const ShutdownHow = enum { recv, send, both };
-
-/// Shutdown socket send/receive operations
-pub fn shutdown(sock: socket_t, how: ShutdownHow) ShutdownError!void {
-    if (native_os == .windows) {
-        const result = windows.ws2_32.shutdown(sock, switch (how) {
-            .recv => windows.ws2_32.SD_RECEIVE,
-            .send => windows.ws2_32.SD_SEND,
-            .both => windows.ws2_32.SD_BOTH,
-        });
-        if (0 != result) switch (windows.ws2_32.WSAGetLastError()) {
-            .ECONNABORTED => return error.ConnectionAborted,
-            .ECONNRESET => return error.ConnectionResetByPeer,
-            .EINPROGRESS => return error.BlockingOperationInProgress,
-            .EINVAL => unreachable,
-            .ENETDOWN => return error.NetworkDown,
-            .ENOTCONN => return error.SocketUnconnected,
-            .ENOTSOCK => unreachable,
-            .NOTINITIALISED => unreachable,
-            else => |err| return windows.unexpectedWSAError(err),
-        };
-    } else {
-        const rc = system.shutdown(sock, switch (how) {
-            .recv => SHUT.RD,
-            .send => SHUT.WR,
-            .both => SHUT.RDWR,
-        });
-        switch (errno(rc)) {
-            .SUCCESS => return,
-            .BADF => unreachable,
-            .INVAL => unreachable,
-            .NOTCONN => return error.SocketUnconnected,
-            .NOTSOCK => unreachable,
-            .NOBUFS => return error.SystemResources,
-            else => |err| return unexpectedErrno(err),
-        }
-    }
-}
-
 pub const BindError = error{
     SymLinkLoop,
     NameTooLong,
