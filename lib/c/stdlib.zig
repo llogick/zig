@@ -1,6 +1,9 @@
 const std = @import("std");
 const common = @import("common.zig");
 const builtin = @import("builtin");
+const div_t = std.c.div_t;
+const ldiv_t = std.c.ldiv_t;
+const lldiv_t = std.c.lldiv_t;
 
 comptime {
     if (builtin.target.isMuslLibC() or builtin.target.isWasiLibC()) {
@@ -8,6 +11,10 @@ comptime {
         @export(&abs, .{ .name = "abs", .linkage = common.linkage, .visibility = common.visibility });
         @export(&labs, .{ .name = "labs", .linkage = common.linkage, .visibility = common.visibility });
         @export(&llabs, .{ .name = "llabs", .linkage = common.linkage, .visibility = common.visibility });
+
+        @export(&div, .{ .name = "div", .linkage = common.linkage, .visibility = common.visibility });
+        @export(&ldiv, .{ .name = "ldiv", .linkage = common.linkage, .visibility = common.visibility });
+        @export(&lldiv, .{ .name = "lldiv", .linkage = common.linkage, .visibility = common.visibility });
 
         @export(&qsort_r, .{ .name = "qsort_r", .linkage = common.linkage, .visibility = common.visibility });
         @export(&qsort, .{ .name = "qsort", .linkage = common.linkage, .visibility = common.visibility });
@@ -24,6 +31,27 @@ fn labs(a: c_long) callconv(.c) c_long {
 
 fn llabs(a: c_longlong) callconv(.c) c_longlong {
     return @intCast(@abs(a));
+}
+
+fn div(a: c_int, b: c_int) callconv(.c) div_t {
+    return .{
+        .quot = @divTrunc(a, b),
+        .rem = @rem(a, b),
+    };
+}
+
+fn ldiv(a: c_long, b: c_long) callconv(.c) ldiv_t {
+    return .{
+        .quot = @divTrunc(a, b),
+        .rem = @rem(a, b),
+    };
+}
+
+fn lldiv(a: c_longlong, b: c_longlong) callconv(.c) lldiv_t {
+    return .{
+        .quot = @divTrunc(a, b),
+        .rem = @rem(a, b),
+    };
 }
 
 // NOTE: Despite its name, `qsort` doesn't have to use quicksort or make any complexity or stability guarantee.
@@ -80,4 +108,19 @@ test labs {
 test llabs {
     const val: c_longlong = -10;
     try std.testing.expectEqual(10, llabs(val));
+}
+
+test div {
+    const expected: div_t = .{ .quot = 5, .rem = 5 };
+    try std.testing.expectEqual(expected, div(55, 10));
+}
+
+test ldiv {
+    const expected: ldiv_t = .{ .quot = -6, .rem = 2 };
+    try std.testing.expectEqual(expected, ldiv(38, -6));
+}
+
+test lldiv {
+    const expected: lldiv_t = .{ .quot = 1, .rem = 2 };
+    try std.testing.expectEqual(expected, lldiv(5, 3));
 }

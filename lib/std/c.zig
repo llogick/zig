@@ -11051,6 +11051,26 @@ else
         b: c_longdouble,
     };
 
+pub const div_t = extern struct {
+    quot: c_int,
+    rem: c_int,
+};
+
+pub const ldiv_t = extern struct {
+    quot: c_long,
+    rem: c_long,
+};
+
+pub const lldiv_t = extern struct {
+    quot: c_longlong,
+    rem: c_longlong,
+};
+
+pub const imaxdiv_t = extern struct {
+    quot: intmax_t,
+    rem: intmax_t,
+};
+
 pub const intmax_t = i64;
 pub const uintmax_t = u64;
 
