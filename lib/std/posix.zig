@@ -1274,31 +1274,6 @@ pub fn fcntl(fd: fd_t, cmd: i32, arg: usize) FcntlError!usize {
     }
 }
 
-/// Spurious wakeups are possible and no precision of timing is guaranteed.
-pub fn nanosleep(seconds: u64, nanoseconds: u64) void {
-    var req = timespec{
-        .sec = cast(isize, seconds) orelse maxInt(isize),
-        .nsec = cast(isize, nanoseconds) orelse maxInt(isize),
-    };
-    var rem: timespec = undefined;
-    while (true) {
-        switch (errno(system.nanosleep(&req, &rem))) {
-            .FAULT => unreachable,
-            .INVAL => {
-                // Sometimes Darwin returns EINVAL for no reason.
-                // We treat it as a spurious wakeup.
-                return;
-            },
-            .INTR => {
-                req = rem;
-                continue;
-            },
-            // This prong handles success as well as unexpected errors.
-            else => return,
-        }
-    }
-}
-
 pub fn getSelfPhdrs() []std.elf.ElfN.Phdr {
     const getauxval = if (builtin.link_libc) std.c.getauxval else std.os.linux.getauxval;
     assert(getauxval(std.elf.AT_PHENT) == @sizeOf(std.elf.ElfN.Phdr));
