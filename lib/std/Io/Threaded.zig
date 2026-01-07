@@ -15284,9 +15284,9 @@ fn fallbackSeedWasi(seed: *[Csprng.seed_len]u8) void {
 
 fn randomSecure(userdata: ?*anyopaque, buffer: []u8) Io.RandomSecureError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    if (buffer.len == 0) return;
 
     if (is_windows) {
+        if (buffer.len == 0) return;
         // ProcessPrng from bcryptprimitives.dll has the following properties:
         // * introduces a dependency on bcryptprimitives.dll, which apparently
         //   runs a test suite every time it is loaded
@@ -15331,11 +15331,13 @@ fn randomSecure(userdata: ?*anyopaque, buffer: []u8) Io.RandomSecureError!void {
     }
 
     if (builtin.link_libc and @TypeOf(posix.system.arc4random_buf) != void) {
+        if (buffer.len == 0) return;
         posix.system.arc4random_buf(buffer.ptr, buffer.len);
         return;
     }
 
     if (native_os == .wasi) {
+        if (buffer.len == 0) return;
         const syscall: Syscall = try .start();
         while (true) switch (std.os.wasi.random_get(buffer.ptr, buffer.len)) {
             .SUCCESS => return syscall.finish(),
@@ -15351,7 +15353,7 @@ fn randomSecure(userdata: ?*anyopaque, buffer: []u8) Io.RandomSecureError!void {
         const getrandom = if (use_libc_getrandom) std.c.getrandom else std.os.linux.getrandom;
         var i: usize = 0;
         const syscall: Syscall = try .start();
-        while (i < buffer.len) {
+        while (buffer.len - i != 0) {
             const buf = buffer[i..];
             const rc = getrandom(buf.ptr, buf.len, 0);
             switch (posix.errno(rc)) {
@@ -15372,6 +15374,7 @@ fn randomSecure(userdata: ?*anyopaque, buffer: []u8) Io.RandomSecureError!void {
     }
 
     if (native_os == .emscripten) {
+        if (buffer.len == 0) return;
         const err = posix.errno(std.c.getentropy(buffer.ptr, buffer.len));
         switch (err) {
             .SUCCESS => return,
@@ -15391,13 +15394,7 @@ fn randomSecure(userdata: ?*anyopaque, buffer: []u8) Io.RandomSecureError!void {
                 .SUCCESS => {
                     syscall.finish();
                     const n: usize = @intCast(rc);
-                    if (n == 0) {
-                        if (buffer.len - i != 0) {
-                            return error.EntropyUnavailable;
-                        } else {
-                            return;
-                        }
-                    }
+                    if (n == 0) return error.EntropyUnavailable;
                     i += n;
                     continue;
                 },
