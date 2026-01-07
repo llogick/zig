@@ -699,7 +699,7 @@ const Os = switch (builtin.os.tag) {
                                 .data = 0,
                                 .udata = gop.index,
                             }};
-                            _ = try posix.kevent(w.os.kq_fd, &changes, &.{}, null);
+                            _ = try Io.Kqueue.kevent(w.os.kq_fd, &changes, &.{}, null);
                             assert(handles.len == gop.index);
                             try handles.append(gpa, .{
                                 .rs = .{},
@@ -789,7 +789,7 @@ const Os = switch (builtin.os.tag) {
                         },
                     };
                     const filtered_changes = if (i == handles.len - 1) changes[0..1] else &changes;
-                    _ = try posix.kevent(w.os.kq_fd, filtered_changes, &.{}, null);
+                    _ = try Io.Kqueue.kevent(w.os.kq_fd, filtered_changes, &.{}, null);
                     if (path.sub_path.len != 0) posix.close(dir_fd);
 
                     w.dir_table.swapRemoveAt(i);
@@ -803,13 +803,13 @@ const Os = switch (builtin.os.tag) {
         fn wait(w: *Watch, gpa: Allocator, timeout: Timeout) !WaitResult {
             var timespec_buffer: posix.timespec = undefined;
             var event_buffer: [100]posix.Kevent = undefined;
-            var n = try posix.kevent(w.os.kq_fd, &.{}, &event_buffer, timeout.toTimespec(&timespec_buffer));
+            var n = try Io.Kqueue.kevent(w.os.kq_fd, &.{}, &event_buffer, timeout.toTimespec(&timespec_buffer));
             if (n == 0) return .timeout;
             const reaction_sets = w.os.handles.items(.rs);
             var any_dirty = markDirtySteps(gpa, reaction_sets, event_buffer[0..n], false);
             timespec_buffer = .{ .sec = 0, .nsec = 0 };
             while (n == event_buffer.len) {
-                n = try posix.kevent(w.os.kq_fd, &.{}, &event_buffer, &timespec_buffer);
+                n = try Io.Kqueue.kevent(w.os.kq_fd, &.{}, &event_buffer, &timespec_buffer);
                 if (n == 0) break;
                 any_dirty = markDirtySteps(gpa, reaction_sets, event_buffer[0..n], any_dirty);
             }

@@ -792,54 +792,6 @@ pub fn fstat(fd: fd_t) FStatError!Stat {
     }
 }
 
-pub const KEventError = error{
-    /// The process does not have permission to register a filter.
-    AccessDenied,
-
-    /// The event could not be found to be modified or deleted.
-    EventNotFound,
-
-    /// No memory was available to register the event.
-    SystemResources,
-
-    /// The specified process to attach to does not exist.
-    ProcessNotFound,
-
-    /// changelist or eventlist had too many items on it.
-    /// TODO remove this possibility
-    Overflow,
-};
-
-pub fn kevent(
-    kq: i32,
-    changelist: []const Kevent,
-    eventlist: []Kevent,
-    timeout: ?*const timespec,
-) KEventError!usize {
-    while (true) {
-        const rc = system.kevent(
-            kq,
-            changelist.ptr,
-            cast(c_int, changelist.len) orelse return error.Overflow,
-            eventlist.ptr,
-            cast(c_int, eventlist.len) orelse return error.Overflow,
-            timeout,
-        );
-        switch (errno(rc)) {
-            .SUCCESS => return @intCast(rc),
-            .ACCES => return error.AccessDenied,
-            .FAULT => unreachable,
-            .BADF => unreachable, // Always a race condition.
-            .INTR => continue,
-            .INVAL => unreachable,
-            .NOENT => return error.EventNotFound,
-            .NOMEM => return error.SystemResources,
-            .SRCH => return error.ProcessNotFound,
-            else => unreachable,
-        }
-    }
-}
-
 pub const INotifyInitError = error{
     ProcessFdQuotaExceeded,
     SystemFdQuotaExceeded,

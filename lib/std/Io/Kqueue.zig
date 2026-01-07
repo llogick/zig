@@ -334,7 +334,10 @@ fn schedule(k: *Kqueue, thread: *Thread, ready_queue: Fiber.Queue) void {
             },
         };
         // If an error occurs it only pessimises scheduling.
-        _ = posix.kevent(idle_search_thread.kq_fd, &changes, &.{}, null) catch {};
+        _ = kevent(idle_search_thread.kq_fd, &changes, &.{}, null) catch |err| {
+            // TODO handle EINTR for cancellation purposes
+            @panic(@errorName(err)); // TODO
+        };
         return;
     }
     spawn_thread: {
@@ -429,9 +432,9 @@ fn idle(k: *Kqueue, thread: *Thread) void {
             k.yield(ready_fiber, .nothing);
             maybe_ready_fiber = null;
         }
-        const n = posix.kevent(thread.kq_fd, &.{}, &events_buffer, null) catch |err| {
+        const n = kevent(thread.kq_fd, &.{}, &events_buffer, null) catch |err| {
             // TODO handle EINTR for cancellation purposes
-            @panic(@errorName(err));
+            @panic(@errorName(err)); // TODO
         };
         var maybe_ready_queue: ?Fiber.Queue = null;
         for (events_buffer[0..n]) |event| switch (@as(Completion.UserData, @enumFromInt(event.udata))) {
@@ -598,8 +601,9 @@ const SwitchMessage = struct {
                         .udata = @intFromEnum(Completion.UserData.exit),
                     },
                 };
-                _ = posix.kevent(each_thread.kq_fd, &changes, &.{}, null) catch |err| {
-                    @panic(@errorName(err));
+                _ = kevent(each_thread.kq_fd, &changes, &.{}, null) catch |err| {
+                    // TODO handle EINTR for cancellation purposes
+                    @panic(@errorName(err)); // TODO
                 };
             },
         }
@@ -1538,7 +1542,8 @@ fn netRead(userdata: ?*anyopaque, fd: net.Socket.Handle, data: [][]u8) net.Strea
                             .udata = @intFromPtr(fiber),
                         },
                     };
-                    assert(0 == (posix.kevent(thread.kq_fd, &changes, &.{}, null) catch |err| {
+                    assert(0 == (kevent(thread.kq_fd, &changes, &.{}, null) catch |err| {
+                        // TODO handle EINTR for cancellation purposes
                         @panic(@errorName(err)); // TODO
                     }));
                 }
@@ -1774,3 +1779,47 @@ const Condition = struct {
         wake: Io.Condition.Wake,
     },
 };
+
+pub const KEventError = error{
+    /// The process does not have permission to register a filter.
+    AccessDenied,
+    /// The event could not be found to be modified or deleted.
+    EventNotFound,
+    /// No memory was available to register the event.
+    SystemResources,
+    /// The specified process to attach to does not exist.
+    ProcessNotFound,
+    /// changelist or eventlist had too many items on it.
+    /// TODO remove this possibility
+    Overflow,
+};
+
+pub fn kevent(
+    kq: i32,
+    changelist: []const posix.Kevent,
+    eventlist: []posix.Kevent,
+    timeout: ?*const posix.timespec,
+) KEventError!usize {
+    while (true) {
+        const rc = posix.system.kevent(
+            kq,
+            changelist.ptr,
+            std.math.cast(c_int, changelist.len) orelse return error.Overflow,
+            eventlist.ptr,
+            std.math.cast(c_int, eventlist.len) orelse return error.Overflow,
+            timeout,
+        );
+        switch (posix.errno(rc)) {
+            .SUCCESS => return @intCast(rc),
+            .ACCES => return error.AccessDenied,
+            .FAULT => unreachable, // TODO use error.Unexpected for these
+            .BADF => unreachable, // Always a race condition.
+            .INTR => continue, // TODO handle cancelation
+            .INVAL => unreachable,
+            .NOENT => return error.EventNotFound,
+            .NOMEM => return error.SystemResources,
+            .SRCH => return error.ProcessNotFound,
+            else => unreachable,
+        }
+    }
+}
