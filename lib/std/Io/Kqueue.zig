@@ -157,8 +157,11 @@ pub const InitOptions = struct {
     n_threads: ?usize = null,
 };
 
+pub const InitError = Allocator.Error || CreateFileDescriptorError;
+
 pub fn init(k: *Kqueue, gpa: Allocator, options: InitOptions) !void {
     assert(options.n_threads != 0);
+
     const n_threads = @max(1, options.n_threads orelse std.Thread.getCpuCount() catch 1);
     const threads_size = n_threads * @sizeOf(Thread);
     const idle_stack_end_offset = std.mem.alignForward(usize, threads_size + idle_stack_size, std.heap.page_size_max);
@@ -204,7 +207,7 @@ pub fn init(k: *Kqueue, gpa: Allocator, options: InitOptions) !void {
         },
         .current_context = &main_fiber.context,
         .ready_queue = null,
-        .kq_fd = try posix.kqueue(),
+        .kq_fd = try createFileDescriptor(),
         .idle_search_index = 1,
         .steal_ready_search_index = 1,
         .wait_queues = .empty,
@@ -229,6 +232,23 @@ pub fn deinit(k: *Kqueue) void {
     for (k.threads.allocated[1..active_threads]) |*thread| thread.thread.join();
     gpa.free(allocated_ptr[0..idle_stack_end_offset]);
     k.* = undefined;
+}
+
+pub const CreateFileDescriptorError = error{
+    /// The per-process limit on the number of open file descriptors has been reached.
+    ProcessFdQuotaExceeded,
+    /// The system-wide limit on the total number of open files has been reached.
+    SystemFdQuotaExceeded,
+} || Io.Unexpected;
+
+pub fn createFileDescriptor() CreateFileDescriptorError!posix.fd_t {
+    const rc = posix.system.kqueue();
+    switch (posix.errno(rc)) {
+        .SUCCESS => return @intCast(rc),
+        .MFILE => return error.ProcessFdQuotaExceeded,
+        .NFILE => return error.SystemFdQuotaExceeded,
+        else => |err| return posix.unexpectedErrno(err),
+    }
 }
 
 fn findReadyFiber(k: *Kqueue, thread: *Thread) ?*Fiber {
@@ -334,7 +354,7 @@ fn schedule(k: *Kqueue, thread: *Thread, ready_queue: Fiber.Queue) void {
             .idle_context = undefined,
             .current_context = &new_thread.idle_context,
             .ready_queue = ready_queue.head,
-            .kq_fd = posix.kqueue() catch |err| {
+            .kq_fd = createFileDescriptor() catch |err| {
                 @atomicStore(u32, &k.threads.reserved, new_thread_index, .release);
                 // no more access to `thread` after giving up reservation
                 std.log.warn("unable to create worker thread due to kqueue init failure: {t}", .{err});

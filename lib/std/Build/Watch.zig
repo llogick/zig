@@ -1,5 +1,7 @@
 const builtin = @import("builtin");
+
 const std = @import("../std.zig");
+const Io = std.Io;
 const Step = std.Build.Step;
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
@@ -666,7 +668,7 @@ const Os = switch (builtin.os.tag) {
                 .dir_table = .{},
                 .dir_count = 0,
                 .os = .{
-                    .kq_fd = try posix.kqueue(),
+                    .kq_fd = try Io.Kqueue.createFileDescriptor(),
                     .handles = .empty,
                 },
                 .generation = 0,

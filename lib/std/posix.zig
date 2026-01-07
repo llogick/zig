@@ -792,24 +792,6 @@ pub fn fstat(fd: fd_t) FStatError!Stat {
     }
 }
 
-pub const KQueueError = error{
-    /// The per-process limit on the number of open file descriptors has been reached.
-    ProcessFdQuotaExceeded,
-
-    /// The system-wide limit on the total number of open files has been reached.
-    SystemFdQuotaExceeded,
-} || UnexpectedError;
-
-pub fn kqueue() KQueueError!i32 {
-    const rc = system.kqueue();
-    switch (errno(rc)) {
-        .SUCCESS => return @intCast(rc),
-        .MFILE => return error.ProcessFdQuotaExceeded,
-        .NFILE => return error.SystemFdQuotaExceeded,
-        else => |err| return unexpectedErrno(err),
-    }
-}
-
 pub const KEventError = error{
     /// The process does not have permission to register a filter.
     AccessDenied,
