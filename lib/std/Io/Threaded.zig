@@ -1744,18 +1744,17 @@ const statx_use_c = std.c.versionCheck(if (builtin.abi.isAndroid())
 else
     .{ .major = 2, .minor = 28, .patch = 0 });
 
-const getrandom_use_libc = @TypeOf(posix.system.getrandom) != void and (native_os != .linux or
-    std.c.versionCheck(if (builtin.abi.isAndroid()) .{
-        .major = 28,
-        .minor = 0,
-        .patch = 0,
-    } else .{
-        .major = 2,
-        .minor = 25,
-        .patch = 0,
-    }));
+const use_libc_getrandom = std.c.versionCheck(if (builtin.abi.isAndroid()) .{
+    .major = 28,
+    .minor = 0,
+    .patch = 0,
+} else .{
+    .major = 2,
+    .minor = 25,
+    .patch = 0,
+});
 
-const use_dev_urandom = !getrandom_use_libc and native_os == .linux;
+const use_dev_urandom = @TypeOf(posix.system.getrandom) == void and native_os == .linux;
 
 fn async(
     userdata: ?*anyopaque,
@@ -15149,9 +15148,9 @@ fn fallbackSeedWasi(seed: *[Csprng.seed_len]u8) void {
 
 fn randomSecure(userdata: ?*anyopaque, buffer: []u8) Io.RandomSecureError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
+    if (buffer.len == 0) return;
 
     if (is_windows) {
-        if (buffer.len == 0) return;
         // ProcessPrng from bcryptprimitives.dll has the following properties:
         // * introduces a dependency on bcryptprimitives.dll, which apparently
         //   runs a test suite every time it is loaded
@@ -15213,7 +15212,7 @@ fn randomSecure(userdata: ?*anyopaque, buffer: []u8) Io.RandomSecureError!void {
     }
 
     if (@TypeOf(posix.system.getrandom) != void) {
-        const getrandom = if (getrandom_use_libc) std.c.getrandom else std.os.linux.getrandom;
+        const getrandom = if (use_libc_getrandom) std.c.getrandom else std.os.linux.getrandom;
         var i: usize = 0;
         const syscall: Syscall = try .start();
         while (i < buffer.len) {
@@ -15244,34 +15243,38 @@ fn randomSecure(userdata: ?*anyopaque, buffer: []u8) Io.RandomSecureError!void {
         }
     }
 
-    if (buffer.len == 0) return;
-    const urandom_fd = try getRandomFd(t);
+    if (native_os == .linux) {
+        comptime assert(use_dev_urandom);
+        const urandom_fd = try getRandomFd(t);
 
-    var i: usize = 0;
-    while (buffer.len - i != 0) {
-        const syscall: Syscall = try .start();
-        const rc = posix.system.read(urandom_fd, buffer[i..].ptr, buffer.len - i);
-        switch (posix.errno(rc)) {
-            .SUCCESS => {
-                syscall.finish();
-                const n: usize = @intCast(rc);
-                if (n == 0) {
-                    if (buffer.len - i != 0) {
-                        return error.EntropyUnavailable;
-                    } else {
-                        return;
+        var i: usize = 0;
+        while (buffer.len - i != 0) {
+            const syscall: Syscall = try .start();
+            const rc = posix.system.read(urandom_fd, buffer[i..].ptr, buffer.len - i);
+            switch (posix.errno(rc)) {
+                .SUCCESS => {
+                    syscall.finish();
+                    const n: usize = @intCast(rc);
+                    if (n == 0) {
+                        if (buffer.len - i != 0) {
+                            return error.EntropyUnavailable;
+                        } else {
+                            return;
+                        }
                     }
-                }
-                i += n;
-                continue;
-            },
-            .INTR => {
-                try syscall.checkCancel();
-                continue;
-            },
-            else => return syscall.fail(error.EntropyUnavailable),
+                    i += n;
+                    continue;
+                },
+                .INTR => {
+                    try syscall.checkCancel();
+                    continue;
+                },
+                else => return syscall.fail(error.EntropyUnavailable),
+            }
         }
     }
+
+    return error.EntropyUnavailable;
 }
 
 fn getRandomFd(t: *Threaded) Io.RandomSecureError!posix.fd_t {
