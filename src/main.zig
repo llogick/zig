@@ -2498,6 +2498,9 @@ fn buildOutputType(
                     // this ignores plain --sort-common
                 } else if (mem.eql(u8, arg, "-rpath") or mem.eql(u8, arg, "--rpath") or mem.eql(u8, arg, "-R")) {
                     try create_module.rpath_list.append(arena, linker_args_it.nextOrFatal());
+                } else if (mem.eql(u8, arg, "-rpath-link") or mem.eql(u8, arg, "--rpath-link")) {
+                    _ = linker_args_it.nextOrFatal();
+                    warn("rpath-link option is unimplemented and ignored", .{});
                 } else if (mem.eql(u8, arg, "--subsystem")) {
                     subsystem = try parseSubsystem(linker_args_it.nextOrFatal());
                 } else if (mem.eql(u8, arg, "-I") or
