@@ -463,8 +463,12 @@ test "rename smoke test" {
         // Create some file using `open`.
         const file_path = try Dir.path.join(gpa, &.{ base_path, "some_file" });
         defer gpa.free(file_path);
-        const fd = try posix.open(file_path, .{ .ACCMODE = .RDWR, .CREAT = true, .EXCL = true }, mode);
-        posix.close(fd);
+        const file = try Io.Dir.cwd().createFile(io, file_path, .{
+            .read = true,
+            .exclusive = true,
+            .permissions = .fromMode(mode),
+        });
+        file.close(io);
 
         // Rename the file
         const new_file_path = try Dir.path.join(gpa, &.{ base_path, "some_other_file" });
@@ -476,15 +480,15 @@ test "rename smoke test" {
         // Try opening renamed file
         const file_path = try Dir.path.join(gpa, &.{ base_path, "some_other_file" });
         defer gpa.free(file_path);
-        const fd = try posix.open(file_path, .{ .ACCMODE = .RDWR }, mode);
-        posix.close(fd);
+        const file = try Io.Dir.cwd().openFile(io, file_path, .{ .mode = .read_write });
+        file.close(io);
     }
 
     {
         // Try opening original file - should fail with error.FileNotFound
         const file_path = try Dir.path.join(gpa, &.{ base_path, "some_file" });
         defer gpa.free(file_path);
-        try expectError(error.FileNotFound, posix.open(file_path, .{ .ACCMODE = .RDWR }, mode));
+        try expectError(error.FileNotFound, Io.Dir.cwd().openFile(io, file_path, .{ .mode = .read_write }));
     }
 
     {
@@ -503,15 +507,15 @@ test "rename smoke test" {
         // Try opening renamed directory
         const file_path = try Dir.path.join(gpa, &.{ base_path, "some_other_dir" });
         defer gpa.free(file_path);
-        const fd = try posix.open(file_path, .{ .ACCMODE = .RDONLY, .DIRECTORY = true }, mode);
-        posix.close(fd);
+        const dir = try Io.Dir.cwd().openDir(io, file_path, .{});
+        dir.close(io);
     }
 
     {
         // Try opening original directory - should fail with error.FileNotFound
         const file_path = try Dir.path.join(gpa, &.{ base_path, "some_dir" });
         defer gpa.free(file_path);
-        try expectError(error.FileNotFound, posix.open(file_path, .{ .ACCMODE = .RDONLY, .DIRECTORY = true }, mode));
+        try expectError(error.FileNotFound, Io.Dir.cwd().openDir(io, file_path, .{}));
     }
 }
 

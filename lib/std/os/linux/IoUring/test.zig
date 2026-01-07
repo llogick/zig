@@ -932,6 +932,8 @@ test "accept/connect/recv/cancel" {
 }
 
 test "register_files_update" {
+    const io = testing.io;
+
     var ring = IoUring.init(1, 0) catch |err| switch (err) {
         error.SystemOutdated => return error.SkipZigTest,
         error.PermissionDenied => return error.SkipZigTest,
@@ -939,13 +941,13 @@ test "register_files_update" {
     };
     defer ring.deinit();
 
-    const fd = try posix.openZ("/dev/zero", .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, 0);
-    defer posix.close(fd);
+    const file = try Io.Dir.openFileAbsolute(io, "/dev/zero", .{});
+    defer file.close(io);
 
     var registered_fds = [_]linux.fd_t{0} ** 2;
     const fd_index = 0;
     const fd_index2 = 1;
-    registered_fds[fd_index] = fd;
+    registered_fds[fd_index] = file.handle;
     registered_fds[fd_index2] = -1;
 
     ring.register_files(registered_fds[0..]) catch |err| switch (err) {
@@ -957,10 +959,10 @@ test "register_files_update" {
     // Test IORING_REGISTER_FILES_UPDATE
     // Only available since Linux 5.5
 
-    const fd2 = try posix.openZ("/dev/zero", .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, 0);
-    defer posix.close(fd2);
+    const file2 = try Io.Dir.openFileAbsolute(io, "/dev/zero", .{});
+    defer file2.close(io);
 
-    registered_fds[fd_index] = fd2;
+    registered_fds[fd_index] = file2.handle;
     registered_fds[fd_index2] = -1;
     try ring.register_files_update(0, registered_fds[0..]);
 
@@ -1339,6 +1341,8 @@ test "linkat" {
 }
 
 test "provide_buffers: read" {
+    const io = testing.io;
+
     var ring = IoUring.init(1, 0) catch |err| switch (err) {
         error.SystemOutdated => return error.SkipZigTest,
         error.PermissionDenied => return error.SkipZigTest,
@@ -1346,8 +1350,8 @@ test "provide_buffers: read" {
     };
     defer ring.deinit();
 
-    const fd = try posix.openZ("/dev/zero", .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, 0);
-    defer posix.close(fd);
+    const file = try Io.Dir.openFileAbsolute(io, "/dev/zero", .{});
+    defer file.close(io);
 
     const group_id = 1337;
     const buffer_id = 0;
@@ -1380,9 +1384,9 @@ test "provide_buffers: read" {
 
     var i: usize = 0;
     while (i < buffers.len) : (i += 1) {
-        const sqe = try ring.read(0xdededede, fd, .{ .buffer_selection = .{ .group_id = group_id, .len = buffer_len } }, 0);
+        const sqe = try ring.read(0xdededede, file.handle, .{ .buffer_selection = .{ .group_id = group_id, .len = buffer_len } }, 0);
         try testing.expectEqual(linux.IORING_OP.READ, sqe.opcode);
-        try testing.expectEqual(@as(i32, fd), sqe.fd);
+        try testing.expectEqual(@as(i32, file.handle), sqe.fd);
         try testing.expectEqual(@as(u64, 0), sqe.addr);
         try testing.expectEqual(@as(u32, buffer_len), sqe.len);
         try testing.expectEqual(@as(u16, group_id), sqe.buf_index);
@@ -1406,9 +1410,9 @@ test "provide_buffers: read" {
     // This read should fail
 
     {
-        const sqe = try ring.read(0xdfdfdfdf, fd, .{ .buffer_selection = .{ .group_id = group_id, .len = buffer_len } }, 0);
+        const sqe = try ring.read(0xdfdfdfdf, file.handle, .{ .buffer_selection = .{ .group_id = group_id, .len = buffer_len } }, 0);
         try testing.expectEqual(linux.IORING_OP.READ, sqe.opcode);
-        try testing.expectEqual(@as(i32, fd), sqe.fd);
+        try testing.expectEqual(@as(i32, file.handle), sqe.fd);
         try testing.expectEqual(@as(u64, 0), sqe.addr);
         try testing.expectEqual(@as(u32, buffer_len), sqe.len);
         try testing.expectEqual(@as(u16, group_id), sqe.buf_index);
@@ -1445,9 +1449,9 @@ test "provide_buffers: read" {
     // Final read which should work
 
     {
-        const sqe = try ring.read(0xdfdfdfdf, fd, .{ .buffer_selection = .{ .group_id = group_id, .len = buffer_len } }, 0);
+        const sqe = try ring.read(0xdfdfdfdf, file.handle, .{ .buffer_selection = .{ .group_id = group_id, .len = buffer_len } }, 0);
         try testing.expectEqual(linux.IORING_OP.READ, sqe.opcode);
-        try testing.expectEqual(@as(i32, fd), sqe.fd);
+        try testing.expectEqual(@as(i32, file.handle), sqe.fd);
         try testing.expectEqual(@as(u64, 0), sqe.addr);
         try testing.expectEqual(@as(u32, buffer_len), sqe.len);
         try testing.expectEqual(@as(u16, group_id), sqe.buf_index);
@@ -1469,6 +1473,8 @@ test "provide_buffers: read" {
 }
 
 test "remove_buffers" {
+    const io = testing.io;
+
     var ring = IoUring.init(1, 0) catch |err| switch (err) {
         error.SystemOutdated => return error.SkipZigTest,
         error.PermissionDenied => return error.SkipZigTest,
@@ -1476,8 +1482,8 @@ test "remove_buffers" {
     };
     defer ring.deinit();
 
-    const fd = try posix.openZ("/dev/zero", .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, 0);
-    defer posix.close(fd);
+    const file = try Io.Dir.openFileAbsolute(io, "/dev/zero", .{});
+    defer file.close(io);
 
     const group_id = 1337;
     const buffer_id = 0;
@@ -1522,7 +1528,7 @@ test "remove_buffers" {
     // This read should work
 
     {
-        _ = try ring.read(0xdfdfdfdf, fd, .{ .buffer_selection = .{ .group_id = group_id, .len = buffer_len } }, 0);
+        _ = try ring.read(0xdfdfdfdf, file.handle, .{ .buffer_selection = .{ .group_id = group_id, .len = buffer_len } }, 0);
         try testing.expectEqual(@as(u32, 1), try ring.submit());
 
         const cqe = try ring.copy_cqe();
@@ -1542,7 +1548,7 @@ test "remove_buffers" {
     // Final read should _not_ work
 
     {
-        _ = try ring.read(0xdfdfdfdf, fd, .{ .buffer_selection = .{ .group_id = group_id, .len = buffer_len } }, 0);
+        _ = try ring.read(0xdfdfdfdf, file.handle, .{ .buffer_selection = .{ .group_id = group_id, .len = buffer_len } }, 0);
         try testing.expectEqual(@as(u32, 1), try ring.submit());
 
         const cqe = try ring.copy_cqe();

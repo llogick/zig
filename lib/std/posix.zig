@@ -449,66 +449,6 @@ pub fn read(fd: fd_t, buf: []u8) ReadError!usize {
 pub const OpenError = std.Io.File.OpenError || error{WouldBlock};
 
 /// Open and possibly create a file. Keeps trying if it gets interrupted.
-/// On Windows, `file_path` should be encoded as [WTF-8](https://wtf-8.codeberg.page/).
-/// On WASI, `file_path` should be encoded as valid UTF-8.
-/// On other platforms, `file_path` is an opaque sequence of bytes with no particular encoding.
-/// See also `openZ`.
-pub fn open(file_path: []const u8, flags: O, perm: mode_t) OpenError!fd_t {
-    if (native_os == .windows) {
-        @compileError("Windows does not support POSIX; use Windows-specific API or cross-platform std.fs API");
-    } else if (native_os == .wasi and !builtin.link_libc) {
-        return openat(AT.FDCWD, file_path, flags, perm);
-    }
-    const file_path_c = try toPosixPath(file_path);
-    return openZ(&file_path_c, flags, perm);
-}
-
-/// Open and possibly create a file. Keeps trying if it gets interrupted.
-/// On Windows, `file_path` should be encoded as [WTF-8](https://wtf-8.codeberg.page/).
-/// On WASI, `file_path` should be encoded as valid UTF-8.
-/// On other platforms, `file_path` is an opaque sequence of bytes with no particular encoding.
-/// See also `open`.
-pub fn openZ(file_path: [*:0]const u8, flags: O, perm: mode_t) OpenError!fd_t {
-    if (native_os == .windows) {
-        @compileError("Windows does not support POSIX; use Windows-specific API or cross-platform std.fs API");
-    } else if (native_os == .wasi and !builtin.link_libc) {
-        return open(mem.sliceTo(file_path, 0), flags, perm);
-    }
-
-    const open_sym = if (lfs64_abi) system.open64 else system.open;
-    while (true) {
-        const rc = open_sym(file_path, flags, perm);
-        switch (errno(rc)) {
-            .SUCCESS => return @intCast(rc),
-            .INTR => continue,
-
-            .FAULT => unreachable,
-            .INVAL => return error.BadPathName,
-            .ACCES => return error.AccessDenied,
-            .FBIG => return error.FileTooBig,
-            .OVERFLOW => return error.FileTooBig,
-            .ISDIR => return error.IsDir,
-            .LOOP => return error.SymLinkLoop,
-            .MFILE => return error.ProcessFdQuotaExceeded,
-            .NAMETOOLONG => return error.NameTooLong,
-            .NFILE => return error.SystemFdQuotaExceeded,
-            .NODEV => return error.NoDevice,
-            .NOENT => return error.FileNotFound,
-            // Can happen on Linux when opening procfs files.
-            .SRCH => return error.FileNotFound,
-            .NOMEM => return error.SystemResources,
-            .NOSPC => return error.NoSpaceLeft,
-            .NOTDIR => return error.NotDir,
-            .PERM => return error.PermissionDenied,
-            .EXIST => return error.PathAlreadyExists,
-            .BUSY => return error.DeviceBusy,
-            .ILSEQ => return error.BadPathName,
-            else => |err| return unexpectedErrno(err),
-        }
-    }
-}
-
-/// Open and possibly create a file. Keeps trying if it gets interrupted.
 /// `file_path` is relative to the open directory handle `dir_fd`.
 /// On Windows, `file_path` should be encoded as [WTF-8](https://wtf-8.codeberg.page/).
 /// On WASI, `file_path` should be encoded as valid UTF-8.
