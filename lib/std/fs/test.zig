@@ -1022,8 +1022,7 @@ test "Dir.rename directory onto non-empty dir" {
             file.close(io);
             target_dir.close(io);
 
-            // Rename should fail with PathAlreadyExists if target_dir is non-empty
-            try expectError(error.PathAlreadyExists, ctx.dir.rename(test_dir_path, ctx.dir, target_dir_path, io));
+            try expectError(error.DirNotEmpty, ctx.dir.rename(test_dir_path, ctx.dir, target_dir_path, io));
 
             // Ensure the directory was not renamed
             var dir = try ctx.dir.openDir(io, test_dir_path, .{});

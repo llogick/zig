@@ -3460,7 +3460,7 @@ fn renameTmpIntoCache(
                 },
                 else => return error.AccessDenied,
             },
-            error.PathAlreadyExists => {
+            error.DirNotEmpty => {
                 try cache_directory.handle.deleteTree(io, o_sub_path);
                 continue;
             },

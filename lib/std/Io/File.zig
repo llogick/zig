@@ -726,7 +726,7 @@ pub const HardLinkError = error{
     SystemResources,
     NoSpaceLeft,
     ReadOnlyFileSystem,
-    NotSameFileSystem,
+    CrossDevice,
     NotDir,
 } || Io.Cancelable || Dir.PathNameError || Io.UnexpectedError;
 

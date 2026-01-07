@@ -1476,7 +1476,7 @@ pub fn renameTmpIntoCache(io: Io, cache_dir: Io.Dir, tmp_dir_sub_path: []const u
                 };
                 continue;
             },
-            error.PathAlreadyExists, error.AccessDenied => {
+            error.DirNotEmpty, error.AccessDenied => {
                 // Package has been already downloaded and may already be in use on the system.
                 cache_dir.deleteTree(io, tmp_dir_sub_path) catch {
                     // Garbage files leftover in zig-cache/tmp/ is, as they say

@@ -1594,7 +1594,7 @@ pub const FanotifyMarkError = error{
     NotDir,
     OperationUnsupported,
     PermissionDenied,
-    NotSameFileSystem,
+    CrossDevice,
     NameTooLong,
 } || UnexpectedError;
 
@@ -1634,7 +1634,7 @@ pub fn fanotify_markZ(
         .NOTDIR => return error.NotDir,
         .OPNOTSUPP => return error.OperationUnsupported,
         .PERM => return error.PermissionDenied,
-        .XDEV => return error.NotSameFileSystem,
+        .XDEV => return error.CrossDevice,
         else => |err| return unexpectedErrno(err),
     }
 }

@@ -3194,7 +3194,7 @@ pub const RenameError = error{
     NetworkNotFound,
     AntivirusInterference,
     BadPathName,
-    RenameAcrossMountPoints,
+    CrossDevice,
 } || UnexpectedError;
 
 pub fn RenameFile(
@@ -3295,7 +3295,7 @@ pub fn RenameFile(
         .ACCESS_DENIED => return error.AccessDenied,
         .OBJECT_NAME_NOT_FOUND => return error.FileNotFound,
         .OBJECT_PATH_NOT_FOUND => return error.FileNotFound,
-        .NOT_SAME_DEVICE => return error.RenameAcrossMountPoints,
+        .NOT_SAME_DEVICE => return error.CrossDevice,
         .OBJECT_NAME_COLLISION => return error.PathAlreadyExists,
         .DIRECTORY_NOT_EMPTY => return error.PathAlreadyExists,
         .FILE_IS_A_DIRECTORY => return error.IsDir,
