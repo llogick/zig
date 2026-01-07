@@ -532,6 +532,10 @@ pub fn defaultPanic(msg: []const u8, first_trace_addr: ?usize) noreturn {
         else => {},
     }
 
+    // Don't try to cancel during a panic. No need to re-enable cancelation,
+    // because the panic handler doesn't return.
+    _ = std.Options.debug_io.swapCancelProtection(.blocked);
+
     if (enable_segfault_handler) {
         // If a segfault happens while panicking, we want it to actually segfault, not trigger
         // the handler.
@@ -1533,6 +1537,10 @@ fn handleSegfault(addr: ?usize, name: []const u8, opt_ctx: ?CpuContextPtr) noret
 }
 
 pub fn defaultHandleSegfault(addr: ?usize, name: []const u8, opt_ctx: ?CpuContextPtr) noreturn {
+    // Don't try to cancel during a segfault. No need to re-enable cancelation,
+    // because the segfault handler doesn't return.
+    _ = std.Options.debug_io.swapCancelProtection(.blocked);
+
     // There is very similar logic to the following in `defaultPanic`.
     switch (panic_stage) {
         0 => {

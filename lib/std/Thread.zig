@@ -1224,6 +1224,10 @@ const LinuxThreadImpl = struct {
         /// Ported over from musl libc's pthread detached implementation:
         /// https://github.com/ifduyue/musl/search?q=__unmapself
         fn freeAndExit(self: *ThreadCompletion) noreturn {
+            // If a signal were delivered between SYS_munmap and SYS_exit, any installed signal
+            // handler would immediately segfault due to the stack being unmapped. To avoid this,
+            // we need to mask all signals before entering the inline asm.
+            posix.sigprocmask(std.posix.SIG.BLOCK, &std.os.linux.sigfillset(), null);
             switch (target.cpu.arch) {
                 .x86 => asm volatile (
                     \\  movl $91, %%eax # SYS_munmap

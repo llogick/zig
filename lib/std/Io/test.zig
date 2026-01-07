@@ -254,8 +254,6 @@ test "Group.cancel" {
 }
 
 test "Group.concurrent" {
-    if (builtin.os.tag == .linux and !builtin.link_libc) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/30096
-
     const io = testing.io;
 
     var group: Io.Group = .init;
@@ -421,8 +419,6 @@ test "Event" {
 }
 
 test "recancel" {
-    if (builtin.os.tag == .linux and !builtin.link_libc) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/30592
-
     const global = struct {
         fn worker(io: Io) Io.Cancelable!void {
             var dummy_event: Io.Event = .unset;
