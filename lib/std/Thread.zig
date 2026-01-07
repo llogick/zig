@@ -175,7 +175,7 @@ pub const SetNameError = error{
     Unsupported,
     Unexpected,
     InvalidWtf8,
-} || posix.PrctlError || posix.WriteError || Io.File.OpenError || std.fmt.BufPrintError;
+} || posix.PrctlError || Io.File.Writer.Error || Io.File.OpenError || std.fmt.BufPrintError;
 
 pub fn setName(self: Thread, io: Io, name: []const u8) SetNameError!void {
     if (name.len > max_name_len) return error.NameTooLong;
