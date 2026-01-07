@@ -537,7 +537,7 @@ test "sendmsg/recvmsg" {
 
     // set address_server to the OS-chosen IP/port.
     var slen: posix.socklen_t = @sizeOf(linux.sockaddr.in);
-    try posix.getsockname(server, addrAny(&address_server), &slen);
+    try getsockname(server, addrAny(&address_server), &slen);
 
     const client = try socket(address_server.family, posix.SOCK.DGRAM, 0);
     defer posix.close(client);
@@ -1041,7 +1041,7 @@ test "shutdown" {
 
         // set address to the OS-chosen IP/port.
         var slen: posix.socklen_t = @sizeOf(linux.sockaddr.in);
-        try posix.getsockname(server, addrAny(&address), &slen);
+        try getsockname(server, addrAny(&address), &slen);
 
         const shutdown_sqe = try ring.shutdown(0x445445445, server, linux.SHUT.RD);
         try testing.expectEqual(linux.IORING_OP.SHUTDOWN, shutdown_sqe.opcode);
@@ -2462,7 +2462,7 @@ test "bind/listen/connect" {
 
         // Read system assigned port into addr
         var addr_len: posix.socklen_t = @sizeOf(linux.sockaddr.in);
-        try posix.getsockname(listen_fd, addrAny(&addr), &addr_len);
+        try getsockname(listen_fd, addrAny(&addr), &addr_len);
 
         break :brk listen_fd;
     };
@@ -2666,7 +2666,7 @@ fn createListenerSocket(address: *linux.sockaddr.in) !posix.socket_t {
 
     // set address to the OS-chosen IP/port.
     var slen: posix.socklen_t = @sizeOf(linux.sockaddr.in);
-    try posix.getsockname(listener_socket, addrAny(address), &slen);
+    try getsockname(listener_socket, addrAny(address), &slen);
 
     return listener_socket;
 }
@@ -2715,5 +2715,12 @@ fn listen(sock: posix.socket_t, backlog: u31) !void {
     switch (posix.errno(posix.system.listen(sock, backlog))) {
         .SUCCESS => return,
         else => return error.ListenFailure,
+    }
+}
+
+fn getsockname(sock: posix.socket_t, addr: *posix.sockaddr, addrlen: *posix.socklen_t) !void {
+    switch (posix.errno(posix.system.getsockname(sock, addr, addrlen))) {
+        .SUCCESS => return,
+        else => return error.GetSockNameFailure,
     }
 }

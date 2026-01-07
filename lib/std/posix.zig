@@ -710,35 +710,6 @@ pub const GetSockNameError = error{
     FileDescriptorNotASocket,
 } || UnexpectedError;
 
-pub fn getsockname(sock: socket_t, addr: *sockaddr, addrlen: *socklen_t) GetSockNameError!void {
-    if (native_os == .windows) {
-        const rc = windows.getsockname(sock, addr, addrlen);
-        if (rc == windows.ws2_32.SOCKET_ERROR) {
-            switch (windows.ws2_32.WSAGetLastError()) {
-                .NOTINITIALISED => unreachable,
-                .ENETDOWN => return error.NetworkDown,
-                .EFAULT => unreachable, // addr or addrlen have invalid pointers or addrlen points to an incorrect value
-                .ENOTSOCK => return error.FileDescriptorNotASocket,
-                .EINVAL => return error.SocketNotBound,
-                else => |err| return windows.unexpectedWSAError(err),
-            }
-        }
-        return;
-    } else {
-        const rc = system.getsockname(sock, addr, addrlen);
-        switch (errno(rc)) {
-            .SUCCESS => return,
-            else => |err| return unexpectedErrno(err),
-
-            .BADF => unreachable, // always a race condition
-            .FAULT => unreachable,
-            .INVAL => unreachable, // invalid parameters
-            .NOTSOCK => return error.FileDescriptorNotASocket,
-            .NOBUFS => return error.SystemResources,
-        }
-    }
-}
-
 pub fn getpeername(sock: socket_t, addr: *sockaddr, addrlen: *socklen_t) GetSockNameError!void {
     if (native_os == .windows) {
         const rc = windows.getpeername(sock, addr, addrlen);
