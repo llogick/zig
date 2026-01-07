@@ -1046,18 +1046,6 @@ pub fn mprotect(memory: []align(page_size_min) u8, protection: u32) MProtectErro
     }
 }
 
-pub const ForkError = error{SystemResources} || UnexpectedError;
-
-pub fn fork() ForkError!pid_t {
-    const rc = system.fork();
-    switch (errno(rc)) {
-        .SUCCESS => return @intCast(rc),
-        .AGAIN => return error.SystemResources,
-        .NOMEM => return error.SystemResources,
-        else => |err| return unexpectedErrno(err),
-    }
-}
-
 pub const MMapError = error{
     /// The underlying filesystem of the specified file does not support memory mapping.
     MemoryMappingNotSupported,
