@@ -529,7 +529,7 @@ test "sendmsg/recvmsg" {
         .addr = @bitCast([4]u8{ 127, 0, 0, 1 }),
     };
 
-    const server = try posix.socket(address_server.family, posix.SOCK.DGRAM, 0);
+    const server = try socket(address_server.family, posix.SOCK.DGRAM, 0);
     defer posix.close(server);
     try posix.setsockopt(server, posix.SOL.SOCKET, posix.SO.REUSEPORT, &mem.toBytes(@as(c_int, 1)));
     try posix.setsockopt(server, posix.SOL.SOCKET, posix.SO.REUSEADDR, &mem.toBytes(@as(c_int, 1)));
@@ -539,7 +539,7 @@ test "sendmsg/recvmsg" {
     var slen: posix.socklen_t = @sizeOf(linux.sockaddr.in);
     try posix.getsockname(server, addrAny(&address_server), &slen);
 
-    const client = try posix.socket(address_server.family, posix.SOCK.DGRAM, 0);
+    const client = try socket(address_server.family, posix.SOCK.DGRAM, 0);
     defer posix.close(client);
 
     const buffer_send = [_]u8{42} ** 128;
@@ -1033,7 +1033,7 @@ test "shutdown" {
 
     // Socket bound, expect shutdown to work
     {
-        const server = try posix.socket(address.family, posix.SOCK.STREAM | posix.SOCK.CLOEXEC, 0);
+        const server = try socket(address.family, posix.SOCK.STREAM | posix.SOCK.CLOEXEC, 0);
         defer posix.close(server);
         try posix.setsockopt(server, posix.SOL.SOCKET, posix.SO.REUSEADDR, &mem.toBytes(@as(c_int, 1)));
         try posix.bind(server, addrAny(&address), @sizeOf(linux.sockaddr.in));
@@ -1066,7 +1066,7 @@ test "shutdown" {
 
     // Socket not bound, expect to fail with ENOTCONN
     {
-        const server = try posix.socket(address.family, posix.SOCK.STREAM | posix.SOCK.CLOEXEC, 0);
+        const server = try socket(address.family, posix.SOCK.STREAM | posix.SOCK.CLOEXEC, 0);
         defer posix.close(server);
 
         const shutdown_sqe = ring.shutdown(0x445445445, server, linux.SHUT.RD) catch |err| switch (err) {
@@ -1753,7 +1753,7 @@ test "accept multishot" {
     var nr: usize = 4; // number of clients to connect
     while (nr > 0) : (nr -= 1) {
         // connect client
-        const client = try posix.socket(address.family, posix.SOCK.STREAM | posix.SOCK.CLOEXEC, 0);
+        const client = try socket(address.family, posix.SOCK.STREAM | posix.SOCK.CLOEXEC, 0);
         errdefer posix.close(client);
         try posix.connect(client, addrAny(&address), @sizeOf(linux.sockaddr.in));
 
@@ -1862,7 +1862,7 @@ test "accept_direct" {
             try testing.expectEqual(@as(u32, 1), try ring.submit());
 
             // connect
-            const client = try posix.socket(address.family, posix.SOCK.STREAM | posix.SOCK.CLOEXEC, 0);
+            const client = try socket(address.family, posix.SOCK.STREAM | posix.SOCK.CLOEXEC, 0);
             try posix.connect(client, addrAny(&address), @sizeOf(linux.sockaddr.in));
             defer posix.close(client);
 
@@ -1896,7 +1896,7 @@ test "accept_direct" {
             _ = try ring.accept_direct(accept_userdata, listener_socket, null, null, 0);
             try testing.expectEqual(@as(u32, 1), try ring.submit());
             // connect
-            const client = try posix.socket(address.family, posix.SOCK.STREAM | posix.SOCK.CLOEXEC, 0);
+            const client = try socket(address.family, posix.SOCK.STREAM | posix.SOCK.CLOEXEC, 0);
             try posix.connect(client, addrAny(&address), @sizeOf(linux.sockaddr.in));
             defer posix.close(client);
             // completion with error
@@ -1946,7 +1946,7 @@ test "accept_multishot_direct" {
 
         for (registered_fds) |_| {
             // connect
-            const client = try posix.socket(address.family, posix.SOCK.STREAM | posix.SOCK.CLOEXEC, 0);
+            const client = try socket(address.family, posix.SOCK.STREAM | posix.SOCK.CLOEXEC, 0);
             try posix.connect(client, addrAny(&address), @sizeOf(linux.sockaddr.in));
             defer posix.close(client);
 
@@ -1961,7 +1961,7 @@ test "accept_multishot_direct" {
         // Multishot is terminated (more flag is not set).
         {
             // connect
-            const client = try posix.socket(address.family, posix.SOCK.STREAM | posix.SOCK.CLOEXEC, 0);
+            const client = try socket(address.family, posix.SOCK.STREAM | posix.SOCK.CLOEXEC, 0);
             try posix.connect(client, addrAny(&address), @sizeOf(linux.sockaddr.in));
             defer posix.close(client);
             // completion with error
@@ -2617,7 +2617,7 @@ pub fn createSocketTestHarness(ring: *IoUring) !SocketTestHarness {
     _ = try ring.accept(0xaaaaaaaa, listener_socket, &accept_addr, &accept_addr_len, 0);
 
     // Create a TCP client socket
-    const client = try posix.socket(address.family, posix.SOCK.STREAM | posix.SOCK.CLOEXEC, 0);
+    const client = try socket(address.family, posix.SOCK.STREAM | posix.SOCK.CLOEXEC, 0);
     errdefer posix.close(client);
     _ = try ring.connect(0xcccccccc, client, addrAny(&address), @sizeOf(linux.sockaddr.in));
 
@@ -2657,7 +2657,7 @@ pub fn createSocketTestHarness(ring: *IoUring) !SocketTestHarness {
 
 fn createListenerSocket(address: *linux.sockaddr.in) !posix.socket_t {
     const kernel_backlog = 1;
-    const listener_socket = try posix.socket(address.family, posix.SOCK.STREAM | posix.SOCK.CLOEXEC, 0);
+    const listener_socket = try socket(address.family, posix.SOCK.STREAM | posix.SOCK.CLOEXEC, 0);
     errdefer posix.close(listener_socket);
 
     try posix.setsockopt(listener_socket, posix.SOL.SOCKET, posix.SO.REUSEADDR, &mem.toBytes(@as(c_int, 1)));
@@ -2694,4 +2694,12 @@ inline fn skipKernelLessThan(required: std.SemanticVersion) !void {
 
 fn addrAny(addr: *linux.sockaddr.in) *linux.sockaddr {
     return @ptrCast(addr);
+}
+
+fn socket(domain: u32, socket_type: u32, protocol: u32) !posix.socket_t {
+    const rc = posix.system.socket(domain, socket_type, protocol);
+    switch (posix.errno(rc)) {
+        .SUCCESS => return @intCast(rc),
+        else => return error.SocketCreationFailure,
+    }
 }

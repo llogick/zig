@@ -579,35 +579,6 @@ pub const SocketError = error{
     SocketTypeNotSupported,
 } || UnexpectedError;
 
-pub fn socket(domain: u32, socket_type: u32, protocol: u32) SocketError!socket_t {
-    const have_sock_flags = !builtin.target.os.tag.isDarwin() and native_os != .haiku;
-    const filtered_sock_type = if (!have_sock_flags)
-        socket_type & ~@as(u32, SOCK.NONBLOCK | SOCK.CLOEXEC)
-    else
-        socket_type;
-    const rc = system.socket(domain, filtered_sock_type, protocol);
-    switch (errno(rc)) {
-        .SUCCESS => {
-            const fd: fd_t = @intCast(rc);
-            errdefer close(fd);
-            if (!have_sock_flags) {
-                try setSockFlags(fd, socket_type);
-            }
-            return fd;
-        },
-        .ACCES => return error.AccessDenied,
-        .AFNOSUPPORT => return error.AddressFamilyUnsupported,
-        .INVAL => return error.ProtocolFamilyNotAvailable,
-        .MFILE => return error.ProcessFdQuotaExceeded,
-        .NFILE => return error.SystemFdQuotaExceeded,
-        .NOBUFS => return error.SystemResources,
-        .NOMEM => return error.SystemResources,
-        .PROTONOSUPPORT => return error.ProtocolNotSupported,
-        .PROTOTYPE => return error.SocketTypeNotSupported,
-        else => |err| return unexpectedErrno(err),
-    }
-}
-
 pub fn socketpair(domain: u32, socket_type: u32, protocol: u32) SocketError![2]socket_t {
     // Note to the future: we could provide a shim here for e.g. windows which
     // creates a listening socket, then creates a second socket and connects it
