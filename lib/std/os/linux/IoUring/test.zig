@@ -1874,7 +1874,7 @@ test "accept_direct" {
             try testing.expect(cqe_accept.user_data == accept_userdata);
 
             // send data
-            _ = try posix.send(client, buffer_send, 0);
+            _ = try send(client, buffer_send, 0);
 
             // Example of how to use registered fd:
             // Submit receive to fixed file returned by accept (fd_index).
@@ -2722,5 +2722,13 @@ fn getsockname(sock: posix.socket_t, addr: *posix.sockaddr, addrlen: *posix.sock
     switch (posix.errno(posix.system.getsockname(sock, addr, addrlen))) {
         .SUCCESS => return,
         else => return error.GetSockNameFailure,
+    }
+}
+
+fn send(sockfd: posix.socket_t, buf: []const u8, flags: u32) !usize {
+    const rc = posix.system.sendto(sockfd, buf.ptr, buf.len, flags, null, 0);
+    switch (posix.errno(rc)) {
+        .SUCCESS => return @intCast(rc),
+        else => return error.SendFailed,
     }
 }
