@@ -1706,18 +1706,29 @@ fn getZigArgs(compile: *Compile, fuzz: bool) ![][]const u8 {
             // The args file is already present from a previous run.
         } else |err| switch (err) {
             error.FileNotFound => {
-                try b.cache_root.handle.createDirPath(io, "tmp");
-                const rand_int = std.crypto.random.int(u64);
-                const tmp_path = "tmp" ++ fs.path.sep_str ++ std.fmt.hex(rand_int);
-                try b.cache_root.handle.writeFile(io, .{ .sub_path = tmp_path, .data = args });
-                defer b.cache_root.handle.deleteFile(io, tmp_path) catch {
-                    // It's fine if the temporary file can't be cleaned up.
+                var af = b.cache_root.handle.createFileAtomic(io, args_file, .{
+                    .replace = false,
+                    .make_path = true,
+                }) catch |e| return step.fail("failed creating tmp args file {f}{s}: {t}", .{
+                    b.cache_root, args_file, e,
+                });
+                defer af.deinit(io);
+
+                af.file.writeStreamingAll(io, args) catch |e| {
+                    return step.fail("failed writing args data to tmp file {f}{s}: {t}", .{
+                        b.cache_root, args_file, e,
+                    });
                 };
-                b.cache_root.handle.rename(tmp_path, b.cache_root.handle, args_file, io) catch |rename_err| switch (rename_err) {
+                // Note we can't clean up this file, not even after build
+                // success, because that might interfere with another build
+                // process that needs the same file.
+                af.link(io) catch |e| switch (e) {
                     error.PathAlreadyExists => {
                         // The args file was created by another concurrent build process.
                     },
-                    else => |other_err| return other_err,
+                    else => |other_err| return step.fail("failed linking tmp file {f}{s}: {t}", .{
+                        b.cache_root, args_file, other_err,
+                    }),
                 };
             },
             else => |other_err| return other_err,

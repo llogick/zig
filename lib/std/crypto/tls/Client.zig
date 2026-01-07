@@ -109,7 +109,7 @@ pub const Options = struct {
     read_buffer: []u8,
     /// Cryptographically secure random bytes. The pointer is not captured; data is only
     /// read during `init`.
-    entropy: *const [176]u8,
+    entropy: *const [entropy_len]u8,
     /// Current time according to the wall clock / calendar, in seconds.
     realtime_now_seconds: i64,
 
@@ -130,6 +130,8 @@ pub const Options = struct {
     allow_truncation_attacks: bool = false,
     /// Populated when `error.TlsAlert` is returned from `init`.
     alert: ?*tls.Alert = null,
+
+    pub const entropy_len = 240;
 };
 
 const InitError = error{
@@ -200,7 +202,7 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
     var server_hello_rand: [32]u8 = undefined;
     const legacy_session_id = options.entropy[32..64].*;
 
-    var key_share = KeyShare.init(options.entropy[64..176].*) catch |err| switch (err) {
+    var key_share = KeyShare.init(options.entropy[64..240]) catch |err| switch (err) {
         // Only possible to happen if the seed is all zeroes.
         error.IdentityElement => return error.InsufficientEntropy,
     };
@@ -1330,12 +1332,12 @@ const KeyShare = struct {
         crypto.dh.X25519.shared_length,
     );
 
-    fn init(seed: [112]u8) error{IdentityElement}!KeyShare {
+    fn init(seed: *const [176]u8) error{IdentityElement}!KeyShare {
         return .{
-            .ml_kem768_kp = .generate(),
-            .secp256r1_kp = try .generateDeterministic(seed[0..32].*),
-            .secp384r1_kp = try .generateDeterministic(seed[32..80].*),
-            .x25519_kp = try .generateDeterministic(seed[80..112].*),
+            .ml_kem768_kp = try .generateDeterministic(seed[0..64].*),
+            .secp256r1_kp = try .generateDeterministic(seed[64..96].*),
+            .secp384r1_kp = try .generateDeterministic(seed[96..144].*),
+            .x25519_kp = try .generateDeterministic(seed[144..176].*),
             .sk_buf = undefined,
             .sk_len = 0,
         };

@@ -57,7 +57,7 @@ pub const ParseOptions = struct {
 
 pub const Error = Allocator.Error;
 
-pub fn parse(gpa: Allocator, ast: Ast, options: ParseOptions) Error!Manifest {
+pub fn parse(gpa: Allocator, ast: Ast, rng: std.Random, options: ParseOptions) Error!Manifest {
     const main_node_index = ast.nodeData(.root).node;
 
     var arena_instance = std.heap.ArenaAllocator.init(gpa);
@@ -87,7 +87,7 @@ pub fn parse(gpa: Allocator, ast: Ast, options: ParseOptions) Error!Manifest {
     defer p.dependencies.deinit(gpa);
     defer p.paths.deinit(gpa);
 
-    p.parseRoot(main_node_index) catch |err| switch (err) {
+    p.parseRoot(main_node_index, rng) catch |err| switch (err) {
         error.ParseFailure => assert(p.errors.items.len > 0),
         else => |e| return e,
     };
@@ -157,7 +157,7 @@ const Parse = struct {
 
     const InnerError = error{ ParseFailure, OutOfMemory };
 
-    fn parseRoot(p: *Parse, node: Ast.Node.Index) !void {
+    fn parseRoot(p: *Parse, node: Ast.Node.Index, rng: std.Random) !void {
         const ast = p.ast;
         const main_token = ast.nodeMainToken(node);
 
@@ -217,13 +217,13 @@ const Parse = struct {
             if (fingerprint) |n| {
                 if (!n.validate(p.name)) {
                     return fail(p, main_token, "invalid fingerprint: 0x{x}; if this is a new or forked package, use this value: 0x{x}", .{
-                        n.int(), Package.Fingerprint.generate(p.name).int(),
+                        n.int(), Package.Fingerprint.generate(rng, p.name).int(),
                     });
                 }
                 p.id = n.id;
             } else if (!p.allow_missing_fingerprint) {
                 try appendError(p, main_token, "missing top-level 'fingerprint' field; suggested value: 0x{x}", .{
-                    Package.Fingerprint.generate(p.name).int(),
+                    Package.Fingerprint.generate(rng, p.name).int(),
                 });
             } else {
                 p.id = 0;
@@ -623,7 +623,9 @@ test "basic" {
 
     try testing.expect(ast.errors.len == 0);
 
-    var manifest = try Manifest.parse(gpa, ast, .{});
+    var rng = std.Random.DefaultPrng.init(0);
+
+    var manifest = try Manifest.parse(gpa, ast, rng.random(), .{});
     defer manifest.deinit(gpa);
 
     try testing.expect(manifest.errors.len == 0);
@@ -666,7 +668,9 @@ test "minimum_zig_version" {
 
     try testing.expect(ast.errors.len == 0);
 
-    var manifest = try Manifest.parse(gpa, ast, .{});
+    var rng = std.Random.DefaultPrng.init(0);
+
+    var manifest = try Manifest.parse(gpa, ast, rng.random(), .{});
     defer manifest.deinit(gpa);
 
     try testing.expect(manifest.errors.len == 0);
@@ -698,7 +702,9 @@ test "minimum_zig_version - invalid version" {
 
     try testing.expect(ast.errors.len == 0);
 
-    var manifest = try Manifest.parse(gpa, ast, .{});
+    var rng = std.Random.DefaultPrng.init(0);
+
+    var manifest = try Manifest.parse(gpa, ast, rng.random(), .{});
     defer manifest.deinit(gpa);
 
     try testing.expect(manifest.errors.len == 1);

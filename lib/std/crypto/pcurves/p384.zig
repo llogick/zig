@@ -122,8 +122,8 @@ pub const P384 = struct {
     }
 
     /// Return a random point.
-    pub fn random() P384 {
-        const n = scalar.random(.little);
+    pub fn random(io: std.Io) P384 {
+        const n = scalar.random(io, .little);
         return basePoint.mul(n, .little) catch unreachable;
     }
 

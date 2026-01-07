@@ -323,10 +323,10 @@ pub fn Ecdsa(comptime Curve: type, comptime Hash: type) type {
             }
 
             /// Generate a new, random key pair.
-            pub fn generate() KeyPair {
+            pub fn generate(io: std.Io) KeyPair {
                 var random_seed: [seed_length]u8 = undefined;
                 while (true) {
-                    crypto.random.bytes(&random_seed);
+                    io.random(&random_seed);
                     return generateDeterministic(random_seed) catch {
                         @branchHint(.unlikely);
                         continue;
@@ -417,12 +417,13 @@ pub fn Ecdsa(comptime Curve: type, comptime Hash: type) type {
 test "Basic operations over EcdsaP384Sha384" {
     if (builtin.zig_backend == .stage2_c) return error.SkipZigTest;
 
+    const io = testing.io;
     const Scheme = EcdsaP384Sha384;
-    const kp = Scheme.KeyPair.generate();
+    const kp = Scheme.KeyPair.generate(io);
     const msg = "test";
 
     var noise: [Scheme.noise_length]u8 = undefined;
-    crypto.random.bytes(&noise);
+    io.random(&noise);
     const sig = try kp.sign(msg, noise);
     try sig.verify(msg, kp.public_key);
 
@@ -433,12 +434,13 @@ test "Basic operations over EcdsaP384Sha384" {
 test "Basic operations over Secp256k1" {
     if (builtin.zig_backend == .stage2_c) return error.SkipZigTest;
 
+    const io = testing.io;
     const Scheme = EcdsaSecp256k1Sha256oSha256;
-    const kp = Scheme.KeyPair.generate();
+    const kp = Scheme.KeyPair.generate(io);
     const msg = "test";
 
     var noise: [Scheme.noise_length]u8 = undefined;
-    crypto.random.bytes(&noise);
+    io.random(&noise);
     const sig = try kp.sign(msg, noise);
     try sig.verify(msg, kp.public_key);
 
@@ -449,12 +451,13 @@ test "Basic operations over Secp256k1" {
 test "Basic operations over EcdsaP384Sha256" {
     if (builtin.zig_backend == .stage2_c) return error.SkipZigTest;
 
+    const io = testing.io;
     const Scheme = Ecdsa(crypto.ecc.P384, crypto.hash.sha2.Sha256);
-    const kp = Scheme.KeyPair.generate();
+    const kp = Scheme.KeyPair.generate(io);
     const msg = "test";
 
     var noise: [Scheme.noise_length]u8 = undefined;
-    crypto.random.bytes(&noise);
+    io.random(&noise);
     const sig = try kp.sign(msg, noise);
     try sig.verify(msg, kp.public_key);
 
@@ -502,8 +505,10 @@ test "Verifying a existing signature with EcdsaP384Sha256" {
 test "Prehashed message operations" {
     if (builtin.zig_backend == .stage2_c) return error.SkipZigTest;
 
+    const io = testing.io;
+
     const Scheme = EcdsaP256Sha256;
-    const kp = Scheme.KeyPair.generate();
+    const kp = Scheme.KeyPair.generate(io);
     const msg = "test message for prehashed signing";
 
     const Hash = crypto.hash.sha2.Sha256;
@@ -518,7 +523,7 @@ test "Prehashed message operations" {
     try testing.expectError(error.SignatureVerificationFailed, sig.verifyPrehashed(bad_hash, kp.public_key));
 
     var noise: [Scheme.noise_length]u8 = undefined;
-    crypto.random.bytes(&noise);
+    io.random(&noise);
     const sig_with_noise = try kp.signPrehashed(msg_hash, noise);
     try sig_with_noise.verifyPrehashed(msg_hash, kp.public_key);
 
@@ -1628,8 +1633,9 @@ fn tvTry(comptime Scheme: type, vector: TestVector) !void {
 test "Sec1 encoding/decoding" {
     if (builtin.zig_backend == .stage2_c) return error.SkipZigTest;
 
+    const io = testing.io;
     const Scheme = EcdsaP384Sha384;
-    const kp = Scheme.KeyPair.generate();
+    const kp = Scheme.KeyPair.generate(io);
     const pk = kp.public_key;
     const pk_compressed_sec1 = pk.toCompressedSec1();
     const pk_recovered1 = try Scheme.PublicKey.fromSec1(&pk_compressed_sec1);

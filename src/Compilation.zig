@@ -2942,7 +2942,7 @@ pub fn update(comp: *Compilation, main_progress_node: std.Progress.Node) UpdateE
         .none => |none| {
             assert(none.tmp_artifact_directory == null);
             none.tmp_artifact_directory = d: {
-                tmp_dir_rand_int = std.crypto.random.int(u64);
+                io.random(@ptrCast(&tmp_dir_rand_int));
                 const tmp_dir_sub_path = "tmp" ++ fs.path.sep_str ++ std.fmt.hex(tmp_dir_rand_int);
                 const path = try comp.dirs.local_cache.join(arena, &.{tmp_dir_sub_path});
                 const handle = comp.dirs.local_cache.handle.createDirPathOpen(io, tmp_dir_sub_path, .{}) catch |err| {
@@ -3023,7 +3023,7 @@ pub fn update(comp: *Compilation, main_progress_node: std.Progress.Node) UpdateE
 
             // Compile the artifacts to a temporary directory.
             whole.tmp_artifact_directory = d: {
-                tmp_dir_rand_int = std.crypto.random.int(u64);
+                io.random(@ptrCast(&tmp_dir_rand_int));
                 const tmp_dir_sub_path = "tmp" ++ fs.path.sep_str ++ std.fmt.hex(tmp_dir_rand_int);
                 const path = try comp.dirs.local_cache.join(arena, &.{tmp_dir_sub_path});
                 const handle = comp.dirs.local_cache.handle.createDirPathOpen(io, tmp_dir_sub_path, .{}) catch |err| {
@@ -3460,7 +3460,7 @@ fn renameTmpIntoCache(
                 },
                 else => return error.AccessDenied,
             },
-            error.PathAlreadyExists => {
+            error.DirNotEmpty => {
                 try cache_directory.handle.deleteTree(io, o_sub_path);
                 continue;
             },
@@ -5759,7 +5759,11 @@ pub fn translateC(
 
     const gpa = comp.gpa;
     const io = comp.io;
-    const tmp_basename = std.fmt.hex(std.crypto.random.int(u64));
+    const tmp_basename = r: {
+        var x: u64 = undefined;
+        io.random(@ptrCast(&x));
+        break :r std.fmt.hex(x);
+    };
     const tmp_sub_path = "tmp" ++ fs.path.sep_str ++ tmp_basename;
     const cache_dir = comp.dirs.local_cache.handle;
     var cache_tmp_dir = try cache_dir.createDirPathOpen(io, tmp_sub_path, .{});
@@ -6889,8 +6893,13 @@ fn spawnZigRc(
 }
 
 pub fn tmpFilePath(comp: Compilation, ally: Allocator, suffix: []const u8) error{OutOfMemory}![]const u8 {
+    const io = comp.io;
+    const rand_int = r: {
+        var x: u64 = undefined;
+        io.random(@ptrCast(&x));
+        break :r x;
+    };
     const s = fs.path.sep_str;
-    const rand_int = std.crypto.random.int(u64);
     if (comp.dirs.local_cache.path) |p| {
         return std.fmt.allocPrint(ally, "{s}" ++ s ++ "tmp" ++ s ++ "{x}-{s}", .{ p, rand_int, suffix });
     } else {

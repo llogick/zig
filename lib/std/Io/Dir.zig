@@ -936,10 +936,9 @@ pub fn deleteDirAbsolute(io: Io, absolute_path: []const u8) DeleteDirError!void 
 pub const RenameError = error{
     /// In WASI, this error may occur when the file descriptor does
     /// not hold the required rights to rename a resource by path relative to it.
-    ///
-    /// On Windows, this error may be returned instead of PathAlreadyExists when
-    /// renaming a directory over an existing directory.
     AccessDenied,
+    /// Attempted to replace a nonempty directory.
+    DirNotEmpty,
     PermissionDenied,
     FileBusy,
     DiskQuota,
@@ -950,9 +949,8 @@ pub const RenameError = error{
     NotDir,
     SystemResources,
     NoSpaceLeft,
-    PathAlreadyExists,
     ReadOnlyFileSystem,
-    RenameAcrossMountPoints,
+    CrossDevice,
     NoDevice,
     SharingViolation,
     PipeBusy,
@@ -964,6 +962,7 @@ pub const RenameError = error{
     /// intercepts file system operations and makes them significantly slower
     /// in addition to possibly failing with this error code.
     AntivirusInterference,
+    HardwareFailure,
 } || PathNameError || Io.Cancelable || Io.UnexpectedError;
 
 /// Change the name or location of a file or directory.
@@ -973,9 +972,9 @@ pub const RenameError = error{
 /// Renaming a file over an existing directory or a directory over an existing
 /// file will fail with `error.IsDir` or `error.NotDir`
 ///
-/// On Windows, both paths should be encoded as [WTF-8](https://wtf-8.codeberg.page/).
-/// On WASI, both paths should be encoded as valid UTF-8.
-/// On other platforms, both paths are an opaque sequence of bytes with no particular encoding.
+/// * On Windows, both paths should be encoded as [WTF-8](https://wtf-8.codeberg.page/).
+/// * On WASI, both paths should be encoded as valid UTF-8.
+/// * On other platforms, both paths are an opaque sequence of bytes with no particular encoding.
 pub fn rename(
     old_dir: Dir,
     old_sub_path: []const u8,
@@ -991,6 +990,39 @@ pub fn renameAbsolute(old_path: []const u8, new_path: []const u8, io: Io) Rename
     assert(path.isAbsolute(new_path));
     const my_cwd = cwd();
     return io.vtable.dirRename(io.userdata, my_cwd, old_path, my_cwd, new_path);
+}
+
+pub const RenamePreserveError = error{
+    /// In WASI, this error may occur when the file descriptor does
+    /// not hold the required rights to rename a resource by path relative to it.
+    ///
+    /// On Windows, this error may be returned instead of PathAlreadyExists when
+    /// renaming a directory over an existing directory.
+    AccessDenied,
+    PathAlreadyExists,
+    /// Operating system or file system does not support atomic nonreplacing
+    /// rename.
+    OperationUnsupported,
+} || RenameError;
+
+/// Change the name or location of a file or directory.
+///
+/// If `new_sub_path` already exists, `error.PathAlreadyExists` will be returned.
+///
+/// Renaming a file over an existing directory or a directory over an existing
+/// file will fail with `error.IsDir` or `error.NotDir`
+///
+/// * On Windows, both paths should be encoded as [WTF-8](https://wtf-8.codeberg.page/).
+/// * On WASI, both paths should be encoded as valid UTF-8.
+/// * On other platforms, both paths are an opaque sequence of bytes with no particular encoding.
+pub fn renamePreserve(
+    old_dir: Dir,
+    old_sub_path: []const u8,
+    new_dir: Dir,
+    new_sub_path: []const u8,
+    io: Io,
+) RenamePreserveError!void {
+    return io.vtable.dirRenamePreserve(io.userdata, old_dir, old_sub_path, new_dir, new_sub_path);
 }
 
 pub const HardLinkOptions = File.HardLinkOptions;
@@ -1098,8 +1130,10 @@ pub fn symLinkAtomic(
 
     const temp_path = temp_path_buf[0..temp_path_len];
 
+    var random_integer: u64 = undefined;
+
     while (true) {
-        const random_integer = std.crypto.random.int(u64);
+        io.random(@ptrCast(&random_integer));
         temp_path[dirname.len + 1 ..][0..rand_len].* = std.fmt.hex(random_integer);
 
         if (dir.symLink(io, target_path, temp_path, flags)) {

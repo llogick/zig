@@ -564,3 +564,29 @@ test "tasks spawned in group after Group.cancel are canceled" {
     try io.sleep(.fromMilliseconds(10), .awake); // let that first sleep start up
     try group.concurrent(io, global.waitThenSpawn, .{ io, &group });
 }
+
+test "random" {
+    const io = testing.io;
+
+    var a: u64 = undefined;
+    var b: u64 = undefined;
+    var c: u64 = undefined;
+
+    io.random(@ptrCast(&a));
+    io.random(@ptrCast(&b));
+    io.random(@ptrCast(&c));
+
+    try std.testing.expect(a ^ b ^ c != 0);
+}
+
+test "randomSecure" {
+    const io = testing.io;
+
+    var buf_a: [50]u8 = undefined;
+    var buf_b: [50]u8 = undefined;
+    try io.randomSecure(&buf_a);
+    try io.randomSecure(&buf_b);
+    // If this test fails the chance is significantly higher that there is a bug than
+    // that two sets of 50 bytes were equal.
+    try expect(!mem.eql(u8, &buf_a, &buf_b));
+}

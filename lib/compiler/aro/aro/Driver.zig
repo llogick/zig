@@ -1217,11 +1217,12 @@ pub fn getDepFileName(d: *Driver, source: Source, buf: *[std.fs.max_name_bytes]u
 }
 
 fn getRandomFilename(d: *Driver, buf: *[std.fs.max_name_bytes]u8, extension: []const u8) ![]const u8 {
+    const io = d.comp.io;
     const random_bytes_count = 12;
     const sub_path_len = comptime std.fs.base64_encoder.calcSize(random_bytes_count);
 
     var random_bytes: [random_bytes_count]u8 = undefined;
-    std.crypto.random.bytes(&random_bytes);
+    io.random(&random_bytes);
     var random_name: [sub_path_len]u8 = undefined;
     _ = std.fs.base64_encoder.encode(&random_name, &random_bytes);
 

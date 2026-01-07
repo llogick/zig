@@ -5,6 +5,7 @@ const Allocator = std.mem.Allocator;
 
 pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
+    const io = init.io;
     const args = try init.minimal.args.toSlice(init.arena.allocator());
 
     if (args.len < 2) return error.MissingArgs;
@@ -23,7 +24,7 @@ pub fn main(init: std.process.Init) !void {
         if (args.len < 4) {
             rand_seed = true;
             var buf: [8]u8 = undefined;
-            try std.posix.getrandom(&buf);
+            io.random(&buf);
             break :seed std.mem.readInt(u64, &buf, builtin.cpu.arch.endian());
         }
         break :seed try std.fmt.parseUnsigned(u64, args[3], 10);

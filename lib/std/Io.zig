@@ -676,6 +676,7 @@ pub const VTable = struct {
     dirDeleteFile: *const fn (?*anyopaque, Dir, []const u8) Dir.DeleteFileError!void,
     dirDeleteDir: *const fn (?*anyopaque, Dir, []const u8) Dir.DeleteDirError!void,
     dirRename: *const fn (?*anyopaque, old_dir: Dir, old_sub_path: []const u8, new_dir: Dir, new_sub_path: []const u8) Dir.RenameError!void,
+    dirRenamePreserve: *const fn (?*anyopaque, old_dir: Dir, old_sub_path: []const u8, new_dir: Dir, new_sub_path: []const u8) Dir.RenamePreserveError!void,
     dirSymLink: *const fn (?*anyopaque, Dir, target_path: []const u8, sym_link_path: []const u8, Dir.SymLinkFlags) Dir.SymLinkError!void,
     dirReadLink: *const fn (?*anyopaque, Dir, sub_path: []const u8, buffer: []u8) Dir.ReadLinkError!usize,
     dirSetOwner: *const fn (?*anyopaque, Dir, ?File.Uid, ?File.Gid) Dir.SetOwnerError!void,
@@ -730,6 +731,9 @@ pub const VTable = struct {
 
     now: *const fn (?*anyopaque, Clock) Clock.Error!Timestamp,
     sleep: *const fn (?*anyopaque, Timeout) SleepError!void,
+
+    random: *const fn (?*anyopaque, buffer: []u8) void,
+    randomSecure: *const fn (?*anyopaque, buffer: []u8) RandomSecureError!void,
 
     netListenIp: *const fn (?*anyopaque, address: net.IpAddress, net.IpAddress.ListenOptions) net.IpAddress.ListenError!net.Server,
     netAccept: *const fn (?*anyopaque, server: net.Socket.Handle) net.Server.AcceptError!net.Stream,
@@ -2241,4 +2245,37 @@ pub fn tryLockStderr(io: Io, buffer: []u8, terminal_mode: ?Terminal.Mode) Cancel
 
 pub fn unlockStderr(io: Io) void {
     return io.vtable.unlockStderr(io.userdata);
+}
+
+/// Obtains entropy from a cryptographically secure pseudo-random number
+/// generator.
+///
+/// The implementation *may* store RNG state in process memory and use it to
+/// fill `buffer`.
+///
+/// The randomness is seeded by `randomSecure`, or a less secure mechanism upon
+/// failure.
+///
+/// Threadsafe.
+///
+/// See also `randomSecure`.
+pub fn random(io: Io, buffer: []u8) void {
+    return io.vtable.random(io.userdata, buffer);
+}
+
+pub const RandomSecureError = error{EntropyUnavailable} || Cancelable;
+
+/// Obtains cryptographically secure entropy from outside the process.
+///
+/// Always makes a syscall, or otherwise avoids dependency on process memory,
+/// in order to obtain fresh randomness. Does not rely on stored RNG state.
+///
+/// Does not have any fallback mechanisms; returns `error.EntropyUnavailable`
+/// if any problems occur.
+///
+/// Threadsafe.
+///
+/// See also `random`.
+pub fn randomSecure(io: Io, buffer: []u8) RandomSecureError!void {
+    return io.vtable.randomSecure(io.userdata, buffer);
 }

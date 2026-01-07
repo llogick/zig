@@ -293,7 +293,8 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
         .tmp => {
             step.result_cached = false;
 
-            const rand_int = std.crypto.random.int(u64);
+            var rand_int: u64 = undefined;
+            io.random(@ptrCast(&rand_int));
             const tmp_dir_sub_path = "tmp" ++ Dir.path.sep_str ++ std.fmt.hex(rand_int);
 
             write_file.generated_directory.path = try b.cache_root.join(arena, &.{tmp_dir_sub_path});

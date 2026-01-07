@@ -100,7 +100,7 @@ pub fn main(init: std.process.Init) !void {
     const prog_node = std.Progress.start(io, .{});
     defer prog_node.end();
 
-    const rand_int = std.crypto.random.int(u64);
+    const rand_int = rand64(io);
     const tmp_dir_path = "tmp_" ++ std.fmt.hex(rand_int);
     var tmp_dir = try Dir.cwd().createDirPathOpen(io, tmp_dir_path, .{});
     defer {
@@ -452,19 +452,18 @@ const Eval = struct {
             std.debug.assert(eval.target.backend == .sema);
             return;
         };
+        const io = eval.io;
 
         const binary_path = switch (eval.target.backend) {
             .sema => unreachable,
             .selfhosted, .llvm => emitted_path,
             .cbe => bin: {
-                const rand_int = std.crypto.random.int(u64);
+                const rand_int = rand64(io);
                 const out_bin_name = "./out_" ++ std.fmt.hex(rand_int);
                 try eval.buildCOutput(emitted_path, out_bin_name, prog_node);
                 break :bin out_bin_name;
             },
         };
-
-        const io = eval.io;
 
         var argv_buf: [2][]const u8 = undefined;
         const argv: []const []const u8, const is_foreign: bool = sw: switch (std.zig.system.getExternalExecutor(
@@ -956,4 +955,10 @@ fn parseExpectedError(str: []const u8, l: usize) Case.ExpectedError {
         .column = column,
         .msg = message,
     };
+}
+
+fn rand64(io: Io) u64 {
+    var x: u64 = undefined;
+    io.random(@ptrCast(&x));
+    return x;
 }

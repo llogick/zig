@@ -65,6 +65,22 @@ argv0: Argv0,
 environ: Environ,
 
 null_file: NullFile = .{},
+random_file: RandomFile = .{},
+
+csprng: Csprng = .{},
+
+pub const Csprng = struct {
+    rng: std.Random.DefaultCsprng = .{
+        .state = undefined,
+        .offset = std.math.maxInt(usize),
+    },
+
+    pub const seed_len = std.Random.DefaultCsprng.secret_seed_length;
+
+    pub fn isInitialized(c: *const Csprng) bool {
+        return c.rng.offset != std.math.maxInt(usize);
+    }
+};
 
 pub const Argv0 = switch (native_os) {
     .openbsd, .haiku => struct {
@@ -147,6 +163,15 @@ pub const NullFile = switch (native_os) {
                 posix.close(this.fd);
                 this.fd = -1;
             }
+        }
+    },
+};
+
+pub const RandomFile = switch (native_os) {
+    .windows => NullFile,
+    else => if (use_dev_urandom) NullFile else struct {
+        fn deinit(this: @This()) void {
+            _ = this;
         }
     },
 };
@@ -584,6 +609,8 @@ const Thread = struct {
     cancel_protection: Io.CancelProtection,
     /// Always released when `Status.cancelation` is set to `.parked`.
     futex_waiter: if (use_parking_futex) ?*parking_futex.Waiter else ?noreturn,
+
+    csprng: Csprng,
 
     const Handle = Handle: {
         if (std.Thread.use_pthreads) break :Handle std.c.pthread_t;
@@ -1285,6 +1312,7 @@ pub fn deinit(t: *Threaded) void {
         if (have_sig_pipe) posix.sigaction(.PIPE, &t.old_sig_pipe, null);
     }
     t.null_file.deinit();
+    t.random_file.deinit();
     t.* = undefined;
 }
 
@@ -1313,6 +1341,7 @@ fn worker(t: *Threaded) void {
         }),
         .cancel_protection = .unblocked,
         .futex_waiter = undefined,
+        .csprng = .{},
     };
     Thread.current = &thread;
 
@@ -1413,6 +1442,7 @@ pub fn io(t: *Threaded) Io {
             .dirDeleteFile = dirDeleteFile,
             .dirDeleteDir = dirDeleteDir,
             .dirRename = dirRename,
+            .dirRenamePreserve = dirRenamePreserve,
             .dirSymLink = dirSymLink,
             .dirReadLink = dirReadLink,
             .dirSetOwner = dirSetOwner,
@@ -1465,6 +1495,9 @@ pub fn io(t: *Threaded) Io {
 
             .now = now,
             .sleep = sleep,
+
+            .random = random,
+            .randomSecure = randomSecure,
 
             .netListenIp = switch (native_os) {
                 .windows => netListenIpWindows,
@@ -1561,6 +1594,7 @@ pub fn ioBasic(t: *Threaded) Io {
             .dirDeleteFile = dirDeleteFile,
             .dirDeleteDir = dirDeleteDir,
             .dirRename = dirRename,
+            .dirRenamePreserve = dirRenamePreserve,
             .dirSymLink = dirSymLink,
             .dirReadLink = dirReadLink,
             .dirSetOwner = dirSetOwner,
@@ -1613,6 +1647,9 @@ pub fn ioBasic(t: *Threaded) Io {
 
             .now = now,
             .sleep = sleep,
+
+            .random = random,
+            .randomSecure = randomSecure,
 
             .netListenIp = netListenIpUnavailable,
             .netListenUnix = netListenUnixUnavailable,
@@ -1703,6 +1740,23 @@ const linux_copy_file_range_use_c = std.c.versionCheck(if (builtin.abi.isAndroid
     .patch = 0,
 });
 const linux_copy_file_range_sys = if (linux_copy_file_range_use_c) std.c else std.os.linux;
+
+const statx_use_c = std.c.versionCheck(if (builtin.abi.isAndroid())
+    .{ .major = 30, .minor = 0, .patch = 0 }
+else
+    .{ .major = 2, .minor = 28, .patch = 0 });
+
+const use_libc_getrandom = std.c.versionCheck(if (builtin.abi.isAndroid()) .{
+    .major = 28,
+    .minor = 0,
+    .patch = 0,
+} else .{
+    .major = 2,
+    .minor = 25,
+    .patch = 0,
+});
+
+const use_dev_urandom = @TypeOf(posix.system.getrandom) == void and native_os == .linux;
 
 fn async(
     userdata: ?*anyopaque,
@@ -2342,11 +2396,11 @@ fn dirCreateDirPath(
             status = .created;
         } else |err| switch (err) {
             error.PathAlreadyExists => {
-                // stat the file and return an error if it's not a directory
-                // this is important because otherwise a dangling symlink
-                // could cause an infinite loop
-                const fstat = try dirStatFile(t, dir, component.path, .{});
-                if (fstat.kind != .directory) return error.NotDir;
+                // It is important to return an error if it's not a directory
+                // because otherwise a dangling symlink could cause an infinite
+                // loop.
+                const kind = try filePathKind(t, dir, component.path);
+                if (kind != .directory) return error.NotDir;
             },
             error.FileNotFound => |e| {
                 component = it.previous() orelse return e;
@@ -2538,11 +2592,7 @@ fn dirStatFileLinux(
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     _ = t;
     const linux = std.os.linux;
-    const use_c = std.c.versionCheck(if (builtin.abi.isAndroid())
-        .{ .major = 30, .minor = 0, .patch = 0 }
-    else
-        .{ .major = 2, .minor = 28, .patch = 0 });
-    const sys = if (use_c) std.c else std.os.linux;
+    const sys = if (statx_use_c) std.c else std.os.linux;
 
     var path_buffer: [posix.PATH_MAX]u8 = undefined;
     const sub_path_posix = try pathToPosix(sub_path, &path_buffer);
@@ -2691,6 +2741,35 @@ fn dirStatFileWasi(
     }
 }
 
+fn filePathKind(t: *Threaded, dir: Dir, sub_path: []const u8) !File.Kind {
+    if (native_os == .linux) {
+        var path_buffer: [posix.PATH_MAX]u8 = undefined;
+        const sub_path_posix = try pathToPosix(sub_path, &path_buffer);
+
+        const linux = std.os.linux;
+        const syscall: Syscall = try .start();
+        while (true) {
+            var statx = std.mem.zeroes(linux.Statx);
+            switch (linux.errno(linux.statx(dir.handle, sub_path_posix, 0, .{ .TYPE = true }, &statx))) {
+                .SUCCESS => {
+                    syscall.finish();
+                    if (!statx.mask.TYPE) return error.Unexpected;
+                    return statxKind(statx.mode);
+                },
+                .INTR => {
+                    try syscall.checkCancel();
+                    continue;
+                },
+                .NOMEM => return syscall.fail(error.SystemResources),
+                else => |err| return syscall.unexpectedErrno(err),
+            }
+        }
+    }
+
+    const stat = try dirStatFile(t, dir, sub_path, .{});
+    return stat.kind;
+}
+
 fn fileLength(userdata: ?*anyopaque, file: File) File.LengthError!u64 {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
 
@@ -2778,11 +2857,7 @@ fn fileStatLinux(userdata: ?*anyopaque, file: File) File.StatError!File.Stat {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     _ = t;
     const linux = std.os.linux;
-    const use_c = std.c.versionCheck(if (builtin.abi.isAndroid())
-        .{ .major = 30, .minor = 0, .patch = 0 }
-    else
-        .{ .major = 2, .minor = 28, .patch = 0 });
-    const sys = if (use_c) std.c else std.os.linux;
+    const sys = if (statx_use_c) std.c else std.os.linux;
 
     const syscall: Syscall = try .start();
     while (true) {
@@ -3450,7 +3525,7 @@ fn dirCreateFileAtomic(
         if (dest_dirname) |dirname| {
             // This has a nice side effect of preemptively triggering EISDIR or
             // ENOENT, avoiding the ambiguity below.
-            dir.createDirPath(t_io, dirname) catch |err| switch (err) {
+            if (options.make_path) dir.createDirPath(t_io, dirname) catch |err| switch (err) {
                 // None of these make sense in this context.
                 error.IsDir,
                 error.Streaming,
@@ -3553,8 +3628,9 @@ fn atomicFileInit(
     dir: Dir,
     close_dir_on_deinit: bool,
 ) Dir.CreateFileAtomicError!File.Atomic {
+    var random_integer: u64 = undefined;
     while (true) {
-        const random_integer = std.crypto.random.int(u64);
+        t_io.random(@ptrCast(&random_integer));
         const tmp_sub_path = std.fmt.hex(random_integer);
         const file = dir.createFile(t_io, &tmp_sub_path, .{
             .permissions = permissions,
@@ -3636,10 +3712,12 @@ fn dirOpenFilePosix(
         },
     };
 
+    const mode: posix.mode_t = 0;
+
     const fd: posix.fd_t = fd: {
         const syscall: Syscall = try .start();
         while (true) {
-            const rc = openat_sym(dir.handle, sub_path_posix, os_flags, @as(posix.mode_t, 0));
+            const rc = openat_sym(dir.handle, sub_path_posix, os_flags, mode);
             switch (posix.errno(rc)) {
                 .SUCCESS => {
                     syscall.finish();
@@ -4068,9 +4146,11 @@ fn dirOpenDirPosix(
     if (@hasField(posix.O, "PATH") and !options.iterate)
         flags.PATH = true;
 
+    const mode: posix.mode_t = 0;
+
     const syscall: Syscall = try .start();
     while (true) {
-        const rc = openat_sym(dir.handle, sub_path_posix, flags, @as(usize, 0));
+        const rc = openat_sym(dir.handle, sub_path_posix, flags, mode);
         switch (posix.errno(rc)) {
             .SUCCESS => {
                 syscall.finish();
@@ -5169,12 +5249,21 @@ fn fileHardLink(
     var new_path_buffer: [posix.PATH_MAX]u8 = undefined;
     const new_sub_path_posix = try pathToPosix(new_sub_path, &new_path_buffer);
 
-    const flags: u32 = if (!options.follow_symlinks)
-        posix.AT.SYMLINK_NOFOLLOW | posix.AT.EMPTY_PATH
+    const flags: u32 = if (options.follow_symlinks)
+        posix.AT.SYMLINK_FOLLOW | posix.AT.EMPTY_PATH
     else
         posix.AT.EMPTY_PATH;
 
-    return linkat(file.handle, "", new_dir.handle, new_sub_path_posix, flags);
+    return linkat(file.handle, "", new_dir.handle, new_sub_path_posix, flags) catch |err| switch (err) {
+        error.FileNotFound => {
+            if (options.follow_symlinks) return error.FileNotFound;
+            var proc_buf: ["/proc/self/fd/-2147483648\x00".len]u8 = undefined;
+            const proc_path = std.fmt.bufPrintSentinel(&proc_buf, "/proc/self/fd/{d}", .{file.handle}, 0) catch
+                unreachable;
+            return linkat(posix.AT.FDCWD, proc_path, new_dir.handle, new_sub_path_posix, posix.AT.SYMLINK_FOLLOW);
+        },
+        else => |e| return e,
+    };
 }
 
 fn linkat(
@@ -5205,7 +5294,7 @@ fn linkat(
             .NOTDIR => return syscall.fail(error.NotDir),
             .PERM => return syscall.fail(error.PermissionDenied),
             .ROFS => return syscall.fail(error.ReadOnlyFileSystem),
-            .XDEV => return syscall.fail(error.NotSameFileSystem),
+            .XDEV => return syscall.fail(error.CrossDevice),
             .ILSEQ => return syscall.fail(error.BadPathName),
             .FAULT => |err| return syscall.errnoBug(err),
             .INVAL => |err| return syscall.errnoBug(err),
@@ -5614,15 +5703,44 @@ fn dirRenameWindows(
     new_dir: Dir,
     new_sub_path: []const u8,
 ) Dir.RenameError!void {
-    const w = windows;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     _ = t;
+    return dirRenameWindowsInner(old_dir, old_sub_path, new_dir, new_sub_path, true) catch |err| switch (err) {
+        error.PathAlreadyExists => return error.Unexpected,
+        error.OperationUnsupported => return error.Unexpected,
+        else => |e| return e,
+    };
+}
 
+fn dirRenamePreserve(
+    userdata: ?*anyopaque,
+    old_dir: Dir,
+    old_sub_path: []const u8,
+    new_dir: Dir,
+    new_sub_path: []const u8,
+) Dir.RenamePreserveError!void {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    if (is_windows) return dirRenameWindowsInner(old_dir, old_sub_path, new_dir, new_sub_path, false);
+    if (native_os == .linux) return dirRenamePreserveLinux(old_dir, old_sub_path, new_dir, new_sub_path);
+    // Make a hard link then delete the original.
+    try dirHardLink(t, old_dir, old_sub_path, new_dir, new_sub_path, .{ .follow_symlinks = false });
+    const prev = swapCancelProtection(t, .blocked);
+    defer _ = swapCancelProtection(t, prev);
+    dirDeleteFile(t, old_dir, old_sub_path) catch {};
+}
+
+fn dirRenameWindowsInner(
+    old_dir: Dir,
+    old_sub_path: []const u8,
+    new_dir: Dir,
+    new_sub_path: []const u8,
+    replace_if_exists: bool,
+) Dir.RenamePreserveError!void {
+    const w = windows;
     const old_path_w_buf = try windows.sliceToPrefixedFileW(old_dir.handle, old_sub_path);
     const old_path_w = old_path_w_buf.span();
     const new_path_w_buf = try windows.sliceToPrefixedFileW(new_dir.handle, new_sub_path);
     const new_path_w = new_path_w_buf.span();
-    const replace_if_exists = true;
 
     const src_fd = src_fd: {
         const syscall: Syscall = try .start();
@@ -5724,9 +5842,9 @@ fn dirRenameWindows(
         .ACCESS_DENIED => return error.AccessDenied,
         .OBJECT_NAME_NOT_FOUND => return error.FileNotFound,
         .OBJECT_PATH_NOT_FOUND => return error.FileNotFound,
-        .NOT_SAME_DEVICE => return error.RenameAcrossMountPoints,
+        .NOT_SAME_DEVICE => return error.CrossDevice,
         .OBJECT_NAME_COLLISION => return error.PathAlreadyExists,
-        .DIRECTORY_NOT_EMPTY => return error.PathAlreadyExists,
+        .DIRECTORY_NOT_EMPTY => return error.DirNotEmpty,
         .FILE_IS_A_DIRECTORY => return error.IsDir,
         .NOT_A_DIRECTORY => return error.NotDir,
         else => return w.unexpectedStatus(rc),
@@ -5770,10 +5888,10 @@ fn dirRenameWasi(
                     .NOTDIR => return error.NotDir,
                     .NOMEM => return error.SystemResources,
                     .NOSPC => return error.NoSpaceLeft,
-                    .EXIST => return error.PathAlreadyExists,
-                    .NOTEMPTY => return error.PathAlreadyExists,
+                    .EXIST => return error.DirNotEmpty,
+                    .NOTEMPTY => return error.DirNotEmpty,
                     .ROFS => return error.ReadOnlyFileSystem,
-                    .XDEV => return error.RenameAcrossMountPoints,
+                    .XDEV => return error.CrossDevice,
                     .NOTCAPABLE => return error.AccessDenied,
                     .ILSEQ => return error.BadPathName,
                     else => |err| return posix.unexpectedErrno(err),
@@ -5799,9 +5917,105 @@ fn dirRenamePosix(
     const old_sub_path_posix = try pathToPosix(old_sub_path, &old_path_buffer);
     const new_sub_path_posix = try pathToPosix(new_sub_path, &new_path_buffer);
 
+    return renameat(old_dir.handle, old_sub_path_posix, new_dir.handle, new_sub_path_posix);
+}
+
+fn dirRenamePreserveLinux(
+    old_dir: Dir,
+    old_sub_path: []const u8,
+    new_dir: Dir,
+    new_sub_path: []const u8,
+) Dir.RenamePreserveError!void {
+    const linux = std.os.linux;
+
+    var old_path_buffer: [linux.PATH_MAX]u8 = undefined;
+    var new_path_buffer: [linux.PATH_MAX]u8 = undefined;
+
+    const old_sub_path_posix = try pathToPosix(old_sub_path, &old_path_buffer);
+    const new_sub_path_posix = try pathToPosix(new_sub_path, &new_path_buffer);
+
+    const syscall: Syscall = try .start();
+    while (true) switch (linux.errno(linux.renameat2(
+        old_dir.handle,
+        old_sub_path_posix,
+        new_dir.handle,
+        new_sub_path_posix,
+        .{ .NOREPLACE = true },
+    ))) {
+        .SUCCESS => return syscall.finish(),
+        .INTR => {
+            try syscall.checkCancel();
+            continue;
+        },
+        .ACCES => return syscall.fail(error.AccessDenied),
+        .PERM => return syscall.fail(error.PermissionDenied),
+        .BUSY => return syscall.fail(error.FileBusy),
+        .DQUOT => return syscall.fail(error.DiskQuota),
+        .ISDIR => return syscall.fail(error.IsDir),
+        .LOOP => return syscall.fail(error.SymLinkLoop),
+        .MLINK => return syscall.fail(error.LinkQuotaExceeded),
+        .NAMETOOLONG => return syscall.fail(error.NameTooLong),
+        .NOENT => return syscall.fail(error.FileNotFound),
+        .NOTDIR => return syscall.fail(error.NotDir),
+        .NOMEM => return syscall.fail(error.SystemResources),
+        .NOSPC => return syscall.fail(error.NoSpaceLeft),
+        .EXIST => return syscall.fail(error.PathAlreadyExists),
+        .NOTEMPTY => return syscall.fail(error.DirNotEmpty),
+        .ROFS => return syscall.fail(error.ReadOnlyFileSystem),
+        .XDEV => return syscall.fail(error.CrossDevice),
+        .ILSEQ => return syscall.fail(error.BadPathName),
+        .FAULT => |err| return syscall.errnoBug(err),
+        .INVAL => |err| return syscall.errnoBug(err),
+        else => |err| return syscall.unexpectedErrno(err),
+    };
+}
+
+fn renameat(
+    old_dir: posix.fd_t,
+    old_sub_path: [*:0]const u8,
+    new_dir: posix.fd_t,
+    new_sub_path: [*:0]const u8,
+) Dir.RenameError!void {
+    const syscall: Syscall = try .start();
+    while (true) switch (posix.errno(posix.system.renameat(old_dir, old_sub_path, new_dir, new_sub_path))) {
+        .SUCCESS => return syscall.finish(),
+        .INTR => {
+            try syscall.checkCancel();
+            continue;
+        },
+        .ACCES => return syscall.fail(error.AccessDenied),
+        .PERM => return syscall.fail(error.PermissionDenied),
+        .BUSY => return syscall.fail(error.FileBusy),
+        .DQUOT => return syscall.fail(error.DiskQuota),
+        .ISDIR => return syscall.fail(error.IsDir),
+        .IO => return syscall.fail(error.HardwareFailure),
+        .LOOP => return syscall.fail(error.SymLinkLoop),
+        .MLINK => return syscall.fail(error.LinkQuotaExceeded),
+        .NAMETOOLONG => return syscall.fail(error.NameTooLong),
+        .NOENT => return syscall.fail(error.FileNotFound),
+        .NOTDIR => return syscall.fail(error.NotDir),
+        .NOMEM => return syscall.fail(error.SystemResources),
+        .NOSPC => return syscall.fail(error.NoSpaceLeft),
+        .EXIST => return syscall.fail(error.DirNotEmpty),
+        .NOTEMPTY => return syscall.fail(error.DirNotEmpty),
+        .ROFS => return syscall.fail(error.ReadOnlyFileSystem),
+        .XDEV => return syscall.fail(error.CrossDevice),
+        .ILSEQ => return syscall.fail(error.BadPathName),
+        .FAULT => |err| return syscall.errnoBug(err),
+        .INVAL => |err| return syscall.errnoBug(err),
+        else => |err| return syscall.unexpectedErrno(err),
+    };
+}
+
+fn renameatPreserve(
+    old_dir: posix.fd_t,
+    old_sub_path: [*:0]const u8,
+    new_dir: posix.fd_t,
+    new_sub_path: [*:0]const u8,
+) Dir.RenameError!void {
     const syscall: Syscall = try .start();
     while (true) {
-        switch (posix.errno(posix.system.renameat(old_dir.handle, old_sub_path_posix, new_dir.handle, new_sub_path_posix))) {
+        switch (posix.errno(posix.system.renameat(old_dir, old_sub_path, new_dir, new_sub_path))) {
             .SUCCESS => return syscall.finish(),
             .INTR => {
                 try syscall.checkCancel();
@@ -5827,7 +6041,7 @@ fn dirRenamePosix(
                     .EXIST => return error.PathAlreadyExists,
                     .NOTEMPTY => return error.PathAlreadyExists,
                     .ROFS => return error.ReadOnlyFileSystem,
-                    .XDEV => return error.RenameAcrossMountPoints,
+                    .XDEV => return error.CrossDevice,
                     .ILSEQ => return error.BadPathName,
                     else => |err| return posix.unexpectedErrno(err),
                 }
@@ -6318,11 +6532,6 @@ fn fchmodatFallback(
     mode: posix.mode_t,
 ) Dir.SetFilePermissionsError!void {
     comptime assert(native_os == .linux);
-    const use_c = std.c.versionCheck(if (builtin.abi.isAndroid())
-        .{ .major = 30, .minor = 0, .patch = 0 }
-    else
-        .{ .major = 2, .minor = 28, .patch = 0 });
-    const sys = if (use_c) std.c else std.os.linux;
 
     // Fallback to changing permissions using procfs:
     //
@@ -6369,6 +6578,7 @@ fn fchmodatFallback(
     defer posix.close(path_fd);
 
     const path_mode = mode: {
+        const sys = if (statx_use_c) std.c else std.os.linux;
         const syscall: Syscall = try .start();
         while (true) {
             var statx = std.mem.zeroes(std.os.linux.Statx);
@@ -7612,7 +7822,7 @@ fn dirHardLink(
                         .NOTDIR => return error.NotDir,
                         .PERM => return error.PermissionDenied,
                         .ROFS => return error.ReadOnlyFileSystem,
-                        .XDEV => return error.NotSameFileSystem,
+                        .XDEV => return error.CrossDevice,
                         .INVAL => |err| return errnoBug(err),
                         .ILSEQ => return error.BadPathName,
                         else => |err| return posix.unexpectedErrno(err),
@@ -7628,7 +7838,7 @@ fn dirHardLink(
     const old_sub_path_posix = try pathToPosix(old_sub_path, &old_path_buffer);
     const new_sub_path_posix = try pathToPosix(new_sub_path, &new_path_buffer);
 
-    const flags: u32 = if (!options.follow_symlinks) posix.AT.SYMLINK_NOFOLLOW else 0;
+    const flags: u32 = if (options.follow_symlinks) posix.AT.SYMLINK_FOLLOW else 0;
     return linkat(old_dir.handle, old_sub_path_posix, new_dir.handle, new_sub_path_posix, flags);
 }
 
@@ -12268,21 +12478,25 @@ fn statFromLinux(stx: *const std.os.linux.Statx) Io.UnexpectedError!File.Stat {
         .nlink = stx.nlink,
         .size = stx.size,
         .permissions = .fromMode(stx.mode),
-        .kind = switch (stx.mode & std.os.linux.S.IFMT) {
-            std.os.linux.S.IFDIR => .directory,
-            std.os.linux.S.IFCHR => .character_device,
-            std.os.linux.S.IFBLK => .block_device,
-            std.os.linux.S.IFREG => .file,
-            std.os.linux.S.IFIFO => .named_pipe,
-            std.os.linux.S.IFLNK => .sym_link,
-            std.os.linux.S.IFSOCK => .unix_domain_socket,
-            else => .unknown,
-        },
+        .kind = statxKind(stx.mode),
         .atime = if (!stx.mask.ATIME) null else .{
             .nanoseconds = @intCast(@as(i128, stx.atime.sec) * std.time.ns_per_s + stx.atime.nsec),
         },
         .mtime = .{ .nanoseconds = @intCast(@as(i128, stx.mtime.sec) * std.time.ns_per_s + stx.mtime.nsec) },
         .ctime = .{ .nanoseconds = @intCast(@as(i128, stx.ctime.sec) * std.time.ns_per_s + stx.ctime.nsec) },
+    };
+}
+
+fn statxKind(stx_mode: u16) File.Kind {
+    return switch (stx_mode & std.os.linux.S.IFMT) {
+        std.os.linux.S.IFDIR => .directory,
+        std.os.linux.S.IFCHR => .character_device,
+        std.os.linux.S.IFBLK => .block_device,
+        std.os.linux.S.IFREG => .file,
+        std.os.linux.S.IFIFO => .named_pipe,
+        std.os.linux.S.IFLNK => .sym_link,
+        std.os.linux.S.IFSOCK => .unix_domain_socket,
+        else => .unknown,
     };
 }
 
@@ -12441,7 +12655,8 @@ fn lookupDns(
 
     for (family_records) |fr| {
         if (options.family != fr.af) {
-            const entropy = std.crypto.random.array(u8, 2);
+            var entropy: [2]u8 = undefined;
+            random(t, &entropy);
             const len = writeResolutionQuery(&query_buffers[nq], 0, lookup_canon_name, 1, fr.rr, entropy);
             queries_buffer[nq] = query_buffers[nq][0..len];
             nq += 1;
@@ -13853,6 +14068,62 @@ fn processSpawnWindows(userdata: ?*anyopaque, options: process.SpawnOptions) pro
     };
 }
 
+fn getCngHandle(t: *Threaded) Io.RandomSecureError!windows.HANDLE {
+    {
+        t.mutex.lock();
+        defer t.mutex.unlock();
+        if (t.random_file.handle) |handle| return handle;
+    }
+
+    const device_path = [_]u16{ '\\', 'D', 'e', 'v', 'i', 'c', 'e', '\\', 'C', 'N', 'G' };
+
+    var nt_name: windows.UNICODE_STRING = .{
+        .Length = device_path.len * 2,
+        .MaximumLength = 0,
+        .Buffer = @constCast(&device_path),
+    };
+    var fresh_handle: windows.HANDLE = undefined;
+    var io_status_block: windows.IO_STATUS_BLOCK = undefined;
+    var syscall: Syscall = try .start();
+    while (true) switch (windows.ntdll.NtOpenFile(
+        &fresh_handle,
+        .{
+            .STANDARD = .{ .SYNCHRONIZE = true },
+            .SPECIFIC = .{ .FILE = .{ .READ_DATA = true } },
+        },
+        &.{
+            .Length = @sizeOf(windows.OBJECT_ATTRIBUTES),
+            .RootDirectory = null,
+            .ObjectName = &nt_name,
+            .Attributes = .{},
+            .SecurityDescriptor = null,
+            .SecurityQualityOfService = null,
+        },
+        &io_status_block,
+        .VALID_FLAGS,
+        .{ .IO = .SYNCHRONOUS_NONALERT },
+    )) {
+        .SUCCESS => {
+            syscall.finish();
+            t.mutex.lock(); // Another thread might have won the race.
+            defer t.mutex.unlock();
+            if (t.random_file.handle) |prev_handle| {
+                _ = windows.ntdll.NtClose(fresh_handle);
+                return prev_handle;
+            } else {
+                t.random_file.handle = fresh_handle;
+                return fresh_handle;
+            }
+        },
+        .CANCELLED => {
+            try syscall.checkCancel();
+            continue;
+        },
+        .OBJECT_NAME_NOT_FOUND => return syscall.fail(error.EntropyUnavailable), // Observed on wine 10.0
+        else => return syscall.fail(error.EntropyUnavailable),
+    };
+}
+
 fn getNulHandle(t: *Threaded) !windows.HANDLE {
     {
         t.mutex.lock();
@@ -14933,6 +15204,305 @@ fn progressParentFile(userdata: ?*anyopaque) std.Progress.ParentFileError!File {
 pub fn environString(t: *Threaded, comptime name: []const u8) ?[:0]const u8 {
     t.scanEnviron();
     return @field(t.environ.string, name);
+}
+
+fn random(userdata: ?*anyopaque, buffer: []u8) void {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const thread = Thread.current orelse return randomMainThread(t, buffer);
+    if (!thread.csprng.isInitialized()) {
+        @branchHint(.unlikely);
+        var seed: [Csprng.seed_len]u8 = undefined;
+        randomMainThread(t, &seed);
+        thread.csprng.rng = .init(seed);
+    }
+    thread.csprng.rng.fill(buffer);
+}
+
+fn randomMainThread(t: *Threaded, buffer: []u8) void {
+    t.mutex.lock();
+    defer t.mutex.unlock();
+
+    if (!t.csprng.isInitialized()) {
+        @branchHint(.unlikely);
+        var seed: [Csprng.seed_len]u8 = undefined;
+        {
+            t.mutex.unlock();
+            defer t.mutex.lock();
+
+            const prev = swapCancelProtection(t, .blocked);
+            defer _ = swapCancelProtection(t, prev);
+
+            randomSecure(t, &seed) catch |err| switch (err) {
+                error.Canceled => unreachable,
+                error.EntropyUnavailable => {
+                    @memset(&seed, 0);
+                    const aslr_addr = @intFromPtr(t);
+                    std.mem.writeInt(usize, seed[seed.len - @sizeOf(usize) ..][0..@sizeOf(usize)], aslr_addr, .native);
+                    switch (native_os) {
+                        .windows => fallbackSeedWindows(&seed),
+                        .wasi => if (builtin.link_libc) fallbackSeedPosix(&seed) else fallbackSeedWasi(&seed),
+                        else => fallbackSeedPosix(&seed),
+                    }
+                },
+            };
+        }
+        t.csprng.rng = .init(seed);
+    }
+
+    t.csprng.rng.fill(buffer);
+}
+
+fn fallbackSeedPosix(seed: *[Csprng.seed_len]u8) void {
+    std.mem.writeInt(posix.pid_t, seed[0..@sizeOf(posix.pid_t)], posix.system.getpid(), .native);
+    const i_1 = @sizeOf(posix.pid_t);
+
+    var ts: posix.timespec = undefined;
+    const Sec = @TypeOf(ts.sec);
+    const Nsec = @TypeOf(ts.nsec);
+    const i_2 = i_1 + @sizeOf(Sec);
+    switch (posix.errno(posix.system.clock_gettime(.REALTIME, &ts))) {
+        .SUCCESS => {
+            std.mem.writeInt(Sec, seed[i_1..][0..@sizeOf(Sec)], ts.sec, .native);
+            std.mem.writeInt(Nsec, seed[i_2..][0..@sizeOf(Nsec)], ts.nsec, .native);
+        },
+        else => {},
+    }
+}
+
+fn fallbackSeedWindows(seed: *[Csprng.seed_len]u8) void {
+    var pc: windows.LARGE_INTEGER = undefined;
+    _ = windows.ntdll.RtlQueryPerformanceCounter(&pc);
+    std.mem.writeInt(windows.LARGE_INTEGER, seed[0..@sizeOf(windows.LARGE_INTEGER)], pc, .native);
+}
+
+fn fallbackSeedWasi(seed: *[Csprng.seed_len]u8) void {
+    var ts: std.os.wasi.timestamp_t = undefined;
+    if (std.os.wasi.clock_time_get(.REALTIME, 1, &ts) == .SUCCESS) {
+        std.mem.writeInt(std.os.wasi.timestamp_t, seed[0..@sizeOf(std.os.wasi.timestamp_t)], ts, .native);
+    }
+}
+
+fn randomSecure(userdata: ?*anyopaque, buffer: []u8) Io.RandomSecureError!void {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+
+    if (is_windows) {
+        if (buffer.len == 0) return;
+        // ProcessPrng from bcryptprimitives.dll has the following properties:
+        // * introduces a dependency on bcryptprimitives.dll, which apparently
+        //   runs a test suite every time it is loaded
+        // * heap allocates a 48-byte buffer, handling failure by returning NO_MEMORY in a BOOL
+        //   despite the function being documented to always return TRUE
+        // * reads from "\\Device\\CNG" which then seeds a per-CPU AES CSPRNG
+        // Therefore, that function is avoided in favor of using the device directly.
+        const cng_device = try getCngHandle(t);
+        var io_status_block: windows.IO_STATUS_BLOCK = undefined;
+        var i: usize = 0;
+        const syscall: Syscall = try .start();
+        while (true) {
+            const remaining_len = std.math.lossyCast(u32, buffer.len - i);
+            switch (windows.ntdll.NtDeviceIoControlFile(
+                cng_device,
+                null,
+                null,
+                null,
+                &io_status_block,
+                windows.IOCTL.KSEC.GEN_RANDOM,
+                null,
+                0,
+                buffer[i..].ptr,
+                remaining_len,
+            )) {
+                .SUCCESS => {
+                    i += remaining_len;
+                    if (buffer.len - i == 0) {
+                        return syscall.finish();
+                    } else {
+                        try syscall.checkCancel();
+                        continue;
+                    }
+                },
+                .CANCELLED => {
+                    try syscall.checkCancel();
+                    continue;
+                },
+                else => return syscall.fail(error.EntropyUnavailable),
+            }
+        }
+    }
+
+    if (builtin.link_libc and @TypeOf(posix.system.arc4random_buf) != void) {
+        if (buffer.len == 0) return;
+        posix.system.arc4random_buf(buffer.ptr, buffer.len);
+        return;
+    }
+
+    if (native_os == .wasi) {
+        if (buffer.len == 0) return;
+        const syscall: Syscall = try .start();
+        while (true) switch (std.os.wasi.random_get(buffer.ptr, buffer.len)) {
+            .SUCCESS => return syscall.finish(),
+            .INTR => {
+                try syscall.checkCancel();
+                continue;
+            },
+            else => return syscall.fail(error.EntropyUnavailable),
+        };
+    }
+
+    if (@TypeOf(posix.system.getrandom) != void) {
+        const getrandom = if (use_libc_getrandom) std.c.getrandom else std.os.linux.getrandom;
+        var i: usize = 0;
+        const syscall: Syscall = try .start();
+        while (buffer.len - i != 0) {
+            const buf = buffer[i..];
+            const rc = getrandom(buf.ptr, buf.len, 0);
+            switch (posix.errno(rc)) {
+                .SUCCESS => {
+                    syscall.finish();
+                    const n: usize = @intCast(rc);
+                    i += n;
+                    continue;
+                },
+                .INTR => {
+                    try syscall.checkCancel();
+                    continue;
+                },
+                else => return syscall.fail(error.EntropyUnavailable),
+            }
+        }
+        return;
+    }
+
+    if (native_os == .emscripten) {
+        if (buffer.len == 0) return;
+        const err = posix.errno(std.c.getentropy(buffer.ptr, buffer.len));
+        switch (err) {
+            .SUCCESS => return,
+            else => return error.EntropyUnavailable,
+        }
+    }
+
+    if (native_os == .linux) {
+        comptime assert(use_dev_urandom);
+        const urandom_fd = try getRandomFd(t);
+
+        var i: usize = 0;
+        while (buffer.len - i != 0) {
+            const syscall: Syscall = try .start();
+            const rc = posix.system.read(urandom_fd, buffer[i..].ptr, buffer.len - i);
+            switch (posix.errno(rc)) {
+                .SUCCESS => {
+                    syscall.finish();
+                    const n: usize = @intCast(rc);
+                    if (n == 0) return error.EntropyUnavailable;
+                    i += n;
+                    continue;
+                },
+                .INTR => {
+                    try syscall.checkCancel();
+                    continue;
+                },
+                else => return syscall.fail(error.EntropyUnavailable),
+            }
+        }
+    }
+
+    return error.EntropyUnavailable;
+}
+
+fn getRandomFd(t: *Threaded) Io.RandomSecureError!posix.fd_t {
+    {
+        t.mutex.lock();
+        defer t.mutex.unlock();
+
+        if (t.random_file.fd == -2) return error.EntropyUnavailable;
+        if (t.random_file.fd != -1) return t.random_file.fd;
+    }
+
+    const mode: posix.mode_t = 0;
+
+    const fd: posix.fd_t = fd: {
+        const syscall: Syscall = try .start();
+        while (true) {
+            const rc = openat_sym(posix.AT.FDCWD, "/dev/urandom", .{
+                .ACCMODE = .RDONLY,
+                .CLOEXEC = true,
+            }, mode);
+            switch (posix.errno(rc)) {
+                .SUCCESS => {
+                    syscall.finish();
+                    break :fd @intCast(rc);
+                },
+                .INTR => {
+                    try syscall.checkCancel();
+                    continue;
+                },
+                else => return syscall.fail(error.EntropyUnavailable),
+            }
+        }
+    };
+    errdefer posix.close(fd);
+
+    switch (native_os) {
+        .linux => {
+            const sys = if (statx_use_c) std.c else std.os.linux;
+            const syscall: Syscall = try .start();
+            while (true) {
+                var statx = std.mem.zeroes(std.os.linux.Statx);
+                switch (sys.errno(sys.statx(fd, "", std.os.linux.AT.EMPTY_PATH, .{ .TYPE = true }, &statx))) {
+                    .SUCCESS => {
+                        syscall.finish();
+                        if (!statx.mask.TYPE) return error.EntropyUnavailable;
+                        t.mutex.lock(); // Another thread might have won the race.
+                        defer t.mutex.unlock();
+                        if (t.random_file.fd >= 0) {
+                            posix.close(fd);
+                            return t.random_file.fd;
+                        } else if (!posix.S.ISCHR(statx.mode)) {
+                            t.random_file.fd = -2;
+                            return error.EntropyUnavailable;
+                        } else {
+                            t.random_file.fd = fd;
+                            return fd;
+                        }
+                    },
+                    .INTR => {
+                        try syscall.checkCancel();
+                        continue;
+                    },
+                    else => return syscall.fail(error.EntropyUnavailable),
+                }
+            }
+        },
+        else => {
+            const syscall: Syscall = try .start();
+            while (true) {
+                var stat = std.mem.zeroes(posix.Stat);
+                switch (posix.errno(fstat_sym(fd, &stat))) {
+                    .SUCCESS => {
+                        syscall.finish();
+                        t.mutex.lock(); // Another thread might have won the race.
+                        defer t.mutex.unlock();
+                        if (t.random_file.fd >= 0) {
+                            posix.close(fd);
+                            return t.random_file.fd;
+                        } else if (!posix.S.ISCHR(stat.mode)) {
+                            t.random_file.fd = -2;
+                            return error.EntropyUnavailable;
+                        } else {
+                            t.random_file.fd = fd;
+                            return fd;
+                        }
+                    },
+                    .INTR => {
+                        try syscall.checkCancel();
+                        continue;
+                    },
+                    else => return syscall.fail(error.EntropyUnavailable),
+                }
+            }
+        },
+    }
 }
 
 test {

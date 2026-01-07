@@ -37,10 +37,14 @@ pub fn deinit(af: *Atomic, io: Io) void {
     af.* = undefined;
 }
 
-pub const LinkError = Dir.HardLinkError;
+pub const LinkError = File.HardLinkError || Dir.RenamePreserveError;
 
 /// Atomically materializes the file into place, failing with
 /// `error.PathAlreadyExists` if something already exists there.
+///
+/// If this operation could not be done with an unnamed temporary file, the
+/// named temporary file will be deleted in a following operation, which may
+/// independently fail. The result of that operation is stored in `delete_err`.
 pub fn link(af: *Atomic, io: Io) LinkError!void {
     if (af.file_exists) {
         if (af.file_open) {
@@ -48,8 +52,7 @@ pub fn link(af: *Atomic, io: Io) LinkError!void {
             af.file_open = false;
         }
         const tmp_sub_path = std.fmt.hex(af.file_basename_hex);
-        try af.dir.hardLink(&tmp_sub_path, af.dir, af.dest_sub_path, io, .{});
-        af.dir.deleteFile(io, &tmp_sub_path) catch {};
+        try af.dir.renamePreserve(&tmp_sub_path, af.dir, af.dest_sub_path, io);
         af.file_exists = false;
     } else {
         assert(af.file_open);

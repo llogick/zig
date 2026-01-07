@@ -1022,8 +1022,7 @@ test "Dir.rename directory onto non-empty dir" {
             file.close(io);
             target_dir.close(io);
 
-            // Rename should fail with PathAlreadyExists if target_dir is non-empty
-            try expectError(error.PathAlreadyExists, ctx.dir.rename(test_dir_path, ctx.dir, target_dir_path, io));
+            try expectError(error.DirNotEmpty, ctx.dir.rename(test_dir_path, ctx.dir, target_dir_path, io));
 
             // Ensure the directory was not renamed
             var dir = try ctx.dir.openDir(io, test_dir_path, .{});
@@ -1651,6 +1650,21 @@ test "AtomicFile" {
                 \\ this is a test file
             ;
 
+            // link() succeeds with no file already present
+            {
+                var af = try ctx.dir.createFileAtomic(io, test_out_file, .{ .replace = false });
+                defer af.deinit(io);
+                try af.file.writeStreamingAll(io, test_content);
+                try af.link(io);
+            }
+            // link() returns error.PathAlreadyExists if file already present
+            {
+                var af = try ctx.dir.createFileAtomic(io, test_out_file, .{ .replace = false });
+                defer af.deinit(io);
+                try af.file.writeStreamingAll(io, test_content);
+                try expectError(error.PathAlreadyExists, af.link(io));
+            }
+            // replace() succeeds if file already present
             {
                 var af = try ctx.dir.createFileAtomic(io, test_out_file, .{ .replace = true });
                 defer af.deinit(io);
@@ -1761,7 +1775,7 @@ test "open file with exclusive nonblocking lock twice (absolute paths)" {
     const io = testing.io;
 
     var random_bytes: [12]u8 = undefined;
-    std.crypto.random.bytes(&random_bytes);
+    io.random(&random_bytes);
 
     var random_b64: [std.fs.base64_encoder.calcSize(random_bytes.len)]u8 = undefined;
     _ = std.fs.base64_encoder.encode(&random_b64, &random_bytes);

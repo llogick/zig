@@ -501,6 +501,15 @@ pub const O = switch (native_arch) {
     else => @compileError("missing std.os.linux.O constants for this architecture"),
 };
 
+pub const RENAME = packed struct(u32) {
+    /// Cannot be set together with `EXCHANGE`.
+    NOREPLACE: bool = false,
+    /// Cannot be set together with `NOREPLACE`.
+    EXCHANGE: bool = false,
+    WHITEOUT: bool = false,
+    _: u29 = 0,
+};
+
 /// Set by startup code, used by `getauxval`.
 pub var elf_aux_maybe: ?[*]std.elf.Auxv = null;
 
@@ -1346,9 +1355,22 @@ pub fn rename(old: [*:0]const u8, new: [*:0]const u8) usize {
     if (@hasField(SYS, "rename")) {
         return syscall2(.rename, @intFromPtr(old), @intFromPtr(new));
     } else if (@hasField(SYS, "renameat")) {
-        return syscall4(.renameat, @as(usize, @bitCast(@as(isize, AT.FDCWD))), @intFromPtr(old), @as(usize, @bitCast(@as(isize, AT.FDCWD))), @intFromPtr(new));
+        return syscall4(
+            .renameat,
+            @as(usize, @bitCast(@as(isize, AT.FDCWD))),
+            @intFromPtr(old),
+            @as(usize, @bitCast(@as(isize, AT.FDCWD))),
+            @intFromPtr(new),
+        );
     } else {
-        return syscall5(.renameat2, @as(usize, @bitCast(@as(isize, AT.FDCWD))), @intFromPtr(old), @as(usize, @bitCast(@as(isize, AT.FDCWD))), @intFromPtr(new), 0);
+        return syscall5(
+            .renameat2,
+            @as(usize, @bitCast(@as(isize, AT.FDCWD))),
+            @intFromPtr(old),
+            @as(usize, @bitCast(@as(isize, AT.FDCWD))),
+            @intFromPtr(new),
+            0,
+        );
     }
 }
 
@@ -1373,14 +1395,14 @@ pub fn renameat(oldfd: i32, oldpath: [*:0]const u8, newfd: i32, newpath: [*:0]co
     }
 }
 
-pub fn renameat2(oldfd: i32, oldpath: [*:0]const u8, newfd: i32, newpath: [*:0]const u8, flags: u32) usize {
+pub fn renameat2(oldfd: i32, oldpath: [*:0]const u8, newfd: i32, newpath: [*:0]const u8, flags: RENAME) usize {
     return syscall5(
         .renameat2,
         @as(usize, @bitCast(@as(isize, oldfd))),
         @intFromPtr(oldpath),
         @as(usize, @bitCast(@as(isize, newfd))),
         @intFromPtr(newpath),
-        flags,
+        @as(u32, @bitCast(flags)),
     );
 }
 

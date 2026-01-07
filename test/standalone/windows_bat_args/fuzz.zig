@@ -22,7 +22,7 @@ pub fn main(init: std.process.Init) !void {
         const seed_arg = it.next() orelse {
             rand_seed = true;
             var buf: [8]u8 = undefined;
-            try std.posix.getrandom(&buf);
+            io.random(&buf);
             break :seed std.mem.readInt(u64, &buf, builtin.cpu.arch.endian());
         };
         break :seed try std.fmt.parseUnsigned(u64, seed_arg, 10);

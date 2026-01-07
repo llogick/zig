@@ -476,46 +476,28 @@ fn make(step: *Step, make_options: Step.MakeOptions) !void {
         return;
     } else |outer_err| switch (outer_err) {
         error.FileNotFound => {
-            const sub_dirname = fs.path.dirname(sub_path).?;
-            b.cache_root.handle.createDirPath(io, sub_dirname) catch |e|
-                return step.fail("unable to make path '{f}{s}': {t}", .{ b.cache_root, sub_dirname, e });
+            var atomic_file = b.cache_root.handle.createFileAtomic(io, sub_path, .{
+                .replace = false,
+                .make_path = true,
+            }) catch |err| return step.fail("failed to create temporary path for '{f}{s}': {t}", .{
+                b.cache_root, sub_path, err,
+            });
+            defer atomic_file.deinit(io);
 
-            const rand_int = std.crypto.random.int(u64);
-            const tmp_sub_path = "tmp" ++ fs.path.sep_str ++
-                std.fmt.hex(rand_int) ++ fs.path.sep_str ++
-                basename;
-            const tmp_sub_path_dirname = fs.path.dirname(tmp_sub_path).?;
-
-            b.cache_root.handle.createDirPath(io, tmp_sub_path_dirname) catch |err| {
-                return step.fail("unable to make temporary directory '{f}{s}': {t}", .{
-                    b.cache_root, tmp_sub_path_dirname, err,
+            atomic_file.file.writeStreamingAll(io, options.contents.items) catch |err| {
+                return step.fail("failed to write options to temporary path for '{f}{s}': {t}", .{
+                    b.cache_root, sub_path, err,
                 });
             };
 
-            b.cache_root.handle.writeFile(io, .{ .sub_path = tmp_sub_path, .data = options.contents.items }) catch |err| {
-                return step.fail("unable to write options to '{f}{s}': {t}", .{
-                    b.cache_root, tmp_sub_path, err,
-                });
-            };
-
-            b.cache_root.handle.rename(tmp_sub_path, b.cache_root.handle, sub_path, io) catch |err| switch (err) {
+            atomic_file.link(io) catch |err| switch (err) {
                 error.PathAlreadyExists => {
-                    // Other process beat us to it. Clean up the temp file.
-                    b.cache_root.handle.deleteFile(io, tmp_sub_path) catch |e| {
-                        try step.addError("warning: unable to delete temp file '{f}{s}': {t}", .{
-                            b.cache_root, tmp_sub_path, e,
-                        });
-                    };
                     step.result_cached = true;
                     return;
                 },
-                else => {
-                    return step.fail("unable to rename options from '{f}{s}' to '{f}{s}': {t}", .{
-                        b.cache_root, tmp_sub_path,
-                        b.cache_root, sub_path,
-                        err,
-                    });
-                },
+                else => return step.fail("failed to link temporary file into '{f}{s}': {t}", .{
+                    b.cache_root, sub_path, err,
+                }),
             };
         },
         else => |e| return step.fail("unable to access options file '{f}{s}': {t}", .{

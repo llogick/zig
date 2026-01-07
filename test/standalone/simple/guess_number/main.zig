@@ -10,7 +10,8 @@ pub fn main(init: std.process.Init) !void {
 
     try out.writeAll("Welcome to the Guess Number Game in Zig.\n");
 
-    const answer = std.crypto.random.intRangeLessThan(u8, 0, 100) + 1;
+    var rng: std.Random.IoSource = .{ .io = init.io };
+    const answer = rng.interface().intRangeLessThan(u8, 0, 100) + 1;
 
     while (true) {
         try out.writeAll("\nGuess a number between 1 and 100: ");

@@ -21,7 +21,6 @@ pub const dependencies = @import("@dependencies");
 pub const std_options: std.Options = .{
     .side_channels_mitigations = .none,
     .http_disable_tls = true,
-    .crypto_fork_safety = false,
 };
 
 pub fn main(init: process.Init.Minimal) !void {

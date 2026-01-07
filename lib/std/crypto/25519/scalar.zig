@@ -101,8 +101,8 @@ pub fn sub(a: CompressedScalar, b: CompressedScalar) CompressedScalar {
 }
 
 /// Return a random scalar < L
-pub fn random() CompressedScalar {
-    return Scalar.random().toBytes();
+pub fn random(io: std.Io) CompressedScalar {
+    return Scalar.random(io).toBytes();
 }
 
 /// A scalar in unpacked representation
@@ -560,10 +560,10 @@ pub const Scalar = struct {
     }
 
     /// Return a random scalar < L.
-    pub fn random() Scalar {
+    pub fn random(io: std.Io) Scalar {
         var s: [64]u8 = undefined;
         while (true) {
-            crypto.random.bytes(&s);
+            io.random(&s);
             const n = Scalar.fromBytes64(s);
             if (!n.isZero()) {
                 return n;
@@ -879,8 +879,9 @@ test "scalar field inversion" {
 }
 
 test "random scalar" {
-    const s1 = random();
-    const s2 = random();
+    const io = std.testing.io;
+    const s1 = random(io);
+    const s2 = random(io);
     try std.testing.expect(!mem.eql(u8, &s1, &s2));
 }
 

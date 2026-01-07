@@ -361,107 +361,6 @@ pub fn reboot(cmd: RebootCommand) RebootError!void {
     }
 }
 
-pub const GetRandomError = OpenError;
-
-/// Obtain a series of random bytes. These bytes can be used to seed user-space
-/// random number generators or for cryptographic purposes.
-/// When linking against libc, this calls the
-/// appropriate OS-specific library call. Otherwise it uses the zig standard
-/// library implementation.
-pub fn getrandom(buffer: []u8) GetRandomError!void {
-    if (native_os == .windows) {
-        return windows.ProcessPrng(buffer);
-    }
-    if (builtin.link_libc and @TypeOf(system.arc4random_buf) != void) {
-        system.arc4random_buf(buffer.ptr, buffer.len);
-        return;
-    }
-    if (native_os == .wasi) switch (wasi.random_get(buffer.ptr, buffer.len)) {
-        .SUCCESS => return,
-        else => |err| return unexpectedErrno(err),
-    };
-    if (@TypeOf(system.getrandom) != void) {
-        var buf = buffer;
-        const use_c = native_os != .linux or
-            std.c.versionCheck(if (builtin.abi.isAndroid()) .{ .major = 28, .minor = 0, .patch = 0 } else .{ .major = 2, .minor = 25, .patch = 0 });
-
-        while (buf.len != 0) {
-            const num_read: usize, const err = if (use_c) res: {
-                const rc = std.c.getrandom(buf.ptr, buf.len, 0);
-                break :res .{ @bitCast(rc), errno(rc) };
-            } else res: {
-                const rc = linux.getrandom(buf.ptr, buf.len, 0);
-                break :res .{ rc, linux.errno(rc) };
-            };
-
-            switch (err) {
-                .SUCCESS => buf = buf[num_read..],
-                .INVAL => unreachable,
-                .FAULT => unreachable,
-                .INTR => continue,
-                else => return unexpectedErrno(err),
-            }
-        }
-        return;
-    }
-    if (native_os == .emscripten) {
-        const err = errno(std.c.getentropy(buffer.ptr, buffer.len));
-        switch (err) {
-            .SUCCESS => return,
-            else => return unexpectedErrno(err),
-        }
-    }
-    return getRandomBytesDevURandom(buffer);
-}
-
-fn getRandomBytesDevURandom(buf: []u8) GetRandomError!void {
-    const fd = try openZ("/dev/urandom", .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, 0);
-    defer close(fd);
-
-    switch (native_os) {
-        .linux => {
-            var stx = std.mem.zeroes(linux.Statx);
-            const rc = linux.statx(
-                fd,
-                "",
-                linux.AT.EMPTY_PATH,
-                .{ .TYPE = true },
-                &stx,
-            );
-            switch (errno(rc)) {
-                .SUCCESS => {},
-                .ACCES => unreachable,
-                .BADF => unreachable,
-                .FAULT => unreachable,
-                .INVAL => unreachable,
-                .LOOP => unreachable,
-                .NAMETOOLONG => unreachable,
-                .NOENT => unreachable,
-                .NOMEM => return error.SystemResources,
-                .NOTDIR => unreachable,
-                else => |err| return unexpectedErrno(err),
-            }
-            if (!S.ISCHR(stx.mode)) {
-                return error.NoDevice;
-            }
-        },
-        else => {
-            const st = fstat(fd) catch |err| switch (err) {
-                error.Streaming => return error.NoDevice,
-                else => |e| return e,
-            };
-            if (!S.ISCHR(st.mode)) {
-                return error.NoDevice;
-            }
-        },
-    }
-
-    var i: usize = 0;
-    while (i < buf.len) {
-        i += read(fd, buf[i..]) catch return error.Unexpected;
-    }
-}
-
 pub const RaiseError = UnexpectedError;
 
 pub fn raise(sig: SIG) RaiseError!void {
@@ -1695,7 +1594,7 @@ pub const FanotifyMarkError = error{
     NotDir,
     OperationUnsupported,
     PermissionDenied,
-    NotSameFileSystem,
+    CrossDevice,
     NameTooLong,
 } || UnexpectedError;
 
@@ -1735,7 +1634,7 @@ pub fn fanotify_markZ(
         .NOTDIR => return error.NotDir,
         .OPNOTSUPP => return error.OperationUnsupported,
         .PERM => return error.PermissionDenied,
-        .XDEV => return error.NotSameFileSystem,
+        .XDEV => return error.CrossDevice,
         else => |err| return unexpectedErrno(err),
     }
 }
