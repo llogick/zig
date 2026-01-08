@@ -9707,13 +9707,8 @@ fn sleepPosix(timeout: Io.Timeout) Io.SleepError!void {
                 try syscall.checkCancel();
                 continue;
             },
-            else => |e| {
-                syscall.finish();
-                switch (e) {
-                    .INVAL => return error.UnsupportedClock,
-                    else => |err| return posix.unexpectedErrno(err),
-                }
-            },
+            .INVAL => return syscall.fail(error.UnsupportedClock),
+            else => |err| return syscall.unexpectedErrno(err),
         }
     }
 }
@@ -9876,14 +9871,9 @@ fn netListenIpPosix(
                 try syscall.checkCancel();
                 continue;
             },
-            else => |e| {
-                syscall.finish();
-                switch (e) {
-                    .ADDRINUSE => return error.AddressInUse,
-                    .BADF => |err| return errnoBug(err), // File descriptor used after closed.
-                    else => |err| return posix.unexpectedErrno(err),
-                }
-            },
+            .ADDRINUSE => return syscall.fail(error.AddressInUse),
+            .BADF => |err| return syscall.errnoBug(err), // File descriptor used after closed.
+            else => |err| return syscall.unexpectedErrno(err),
         }
     }
 
@@ -10038,14 +10028,9 @@ fn netListenUnixPosix(
                 try syscall.checkCancel();
                 continue;
             },
-            else => |e| {
-                syscall.finish();
-                switch (e) {
-                    .ADDRINUSE => return error.AddressInUse,
-                    .BADF => |err| return errnoBug(err), // File descriptor used after closed.
-                    else => |err| return posix.unexpectedErrno(err),
-                }
-            },
+            .ADDRINUSE => return syscall.fail(error.AddressInUse),
+            .BADF => |err| return syscall.errnoBug(err), // File descriptor used after closed.
+            else => |err| return syscall.unexpectedErrno(err),
         }
     }
 
