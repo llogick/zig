@@ -32,6 +32,12 @@ comptime {
         @export(&nanf, .{ .name = "nanf", .linkage = common.linkage, .visibility = common.visibility });
         @export(&nanl, .{ .name = "nanl", .linkage = common.linkage, .visibility = common.visibility });
     }
+
+    if (builtin.target.isMuslLibC()) {
+        @export(&copysignf, .{ .name = "copysignf", .linkage = common.linkage, .visibility = common.visibility });
+        @export(&copysign, .{ .name = "copysign", .linkage = common.linkage, .visibility = common.visibility });
+    }
+    @export(&copysignl, .{ .name = "copysignl", .linkage = common.linkage, .visibility = common.visibility });
 }
 
 fn isnan(x: f64) callconv(.c) c_int {
@@ -56,4 +62,16 @@ fn nanf(_: [*:0]const c_char) callconv(.c) f32 {
 
 fn nanl(_: [*:0]const c_char) callconv(.c) c_longdouble {
     return std.math.nan(c_longdouble);
+}
+
+fn copysignf(x: f32, y: f32) callconv(.c) f32 {
+    return std.math.copysign(x, y);
+}
+
+fn copysign(x: f64, y: f64) callconv(.c) f64 {
+    return std.math.copysign(x, y);
+}
+
+fn copysignl(x: c_longdouble, y: c_longdouble) callconv(.c) c_longdouble {
+    return std.math.copysign(x, y);
 }

@@ -710,7 +710,6 @@ const libc_top_half_src_files = [_][]const u8{
     "musl/src/math/cbrt.c",
     "musl/src/math/cbrtf.c",
     "musl/src/math/cbrtl.c",
-    "musl/src/math/copysignl.c",
     "musl/src/math/__cos.c",
     "musl/src/math/__cosdf.c",
     "musl/src/math/coshl.c",
