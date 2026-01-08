@@ -901,7 +901,7 @@ fn markAllFilesDirty(w: *Watch, gpa: Allocator) void {
         };
         for (reaction_set.values()) |step_set| {
             for (step_set.keys()) |step| {
-                step.recursiveReset(gpa);
+                _ = step.invalidateResult(gpa);
             }
         }
     }
@@ -910,10 +910,7 @@ fn markAllFilesDirty(w: *Watch, gpa: Allocator) void {
 fn markStepSetDirty(gpa: Allocator, step_set: *StepSet, any_dirty: bool) bool {
     var this_any_dirty = false;
     for (step_set.keys()) |step| {
-        if (step.state != .precheck_done) {
-            step.recursiveReset(gpa);
-            this_any_dirty = true;
-        }
+        if (step.invalidateResult(gpa)) this_any_dirty = true;
     }
     return any_dirty or this_any_dirty;
 }

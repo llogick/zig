@@ -349,13 +349,17 @@ fn eventCallback(
             false => {
                 if (fse.watch_paths.get(event_path)) |steps| {
                     assert(steps.len > 0);
-                    for (steps) |s| dirtyStep(s, gpa, &any_dirty);
+                    for (steps) |s| {
+                        if (s.invalidateResult(gpa)) any_dirty = true;
+                    }
                 }
                 if (std.fs.path.dirname(event_path)) |event_dirname| {
                     // Modifying '/foo/bar' triggers the watch on '/foo'.
                     if (fse.watch_paths.get(event_dirname)) |steps| {
                         assert(steps.len > 0);
-                        for (steps) |s| dirtyStep(s, gpa, &any_dirty);
+                        for (steps) |s| {
+                            if (s.invalidateResult(gpa)) any_dirty = true;
+                        }
                     }
                 }
             },
@@ -368,7 +372,9 @@ fn eventCallback(
                 const changed_path = std.fs.path.dirname(event_path) orelse event_path;
                 for (fse.watch_paths.keys(), fse.watch_paths.values()) |watching_path, steps| {
                     if (dirStartsWith(watching_path, changed_path)) {
-                        for (steps) |s| dirtyStep(s, gpa, &any_dirty);
+                        for (steps) |s| {
+                            if (s.invalidateResult(gpa)) any_dirty = true;
+                        }
                     }
                 }
             },
@@ -378,11 +384,6 @@ fn eventCallback(
         fse.since_event = rs.FSEventStreamGetLatestEventId(stream);
         _ = dispatch_semaphore_signal(fse.waiting_semaphore);
     }
-}
-fn dirtyStep(s: *std.Build.Step, gpa: Allocator, any_dirty: *bool) void {
-    if (s.state == .precheck_done) return;
-    s.recursiveReset(gpa);
-    any_dirty.* = true;
 }
 fn dirStartsWith(path: []const u8, prefix: []const u8) bool {
     if (std.mem.eql(u8, path, prefix)) return true;
