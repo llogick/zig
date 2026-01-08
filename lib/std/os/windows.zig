@@ -267,7 +267,11 @@ pub const FILE = struct {
 
         pub fn toBuffer(fri: *const RENAME_INFORMATION) []const u8 {
             const start: [*]const u8 = @ptrCast(fri);
-            return start[0 .. @offsetOf(RENAME_INFORMATION, "FileName") + fri.FileNameLength];
+            // The ABI size of the documented struct is 24 bytes, and attempting to use any size
+            // less than that will trigger INFO_LENGTH_MISMATCH, so enforce a minimum in cases where,
+            // for example, FileNameLength is 1 so only 22 bytes are technically needed.
+            const size = @max(24, @offsetOf(RENAME_INFORMATION, "FileName") + fri.FileNameLength);
+            return start[0..size];
         }
     };
 
