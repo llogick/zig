@@ -2683,6 +2683,7 @@ pub const SIG = switch (native_os) {
         ABRT = 22,
         /// SIGABRT compatible with other platforms, same as SIGABRT
         ABRT_COMPAT = 6,
+        _,
 
         // Signal action codes
         /// default signal action
@@ -2776,6 +2777,7 @@ pub const SIG = switch (native_os) {
         USR1 = 30,
         /// user defined signal 2
         USR2 = 31,
+        _,
     },
     .freebsd => enum(u32) {
         pub const BLOCK = 1;
@@ -2841,6 +2843,7 @@ pub const SIG = switch (native_os) {
         USR2 = 31,
         THR = 32,
         LIBRT = 33,
+        _,
     },
     .illumos => enum(u32) {
         pub const DFL: ?Sigaction.handler_fn = @ptrFromInt(0);
@@ -2916,6 +2919,7 @@ pub const SIG = switch (native_os) {
         JVM1 = 39,
         JVM2 = 40,
         INFO = 41,
+        _,
     },
     .netbsd => enum(u32) {
         pub const DFL: ?Sigaction.handler_fn = @ptrFromInt(0);
@@ -2979,6 +2983,7 @@ pub const SIG = switch (native_os) {
         USR1 = 30,
         USR2 = 31,
         PWR = 32,
+        _,
     },
     .dragonfly => enum(u32) {
         pub const DFL: ?Sigaction.handler_fn = @ptrFromInt(0);
@@ -3027,6 +3032,7 @@ pub const SIG = switch (native_os) {
         THR = 32,
         CKPT = 33,
         CKPTEXIT = 34,
+        _,
     },
     .haiku => enum(u32) {
         pub const DFL: ?Sigaction.handler_fn = @ptrFromInt(0);
@@ -3073,6 +3079,7 @@ pub const SIG = switch (native_os) {
         BUS = 30,
         RESERVED1 = 31,
         RESERVED2 = 32,
+        _,
     },
     .openbsd => enum(u32) {
         pub const DFL: ?Sigaction.handler_fn = @ptrFromInt(0);
@@ -3119,6 +3126,7 @@ pub const SIG = switch (native_os) {
         USR1 = 30,
         USR2 = 31,
         PWR = 32,
+        _,
     },
     // https://github.com/SerenityOS/serenity/blob/046c23f567a17758d762a33bdf04bacbfd088f9f/Kernel/API/POSIX/signal.h
     // https://github.com/SerenityOS/serenity/blob/046c23f567a17758d762a33bdf04bacbfd088f9f/Kernel/API/POSIX/signal_numbers.h
@@ -3164,6 +3172,7 @@ pub const SIG = switch (native_os) {
         INFO = 30,
         SYS = 31,
         CANCEL = 32,
+        _,
     },
     else => void,
 };
