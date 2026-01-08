@@ -1130,6 +1130,7 @@ test "renameAbsolute" {
 
 test "openExecutable" {
     if (native_os == .wasi) return error.SkipZigTest;
+    if (native_os == .openbsd) return error.SkipZigTest;
 
     const io = testing.io;
 
@@ -1139,6 +1140,7 @@ test "openExecutable" {
 
 test "executablePath" {
     if (native_os == .wasi) return error.SkipZigTest;
+    if (native_os == .openbsd) return error.SkipZigTest;
 
     const io = testing.io;
     var buf: [Dir.max_path_bytes]u8 = undefined;

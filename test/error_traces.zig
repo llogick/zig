@@ -439,6 +439,7 @@ pub fn addCases(cases: *@import("tests.zig").ErrorTracesContext) void {
             .{ .powerpc64le, .linux },
             .{ .riscv64, .linux },
             .{ .s390x, .linux },
+            .{ .x86_64, .openbsd },
             .{ .x86_64, .windows },
             .{ .x86, .windows },
             .{ .x86_64, .macos },
