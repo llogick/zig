@@ -10,6 +10,27 @@ comptime {
         @export(&isnanf, .{ .name = "__isnanf", .linkage = common.linkage, .visibility = common.visibility });
         @export(&isnanl, .{ .name = "isnanl", .linkage = common.linkage, .visibility = common.visibility });
         @export(&isnanl, .{ .name = "__isnanl", .linkage = common.linkage, .visibility = common.visibility });
+
+        @export(&std.math.nan(f64), .{ .name = "__QNAN", .linkage = common.linkage, .visibility = common.visibility });
+        @export(&std.math.snan(f64), .{ .name = "__SNAN", .linkage = common.linkage, .visibility = common.visibility });
+        @export(&std.math.inf(f64), .{ .name = "__INF", .linkage = common.linkage, .visibility = common.visibility });
+        @export(&std.math.floatTrueMin(f64), .{ .name = "__DENORM", .linkage = common.linkage, .visibility = common.visibility });
+
+        @export(&std.math.nan(f32), .{ .name = "__QNANF", .linkage = common.linkage, .visibility = common.visibility });
+        @export(&std.math.snan(f32), .{ .name = "__SNANF", .linkage = common.linkage, .visibility = common.visibility });
+        @export(&std.math.inf(f32), .{ .name = "__INFF", .linkage = common.linkage, .visibility = common.visibility });
+        @export(&std.math.floatTrueMin(f32), .{ .name = "__DENORMF", .linkage = common.linkage, .visibility = common.visibility });
+
+        @export(&std.math.nan(c_longdouble), .{ .name = "__QNANL", .linkage = common.linkage, .visibility = common.visibility });
+        @export(&std.math.snan(c_longdouble), .{ .name = "__SNANL", .linkage = common.linkage, .visibility = common.visibility });
+        @export(&std.math.inf(c_longdouble), .{ .name = "__INFL", .linkage = common.linkage, .visibility = common.visibility });
+        @export(&std.math.floatTrueMin(c_longdouble), .{ .name = "__DENORML", .linkage = common.linkage, .visibility = common.visibility });
+    }
+
+    if (builtin.target.isMinGW() or builtin.target.isMuslLibC() or builtin.target.isWasiLibC()) {
+        @export(&nan, .{ .name = "nan", .linkage = common.linkage, .visibility = common.visibility });
+        @export(&nanf, .{ .name = "nanf", .linkage = common.linkage, .visibility = common.visibility });
+        @export(&nanl, .{ .name = "nanl", .linkage = common.linkage, .visibility = common.visibility });
     }
 }
 
@@ -23,4 +44,16 @@ fn isnanf(x: f32) callconv(.c) c_int {
 
 fn isnanl(x: c_longdouble) callconv(.c) c_int {
     return if (std.math.isNan(x)) 1 else 0;
+}
+
+fn nan(_: [*:0]const c_char) callconv(.c) f64 {
+    return std.math.nan(f64);
+}
+
+fn nanf(_: [*:0]const c_char) callconv(.c) f32 {
+    return std.math.nan(f32);
+}
+
+fn nanl(_: [*:0]const c_char) callconv(.c) c_longdouble {
+    return std.math.nan(c_longdouble);
 }

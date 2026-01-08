@@ -18,6 +18,8 @@ comptime {
 
         @export(&qsort_r, .{ .name = "qsort_r", .linkage = common.linkage, .visibility = common.visibility });
         @export(&qsort, .{ .name = "qsort", .linkage = common.linkage, .visibility = common.visibility });
+
+        @export(&bsearch, .{ .name = "bsearch", .linkage = common.linkage, .visibility = common.visibility });
     }
 }
 
@@ -95,6 +97,26 @@ fn qsort(base: *anyopaque, n: usize, size: usize, compare: *const fn (a: *const 
     }).wrap, @constCast(compare));
 }
 
+// NOTE: Despite its name, `bsearch` doesn't need to be implemented using binary search or make any complexity guarantee.
+fn bsearch(key: *const anyopaque, base: *const anyopaque, n: usize, size: usize, compare: *const fn (a: *const anyopaque, b: *const anyopaque) callconv(.c) c_int) callconv(.c) ?*anyopaque {
+    const base_bytes: [*]const u8 = @ptrCast(base);
+    var low: usize = 0;
+    var high: usize = n;
+
+    while (low < high) {
+        // Avoid overflowing in the midpoint calculation
+        const mid = low + (high - low) / 2;
+        const elem = &base_bytes[mid * size];
+
+        switch (std.math.order(compare(key, elem), 0)) {
+            .eq => return @constCast(elem),
+            .gt => low = mid + 1,
+            .lt => high = mid,
+        }
+    }
+    return null;
+}
+
 test abs {
     const val: c_int = -10;
     try std.testing.expectEqual(10, abs(val));
@@ -123,4 +145,27 @@ test ldiv {
 test lldiv {
     const expected: lldiv_t = .{ .quot = 1, .rem = 2 };
     try std.testing.expectEqual(expected, lldiv(5, 3));
+}
+
+test bsearch {
+    const Comparison = struct {
+        pub fn compare(a: *const anyopaque, b: *const anyopaque) callconv(.c) c_int {
+            const a_u16: *const u16 = @ptrCast(@alignCast(a));
+            const b_u16: *const u16 = @ptrCast(@alignCast(b));
+
+            return switch (std.math.order(a_u16.*, b_u16.*)) {
+                .gt => 1,
+                .eq => 0,
+                .lt => -1,
+            };
+        }
+    };
+
+    const items: []const u16 = &.{ 0, 5, 7, 9, 10, 200, 512, 768 };
+
+    try std.testing.expectEqual(@as(?*anyopaque, null), bsearch(&@as(u16, 2000), items.ptr, items.len, @sizeOf(u16), Comparison.compare));
+
+    for (items) |*value| {
+        try std.testing.expectEqual(@as(*const anyopaque, value), bsearch(value, items.ptr, items.len, @sizeOf(u16), Comparison.compare));
+    }
 }
