@@ -9664,14 +9664,12 @@ fn nowWasi(clock: Io.Clock) Io.Clock.Error!Io.Timestamp {
 fn sleep(userdata: ?*anyopaque, timeout: Io.Timeout) Io.SleepError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     if (use_parking_sleep) return parking_sleep.sleep(timeout);
-    switch (native_os) {
-        .wasi => return sleepWasi(t, timeout),
-        .linux => return sleepLinux(timeout),
-        else => return sleepPosix(t, timeout),
-    }
+    if (native_os == .wasi) return sleepWasi(t, timeout);
+    if (@TypeOf(posix.system.clock_nanosleep) != void) return sleepPosix(timeout);
+    return sleepNanosleep(t, timeout);
 }
 
-fn sleepLinux(timeout: Io.Timeout) Io.SleepError!void {
+fn sleepPosix(timeout: Io.Timeout) Io.SleepError!void {
     const clock_id: posix.clockid_t = clockToPosix(switch (timeout) {
         .none => .awake,
         .duration => |d| d.clock,
@@ -9685,7 +9683,7 @@ fn sleepLinux(timeout: Io.Timeout) Io.SleepError!void {
     var timespec: posix.timespec = timestampToPosix(deadline_nanoseconds);
     const syscall: Syscall = try .start();
     while (true) {
-        switch (std.os.linux.errno(std.os.linux.clock_nanosleep(clock_id, .{ .ABSTIME = switch (timeout) {
+        switch (posix.errno(posix.system.clock_nanosleep(clock_id, .{ .ABSTIME = switch (timeout) {
             .none, .duration => false,
             .deadline => true,
         } }, &timespec, &timespec))) {
@@ -9737,7 +9735,7 @@ fn sleepWasi(t: *Threaded, timeout: Io.Timeout) Io.SleepError!void {
     syscall.finish();
 }
 
-fn sleepPosix(t: *Threaded, timeout: Io.Timeout) Io.SleepError!void {
+fn sleepNanosleep(t: *Threaded, timeout: Io.Timeout) Io.SleepError!void {
     const t_io = ioBasic(t);
     const sec_type = @typeInfo(posix.timespec).@"struct".fields[0].type;
     const nsec_type = @typeInfo(posix.timespec).@"struct".fields[1].type;
