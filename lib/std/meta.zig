@@ -983,13 +983,13 @@ pub inline fn hasUniqueRepresentation(comptime T: type) bool {
         else => false, // TODO can we know if it's true for some of these types ?
 
         .@"anyframe",
-        .@"enum",
         .error_set,
         .@"fn",
         => true,
 
         .bool => false,
 
+        .@"enum" => |info| hasUniqueRepresentation(info.tag_type),
         .int => |info| @sizeOf(T) * 8 == info.bits,
 
         .pointer => |info| info.size != .slice,
@@ -1089,9 +1089,11 @@ test hasUniqueRepresentation {
 
     inline for ([_]type{ i0, u8, i16, u32, i64 }) |T| {
         try testing.expect(hasUniqueRepresentation(T));
+        try testing.expect(hasUniqueRepresentation(enum(T) { _ }));
     }
     inline for ([_]type{ i1, u9, i17, u33, i24 }) |T| {
         try testing.expect(!hasUniqueRepresentation(T));
+        try testing.expect(!hasUniqueRepresentation(enum(T) { _ }));
     }
 
     try testing.expect(hasUniqueRepresentation(*u8));
