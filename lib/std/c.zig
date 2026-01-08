@@ -10579,7 +10579,7 @@ pub const socket = switch (native_os) {
 
 pub const socketpair = switch (native_os) {
     // https://devblogs.microsoft.com/commandline/af_unix-comes-to-windows/#unsupported\unavailable:
-    .windows => void,
+    .windows => {},
     else => private.socketpair,
 };
 
@@ -10766,11 +10766,10 @@ pub extern "c" fn recvfrom(
 ) if (native_os == .windows) c_int else isize;
 
 pub const recvmsg = switch (native_os) {
-    // Windows: Technically, a form of recvmsg() exists for Windows, but the
-    // user has to install some kind of callback for it.  I'm not sure if/how
-    // we can map this to normal recvmsg() interface use.
+    // Technically, a form of recvmsg() exists for Windows, but the user has to
+    // install some kind of callback for it.
     // https://learn.microsoft.com/en-us/windows/win32/api/mswsock/nc-mswsock-lpfn_wsarecvmsg
-    .windows => void,
+    .windows => {},
     else => private.recvmsg,
 };
 
