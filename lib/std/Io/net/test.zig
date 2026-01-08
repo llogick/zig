@@ -310,11 +310,11 @@ test "listen on a unix socket, send bytes, receive bytes" {
 
 fn generateFileName(io: Io, base_name: []const u8) ![]const u8 {
     const random_bytes_count = 12;
-    const sub_path_len = comptime std.fs.base64_encoder.calcSize(random_bytes_count);
+    const sub_path_len = comptime std.base64.url_safe.Encoder.calcSize(random_bytes_count);
     var random_bytes: [12]u8 = undefined;
     io.random(&random_bytes);
     var sub_path: [sub_path_len]u8 = undefined;
-    _ = std.fs.base64_encoder.encode(&sub_path, &random_bytes);
+    _ = std.base64.url_safe.Encoder.encode(&sub_path, &random_bytes);
     return std.fmt.allocPrint(testing.allocator, "{s}-{s}", .{ sub_path[0..], base_name });
 }
 

@@ -540,18 +540,20 @@ test {
 
 const Io = @This();
 
+pub const Threaded = @import("Io/Threaded.zig");
 pub const Evented = switch (builtin.os.tag) {
     .linux => switch (builtin.cpu.arch) {
-        .x86_64, .aarch64 => @import("Io/IoUring.zig"),
+        .x86_64, .aarch64 => IoUring,
         else => void, // context-switching code not implemented yet
     },
     .dragonfly, .freebsd, .netbsd, .openbsd, .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => switch (builtin.cpu.arch) {
-        .x86_64, .aarch64 => @import("Io/Kqueue.zig"),
+        .x86_64, .aarch64 => Kqueue,
         else => void, // context-switching code not implemented yet
     },
     else => void,
 };
-pub const Threaded = @import("Io/Threaded.zig");
+pub const Kqueue = @import("Io/Kqueue.zig");
+pub const IoUring = @import("Io/IoUring.zig");
 pub const net = @import("Io/net.zig");
 
 userdata: ?*anyopaque,
@@ -1356,7 +1358,7 @@ pub const Mutex = extern struct {
 
     pub const init: Mutex = .{ .state = .init(.unlocked) };
 
-    const State = enum(u32) {
+    pub const State = enum(u32) {
         unlocked,
         locked_once,
         contended,

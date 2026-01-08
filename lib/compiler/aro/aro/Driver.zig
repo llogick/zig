@@ -1219,12 +1219,12 @@ pub fn getDepFileName(d: *Driver, source: Source, buf: *[std.fs.max_name_bytes]u
 fn getRandomFilename(d: *Driver, buf: *[std.fs.max_name_bytes]u8, extension: []const u8) ![]const u8 {
     const io = d.comp.io;
     const random_bytes_count = 12;
-    const sub_path_len = comptime std.fs.base64_encoder.calcSize(random_bytes_count);
+    const sub_path_len = comptime std.base64.url_safe.Encoder.calcSize(random_bytes_count);
 
     var random_bytes: [random_bytes_count]u8 = undefined;
     io.random(&random_bytes);
     var random_name: [sub_path_len]u8 = undefined;
-    _ = std.fs.base64_encoder.encode(&random_name, &random_bytes);
+    _ = std.base64.url_safe.Encoder.encode(&random_name, &random_bytes);
 
     const fmt_template = "/tmp/{s}{s}";
     const fmt_args = .{

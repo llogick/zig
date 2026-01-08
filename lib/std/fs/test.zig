@@ -1777,8 +1777,8 @@ test "open file with exclusive nonblocking lock twice (absolute paths)" {
     var random_bytes: [12]u8 = undefined;
     io.random(&random_bytes);
 
-    var random_b64: [std.fs.base64_encoder.calcSize(random_bytes.len)]u8 = undefined;
-    _ = std.fs.base64_encoder.encode(&random_b64, &random_bytes);
+    var random_b64: [std.base64.url_safe.Encoder.calcSize(random_bytes.len)]u8 = undefined;
+    _ = std.base64.url_safe.Encoder.encode(&random_b64, &random_bytes);
 
     const sub_path = random_b64 ++ "-zig-test-absolute-paths.txt";
 
