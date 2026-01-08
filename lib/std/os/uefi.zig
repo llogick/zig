@@ -111,7 +111,7 @@ pub const Guid = extern struct {
         const time_mid = @byteSwap(self.time_mid);
         const time_high_and_version = @byteSwap(self.time_high_and_version);
 
-        return writer.print("{x:0>8}-{x:0>4}-{x:0>4}-{x:0>2}{x:0>2}-{x:0>12}", .{
+        return writer.print("{x:0>8}-{x:0>4}-{x:0>4}-{x:0>2}{x:0>2}-{x}", .{
             std.mem.asBytes(&time_low),
             std.mem.asBytes(&time_mid),
             std.mem.asBytes(&time_high_and_version),
