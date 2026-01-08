@@ -10588,7 +10588,7 @@ pub const socket = switch (native_os) {
 
 pub const socketpair = switch (native_os) {
     // https://devblogs.microsoft.com/commandline/af_unix-comes-to-windows/#unsupported\unavailable:
-    .windows => void,
+    .windows => {},
     else => private.socketpair,
 };
 
@@ -10775,11 +10775,10 @@ pub extern "c" fn recvfrom(
 ) if (native_os == .windows) c_int else isize;
 
 pub const recvmsg = switch (native_os) {
-    // Windows: Technically, a form of recvmsg() exists for Windows, but the
-    // user has to install some kind of callback for it.  I'm not sure if/how
-    // we can map this to normal recvmsg() interface use.
+    // Technically, a form of recvmsg() exists for Windows, but the user has to
+    // install some kind of callback for it.
     // https://learn.microsoft.com/en-us/windows/win32/api/mswsock/nc-mswsock-lpfn_wsarecvmsg
-    .windows => void,
+    .windows => {},
     else => private.recvmsg,
 };
 
@@ -11086,6 +11085,20 @@ pub const uintmax_t = u64;
 pub extern "c" fn pthread_getthreadid_np() c_int;
 pub extern "c" fn pthread_set_name_np(thread: pthread_t, name: [*:0]const u8) void;
 pub extern "c" fn pthread_get_name_np(thread: pthread_t, name: [*:0]u8, len: usize) void;
+
+pub const TIMER = switch (native_os) {
+    .linux, .emscripten => std.os.linux.TIMER,
+    .openbsd, .netbsd, .wasi, .windows, .freebsd => packed struct(u32) {
+        ABSTIME: bool,
+        _: u31 = 0,
+    },
+    else => void,
+};
+
+pub const clock_nanosleep = switch (native_os) {
+    .linux, .emscripten, .netbsd, .wasi, .windows, .freebsd => private.clock_nanosleep,
+    else => {},
+};
 
 // OS-specific bits. These are protected from being used on the wrong OS by
 // comptime assertions inside each OS-specific file.
@@ -11476,6 +11489,7 @@ const private = struct {
     extern "c" fn gettimeofday(noalias tv: ?*timeval, noalias tz: ?*timezone) c_int;
     extern "c" fn msync(addr: *align(page_size) const anyopaque, len: usize, flags: c_int) c_int;
     extern "c" fn nanosleep(rqtp: *const timespec, rmtp: ?*timespec) c_int;
+    extern "c" fn clock_nanosleep(clockid: clockid_t, flags: TIMER, t: *const timespec, remain: ?*timespec) c_int;
     extern "c" fn pipe2(fds: *[2]fd_t, flags: O) c_int;
     extern "c" fn readdir(dir: *DIR) ?*dirent;
     extern "c" fn realpath(noalias file_name: [*:0]const u8, noalias resolved_name: [*]u8) ?[*:0]u8;
