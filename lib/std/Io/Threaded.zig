@@ -1229,7 +1229,19 @@ pub fn init(
     gpa: Allocator,
     options: InitOptions,
 ) Threaded {
-    if (builtin.single_threaded) return .init_single_threaded;
+    if (builtin.single_threaded) return .{
+        .allocator = gpa,
+        .stack_size = options.stack_size,
+        .async_limit = options.async_limit orelse init_single_threaded.async_limit,
+        .cpu_count_error = init_single_threaded.cpu_count_error,
+        .concurrent_limit = options.concurrent_limit,
+        .old_sig_io = undefined,
+        .old_sig_pipe = undefined,
+        .have_signal_handler = init_single_threaded.have_signal_handler,
+        .argv0 = options.argv0,
+        .environ = .{ .process_environ = options.environ },
+        .worker_threads = init_single_threaded.worker_threads,
+    };
 
     const cpu_count = std.Thread.getCpuCount();
 
@@ -1243,8 +1255,8 @@ pub fn init(
         .old_sig_pipe = undefined,
         .have_signal_handler = false,
         .argv0 = options.argv0,
-        .worker_threads = .init(null),
         .environ = .{ .process_environ = options.environ },
+        .worker_threads = .init(null),
     };
 
     if (posix.Sigaction != void) {
