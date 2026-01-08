@@ -1358,7 +1358,7 @@ pub const Mutex = extern struct {
 
     pub const init: Mutex = .{ .state = .init(.unlocked) };
 
-    const State = enum(u32) {
+    pub const State = enum(u32) {
         unlocked,
         locked_once,
         contended,
