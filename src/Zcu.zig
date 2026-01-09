@@ -878,7 +878,7 @@ pub const Namespace = struct {
         ns: Namespace,
         zcu: *Zcu,
         name: InternPool.NullTerminatedString,
-        writer: anytype,
+        writer: *Writer,
     ) @TypeOf(writer).Error!void {
         const sep: u8 = if (ns.parent.unwrap()) |parent| sep: {
             try zcu.namespacePtr(parent).renderFullyQualifiedDebugName(
@@ -1125,7 +1125,7 @@ pub const File = struct {
         return file.sub_file_path.len - ext.len;
     }
 
-    pub fn renderFullyQualifiedName(file: File, writer: anytype) !void {
+    pub fn renderFullyQualifiedName(file: File, writer: *Writer) !void {
         // Convert all the slashes into dots and truncate the extension.
         const ext = std.fs.path.extension(file.sub_file_path);
         const noext = file.sub_file_path[0 .. file.sub_file_path.len - ext.len];
@@ -1135,7 +1135,7 @@ pub const File = struct {
         };
     }
 
-    pub fn renderFullyQualifiedDebugName(file: File, writer: anytype) !void {
+    pub fn renderFullyQualifiedDebugName(file: File, writer: *Writer) !void {
         for (file.sub_file_path) |byte| switch (byte) {
             '/', '\\' => try writer.writeByte('/'),
             else => try writer.writeByte(byte),
@@ -2177,33 +2177,33 @@ pub const SrcLoc = struct {
                 var multi_i: u32 = 0;
                 var scalar_i: u32 = 0;
                 var underscore_node: Ast.Node.OptionalIndex = .none;
-                const case = case: for (case_nodes) |case_node| {
+                const case: Ast.full.SwitchCase = case: for (case_nodes) |case_node| {
                     const case = tree.fullSwitchCase(case_node).?;
                     if (case.ast.values.len == 0) {
-                        if (want_case_idx == LazySrcLoc.Offset.SwitchCaseIndex.special_else) {
+                        if (want_case_idx == Zir.UnwrappedSwitchBlock.Case.Index.@"else") {
                             break :case case;
                         }
                         continue :case;
                     }
-                    if (underscore_node == .none) for (case.ast.values) |val_node| {
-                        if (tree.nodeTag(val_node) == .identifier and
-                            mem.eql(u8, tree.tokenSlice(tree.nodeMainToken(val_node)), "_"))
-                        {
-                            underscore_node = val_node.toOptional();
-                            if (want_case_idx == LazySrcLoc.Offset.SwitchCaseIndex.special_under) {
-                                break :case case;
+                    if (underscore_node == .none) {
+                        for (case.ast.values) |value| {
+                            if (tree.nodeTag(value) == .identifier and
+                                mem.eql(u8, tree.tokenSlice(tree.nodeMainToken(value)), "_"))
+                            {
+                                underscore_node = value.toOptional();
+                                if (want_case_idx.is_under) break :case case;
+                                if (case.ast.values.len == 1) continue :case;
                             }
-                            continue :case;
                         }
-                    };
+                    }
 
                     const is_multi = case.ast.values.len != 1 or
                         tree.nodeTag(case.ast.values[0]) == .switch_range;
 
                     switch (want_case_idx.kind) {
-                        .scalar => if (!is_multi and want_case_idx.index == scalar_i)
+                        .scalar => if (!is_multi and want_case_idx.value == scalar_i)
                             break :case case,
-                        .multi => if (is_multi and want_case_idx.index == multi_i)
+                        .multi => if (is_multi and want_case_idx.value == multi_i)
                             break :case case,
                     }
 
@@ -2214,12 +2214,13 @@ pub const SrcLoc = struct {
                     }
                 } else unreachable;
 
-                const want_item = switch (src_loc.lazy) {
+                const want_item_idx = switch (src_loc.lazy) {
                     .switch_case_item,
                     .switch_case_item_range_first,
                     .switch_case_item_range_last,
                     => |x| item_idx: {
-                        assert(want_case_idx != LazySrcLoc.Offset.SwitchCaseIndex.special_else);
+                        assert(want_case_idx != Zir.UnwrappedSwitchBlock.Case.Index.@"else");
+                        assert(want_case_idx != Zir.UnwrappedSwitchBlock.Case.Index.bare_under);
                         break :item_idx x.item_idx;
                     },
                     .switch_capture, .switch_tag_capture => {
@@ -2242,7 +2243,7 @@ pub const SrcLoc = struct {
                     else => unreachable,
                 };
 
-                switch (want_item.kind) {
+                switch (want_item_idx.kind) {
                     .single => {
                         var item_i: u32 = 0;
                         for (case.ast.values) |item_node| {
@@ -2251,12 +2252,21 @@ pub const SrcLoc = struct {
                             {
                                 continue;
                             }
-                            if (item_i != want_item.index) {
+                            if (item_i != want_item_idx.value) {
                                 item_i += 1;
                                 continue;
                             }
                             return tree.nodeToSpan(item_node);
-                        } else unreachable;
+                        } else {
+                            for (case.ast.values) |item_node| {
+                                const item_span = tree.nodeToSpan(item_node);
+                                std.debug.print("{s}\n", .{tree.source[item_span.start..item_span.end]});
+                            }
+                            std.debug.print("want_case_idx={any}\n", .{want_case_idx});
+                            std.debug.print("want_item_idx={any}\n", .{want_item_idx});
+                            unreachable;
+                        }
+                        // } else unreachable;
                     },
                     .range => {
                         var range_i: u32 = 0;
@@ -2264,7 +2274,7 @@ pub const SrcLoc = struct {
                             if (tree.nodeTag(item_node) != .switch_range) {
                                 continue;
                             }
-                            if (range_i != want_item.index) {
+                            if (range_i != want_item_idx.value) {
                                 range_i += 1;
                                 continue;
                             }
@@ -2642,29 +2652,21 @@ pub const LazySrcLoc = struct {
             /// The offset of the switch AST node.
             switch_node_offset: Ast.Node.Offset,
             /// The index of the case to point to within this switch.
-            case_idx: SwitchCaseIndex,
+            case_idx: Zir.UnwrappedSwitchBlock.Case.Index,
             /// The index of the item to point to within this case.
-            item_idx: SwitchItemIndex,
+            item_idx: SwitchItem.Index,
+
+            pub const Index = packed struct(u32) {
+                kind: enum(u1) { single, range },
+                value: u31,
+            };
         };
 
         pub const SwitchCapture = struct {
             /// The offset of the switch AST node.
             switch_node_offset: Ast.Node.Offset,
             /// The index of the case whose capture to point to.
-            case_idx: SwitchCaseIndex,
-        };
-
-        pub const SwitchCaseIndex = packed struct(u32) {
-            kind: enum(u1) { scalar, multi },
-            index: u31,
-
-            pub const special_else: SwitchCaseIndex = @bitCast(@as(u32, std.math.maxInt(u32)));
-            pub const special_under: SwitchCaseIndex = @bitCast(@as(u32, std.math.maxInt(u32) - 1));
-        };
-
-        pub const SwitchItemIndex = packed struct(u32) {
-            kind: enum(u1) { single, range },
-            index: u31,
+            case_idx: Zir.UnwrappedSwitchBlock.Case.Index,
         };
 
         pub const ArrayCat = struct {

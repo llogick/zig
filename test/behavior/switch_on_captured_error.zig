@@ -17,7 +17,7 @@ test "switch on error union catch capture" {
             try testElse();
             try testCapture();
             try testInline();
-            try testEmptyErrSet();
+            try testUnreachableElseProng();
             try testAddressOf();
         }
 
@@ -240,17 +240,85 @@ test "switch on error union catch capture" {
             {
                 var a: error{}!u64 = 0;
                 _ = &a;
-                const b: u64 = a catch |err| switch (err) {
-                    else => |e| return e,
+                const b = a catch |err| switch (err) {
+                    undefined => @compileError("unreachable"),
+                };
+                try expectEqual(@as(u64, 0), b);
+            }
+        }
+
+        fn testUnreachableElseProng() !void {
+            {
+                var a: error{}!u64 = 0;
+                _ = &a;
+                const b = a catch |err| switch (err) {
+                    else => unreachable,
                 };
                 try expectEqual(@as(u64, 0), b);
             }
             {
                 var a: error{}!u64 = 0;
                 _ = &a;
-                const b: u64 = a catch |err| switch (err) {
-                    error.UnknownError => return error.Fail,
+                const b = a catch |err| switch (err) {
+                    else => return,
+                };
+                try expectEqual(@as(u64, 0), b);
+            }
+            {
+                var a: error{}!u64 = 0;
+                _ = &a;
+                const b = a catch |err| switch (err) {
                     else => |e| return e,
+                };
+                try expectEqual(@as(u64, 0), b);
+            }
+            {
+                var a: error{MyError}!u64 = error.MyError;
+                _ = &a;
+                const b = a catch |err| switch (err) {
+                    error.MyError => 0,
+                    else => unreachable,
+                };
+                try expectEqual(@as(u64, 0), b);
+            }
+            {
+                var a: error{MyError}!u64 = error.MyError;
+                _ = &a;
+                const b = a catch |err| switch (err) {
+                    error.MyError => 0,
+                    else => return,
+                };
+                try expectEqual(@as(u64, 0), b);
+            }
+            {
+                var a: error{MyError}!u64 = error.MyError;
+                _ = &a;
+                const b = a catch |err| switch (err) {
+                    error.MyError => 0,
+                    else => |e| return e,
+                };
+                try expectEqual(@as(u64, 0), b);
+            }
+        }
+
+        fn testErrNotInSet() !void {
+            {
+                var a: error{MyError}!u64 = 0;
+                _ = &a;
+                const b = a catch |err| switch (err) {
+                    error.MyError => 1,
+                    error.MyOtherError => comptime unreachable,
+                    error.YetAnotherError, error.ThereIsAnother => comptime unreachable,
+                };
+                try expectEqual(@as(u64, 0), b);
+            }
+            {
+                var a: error{MyError}!u64 = error.MyError;
+                _ = &a;
+                const b = a catch |err| switch (err) {
+                    error.MyError => 0,
+                    error.MyOtherError => comptime unreachable,
+                    error.YetAnotherError, error.ThereIsAnother => comptime unreachable,
                 };
                 try expectEqual(@as(u64, 0), b);
             }
@@ -316,8 +384,8 @@ test "switch on error union if else capture" {
             try testCapturePtr();
             try testInline();
             try testInlinePtr();
-            try testEmptyErrSet();
-            try testEmptyErrSetPtr();
+            try testUnreachableElseProng();
+            try testUnreachableElseProngPtr();
             try testAddressOf();
         }
 
@@ -755,17 +823,8 @@ test "switch on error union if else capture" {
             {
                 var a: error{}!u64 = 0;
                 _ = &a;
-                const b: u64 = if (a) |x| x else |err| switch (err) {
-                    else => |e| return e,
-                };
-                try expectEqual(@as(u64, 0), b);
-            }
-            {
-                var a: error{}!u64 = 0;
-                _ = &a;
-                const b: u64 = if (a) |x| x else |err| switch (err) {
-                    error.UnknownError => return error.Fail,
-                    else => |e| return e,
+                const b = if (a) |x| x else |err| switch (err) {
+                    undefined => @compileError("unreachable"),
                 };
                 try expectEqual(@as(u64, 0), b);
             }
@@ -775,17 +834,141 @@ test "switch on error union if else capture" {
             {
                 var a: error{}!u64 = 0;
                 _ = &a;
-                const b: u64 = if (a) |*x| x.* else |err| switch (err) {
-                    else => |e| return e,
+                const b = if (a) |*x| x.* else |err| switch (err) {
+                    error.undefined => @compileError("unreachable"),
+                };
+                try expectEqual(@as(u64, 0), b);
+            }
+        }
+
+        fn testUnreachableElseProng() !void {
+            {
+                var a: error{}!u64 = 0;
+                _ = &a;
+                const b = if (a) |x| x else |err| switch (err) {
+                    else => unreachable,
                 };
                 try expectEqual(@as(u64, 0), b);
             }
             {
                 var a: error{}!u64 = 0;
                 _ = &a;
-                const b: u64 = if (a) |*x| x.* else |err| switch (err) {
+                const b = if (a) |x| x else |err| switch (err) {
+                    error.UnknownError => return error.Fail,
+                    else => return,
+                };
+                try expectEqual(@as(u64, 0), b);
+            }
+            {
+                var a: error{}!u64 = 0;
+                _ = &a;
+                const b = if (a) |x| x else |err| switch (err) {
                     error.UnknownError => return error.Fail,
                     else => |e| return e,
+                };
+                try expectEqual(@as(u64, 0), b);
+            }
+            {
+                var a: error{MyError}!u64 = error.MyError;
+                _ = &a;
+                const b = if (a) |x| x else |err| switch (err) {
+                    error.MyError => 0,
+                    else => unreachable,
+                };
+                try expectEqual(@as(u64, 0), b);
+            }
+            {
+                var a: error{MyError}!u64 = error.MyError;
+                _ = &a;
+                const b = if (a) |x| x else |err| switch (err) {
+                    error.MyError => 0,
+                    else => return,
+                };
+                try expectEqual(@as(u64, 0), b);
+            }
+            {
+                var a: error{MyError}!u64 = error.MyError;
+                _ = &a;
+                const b = if (a) |x| x else |err| switch (err) {
+                    error.MyError => 0,
+                    else => |e| return e,
+                };
+                try expectEqual(@as(u64, 0), b);
+            }
+        }
+
+        fn testUnreachableElseProngPtr() !void {
+            {
+                var a: error{}!u64 = 0;
+                _ = &a;
+                const b = if (a) |*x| x.* else |err| switch (err) {
+                    else => unreachable,
+                };
+                try expectEqual(@as(u64, 0), b);
+            }
+            {
+                var a: error{}!u64 = 0;
+                _ = &a;
+                const b = if (a) |*x| x.* else |err| switch (err) {
+                    else => return,
+                };
+                try expectEqual(@as(u64, 0), b);
+            }
+            {
+                var a: error{}!u64 = 0;
+                _ = &a;
+                const b = if (a) |*x| x.* else |err| switch (err) {
+                    else => |e| return e,
+                };
+                try expectEqual(@as(u64, 0), b);
+            }
+            {
+                var a: error{MyError}!u64 = error.MyError;
+                _ = &a;
+                const b = if (a) |*x| x.* else |err| switch (err) {
+                    error.MyError => 0,
+                    else => unreachable,
+                };
+                try expectEqual(@as(u64, 0), b);
+            }
+            {
+                var a: error{MyError}!u64 = error.MyError;
+                _ = &a;
+                const b = if (a) |*x| x.* else |err| switch (err) {
+                    error.MyError => 0,
+                    else => return,
+                };
+                try expectEqual(@as(u64, 0), b);
+            }
+            {
+                var a: error{MyError}!u64 = error.MyError;
+                _ = &a;
+                const b = if (a) |*x| x.* else |err| switch (err) {
+                    error.MyError => 0,
+                    else => |e| return e,
+                };
+                try expectEqual(@as(u64, 0), b);
+            }
+        }
+
+        fn testErrNotInSet() !void {
+            {
+                var a: error{MyError}!u64 = 0;
+                _ = &a;
+                const b = if (a) |x| x else |err| switch (err) {
+                    error.MyError => 1,
+                    error.MyOtherError => comptime unreachable,
+                    error.YetAnotherError, error.ThereIsAnother => comptime unreachable,
+                };
+                try expectEqual(@as(u64, 0), b);
+            }
+            {
+                var a: error{MyError}!u64 = error.MyError;
+                _ = &a;
+                const b = if (a) |x| x else |err| switch (err) {
+                    error.MyError => 0,
+                    error.MyOtherError => comptime unreachable,
+                    error.YetAnotherError, error.ThereIsAnother => comptime unreachable,
                 };
                 try expectEqual(@as(u64, 0), b);
             }

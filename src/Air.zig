@@ -1339,6 +1339,50 @@ pub const SwitchBr = struct {
         ranges_len: u32,
         body_len: u32,
     };
+
+    pub const BranchHints = struct {
+        bags: std.ArrayList(u32),
+        count: u32,
+
+        const hints_per_bag = 10;
+        const hint_bits = @bitSizeOf(std.builtin.BranchHint);
+
+        pub const empty: BranchHints = .{
+            .bags = .empty,
+            .count = 0,
+        };
+
+        pub fn initCapacity(gpa: std.mem.Allocator, num: u32) std.mem.Allocator.Error!BranchHints {
+            const bags_required = std.math.divCeil(u32, num, hints_per_bag) catch unreachable;
+            const bags: std.ArrayList(u32) = try .initCapacity(gpa, bags_required);
+            return .{ .bags = bags, .count = 0 };
+        }
+
+        pub fn ensureUnusedCapacity(hints: *BranchHints, gpa: std.mem.Allocator, additional_count: u32) std.mem.Allocator.Error!void {
+            const unused_hints = hints.bags.capacity * hints_per_bag - hints.count;
+            if (unused_hints >= additional_count) return;
+            const bags_required = std.math.divCeil(u32, hints.count + additional_count, hints_per_bag) catch unreachable;
+            return hints.bags.ensureUnusedCapacity(gpa, bags_required);
+        }
+
+        pub fn appendAssumeCapacity(hints: *BranchHints, hint: std.builtin.BranchHint) void {
+            const idx_in_bag = hints.count % hints_per_bag;
+            var bag: u32 = if (idx_in_bag > 0) hints.bags.pop().? else 0;
+            bag |= @as(u32, @intFromEnum(hint)) << @intCast(hint_bits * idx_in_bag);
+            hints.count += 1;
+            return hints.bags.appendAssumeCapacity(bag);
+        }
+
+        pub fn append(hints: *BranchHints, gpa: std.mem.Allocator, hint: std.builtin.BranchHint) std.mem.Allocator.Error!void {
+            try hints.ensureUnusedCapacity(gpa, 1);
+            return hints.appendAssumeCapacity(hint);
+        }
+
+        pub fn deinit(hints: *BranchHints, gpa: std.mem.Allocator) void {
+            hints.bags.deinit(gpa);
+            hints.* = undefined;
+        }
+    };
 };
 
 /// This data is stored inside extra. Trailing:
