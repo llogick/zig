@@ -385,15 +385,15 @@ pub const Ed25519 = struct {
             );
         }
 
-        /// Create a Signer, that can be used for incremental signing.
-        /// Note that the signature is not deterministic.
-        pub fn signer(
+        /// Create a signer that can be used for incremental signing, using a custom base nonce.
+        /// `base_nonce` must be unique for each signed message; otherwise, the secret key can
+        /// be trivially recovered by an attacker.
+        /// It can be generated using a cryptographically secure random number generator.
+        pub fn signerWithBaseNonce(
             key_pair: KeyPair,
-            /// If set, should be something unique for each message, such as a
-            /// random nonce, or a counter.
+            base_nonce: [32]u8,
+            /// If set, should be something unique for each message, such as a counter.
             noise: ?[noise_length]u8,
-            /// Filled with cryptographically secure randomness.
-            entropy: *const [noise_length]u8,
         ) (IdentityElementError || KeyMismatchError || NonCanonicalError || WeakPublicKeyError)!Signer {
             if (!mem.eql(u8, &key_pair.secret_key.publicKeyBytes(), &key_pair.public_key.toBytes())) {
                 return error.KeyMismatch;
@@ -401,7 +401,7 @@ pub const Ed25519 = struct {
             const scalar_and_prefix = key_pair.secret_key.scalarAndPrefix();
             var h = Sha512.init(.{});
             h.update(&scalar_and_prefix.prefix);
-            h.update(entropy);
+            h.update(&base_nonce);
             if (noise) |*z| {
                 h.update(z);
             }
@@ -410,6 +410,20 @@ pub const Ed25519 = struct {
             const nonce = Curve.scalar.reduce64(nonce64);
 
             return Signer.init(scalar_and_prefix.scalar, nonce, key_pair.public_key);
+        }
+
+        /// Create a Signer, that can be used for incremental signing.
+        /// Note that the signature is not deterministic.
+        pub fn signer(
+            key_pair: KeyPair,
+            /// If set, should be something unique for each message, such as a
+            /// random nonce, or a counter.
+            noise: ?[noise_length]u8,
+            io: std.Io,
+        ) (IdentityElementError || KeyMismatchError || NonCanonicalError || WeakPublicKeyError)!Signer {
+            var base_nonce: [32]u8 = undefined;
+            io.random(&base_nonce);
+            return key_pair.signerWithBaseNonce(base_nonce, noise);
         }
     };
 
@@ -748,9 +762,7 @@ test "signatures with streaming" {
     const io = std.testing.io;
     const kp = Ed25519.KeyPair.generate(io);
 
-    var entropy: [Ed25519.noise_length]u8 = undefined;
-    io.random(&entropy);
-    var signer = try kp.signer(null, &entropy);
+    var signer = try kp.signer(null, io);
     signer.update("mes");
     signer.update("sage");
     const sig = signer.finalize();
