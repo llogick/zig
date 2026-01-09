@@ -15,6 +15,7 @@ else
 
 comptime {
     _ = @import("c/inttypes.zig");
+    _ = @import("c/ctype.zig");
     _ = @import("c/stdlib.zig");
     _ = @import("c/math.zig");
 
