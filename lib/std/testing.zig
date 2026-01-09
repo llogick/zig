@@ -1187,7 +1187,7 @@ pub fn checkAllAllocationFailures(backing_allocator: std.mem.Allocator, comptime
                     return error.MemoryLeakDetected;
                 }
             },
-            else => return err,
+            else => |e| return e,
         }
     }
 }

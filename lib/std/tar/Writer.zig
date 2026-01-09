@@ -114,7 +114,7 @@ fn writeHeader(
     if (typeflag == .symbolic_link)
         header.setLinkname(link_name) catch |err| switch (err) {
             error.NameTooLong => try w.writeExtendedHeader(.gnu_long_link, &.{link_name}),
-            else => return err,
+            else => |e| return e,
         };
     try header.write(w.underlying_writer);
 }
@@ -131,7 +131,7 @@ fn setPath(w: *Writer, header: *Header, sub_path: []const u8) Error!void {
                 &.{ w.prefix, "/", sub_path };
             try w.writeExtendedHeader(.gnu_long_name, buffers);
         },
-        else => return err,
+        else => |e| return e,
     };
 }
 
