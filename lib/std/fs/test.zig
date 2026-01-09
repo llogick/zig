@@ -847,7 +847,16 @@ test "file operations on directories" {
 
             {
                 const handle = try ctx.dir.openFile(io, test_dir_name, .{ .allow_directory = true, .mode = .read_only });
-                handle.close(io);
+                defer handle.close(io);
+
+                // Reading from the handle should fail
+                const expected_err = switch (native_os) {
+                    .wasi => error.NotOpenForReading,
+                    else => error.IsDir,
+                };
+                var buf: [1]u8 = undefined;
+                try expectError(expected_err, handle.readStreaming(io, &.{&buf}));
+                try expectError(expected_err, handle.readPositional(io, &.{&buf}, 0));
             }
             try expectError(error.IsDir, ctx.dir.openFile(io, test_dir_name, .{ .allow_directory = false, .mode = .read_only }));
 
