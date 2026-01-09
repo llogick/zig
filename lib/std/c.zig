@@ -11088,7 +11088,7 @@ pub extern "c" fn pthread_get_name_np(thread: pthread_t, name: [*:0]u8, len: usi
 
 pub const TIMER = switch (native_os) {
     .linux, .emscripten => std.os.linux.TIMER,
-    .openbsd, .netbsd, .wasi, .windows, .freebsd => packed struct(u32) {
+    .openbsd, .netbsd, .wasi, .windows, .freebsd, .serenity => packed struct(u32) {
         ABSTIME: bool,
         _: u31 = 0,
     },
@@ -11096,7 +11096,7 @@ pub const TIMER = switch (native_os) {
 };
 
 pub const clock_nanosleep = switch (native_os) {
-    .linux, .emscripten, .netbsd, .wasi, .windows, .freebsd => private.clock_nanosleep,
+    .linux, .emscripten, .netbsd, .wasi, .windows, .freebsd, .serenity => private.clock_nanosleep,
     else => {},
 };
 
