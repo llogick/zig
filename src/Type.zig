@@ -1933,12 +1933,12 @@ pub fn isPtrLikeOptional(ty: Type, zcu: *const Zcu) bool {
     };
 }
 
-/// For *[N]T,         returns [N]T.
-/// For *T,            returns T.
-/// For [*]T,          returns T.
-/// For @Vector(N, T), returns T.
-/// For [N]T,          returns T.
-/// For ?T,            returns T.
+/// For `*[N]T`,         returns `[N]T`.
+/// For `*T`,            returns `T`.
+/// For `[*]T`,          returns `T`.
+/// For `@Vector(N, T)`, returns `T`.
+/// For `[N]T`,          returns `T`.
+/// For `?T`,            returns `T`.
 pub fn childType(ty: Type, zcu: *const Zcu) Type {
     return childTypeIp(ty, &zcu.intern_pool);
 }
@@ -1947,15 +1947,15 @@ pub fn childTypeIp(ty: Type, ip: *const InternPool) Type {
     return Type.fromInterned(ip.childType(ty.toIntern()));
 }
 
-/// For *[N]T,       returns T.
-/// For ?*T,         returns T.
-/// For ?*[N]T,      returns T.
-/// For ?[*]T,       returns T.
-/// For *T,          returns T.
-/// For [*]T,        returns T.
-/// For [N]T,        returns T.
-/// For []T,         returns T.
-/// For anyframe->T, returns T.
+/// For `*[N]T`,       returns `T`.
+/// For `?*T`,         returns `T`.
+/// For `?*[N]T`,      returns `T`.
+/// For `?[*]T`,       returns `T`.
+/// For `*T`,          returns `T`.
+/// For `[*]T`,        returns `T`.
+/// For `[N]T`,        returns `T`.
+/// For `[]T`,         returns `T`.
+/// For `anyframe->T`, returns `T`.
 pub fn elemType2(ty: Type, zcu: *const Zcu) Type {
     return switch (zcu.intern_pool.indexToKey(ty.toIntern())) {
         .ptr_type => |ptr_type| switch (ptr_type.flags.size) {
