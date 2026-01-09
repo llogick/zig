@@ -519,10 +519,7 @@ pub fn build(b: *std.Build) !void {
         .skip_libc = true,
         .no_builtin = true,
         .max_rss = switch (b.graph.host.result.os.tag) {
-            .freebsd => switch (b.graph.host.result.cpu.arch) {
-                .x86_64 => 743_802_470,
-                else => 800_000_000,
-            },
+            .freebsd => 800_000_000,
             .linux => switch (b.graph.host.result.cpu.arch) {
                 .aarch64 => 639_565_414,
                 .loongarch64 => 598_884_352,
