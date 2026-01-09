@@ -137,6 +137,16 @@ pub fn isPrint(c: u8) bool {
     return isAscii(c) and !isControl(c);
 }
 
+/// Returns whether the character has some graphical representation,
+pub fn isGraphical(c: u8) bool {
+    return isPrint(c) and c != ' ';
+}
+
+/// Returns whether the character is a punctuation character.
+pub fn isPunctuation(c: u8) bool {
+    return isGraphical(c) and !isAlphanumeric(c);
+}
+
 /// Returns whether this character is included in `whitespace`.
 pub fn isWhitespace(c: u8) bool {
     return switch (c) {
@@ -264,6 +274,17 @@ test "ASCII character classes" {
     try testing.expect(!isPrint(control_code.esc));
     try testing.expect(!isPrint(0x80));
     try testing.expect(!isPrint(0xff));
+
+    try testing.expect(isGraphical('@'));
+    try testing.expect(isGraphical('!'));
+    try testing.expect(!isGraphical(' '));
+
+    try testing.expect(isPunctuation('@'));
+    try testing.expect(isPunctuation('!'));
+    try testing.expect(isPunctuation(';'));
+    try testing.expect(isPunctuation(','));
+    try testing.expect(!isPunctuation('A'));
+    try testing.expect(!isPunctuation('8'));
 }
 
 /// Writes a lower case copy of `ascii_string` to `output`.
