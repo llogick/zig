@@ -3450,6 +3450,16 @@ void do_a_thing(struct Foo *foo) {
       {#code|test_integer_widening.zig#}
 
       {#header_close#}
+      {#header_open|Type Coercion: Int to Float#}
+      <p>
+      {#link|Integers#} coerce to {#link|Floats#} if every possible integer value can be stored in the float
+      without rounding (i.e. the integer's precision does not exceed the float's significand precision).
+      Larger integer types that cannot be safely coerced must be explicitly casted with {#link|@floatFromInt#}.
+      </p>
+      {#code|test_int_to_float_coercion.zig#}
+      {#code|test_failed_int_to_float_coercion.zig#}
+
+      {#header_close#}
       {#header_open|Type Coercion: Float to Int#}
       <p>
       A compiler error is appropriate because this ambiguous expression leaves the compiler

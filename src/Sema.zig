@@ -28715,7 +28715,7 @@ pub fn coerce(
     };
 }
 
-const CoersionError = CompileError || error{
+const CoercionError = CompileError || error{
     /// When coerce is called recursively, this error should be returned instead of using `fail`
     /// to ensure correct types in compile errors.
     NotCoercible,
@@ -28754,7 +28754,7 @@ fn coerceExtra(
     inst: Air.Inst.Ref,
     inst_src: LazySrcLoc,
     opts: CoerceOpts,
-) CoersionError!Air.Inst.Ref {
+) CoercionError!Air.Inst.Ref {
     const pt = sema.pt;
     const zcu = pt.zcu;
     const comp = zcu.comp;
@@ -29185,6 +29185,20 @@ fn coerceExtra(
                     if (dest_ty.zigTypeTag(zcu) == .comptime_float) {
                         if (!opts.report_err) return error.NotCoercible;
                         return sema.failWithNeededComptime(block, inst_src, .{ .simple = .casted_to_comptime_float });
+                    }
+                    const int_info = inst_ty.intInfo(zcu);
+                    const int_precision = int_info.bits - @intFromBool(int_info.signedness == .signed);
+                    const float_precision: u8 = switch (dest_ty.toIntern()) {
+                        .f16_type => 11,
+                        .f32_type => 24,
+                        .f64_type => 53,
+                        .f80_type => 64,
+                        .f128_type => 113,
+                        else => unreachable,
+                    };
+                    if (int_precision <= float_precision) {
+                        try sema.requireRuntimeBlock(block, inst_src, null);
+                        return block.addTyOp(.float_from_int, dest_ty, inst);
                     }
                     break :int;
                 };
