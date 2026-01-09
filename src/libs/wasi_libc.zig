@@ -834,8 +834,6 @@ const libc_top_half_src_files = [_][]const u8{
     "musl/src/math/sinhl.c",
     "musl/src/math/__sinl.c",
     "musl/src/math/sinl.c",
-    "musl/src/math/sqrt_data.c",
-    "musl/src/math/sqrtl.c",
     "musl/src/math/__tan.c",
     "musl/src/math/__tandf.c",
     "musl/src/math/tanh.c",
