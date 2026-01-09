@@ -94,8 +94,8 @@ pub fn initMetadata(self: *DebugSymbols, macho_file: *MachO) !void {
     self.linkedit_segment_cmd_index = @intCast(self.segments.items.len);
     try self.segments.append(self.allocator, .{
         .segname = makeStaticString("__LINKEDIT"),
-        .maxprot = macho.PROT.READ,
-        .initprot = macho.PROT.READ,
+        .maxprot = .{ .READ = true },
+        .initprot = .{ .READ = true },
         .cmdsize = @sizeOf(macho.segment_command_64),
     });
 }

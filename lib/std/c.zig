@@ -1672,10 +1672,10 @@ pub const MCL = switch (native_os) {
     // https://github.com/NetBSD/src/blob/fd2741deca927c18e3ba15acdf78b8b14b2abe36/sys/sys/mman.h#L179
     // https://github.com/openbsd/src/blob/39404228f6d36c0ca4be5f04ab5385568ebd6aa3/sys/sys/mman.h#L129
     // https://github.com/illumos/illumos-gate/blob/5280477614f83fea20fc938729df6adb3e44340d/usr/src/uts/common/sys/mman.h#L343
-    .freebsd, .dragonfly, .netbsd, .openbsd, .illumos => packed struct(c_int) {
-        CURRENT: bool = 0,
-        FUTURE: bool = 0,
-        _: std.meta.Int(.unsigned, @bitSizeOf(c_int) - 2) = 0,
+    .freebsd, .dragonfly, .netbsd, .openbsd, .illumos => packed struct(u32) {
+        CURRENT: bool = false,
+        FUTURE: bool = false,
+        _: u30 = 0,
     },
     else => void,
 };
@@ -1887,32 +1887,13 @@ pub const PROT = switch (native_os) {
     .linux => linux.PROT,
     .emscripten => emscripten.PROT,
     // https://github.com/SerenityOS/serenity/blob/6d59d4d3d9e76e39112842ec487840828f1c9bfe/Kernel/API/POSIX/sys/mman.h#L28-L31
-    .openbsd, .haiku, .dragonfly, .netbsd, .illumos, .freebsd, .windows, .serenity => struct {
-        /// page can not be accessed
-        pub const NONE = 0x0;
-        /// page can be read
-        pub const READ = 0x1;
-        /// page can be written
-        pub const WRITE = 0x2;
-        /// page can be executed
-        pub const EXEC = 0x4;
+    .openbsd, .haiku, .dragonfly, .netbsd, .illumos, .freebsd, .windows, .serenity => packed struct(u32) {
+        READ: bool = false,
+        WRITE: bool = false,
+        EXEC: bool = false,
+        _: u29 = 0,
     },
-    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => struct {
-        /// [MC2] no permissions
-        pub const NONE: vm_prot_t = 0x00;
-        /// [MC2] pages can be read
-        pub const READ: vm_prot_t = 0x01;
-        /// [MC2] pages can be written
-        pub const WRITE: vm_prot_t = 0x02;
-        /// [MC2] pages can be executed
-        pub const EXEC: vm_prot_t = 0x04;
-        /// When a caller finds that they cannot obtain write permission on a
-        /// mapped entry, the following flag can be used. The entry will be
-        /// made "needs copy" effectively copying the object (using COW),
-        /// and write permission will be added to the maximum protections for
-        /// the associated entry.
-        pub const COPY: vm_prot_t = 0x10;
-    },
+    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => vm_prot_t,
     else => void,
 };
 
@@ -10349,7 +10330,7 @@ pub extern "c" fn getgrgid(gid: gid_t) ?*group;
 pub extern "c" fn getgrgid_r(gid: gid_t, grp: *group, buf: [*]u8, buflen: usize, result: *?*group) c_int;
 pub extern "c" fn getrlimit64(resource: rlimit_resource, rlim: *rlimit) c_int;
 pub extern "c" fn lseek64(fd: fd_t, offset: i64, whence: c_int) i64;
-pub extern "c" fn mmap64(addr: ?*align(page_size) anyopaque, len: usize, prot: c_uint, flags: c_uint, fd: fd_t, offset: i64) *anyopaque;
+pub extern "c" fn mmap64(addr: ?*align(page_size) anyopaque, len: usize, prot: PROT, flags: c_uint, fd: fd_t, offset: i64) *anyopaque;
 pub extern "c" fn open64(path: [*:0]const u8, oflag: O, ...) c_int;
 pub extern "c" fn openat64(fd: c_int, path: [*:0]const u8, oflag: O, ...) c_int;
 pub extern "c" fn pread64(fd: fd_t, buf: [*]u8, nbyte: usize, offset: i64) isize;
@@ -10478,7 +10459,7 @@ pub const mlock = switch (native_os) {
 };
 
 pub const mlock2 = switch (native_os) {
-    linux => private.mlock2,
+    .linux => private.mlock2,
     else => {},
 };
 
@@ -10667,10 +10648,10 @@ pub extern "c" fn writev(fd: c_int, iov: [*]const iovec_const, iovcnt: c_uint) i
 pub extern "c" fn pwritev(fd: c_int, iov: [*]const iovec_const, iovcnt: c_uint, offset: off_t) isize;
 pub extern "c" fn write(fd: fd_t, buf: [*]const u8, nbyte: usize) isize;
 pub extern "c" fn pwrite(fd: fd_t, buf: [*]const u8, nbyte: usize, offset: off_t) isize;
-pub extern "c" fn mmap(addr: ?*align(page_size) anyopaque, len: usize, prot: c_uint, flags: MAP, fd: fd_t, offset: off_t) *anyopaque;
+pub extern "c" fn mmap(addr: ?*align(page_size) anyopaque, len: usize, prot: PROT, flags: MAP, fd: fd_t, offset: off_t) *anyopaque;
 pub extern "c" fn munmap(addr: *align(page_size) const anyopaque, len: usize) c_int;
 pub extern "c" fn mremap(addr: ?*align(page_size) const anyopaque, old_len: usize, new_len: usize, flags: MREMAP, ...) *anyopaque;
-pub extern "c" fn mprotect(addr: *align(page_size) anyopaque, len: usize, prot: c_uint) c_int;
+pub extern "c" fn mprotect(addr: *align(page_size) anyopaque, len: usize, prot: PROT) c_int;
 pub extern "c" fn link(oldpath: [*:0]const u8, newpath: [*:0]const u8) c_int;
 pub extern "c" fn linkat(oldfd: fd_t, oldpath: [*:0]const u8, newfd: fd_t, newpath: [*:0]const u8, flags: c_uint) c_int;
 pub extern "c" fn unlink(path: [*:0]const u8) c_int;

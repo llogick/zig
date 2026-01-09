@@ -1535,7 +1535,7 @@ const LinuxThreadImpl = struct {
         const mapped = posix.mmap(
             null,
             map_bytes,
-            posix.PROT.NONE,
+            .{},
             .{ .TYPE = .PRIVATE, .ANONYMOUS = true },
             -1,
             0,
@@ -1551,14 +1551,14 @@ const LinuxThreadImpl = struct {
         assert(mapped.len >= map_bytes);
         errdefer posix.munmap(mapped);
 
-        // map everything but the guard page as read/write
-        posix.mprotect(
-            @alignCast(mapped[guard_offset..]),
-            posix.PROT.READ | posix.PROT.WRITE,
-        ) catch |err| switch (err) {
-            error.AccessDenied => unreachable,
-            else => |e| return e,
-        };
+        // Map everything but the guard page as read/write.
+        const guarded: []align(std.heap.page_size_min) u8 = @alignCast(mapped[guard_offset..]);
+        const protection: posix.PROT = .{ .READ = true, .WRITE = true };
+        switch (posix.errno(posix.system.mprotect(guarded.ptr, guarded.len, protection))) {
+            .SUCCESS => {},
+            .NOMEM => return error.OutOfMemory,
+            else => |err| return posix.unexpectedErrno(err),
+        }
 
         // Prepare the TLS segment and prepare a user_desc struct when needed on x86
         var tls_ptr = linux.tls.prepareArea(mapped[tls_offset..]);

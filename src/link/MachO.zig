@@ -1758,10 +1758,10 @@ fn initSyntheticSections(self: *MachO) !void {
 }
 
 fn getSegmentProt(segname: []const u8) macho.vm_prot_t {
-    if (mem.eql(u8, segname, "__PAGEZERO")) return macho.PROT.NONE;
-    if (mem.eql(u8, segname, "__TEXT")) return macho.PROT.READ | macho.PROT.EXEC;
-    if (mem.eql(u8, segname, "__LINKEDIT")) return macho.PROT.READ;
-    return macho.PROT.READ | macho.PROT.WRITE;
+    if (mem.eql(u8, segname, "__PAGEZERO")) return .{};
+    if (mem.eql(u8, segname, "__TEXT")) return .{ .READ = true, .EXEC = true };
+    if (mem.eql(u8, segname, "__LINKEDIT")) return .{ .READ = true };
+    return .{ .READ = true, .WRITE = true };
 }
 
 fn getSegmentRank(segname: []const u8) u8 {
@@ -3348,7 +3348,7 @@ fn initMetadata(self: *MachO, options: InitMetadataOptions) !void {
                 .filesize = filesize,
                 .vmaddr = base_vmaddr + 0x4000000,
                 .vmsize = filesize,
-                .prot = macho.PROT.READ | macho.PROT.EXEC,
+                .prot = .{ .READ = true, .EXEC = true },
             });
         }
 
@@ -3360,7 +3360,7 @@ fn initMetadata(self: *MachO, options: InitMetadataOptions) !void {
                 .filesize = filesize,
                 .vmaddr = base_vmaddr + 0xc000000,
                 .vmsize = filesize,
-                .prot = macho.PROT.READ | macho.PROT.WRITE,
+                .prot = .{ .READ = true, .WRITE = true },
             });
         }
 
@@ -3372,7 +3372,7 @@ fn initMetadata(self: *MachO, options: InitMetadataOptions) !void {
                 .filesize = filesize,
                 .vmaddr = base_vmaddr + 0x10000000,
                 .vmsize = filesize,
-                .prot = macho.PROT.READ | macho.PROT.WRITE,
+                .prot = .{ .READ = true, .WRITE = true },
             });
         }
 
@@ -3381,7 +3381,7 @@ fn initMetadata(self: *MachO, options: InitMetadataOptions) !void {
             self.zig_bss_seg_index = try self.addSegment("__BSS_ZIG", .{
                 .vmaddr = base_vmaddr + 0x14000000,
                 .vmsize = memsize,
-                .prot = macho.PROT.READ | macho.PROT.WRITE,
+                .prot = .{ .READ = true, .WRITE = true },
             });
         }
 
@@ -3711,7 +3711,7 @@ pub fn addSegment(self: *MachO, name: []const u8, opts: struct {
     vmsize: u64 = 0,
     fileoff: u64 = 0,
     filesize: u64 = 0,
-    prot: macho.vm_prot_t = macho.PROT.NONE,
+    prot: macho.vm_prot_t = .{},
 }) error{OutOfMemory}!u8 {
     const gpa = self.base.comp.gpa;
     const index = @as(u8, @intCast(self.segments.items.len));
@@ -4903,7 +4903,7 @@ pub const MachTask = extern struct {
         try task.setCurrProtection(
             address,
             buf.len,
-            std.c.PROT.READ | std.c.PROT.WRITE | std.c.PROT.COPY,
+            .{ .READ = true, .WRITE = true, .COPY = true },
         );
         defer {
             task.setCurrProtection(address, buf.len, curr_prot) catch {};

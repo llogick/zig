@@ -808,7 +808,7 @@ pub const task_vm_info = extern struct {
 
 pub const task_vm_info_data_t = task_vm_info;
 
-pub const vm_prot_t = c_int;
+pub const vm_prot_t = std.macho.vm_prot_t;
 pub const boolean_t = c_int;
 
 pub extern "c" fn mach_vm_protect(

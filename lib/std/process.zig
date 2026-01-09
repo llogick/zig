@@ -886,3 +886,195 @@ pub const SetCurrentDirError = error{
 pub fn setCurrentDir(io: Io, dir: Io.Dir) !void {
     return io.vtable.processSetCurrentDir(io.userdata, dir);
 }
+
+pub const LockMemoryError = error{
+    UnsupportedOperation,
+    PermissionDenied,
+    LockedMemoryLimitExceeded,
+    SystemResources,
+} || Io.UnexpectedError;
+
+pub const LockMemoryOptions = struct {
+    /// Lock pages that are currently resident and mark the entire range so
+    /// that the remaining nonresident pages are locked when they are populated
+    /// by a page fault.
+    on_fault: bool = false,
+};
+
+/// Request part of the calling process's virtual address space to be in RAM,
+/// preventing that memory from being paged to the swap area.
+///
+/// Corresponds to "mlock" or "mlock2" in libc.
+///
+/// See also:
+/// * unlockMemory
+pub fn lockMemory(memory: []align(std.heap.page_size_min) const u8, options: LockMemoryOptions) LockMemoryError!void {
+    if (native_os == .windows) {
+        // TODO call VirtualLock
+    }
+    if (!options.on_fault and @TypeOf(posix.system.mlock) != void) {
+        switch (posix.errno(posix.system.mlock(memory.ptr, memory.len))) {
+            .SUCCESS => return,
+            .INVAL => |err| return std.Io.Threaded.errnoBug(err), // unaligned, negative, runs off end of addrspace
+            .PERM => return error.PermissionDenied,
+            .NOMEM => return error.LockedMemoryLimitExceeded,
+            .AGAIN => return error.SystemResources,
+            else => |err| return posix.unexpectedErrno(err),
+        }
+    }
+    if (@TypeOf(posix.system.mlock2) != void) {
+        const flags: posix.MLOCK = .{ .ONFAULT = options.on_fault };
+        switch (posix.errno(posix.system.mlock2(memory.ptr, memory.len, flags))) {
+            .SUCCESS => return,
+            .INVAL => |err| return std.Io.Threaded.errnoBug(err), // unaligned, negative, runs off end of addrspace
+            .PERM => return error.PermissionDenied,
+            .NOMEM => return error.LockedMemoryLimitExceeded,
+            .AGAIN => return error.SystemResources,
+            else => |err| return posix.unexpectedErrno(err),
+        }
+    }
+    return error.UnsupportedOperation;
+}
+
+pub const UnlockMemoryError = error{
+    PermissionDenied,
+    OutOfMemory,
+    SystemResources,
+} || Io.UnexpectedError;
+
+/// Withdraw request for process's virtual address space to be in RAM.
+///
+/// Corresponds to "munlock" in libc.
+///
+/// See also:
+/// * `lockMemory`
+pub fn unlockMemory(memory: []align(std.heap.page_size_min) const u8) UnlockMemoryError!void {
+    if (@TypeOf(posix.system.munlock) == void) return;
+    switch (posix.errno(posix.system.munlock(memory.ptr, memory.len))) {
+        .SUCCESS => return,
+        .INVAL => |err| return std.Io.Threaded.errnoBug(err), // unaligned or runs off end of addr space
+        .PERM => return error.PermissionDenied,
+        .NOMEM => return error.OutOfMemory,
+        .AGAIN => return error.SystemResources,
+        else => |err| return posix.unexpectedErrno(err),
+    }
+}
+
+pub const LockMemoryAllOptions = struct {
+    current: bool = false,
+    future: bool = false,
+    /// Asserted to be used together with `current` or `future`, or both.
+    on_fault: bool = false,
+};
+
+pub fn lockMemoryAll(options: LockMemoryAllOptions) LockMemoryError!void {
+    if (@TypeOf(posix.system.mlockall) == void) return error.UnsupportedOperation;
+    var flags: posix.MCL = .{
+        .CURRENT = options.current,
+        .FUTURE = options.future,
+    };
+    if (options.on_fault) {
+        assert(options.current or options.future);
+        if (@hasField(posix.MCL, "ONFAULT")) {
+            flags.ONFAULT = true;
+        } else {
+            return error.UnsupportedOperation;
+        }
+    }
+    switch (posix.errno(posix.system.mlockall(flags))) {
+        .SUCCESS => return,
+        .INVAL => |err| return std.Io.Threaded.errnoBug(err),
+        .PERM => return error.PermissionDenied,
+        .NOMEM => return error.LockedMemoryLimitExceeded,
+        .AGAIN => return error.SystemResources,
+        else => |err| return posix.unexpectedErrno(err),
+    }
+}
+
+pub fn unlockMemoryAll() UnlockMemoryError!void {
+    if (@TypeOf(posix.system.munlockall) == void) return;
+    switch (posix.errno(posix.system.munlockall())) {
+        .SUCCESS => return,
+        .PERM => return error.PermissionDenied,
+        .NOMEM => return error.OutOfMemory,
+        .AGAIN => return error.SystemResources,
+        else => |err| return posix.unexpectedErrno(err),
+    }
+}
+
+pub const ProtectMemoryError = error{
+    UnsupportedOperation,
+    /// The memory cannot be given the specified access. This can happen, for
+    /// example, if you memory map a file to which you have read-only access,
+    /// then use `protectMemory` to mark it writable.
+    AccessDenied,
+    /// Changing the protection of a memory region would result in the total
+    /// number of mappings with distinct attributes exceeding the allowed
+    /// maximum.
+    OutOfMemory,
+} || Io.UnexpectedError;
+
+pub const ProtectMemoryOptions = packed struct(u3) {
+    read: bool = false,
+    write: bool = false,
+    execute: bool = false,
+};
+
+pub fn protectMemory(
+    memory: []align(std.heap.page_size_min) u8,
+    options: ProtectMemoryOptions,
+) ProtectMemoryError!void {
+    if (native_os == .windows) {
+        var addr = memory.ptr; // ntdll takes an extra level of indirection here
+        var size = memory.len; // ntdll takes an extra level of indirection here
+        var old: windows.PAGE = undefined;
+        const current_process: windows.HANDLE = @ptrFromInt(@as(usize, @bitCast(@as(isize, -1))));
+        const new: windows.PAGE = switch (@as(u3, @bitCast(options))) {
+            0b000 => .{ .NOACCESS = true },
+            0b001 => .{ .READONLY = true },
+            0b010 => return error.AccessDenied, // +w -r not allowed
+            0b011 => .{ .READWRITE = true },
+            0b100 => .{ .EXECUTE = true },
+            0b101 => .{ .EXECUTE_READ = true },
+            0b110 => return error.AccessDenied, // +w -r not allowed
+            0b111 => .{ .EXECUTE_READWRITE = true },
+        };
+        switch (windows.ntdll.NtProtectVirtualMemory(current_process, @ptrCast(&addr), &size, new, &old)) {
+            .SUCCESS => return,
+            .INVALID_ADDRESS => return error.AccessDenied,
+            else => |st| return windows.unexpectedStatus(st),
+        }
+    } else if (posix.PROT != void) {
+        const flags: posix.PROT = .{
+            .READ = options.read,
+            .WRITE = options.write,
+            .EXEC = options.execute,
+        };
+        switch (posix.errno(posix.system.mprotect(memory.ptr, memory.len, flags))) {
+            .SUCCESS => return,
+            .INVAL => |err| return std.Io.Threaded.errnoBug(err),
+            .ACCES => return error.AccessDenied,
+            .NOMEM => return error.OutOfMemory,
+            else => |err| return posix.unexpectedErrno(err),
+        }
+    }
+    return error.UnsupportedOperation;
+}
+
+test lockMemory {
+    var page: [std.heap.page_size_min]u8 align(std.heap.page_size_min) = undefined;
+    lockMemory(&page, .{}) catch return error.SkipZigTest;
+    unlockMemory(&page) catch return error.SkipZigTest;
+}
+
+test lockMemoryAll {
+    lockMemoryAll(.{ .current = true }) catch return error.SkipZigTest;
+    unlockMemoryAll() catch return error.SkipZigTest;
+}
+
+test protectMemory {
+    if (builtin.cpu.arch == .hexagon) return error.SkipZigTest; // TODO
+    var page: [std.heap.page_size_min]u8 align(std.heap.page_size_min) = undefined;
+    protectMemory(&page, .{}) catch return error.SkipZigTest;
+    protectMemory(&page, .{ .read = true, .write = true }) catch return error.SkipZigTest;
+}

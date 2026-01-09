@@ -9,7 +9,19 @@ const Allocator = mem.Allocator;
 
 pub const cpu_type_t = c_int;
 pub const cpu_subtype_t = c_int;
-pub const vm_prot_t = c_int;
+pub const vm_prot_t = packed struct(u32) {
+    READ: bool = false,
+    WRITE: bool = false,
+    EXEC: bool = false,
+    _: u1 = 0,
+    /// When a caller finds that they cannot obtain write permission on a
+    /// mapped entry, the following flag can be used. The entry will be
+    /// made "needs copy" effectively copying the object (using COW),
+    /// and write permission will be added to the maximum protections for
+    /// the associated entry.
+    COPY: bool = false,
+    __: u27 = 0,
+};
 
 pub const mach_header = extern struct {
     magic: u32,
@@ -648,10 +660,10 @@ pub const segment_command_64 = extern struct {
     filesize: u64 = 0,
 
     /// maximum VM protection
-    maxprot: vm_prot_t = PROT.NONE,
+    maxprot: vm_prot_t = .{},
 
     /// initial VM protection
-    initprot: vm_prot_t = PROT.NONE,
+    initprot: vm_prot_t = .{},
 
     /// number of sections in segment
     nsects: u32 = 0,
@@ -662,7 +674,7 @@ pub const segment_command_64 = extern struct {
     }
 
     pub fn isWriteable(seg: segment_command_64) bool {
-        return seg.initprot & PROT.WRITE != 0;
+        return seg.initprot.write;
     }
 };
 

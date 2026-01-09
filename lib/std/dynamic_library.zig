@@ -238,7 +238,7 @@ pub const ElfDynLib = struct {
         const file_bytes = try posix.mmap(
             null,
             mem.alignForward(usize, size, page_size),
-            posix.PROT.READ,
+            .{ .READ = true },
             .{ .TYPE = .PRIVATE },
             file.handle,
             0,
@@ -276,7 +276,7 @@ pub const ElfDynLib = struct {
         const all_loaded_mem = try posix.mmap(
             null,
             virt_addr_end,
-            posix.PROT.NONE,
+            .{},
             .{ .TYPE = .PRIVATE, .ANONYMOUS = true },
             -1,
             0,
@@ -302,7 +302,7 @@ pub const ElfDynLib = struct {
                         const extra_bytes = (base + ph.p_vaddr) - aligned_addr;
                         const extended_memsz = mem.alignForward(usize, ph.p_memsz + extra_bytes, page_size);
                         const ptr = @as([*]align(std.heap.page_size_min) u8, @ptrFromInt(aligned_addr));
-                        const prot = elfToMmapProt(ph.p_flags);
+                        const prot = elfToProt(ph.p_flags);
                         if ((ph.p_flags & elf.PF_W) == 0) {
                             // If it does not need write access, it can be mapped from the fd.
                             _ = try posix.mmap(
@@ -531,12 +531,12 @@ pub const ElfDynLib = struct {
         return null;
     }
 
-    fn elfToMmapProt(elf_prot: u64) u32 {
-        var result: u32 = posix.PROT.NONE;
-        if ((elf_prot & elf.PF_R) != 0) result |= posix.PROT.READ;
-        if ((elf_prot & elf.PF_W) != 0) result |= posix.PROT.WRITE;
-        if ((elf_prot & elf.PF_X) != 0) result |= posix.PROT.EXEC;
-        return result;
+    fn elfToProt(elf_prot: u64) posix.PROT {
+        return .{
+            .READ = (elf_prot & elf.PF_R) != 0,
+            .WRITE = (elf_prot & elf.PF_W) != 0,
+            .EXEC = (elf_prot & elf.PF_X) != 0,
+        };
     }
 };
 
