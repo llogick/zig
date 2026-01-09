@@ -7,4 +7,4 @@ export fn foo() void {
 
 // error
 //
-// :3:9: error: continue cannot target labeled block
+// :3:9: error: continue outside of loop or labeled switch expression

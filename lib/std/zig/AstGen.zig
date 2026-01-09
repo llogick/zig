@@ -2276,7 +2276,7 @@ fn continueExpr(parent_gz: *GenZir, parent_scope: *Scope, node: Ast.Node.Index) 
                     if (try astgen.tokenIdentEql(label.token, break_label)) {
                         switch (gen_zir.continue_target) {
                             .none => {
-                                return astgen.failNode(node, "continue cannot target labeled block", .{});
+                                return astgen.failNode(node, "continue outside of loop or labeled switch expression", .{});
                             },
                             .@"break" => if (opt_rhs != .none) {
                                 return astgen.failNode(node, "cannot continue loop with operand", .{});
@@ -6803,12 +6803,11 @@ fn whileExpr(
                 break :s &else_scope.base;
             }
         };
-        // Remove label and forbid unlabeled control flow to this scope so that
-        // `continue` and `break` control flow apply to outer loops; not this one.
-        loop_scope.label = null;
+        // Disallow unlabeled control flow to this scope so that bare `continue`
+        // and `break` control flow apply to outer loops; not this one.
+        // Also disallow `continue` targeting the loop label.
         loop_scope.allow_unlabeled_control_flow = false;
-        loop_scope.continue_target = undefined;
-        loop_scope.break_target = undefined;
+        loop_scope.continue_target = .none;
         const else_result = try fullBodyExpr(&else_scope, sub_scope, loop_scope.break_result_info, else_node, .allow_branch_hint);
         if (is_statement) {
             _ = try addEnsureResult(&else_scope, else_result, else_node);
@@ -7093,12 +7092,11 @@ fn forExpr(
 
     if (for_full.ast.else_expr.unwrap()) |else_node| {
         const sub_scope = &else_scope.base;
-        // Remove label and forbid unlabeled control flow to this scope so that
-        // `continue` and `break` control flow apply to outer loops; not this one.
-        loop_scope.label = null;
+        // Disallow unlabeled control flow to this scope so that bare `continue`
+        // and `break` control flow apply to outer loops; not this one.
+        // Also disallow `continue` targeting the loop label.
         loop_scope.allow_unlabeled_control_flow = false;
-        loop_scope.continue_target = undefined;
-        loop_scope.break_target = undefined;
+        loop_scope.continue_target = .none;
         const else_result = try fullBodyExpr(&else_scope, sub_scope, loop_scope.break_result_info, else_node, .allow_branch_hint);
         if (is_statement) {
             _ = try addEnsureResult(&else_scope, else_result, else_node);
