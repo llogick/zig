@@ -55,10 +55,10 @@ comptime {
     }
 }
 
-// NOTE: If the input is not representable as an unsigned char or is not EOF the behaviour is undefined.
+// NOTE: If the input is not representable as an unsigned char or is not EOF (which is a negative integer value) the behaviour is undefined.
 
 fn isalnum(c: c_int) callconv(.c) c_int {
-    return @intFromBool(std.ascii.isAlphanumeric(@intCast(c)));
+    return @intFromBool(std.ascii.isAlphanumeric(@truncate(@as(c_uint, @bitCast(c))))); // @truncate instead of @intCast as we have to handle EOF
 }
 
 fn __isalnum_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
@@ -67,7 +67,7 @@ fn __isalnum_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
 }
 
 fn isalpha(c: c_int) callconv(.c) c_int {
-    return @intFromBool(std.ascii.isAlphabetic(@intCast(c)));
+    return @intFromBool(std.ascii.isAlphabetic(@truncate(@as(c_uint, @bitCast(c)))));
 }
 
 fn __isalpha_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
@@ -85,7 +85,7 @@ fn __isblank_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
 }
 
 fn iscntrl(c: c_int) callconv(.c) c_int {
-    return @intFromBool(std.ascii.isControl(@intCast(c)));
+    return @intFromBool(std.ascii.isControl(@truncate(@as(c_uint, @bitCast(c)))));
 }
 
 fn __iscntrl_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
@@ -94,7 +94,7 @@ fn __iscntrl_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
 }
 
 fn isdigit(c: c_int) callconv(.c) c_int {
-    return @intFromBool(std.ascii.isDigit(@intCast(c)));
+    return @intFromBool(std.ascii.isDigit(@truncate(@as(c_uint, @bitCast(c)))));
 }
 
 fn __isdigit_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
@@ -103,7 +103,7 @@ fn __isdigit_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
 }
 
 fn isgraph(c: c_int) callconv(.c) c_int {
-    return @intFromBool(std.ascii.isGraphical(@intCast(c)));
+    return @intFromBool(std.ascii.isGraphical(@truncate(@as(c_uint, @bitCast(c)))));
 }
 
 fn __isgraph_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
@@ -112,7 +112,7 @@ fn __isgraph_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
 }
 
 fn islower(c: c_int) callconv(.c) c_int {
-    return @intFromBool(std.ascii.isLower(@intCast(c)));
+    return @intFromBool(std.ascii.isLower(@truncate(@as(c_uint, @bitCast(c)))));
 }
 
 fn __islower_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
@@ -121,7 +121,7 @@ fn __islower_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
 }
 
 fn isprint(c: c_int) callconv(.c) c_int {
-    return @intFromBool(std.ascii.isPrint(@intCast(c)));
+    return @intFromBool(std.ascii.isPrint(@truncate(@as(c_uint, @bitCast(c)))));
 }
 
 fn __isprint_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
@@ -130,7 +130,7 @@ fn __isprint_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
 }
 
 fn ispunct(c: c_int) callconv(.c) c_int {
-    return @intFromBool(std.ascii.isPunctuation(@intCast(c)));
+    return @intFromBool(std.ascii.isPunctuation(@truncate(@as(c_uint, @bitCast(c)))));
 }
 
 fn __ispunct_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
@@ -139,7 +139,7 @@ fn __ispunct_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
 }
 
 fn isspace(c: c_int) callconv(.c) c_int {
-    return @intFromBool(std.ascii.isWhitespace(@intCast(c)));
+    return @intFromBool(std.ascii.isWhitespace(@truncate(@as(c_uint, @bitCast(c)))));
 }
 
 fn __isspace_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
@@ -148,7 +148,7 @@ fn __isspace_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
 }
 
 fn isupper(c: c_int) callconv(.c) c_int {
-    return @intFromBool(std.ascii.isUpper(@intCast(c)));
+    return @intFromBool(std.ascii.isUpper(@truncate(@as(c_uint, @bitCast(c)))));
 }
 
 fn __isupper_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
@@ -157,7 +157,7 @@ fn __isupper_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
 }
 
 fn isxdigit(c: c_int) callconv(.c) c_int {
-    return @intFromBool(std.ascii.isHex(@intCast(c)));
+    return @intFromBool(std.ascii.isHex(@truncate(@as(c_uint, @bitCast(c)))));
 }
 
 fn __isxdigit_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
@@ -166,7 +166,7 @@ fn __isxdigit_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
 }
 
 fn tolower(c: c_int) callconv(.c) c_int {
-    return std.ascii.toLower(@intCast(c));
+    return std.ascii.toLower(@truncate(@as(c_uint, @bitCast(c))));
 }
 
 fn __tolower_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
@@ -175,7 +175,7 @@ fn __tolower_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
 }
 
 fn toupper(c: c_int) callconv(.c) c_int {
-    return std.ascii.toUpper(@intCast(c));
+    return std.ascii.toUpper(@truncate(@as(c_uint, @bitCast(c))));
 }
 
 fn __toupper_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
@@ -184,7 +184,7 @@ fn __toupper_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
 }
 
 fn isascii(c: c_int) callconv(.c) c_int {
-    return @intFromBool(std.ascii.isAscii(@intCast(c)));
+    return @intFromBool(std.ascii.isAscii(@truncate(@as(c_uint, @bitCast(c)))));
 }
 
 fn toascii(c: c_int) callconv(.c) c_int {
