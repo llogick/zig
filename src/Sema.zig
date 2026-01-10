@@ -10590,7 +10590,7 @@ fn zirSwitchBlockErrUnion(sema: *Sema, block: *Block, inst: Zir.Inst.Index) Comp
             break :err_union_ty raw_operand_ty.childType(zcu);
         };
         if (err_union_ty.zigTypeTag(zcu) != .error_union) {
-            return sema.fail(block, src, "expected error union type, found '{f}'", .{
+            return sema.fail(block, operand_src, "expected error union type, found '{f}'", .{
                 err_union_ty.fmt(pt),
             });
         }
