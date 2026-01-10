@@ -1526,7 +1526,7 @@ pub const SubmissionQueue = struct {
         const mmap = try posix.mmap(
             null,
             size,
-            posix.PROT.READ | posix.PROT.WRITE,
+            .{ .READ = true, .WRITE = true },
             .{ .TYPE = .SHARED, .POPULATE = true },
             fd,
             linux.IORING_OFF_SQ_RING,
@@ -1540,7 +1540,7 @@ pub const SubmissionQueue = struct {
         const mmap_sqes = try posix.mmap(
             null,
             size_sqes,
-            posix.PROT.READ | posix.PROT.WRITE,
+            .{ .READ = true, .WRITE = true },
             .{ .TYPE = .SHARED, .POPULATE = true },
             fd,
             linux.IORING_OFF_SQES,
@@ -1747,7 +1747,7 @@ pub fn setup_buf_ring(
     const mmap = try posix.mmap(
         null,
         mmap_size,
-        posix.PROT.READ | posix.PROT.WRITE,
+        .{ .READ = true, .WRITE = true },
         .{ .TYPE = .PRIVATE, .ANONYMOUS = true },
         -1,
         0,

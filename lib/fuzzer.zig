@@ -1320,7 +1320,7 @@ pub const MemoryMappedList = struct {
         const ptr = try std.posix.mmap(
             null,
             capacity,
-            std.posix.PROT.READ | std.posix.PROT.WRITE,
+            .{ .READ = true, .WRITE = true },
             .{ .TYPE = .SHARED },
             file.handle,
             0,

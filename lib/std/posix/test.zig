@@ -172,7 +172,7 @@ test "mmap" {
         const data = try posix.mmap(
             null,
             1234,
-            posix.PROT.READ | posix.PROT.WRITE,
+            .{ .READ = true, .WRITE = true },
             .{ .TYPE = .PRIVATE, .ANONYMOUS = true },
             -1,
             0,
@@ -214,7 +214,7 @@ test "mmap" {
         const data = try posix.mmap(
             null,
             alloc_size,
-            posix.PROT.READ,
+            .{ .READ = true },
             .{ .TYPE = .PRIVATE },
             file.handle,
             0,
@@ -239,7 +239,7 @@ test "mmap" {
         const data = try posix.mmap(
             null,
             alloc_size / 2,
-            posix.PROT.READ,
+            .{ .READ = true },
             .{ .TYPE = .PRIVATE },
             file.handle,
             alloc_size / 2,

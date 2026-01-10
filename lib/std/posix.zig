@@ -934,128 +934,14 @@ pub fn fanotify_markZ(
     }
 }
 
-pub const MlockError = error{
-    PermissionDenied,
-    LockedMemoryLimitExceeded,
-    SystemResources,
-} || UnexpectedError;
-
-pub fn mlock(memory: []align(page_size_min) const u8) MlockError!void {
-    if (@TypeOf(system.mlock) == void)
-        @compileError("mlock not supported on this OS");
-    return switch (errno(system.mlock(memory.ptr, memory.len))) {
-        .SUCCESS => {},
-        .INVAL => unreachable, // unaligned, negative, runs off end of addrspace
-        .PERM => error.PermissionDenied,
-        .NOMEM => error.LockedMemoryLimitExceeded,
-        .AGAIN => error.SystemResources,
-        else => |err| unexpectedErrno(err),
-    };
-}
-
-pub fn mlock2(memory: []align(page_size_min) const u8, flags: MLOCK) MlockError!void {
-    if (@TypeOf(system.mlock2) == void)
-        @compileError("mlock2 not supported on this OS");
-    return switch (errno(system.mlock2(memory.ptr, memory.len, flags))) {
-        .SUCCESS => {},
-        .INVAL => unreachable, // bad memory or bad flags
-        .PERM => error.PermissionDenied,
-        .NOMEM => error.LockedMemoryLimitExceeded,
-        .AGAIN => error.SystemResources,
-        else => |err| unexpectedErrno(err),
-    };
-}
-
-pub fn munlock(memory: []align(page_size_min) const u8) MlockError!void {
-    if (@TypeOf(system.munlock) == void)
-        @compileError("munlock not supported on this OS");
-    return switch (errno(system.munlock(memory.ptr, memory.len))) {
-        .SUCCESS => {},
-        .INVAL => unreachable, // unaligned or runs off end of addr space
-        .PERM => return error.PermissionDenied,
-        .NOMEM => return error.LockedMemoryLimitExceeded,
-        .AGAIN => return error.SystemResources,
-        else => |err| unexpectedErrno(err),
-    };
-}
-
-pub fn mlockall(flags: MCL) MlockError!void {
-    if (@TypeOf(system.mlockall) == void)
-        @compileError("mlockall not supported on this OS");
-    return switch (errno(system.mlockall(flags))) {
-        .SUCCESS => {},
-        .INVAL => unreachable, // bad flags
-        .PERM => error.PermissionDenied,
-        .NOMEM => error.LockedMemoryLimitExceeded,
-        .AGAIN => error.SystemResources,
-        else => |err| unexpectedErrno(err),
-    };
-}
-
-pub fn munlockall() MlockError!void {
-    if (@TypeOf(system.munlockall) == void)
-        @compileError("munlockall not supported on this OS");
-    return switch (errno(system.munlockall())) {
-        .SUCCESS => {},
-        .PERM => error.PermissionDenied,
-        .NOMEM => error.LockedMemoryLimitExceeded,
-        .AGAIN => error.SystemResources,
-        else => |err| unexpectedErrno(err),
-    };
-}
-
-pub const MProtectError = error{
-    /// The memory cannot be given the specified access.  This can happen, for example, if you
-    /// mmap(2)  a  file  to  which  you have read-only access, then ask mprotect() to mark it
-    /// PROT_WRITE.
-    AccessDenied,
-
-    /// Changing  the  protection  of a memory region would result in the total number of map‐
-    /// pings with distinct attributes (e.g., read versus read/write protection) exceeding the
-    /// allowed maximum.  (For example, making the protection of a range PROT_READ in the mid‐
-    /// dle of a region currently protected as PROT_READ|PROT_WRITE would result in three map‐
-    /// pings: two read/write mappings at each end and a read-only mapping in the middle.)
-    OutOfMemory,
-} || UnexpectedError;
-
-pub fn mprotect(memory: []align(page_size_min) u8, protection: u32) MProtectError!void {
-    if (native_os == .windows) {
-        const win_prot: windows.DWORD = switch (@as(u3, @truncate(protection))) {
-            0b000 => windows.PAGE_NOACCESS,
-            0b001 => windows.PAGE_READONLY,
-            0b010 => unreachable, // +w -r not allowed
-            0b011 => windows.PAGE_READWRITE,
-            0b100 => windows.PAGE_EXECUTE,
-            0b101 => windows.PAGE_EXECUTE_READ,
-            0b110 => unreachable, // +w -r not allowed
-            0b111 => windows.PAGE_EXECUTE_READWRITE,
-        };
-        var old: windows.DWORD = undefined;
-        windows.VirtualProtect(memory.ptr, memory.len, win_prot, &old) catch |err| switch (err) {
-            error.InvalidAddress => return error.AccessDenied,
-            error.Unexpected => return error.Unexpected,
-        };
-    } else {
-        switch (errno(system.mprotect(memory.ptr, memory.len, protection))) {
-            .SUCCESS => return,
-            .INVAL => unreachable,
-            .ACCES => return error.AccessDenied,
-            .NOMEM => return error.OutOfMemory,
-            else => |err| return unexpectedErrno(err),
-        }
-    }
-}
-
 pub const MMapError = error{
     /// The underlying filesystem of the specified file does not support memory mapping.
     MemoryMappingNotSupported,
-
     /// A file descriptor refers to a non-regular file. Or a file mapping was requested,
     /// but the file descriptor is not open for reading. Or `MAP.SHARED` was requested
     /// and `PROT_WRITE` is set, but the file descriptor is not open in `RDWR` mode.
     /// Or `PROT_WRITE` is set, but the file is append-only.
     AccessDenied,
-
     /// The `prot` argument asks for `PROT_EXEC` but the mapped area belongs to a file on
     /// a filesystem that was mounted no-exec.
     PermissionDenied,
@@ -1063,7 +949,6 @@ pub const MMapError = error{
     ProcessFdQuotaExceeded,
     SystemFdQuotaExceeded,
     OutOfMemory,
-
     /// Using FIXED_NOREPLACE flag and the process has already mapped memory at the given address
     MappingAlreadyExists,
 } || UnexpectedError;
@@ -1076,8 +961,8 @@ pub const MMapError = error{
 pub fn mmap(
     ptr: ?[*]align(page_size_min) u8,
     length: usize,
-    prot: u32,
-    flags: system.MAP,
+    prot: PROT,
+    flags: MAP,
     fd: fd_t,
     offset: u64,
 ) MMapError![]align(page_size_min) u8 {

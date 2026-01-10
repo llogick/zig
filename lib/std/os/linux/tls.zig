@@ -568,7 +568,7 @@ pub fn initStatic(phdrs: []elf.Phdr) void {
 }
 
 inline fn mmap_tls(length: usize) usize {
-    const prot = linux.PROT.READ | linux.PROT.WRITE;
+    const prot: linux.PROT = .{ .READ = true, .WRITE = true };
     const flags: linux.MAP = .{ .TYPE = .PRIVATE, .ANONYMOUS = true };
 
     if (@hasField(linux.SYS, "mmap2")) {
@@ -576,7 +576,7 @@ inline fn mmap_tls(length: usize) usize {
             .mmap2,
             0,
             length,
-            prot,
+            @as(u32, @bitCast(prot)),
             @as(u32, @bitCast(flags)),
             @as(usize, @bitCast(@as(isize, -1))),
             0,
@@ -589,7 +589,7 @@ inline fn mmap_tls(length: usize) usize {
             @intFromPtr(&[_]usize{
                 0,
                 length,
-                prot,
+                @as(u32, @bitCast(prot)),
                 @as(u32, @bitCast(flags)),
                 @as(usize, @bitCast(@as(isize, -1))),
                 0,
@@ -598,7 +598,7 @@ inline fn mmap_tls(length: usize) usize {
             .mmap,
             0,
             length,
-            prot,
+            @as(u32, @bitCast(prot)),
             @as(u32, @bitCast(flags)),
             @as(usize, @bitCast(@as(isize, -1))),
             0,

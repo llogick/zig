@@ -422,7 +422,7 @@ fn prepareTables(fuzz: *Fuzz, run_step: *Step.Run, coverage_id: u64) error{ OutO
     const mapped_memory = std.posix.mmap(
         null,
         file_size,
-        std.posix.PROT.READ,
+        .{ .READ = true },
         .{ .TYPE = .SHARED },
         coverage_file.handle,
         0,

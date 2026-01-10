@@ -442,7 +442,7 @@ fn loadInner(
         break :mapped std.posix.mmap(
             null,
             file_len,
-            std.posix.PROT.READ,
+            .{ .READ = true },
             .{ .TYPE = .SHARED },
             elf_file.handle,
             0,

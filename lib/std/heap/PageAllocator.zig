@@ -96,7 +96,7 @@ pub fn map(n: usize, alignment: mem.Alignment) ?[*]u8 {
     const slice = posix.mmap(
         hint,
         overalloc_len,
-        posix.PROT.READ | posix.PROT.WRITE,
+        .{ .READ = true, .WRITE = true },
         .{ .TYPE = .PRIVATE, .ANONYMOUS = true },
         -1,
         0,

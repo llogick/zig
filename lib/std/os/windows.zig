@@ -3765,40 +3765,6 @@ pub fn NtFreeVirtualMemory(hProcess: HANDLE, addr: ?*PVOID, size: *SIZE_T, free_
     };
 }
 
-pub const VirtualProtectError = error{
-    InvalidAddress,
-    Unexpected,
-};
-
-pub fn VirtualProtect(lpAddress: ?LPVOID, dwSize: SIZE_T, flNewProtect: DWORD, lpflOldProtect: *DWORD) VirtualProtectError!void {
-    // ntdll takes an extra level of indirection here
-    var addr = lpAddress;
-    var size = dwSize;
-    switch (ntdll.NtProtectVirtualMemory(GetCurrentProcess(), &addr, &size, flNewProtect, lpflOldProtect)) {
-        .SUCCESS => {},
-        .INVALID_ADDRESS => return error.InvalidAddress,
-        else => |st| return unexpectedStatus(st),
-    }
-}
-
-pub fn VirtualProtectEx(handle: HANDLE, addr: ?LPVOID, size: SIZE_T, new_prot: DWORD) VirtualProtectError!DWORD {
-    var old_prot: DWORD = undefined;
-    var out_addr = addr;
-    var out_size = size;
-    switch (ntdll.NtProtectVirtualMemory(
-        handle,
-        &out_addr,
-        &out_size,
-        new_prot,
-        &old_prot,
-    )) {
-        .SUCCESS => return old_prot,
-        .INVALID_ADDRESS => return error.InvalidAddress,
-        // TODO: map errors
-        else => |rc| return unexpectedStatus(rc),
-    }
-}
-
 pub const SetConsoleTextAttributeError = error{Unexpected};
 
 pub fn SetConsoleTextAttribute(hConsoleOutput: HANDLE, wAttributes: WORD) SetConsoleTextAttributeError!void {

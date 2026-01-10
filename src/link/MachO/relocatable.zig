@@ -539,7 +539,7 @@ fn createSegment(macho_file: *MachO) !void {
     const gpa = macho_file.base.comp.gpa;
 
     // For relocatable, we only ever need a single segment so create it now.
-    const prot: macho.vm_prot_t = macho.PROT.READ | macho.PROT.WRITE | macho.PROT.EXEC;
+    const prot: macho.vm_prot_t = .{ .READ = true, .WRITE = true, .EXEC = true };
     try macho_file.segments.append(gpa, .{
         .cmdsize = @sizeOf(macho.segment_command_64),
         .segname = MachO.makeStaticString(""),

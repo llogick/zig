@@ -526,7 +526,7 @@ fn mapDebugInfoFile(io: Io, path: []const u8) ![]align(std.heap.page_size_min) c
     return posix.mmap(
         null,
         file_len,
-        posix.PROT.READ,
+        .{ .READ = true },
         .{ .TYPE = .SHARED },
         file.handle,
         0,
