@@ -54,7 +54,7 @@ pub fn __sqrth(x: f16) callconv(.c) f16 {
     //   m: 2.14 r: 0.16, s: 2.14, d: 2.14, u: 2.14, three: 2.14
     const three: u16 = 0xC000;
     const i: usize = @intCast((ix >> 4) & 0x7F);
-    const r = __rsqrt_tab[i];
+    const r = rsqrt_tab[i];
     // |r*sqrt(m) - 1| < 0x1p-8
     var s = mul16(m, r);
     // |s/sqrt(m) - 1| < 0x1p-8
@@ -92,74 +92,56 @@ pub fn __sqrth(x: f16) callconv(.c) f16 {
 
 pub fn sqrtf(x: f32) callconv(.c) f32 {
     var ix: u32 = @bitCast(x);
-    var top = ix >> 23;
 
-    // special case handling.
-    if (top -% 0x01 >= 0xFF - 0x01) {
+    if (ix < @as(u32, @bitCast(@as(f32, 0x1p-126))) or @as(u32, @bitCast(std.math.inf(f32))) <= ix) {
         @branchHint(.unlikely);
-        // x < 0x1p-126 or inf or nan.
-        if (ix & 0x7FFF_FFFF == 0) return x;
-        if (ix == 0x7F80_0000) return x;
-        if (ix > 0x7F80_0000) return math.nan(f32);
-        // x is subnormal, normalize it.
-        ix = @bitCast(x * 0x1p23);
-        top = (ix >> 23) -% 23;
+
+        if (ix & 0x7fffffff == 0)
+            return x;
+
+        if (ix == @as(u32, @bitCast(std.math.inf(f32))))
+            return x;
+
+        if (ix > @as(u32, @bitCast(std.math.inf(f32))))
+            return if (common.want_float_exceptions) (x - x) / 0.0 else math.nan(f32);
+
+        ix = @as(u32, @bitCast(@as(i32, @bitCast(x * 0x1p23)) - (23 << 23)));
     }
 
-    // argument reduction:
-    // x = 4^e m; with integer e, and m in [1, 4)
-    // m: fixed point representation [2.30]
-    // 2^e is the exponent part of the result.
-    const even = (top & 1) != 0;
-    const m = if (even) (ix << 7) & 0x7FFF_FFFF else (ix << 8) | 0x8000_0000;
-    top = (top +% 0x7F) >> 1;
+    const m: u32 = if (ix & 0x00800000 != 0)
+        (ix << 7) & 0x7fffffff
+    else
+        (ix << 8) | 0x80000000;
 
-    // approximate r ~ 1/sqrt(m) and s ~ sqrt(m) when m in [1,4)
-    // the fixed point representations are
-    //   m: 2.30 r: 0.32, s: 2.30, d: 2.30, u: 2.30, three: 2.30
-    const three: u32 = 0xC000_0000;
-    var i: usize = @intCast((ix >> 17) & 0x3F);
-    if (even) i += 64;
-    var r = @as(u32, @intCast(__rsqrt_tab[i])) << 16;
-    // |r*sqrt(m) - 1| < 0x1p-8
+    const ey = ((ix >> 1) + (0x3f800000 >> 1)) & 0x7f800000;
+    // const ey = ((ix + 0x3f800000) & 0xff000000) >> 1;
+
+    const three = 0xc0000000;
+    const i = (ix >> 17) & 0x7f;
+    var r = @as(u32, rsqrt_tab[i]) << 16;
+
     var s = mul32(m, r);
-    // |s/sqrt(m) - 1| < 0x1p-8
     var d = mul32(s, r);
     var u = three - d;
     r = mul32(r, u) << 1;
-    // |r*sqrt(m) - 1| < 0x1.7bp-16
     s = mul32(s, u) << 1;
-    // |s/sqrt(m) - 1| < 0x1.7bp-16
     d = mul32(s, r);
     u = three - d;
-    s = mul32(s, u); // repr: 3.29
-    // -0x1.03p-28 < s/sqrt(m) - 1 < 0x1.fp-31
-    s = (s - 1) >> 6; // repr: 9.23
-    // s < sqrt(m) < s + 0x1.08p-23
+    s = mul32(s, u);
+    s = (s - 1) >> 6;
 
-    // compute nearest rounded result:
-    // the nearest result to 23 bits is either s or s+0x1p-23,
-    // we can decide by comparing (2^23 s + 0.5)^2 to 2^46 m.
     const d0 = (m << 16) -% s *% s;
     const d1 = s -% d0;
     const d2 = d1 +% s +% 1;
-    s += d1 >> 31;
-    s &= 0x007F_FFFF;
-    s |= top << 23;
-    const y: f32 = @bitCast(s);
+    const y: f32 = @bitCast(((s + (d1 >> 31)) & 0x007fffff) | ey);
 
-    // handle rounding modes and inexact exception:
-    // only (s+1)^2 == 2^16 m case is exact otherwise
-    // add a tiny value to cause the fenv effects.
-    if (d2 != 0) {
-        @branchHint(.likely);
-        var tiny: u32 = 0x0100_0000;
-        tiny |= (d1 ^ d2) & 0x8000_0000;
-        const t: f32 = @bitCast(tiny);
-        return y + t;
-    }
+    const tiny: u32 = if (d2 == 0) blk: {
+        @branchHint(.unlikely);
+        break :blk 0;
+    } else 0x01000000;
+    const t: f32 = @bitCast(tiny | ((d1 ^ d2) & 0x80000000));
 
-    return y;
+    return y + t;
 }
 
 pub fn sqrt(x: f64) callconv(.c) f64 {
@@ -172,7 +154,7 @@ pub fn sqrt(x: f64) callconv(.c) f64 {
         // x < 0x1p-1022 or inf or nan.
         if (ix & 0x7FFF_FFFF_FFFF_FFFF == 0) return x;
         if (ix == 0x7FF0_0000_0000_0000) return x;
-        if (ix > 0x7FF0_0000_0000_0000) return math.nan(f64);
+        if (ix > 0x7FF0_0000_0000_0000) return if (common.want_float_exceptions) (x - x) / 0.0 else math.nan(f64);
         // x is subnormal, normalize it.
         ix = @bitCast(x * 0x1p52);
         top = (ix >> 52) -% 52;
@@ -248,7 +230,7 @@ pub fn sqrt(x: f64) callconv(.c) f64 {
     var d: struct { u32, u64 } = undefined;
     var u: struct { u32, u64 } = undefined;
     const i: usize = @intCast((ix >> 46) & 0x7F);
-    r[0] = @intCast(__rsqrt_tab[i]);
+    r[0] = @intCast(rsqrt_tab[i]);
     r[0] <<= 16;
     // |r sqrt(m) - 1| < 0x1.fdp-9
     s[0] = mul32(@intCast(m >> 32), r[0]);
@@ -309,7 +291,7 @@ pub fn __sqrtx(x: f80) callconv(.c) f80 {
         // x < 0x1p-16382 or inf or nan.
         if (ix & 0x7FFF_FFFF_FFFF_FFFF_FFFF == 0) return x;
         if (ix == 0x7FFF_8000_0000_0000_0000) return x;
-        if (ix > 0x7FFF_8000_0000_0000_0000) return math.nan(f80);
+        if (ix > 0x7FFF_8000_0000_0000_0000) return if (common.want_float_exceptions) (x - x) / 0.0 else math.nan(f80);
         // x is subnormal, normalize it.
         ix = @bitCast(x * 0x1p63);
         top = (ix >> 64) -% 63;
@@ -341,7 +323,7 @@ pub fn __sqrtx(x: f80) callconv(.c) f80 {
     var u: struct { u32, u64, u80 } = undefined;
     var i: usize = @intCast((ix >> 57) & 0x3F);
     if (even) i += 64;
-    r[0] = @intCast(__rsqrt_tab[i]);
+    r[0] = @intCast(rsqrt_tab[i]);
     r[0] <<= 16;
     // |r sqrt(m) - 1| < 0x1p-8
     s[0] = mul32(@intCast(m >> 48), r[0]);
@@ -437,7 +419,7 @@ pub fn sqrtq(x: f128) callconv(.c) f128 {
     var d: struct { u32, u64, u128 } = undefined;
     var u: struct { u32, u64, u128 } = undefined;
     const i: usize = @intCast((ix >> 106) & 0x7F);
-    r[0] = @intCast(__rsqrt_tab[i]);
+    r[0] = @intCast(rsqrt_tab[i]);
     r[0] <<= 16;
     // |r sqrt(m) - 1| < 0x1p-8
     s[0] = mul32(@intCast(m >> 96), r[0]);
@@ -507,7 +489,7 @@ pub fn sqrtl(x: c_longdouble) callconv(.c) c_longdouble {
     }
 }
 
-const __rsqrt_tab: [128]u16 = .{
+const rsqrt_tab: [128]u16 = .{
     0xB451, 0xB2F0, 0xB196, 0xB044, 0xAEF9, 0xADB6, 0xAC79, 0xAB43,
     0xAA14, 0xA8EB, 0xA7C8, 0xA6AA, 0xA592, 0xA480, 0xA373, 0xA26B,
     0xA168, 0xA06A, 0x9F70, 0x9E7B, 0x9D8A, 0x9C9D, 0x9BB5, 0x9AD1,
@@ -527,15 +509,15 @@ const __rsqrt_tab: [128]u16 = .{
 };
 
 inline fn mul16(a: u16, b: u16) u16 {
-    return @intCast(@as(u32, @intCast(a)) * @as(u32, @intCast(b)) >> 16);
+    return @intCast(@as(u32, a) * b >> 16);
 }
 
 inline fn mul32(a: u32, b: u32) u32 {
-    return @intCast(@as(u64, @intCast(a)) * @as(u64, @intCast(b)) >> 32);
+    return @intCast(@as(u64, a) * b >> 32);
 }
 
 inline fn mul64(a: u64, b: u64) u64 {
-    return @intCast(@as(u128, @intCast(a)) * @as(u128, @intCast(b)) >> 64);
+    return @intCast(@as(u128, a) * b >> 64);
 }
 
 inline fn mul80(a: u80, b: u80) u80 {
