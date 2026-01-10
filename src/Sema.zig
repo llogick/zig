@@ -13174,19 +13174,21 @@ fn resolveSwitchItem(
     const pt = sema.pt;
     const zcu = pt.zcu;
     const ip = &zcu.intern_pool;
-    const gpa = sema.gpa;
+    const comp = zcu.comp;
+    const gpa = comp.gpa;
+    const io = comp.io;
 
     var end = extra_index;
     const uncoerced: Air.Inst.Ref, const uncoerced_ty: Type = uncoerced: switch (item_info.unwrap()) {
         .enum_literal => |str_index| {
             const zir_str = sema.code.nullTerminatedString(str_index);
-            const name = try ip.getOrPutString(gpa, pt.tid, zir_str, .no_embedded_nulls);
+            const name = try ip.getOrPutString(gpa, io, pt.tid, zir_str, .no_embedded_nulls);
             const uncoerced = try sema.analyzeDeclLiteral(block, item_src, name, item_ty, false);
             break :uncoerced .{ uncoerced, .enum_literal };
         },
         .error_value => |str_index| {
             const zir_str = sema.code.nullTerminatedString(str_index);
-            const name = try ip.getOrPutString(gpa, pt.tid, zir_str, .no_embedded_nulls);
+            const name = try ip.getOrPutString(gpa, io, pt.tid, zir_str, .no_embedded_nulls);
             // Make sure there's an error integer value associated with `name`.
             _ = try pt.getErrorValue(name);
             const err_set_ty = try pt.singleErrorSetType(name);
