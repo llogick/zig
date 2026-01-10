@@ -1276,3 +1276,35 @@ test "switch with advanced prong items" {
     try S.doTheTest();
     try comptime S.doTheTest();
 }
+
+test "switch evaluation order" {
+    const eval = comptime eval: {
+        var eval = false;
+        const eu: anyerror!u32 = 0;
+        _ = eu catch |err| switch (err) {
+            blk: {
+                eval = true;
+                break :blk error.MyError;
+            } => {},
+            else => unreachable,
+        };
+        break :eval eval;
+    };
+    try comptime expect(!eval);
+}
+
+test "switch resolves lazy values correctly" {
+    const S = extern struct {
+        a: u16,
+        b: i16,
+    };
+    const ok1 = switch (@sizeOf(S)) {
+        4 => true,
+        else => false,
+    };
+    const ok2 = switch (@sizeOf(S)) {
+        4 => true,
+        else => false,
+    };
+    try comptime expect(ok1 == ok2);
+}
