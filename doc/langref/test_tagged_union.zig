@@ -18,6 +18,11 @@ test "switch on tagged union" {
         .ok => |value| try expect(value == 42),
         .not_ok => unreachable,
     }
+
+    switch (c) {
+        .ok => |_, tag| try expect(tag == .ok),
+        .not_ok => unreachable,
+    }
 }
 
 test "get tag type" {
