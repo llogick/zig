@@ -8687,14 +8687,15 @@ fn fileWritePositional(
     addBuf(&iovecs, &iovlen, header);
     for (data[0 .. data.len - 1]) |bytes| addBuf(&iovecs, &iovlen, bytes);
     const pattern = data[data.len - 1];
+
+    var splat_backup_buffer: [splat_buffer_size]u8 = undefined;
     if (iovecs.len - iovlen != 0) switch (splat) {
         0 => {},
         1 => addBuf(&iovecs, &iovlen, pattern),
         else => switch (pattern.len) {
             0 => {},
             1 => {
-                var backup_buffer: [splat_buffer_size]u8 = undefined;
-                const splat_buffer = &backup_buffer;
+                const splat_buffer = &splat_backup_buffer;
                 const memset_len = @min(splat_buffer.len, splat);
                 const buf = splat_buffer[0..memset_len];
                 @memset(buf, pattern[0]);
@@ -8865,14 +8866,15 @@ fn fileWriteStreaming(
     addBuf(&iovecs, &iovlen, header);
     for (data[0 .. data.len - 1]) |bytes| addBuf(&iovecs, &iovlen, bytes);
     const pattern = data[data.len - 1];
+
+    var splat_backup_buffer: [splat_buffer_size]u8 = undefined;
     if (iovecs.len - iovlen != 0) switch (splat) {
         0 => {},
         1 => addBuf(&iovecs, &iovlen, pattern),
         else => switch (pattern.len) {
             0 => {},
             1 => {
-                var backup_buffer: [splat_buffer_size]u8 = undefined;
-                const splat_buffer = &backup_buffer;
+                const splat_buffer = &splat_backup_buffer;
                 const memset_len = @min(splat_buffer.len, splat);
                 const buf = splat_buffer[0..memset_len];
                 @memset(buf, pattern[0]);
@@ -10996,8 +10998,8 @@ fn netReadWindows(userdata: ?*anyopaque, handle: net.Socket.Handle, data: [][]u8
     if (!have_networking) return error.NetworkDown;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
 
+    var iovec_buffer: [max_iovecs_len]ws2_32.WSABUF = undefined;
     const bufs = b: {
-        var iovec_buffer: [max_iovecs_len]ws2_32.WSABUF = undefined;
         var i: usize = 0;
         var n: usize = 0;
         for (data) |buf| {
@@ -11493,14 +11495,15 @@ fn netWritePosix(
     addBuf(&iovecs, &msg.iovlen, header);
     for (data[0 .. data.len - 1]) |bytes| addBuf(&iovecs, &msg.iovlen, bytes);
     const pattern = data[data.len - 1];
+
+    var splat_backup_buffer: [splat_buffer_size]u8 = undefined;
     if (iovecs.len - msg.iovlen != 0) switch (splat) {
         0 => {},
         1 => addBuf(&iovecs, &msg.iovlen, pattern),
         else => switch (pattern.len) {
             0 => {},
             1 => {
-                var backup_buffer: [splat_buffer_size]u8 = undefined;
-                const splat_buffer = &backup_buffer;
+                const splat_buffer = &splat_backup_buffer;
                 const memset_len = @min(splat_buffer.len, splat);
                 const buf = splat_buffer[0..memset_len];
                 @memset(buf, pattern[0]);
