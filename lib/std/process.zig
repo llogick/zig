@@ -1004,6 +1004,10 @@ pub fn unlockMemoryAll() UnlockMemoryError!void {
 
 pub const ProtectMemoryError = error{
     UnsupportedOperation,
+    /// OpenBSD will refuse to change memory protection if the specified region
+    /// contains any pages that have previously been marked immutable using the
+    /// `mimmutable` function.
+    PermissionDenied,
     /// The memory cannot be given the specified access. This can happen, for
     /// example, if you memory map a file to which you have read-only access,
     /// then use `protectMemory` to mark it writable.
@@ -1052,6 +1056,7 @@ pub fn protectMemory(
         };
         switch (posix.errno(posix.system.mprotect(memory.ptr, memory.len, flags))) {
             .SUCCESS => return,
+            .PERM => return error.PermissionDenied,
             .INVAL => |err| return std.Io.Threaded.errnoBug(err),
             .ACCES => return error.AccessDenied,
             .NOMEM => return error.OutOfMemory,
