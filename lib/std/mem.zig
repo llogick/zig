@@ -913,8 +913,9 @@ fn SliceTo(comptime T: type, comptime end: std.meta.Elem(T)) type {
         .pointer => |ptr_info| {
             const Elem = std.meta.Elem(T);
             const have_sentinel: bool = switch (ptr_info.size) {
-                .one, .slice, .many => if (std.meta.sentinel(T)) |s| s == end else false,
-                .c => false,
+                .one, .slice => if (std.meta.sentinel(T)) |s| s == end else false,
+                .many => if (std.meta.sentinel(T)) |s| s == end else true,
+                .c => true,
             };
             return @Pointer(.slice, .{
                 .@"const" = ptr_info.is_const,
@@ -929,11 +930,14 @@ fn SliceTo(comptime T: type, comptime end: std.meta.Elem(T)) type {
     @compileError("invalid type given to std.mem.sliceTo: " ++ @typeName(T));
 }
 
-/// Takes a pointer to an array, a sentinel-terminated pointer, or a slice and iterates searching for
-/// the first occurrence of `end`, returning the scanned slice.
-/// If `end` is not found, the full length of the array/slice/sentinel terminated pointer is returned.
-/// If the pointer type is sentinel terminated and `end` matches that terminator, the
-/// resulting slice is also sentinel terminated.
+/// Takes a pointer to an array, a many-item pointer, or a slice, and returns a
+/// slice of the items up to the first occurrence of `end`.
+/// If `end` is not found, the resulting slice will include all items up to the
+/// input's length or sentinel.
+/// If the pointer type is unbounded (no length or sentinel), `end` will be the
+/// sentinel for the resulting slice.
+/// If the pointer type is sentinel-terminated by `end`, the resulting slice
+/// will also be sentinel-terminated by `end`.
 /// Pointer properties such as mutability and alignment are preserved.
 /// C pointers are assumed to be non-null.
 pub fn sliceTo(ptr: anytype, comptime end: std.meta.Elem(@TypeOf(ptr))) SliceTo(@TypeOf(ptr), end) {
@@ -961,8 +965,15 @@ test sliceTo {
         try testing.expectEqualSlices(u16, array[0..2], sliceTo(&array, 3));
         try testing.expectEqualSlices(u16, array[0..2], sliceTo(array[0..3], 3));
 
+        const many_ptr: [*]u16 = &array;
+        try testing.expectEqualSlices(u16, array[0..2], sliceTo(many_ptr, 3));
+        try testing.expectEqual([:3]u16, @TypeOf(sliceTo(many_ptr, 3)));
+
         const sentinel_ptr = @as([*:5]u16, @ptrCast(&array));
         try testing.expectEqualSlices(u16, array[0..2], sliceTo(sentinel_ptr, 3));
+        try testing.expectEqual([]u16, @TypeOf(sliceTo(sentinel_ptr, 3)));
+        try testing.expectEqualSlices(u16, array[0..4], sliceTo(sentinel_ptr, 5));
+        try testing.expectEqual([:5]u16, @TypeOf(sliceTo(sentinel_ptr, 5)));
         try testing.expectEqualSlices(u16, array[0..4], sliceTo(sentinel_ptr, 99));
 
         const optional_sentinel_ptr = @as(?[*:5]u16, @ptrCast(&array));
@@ -971,6 +982,7 @@ test sliceTo {
 
         const c_ptr = @as([*c]u16, &array);
         try testing.expectEqualSlices(u16, array[0..2], sliceTo(c_ptr, 3));
+        try testing.expectEqual([:3]u16, @TypeOf(sliceTo(c_ptr, 3)));
 
         const slice: []u16 = &array;
         try testing.expectEqualSlices(u16, array[0..2], sliceTo(slice, 3));
@@ -1015,6 +1027,8 @@ fn lenSliceTo(ptr: anytype, comptime end: std.meta.Elem(@TypeOf(ptr))) usize {
                 var i: usize = 0;
                 while (ptr[i] != end and ptr[i] != s) i += 1;
                 return i;
+            } else {
+                return findSentinel(ptr_info.child, end, @ptrCast(ptr));
             },
             .c => {
                 assert(ptr != null);
