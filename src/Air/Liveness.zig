@@ -825,10 +825,10 @@ fn analyzeOperands(
 
             // This logic must synchronize with `will_die_immediately` in `AnalyzeBigOperands.init`.
             const immediate_death = if (data.live_set.remove(inst)) blk: {
-                log.debug("[{}] %{d}: removed from live set", .{ pass, @intFromEnum(inst) });
+                log.debug("[{t}] {f}: removed from live set", .{ pass, inst });
                 break :blk false;
             } else blk: {
-                log.debug("[{}] %{d}: immediate death", .{ pass, @intFromEnum(inst) });
+                log.debug("[{t}] {f}: immediate death", .{ pass, inst });
                 break :blk true;
             };
 
@@ -849,7 +849,7 @@ fn analyzeOperands(
                     const mask = @as(Bpi, 1) << @as(OperandInt, @intCast(i));
 
                     if ((try data.live_set.fetchPut(gpa, operand, {})) == null) {
-                        log.debug("[{}] %{d}: added %{d} to live set (operand dies here)", .{ pass, @intFromEnum(inst), operand });
+                        log.debug("[{t}] {f}: added {f} to live set (operand dies here)", .{ pass, inst, operand });
                         tomb_bits |= mask;
                     }
                 }
@@ -988,19 +988,19 @@ fn analyzeInstBlock(
         },
 
         .main_analysis => {
-            log.debug("[{}] %{f}: block live set is {f}", .{ pass, inst, fmtInstSet(&data.live_set) });
+            log.debug("[{t}] {f}: block live set is {f}", .{ pass, inst, fmtInstSet(&data.live_set) });
             // We can move the live set because the body should have a noreturn
             // instruction which overrides the set.
             try data.block_scopes.put(gpa, inst, .{
                 .live_set = data.live_set.move(),
             });
             defer {
-                log.debug("[{}] %{f}: popped block scope", .{ pass, inst });
+                log.debug("[{t}] {f}: popped block scope", .{ pass, inst });
                 var scope = data.block_scopes.fetchRemove(inst).?.value;
                 scope.live_set.deinit(gpa);
             }
 
-            log.debug("[{}] %{f}: pushed new block scope", .{ pass, inst });
+            log.debug("[{t}] {f}: pushed new block scope", .{ pass, inst });
             try analyzeBody(a, pass, data, body);
 
             // If the block is noreturn, block deaths not only aren't useful, they're impossible to
@@ -1027,7 +1027,7 @@ fn analyzeInstBlock(
                 }
                 assert(measured_num == num_deaths); // post-live-set should be a subset of pre-live-set
                 try a.special.put(gpa, inst, extra_index);
-                log.debug("[{}] %{f}: block deaths are {f}", .{
+                log.debug("[{t}] {f}: block deaths are {f}", .{
                     pass,
                     inst,
                     fmtInstList(@ptrCast(a.extra.items[extra_index + 1 ..][0..num_deaths])),
@@ -1064,7 +1064,7 @@ fn writeLoopInfo(
         const block_inst = key.*;
         a.extra.appendAssumeCapacity(@intFromEnum(block_inst));
     }
-    log.debug("[{}] %{f}: includes breaks to {f}", .{ LivenessPass.loop_analysis, inst, fmtInstSet(&data.breaks) });
+    log.debug("[{t}] {f}: includes breaks to {f}", .{ LivenessPass.loop_analysis, inst, fmtInstSet(&data.breaks) });
 
     // Now we put the live operands from the loop body in too
     const num_live = data.live_set.count();
@@ -1076,7 +1076,7 @@ fn writeLoopInfo(
         const alive = key.*;
         a.extra.appendAssumeCapacity(@intFromEnum(alive));
     }
-    log.debug("[{}] %{f}: maintain liveness of {f}", .{ LivenessPass.loop_analysis, inst, fmtInstSet(&data.live_set) });
+    log.debug("[{t}] {f}: maintain liveness of {f}", .{ LivenessPass.loop_analysis, inst, fmtInstSet(&data.live_set) });
 
     try a.special.put(gpa, inst, extra_index);
 
@@ -1117,7 +1117,7 @@ fn resolveLoopLiveSet(
     try data.live_set.ensureUnusedCapacity(gpa, @intCast(loop_live.len));
     for (loop_live) |alive| data.live_set.putAssumeCapacity(alive, {});
 
-    log.debug("[{}] %{f}: block live set is {f}", .{ LivenessPass.main_analysis, inst, fmtInstSet(&data.live_set) });
+    log.debug("[{t}] {f}: block live set is {f}", .{ LivenessPass.main_analysis, inst, fmtInstSet(&data.live_set) });
 
     for (breaks) |block_inst| {
         // We might break to this block, so include every operand that the block needs alive
@@ -1130,7 +1130,7 @@ fn resolveLoopLiveSet(
         }
     }
 
-    log.debug("[{}] %{f}: loop live set is {f}", .{ LivenessPass.main_analysis, inst, fmtInstSet(&data.live_set) });
+    log.debug("[{t}] {f}: loop live set is {f}", .{ LivenessPass.main_analysis, inst, fmtInstSet(&data.live_set) });
 }
 
 fn analyzeInstLoop(
@@ -1168,7 +1168,7 @@ fn analyzeInstLoop(
                 .live_set = data.live_set.move(),
             });
             defer {
-                log.debug("[{}] %{f}: popped loop block scop", .{ pass, inst });
+                log.debug("[{t}] {f}: popped loop block scop", .{ pass, inst });
                 var scope = data.block_scopes.fetchRemove(inst).?.value;
                 scope.live_set.deinit(gpa);
             }
@@ -1269,13 +1269,13 @@ fn analyzeInstCondBr(
                 }
             }
 
-            log.debug("[{}] %{f}: 'then' branch mirrored deaths are {f}", .{ pass, inst, fmtInstList(then_mirrored_deaths.items) });
-            log.debug("[{}] %{f}: 'else' branch mirrored deaths are {f}", .{ pass, inst, fmtInstList(else_mirrored_deaths.items) });
+            log.debug("[{t}] {f}: 'then' branch mirrored deaths are {f}", .{ pass, inst, fmtInstList(then_mirrored_deaths.items) });
+            log.debug("[{t}] {f}: 'else' branch mirrored deaths are {f}", .{ pass, inst, fmtInstList(else_mirrored_deaths.items) });
 
             data.live_set.deinit(gpa);
             data.live_set = then_live.move(); // Really the union of both live sets
 
-            log.debug("[{}] %{f}: new live set is {f}", .{ pass, inst, fmtInstSet(&data.live_set) });
+            log.debug("[{t}] {f}: new live set is {f}", .{ pass, inst, fmtInstSet(&data.live_set) });
 
             // Write the mirrored deaths to `extra`
             const then_death_count = @as(u32, @intCast(then_mirrored_deaths.items.len));
@@ -1343,7 +1343,7 @@ fn analyzeInstSwitchBr(
                 });
             }
             defer if (is_dispatch_loop) {
-                log.debug("[{}] %{f}: popped loop block scop", .{ pass, inst });
+                log.debug("[{t}] {f}: popped loop block scope", .{ pass, inst });
                 var scope = data.block_scopes.fetchRemove(inst).?.value;
                 scope.live_set.deinit(gpa);
             };
@@ -1401,13 +1401,13 @@ fn analyzeInstSwitchBr(
                 }
 
                 for (mirrored_deaths, 0..) |mirrored, i| {
-                    log.debug("[{}] %{f}: case {} mirrored deaths are {f}", .{ pass, inst, i, fmtInstList(mirrored.items) });
+                    log.debug("[{t}] {f}: case {} mirrored deaths are {f}", .{ pass, inst, i, fmtInstList(mirrored.items) });
                 }
 
                 data.live_set.deinit(gpa);
                 data.live_set = all_alive.move();
 
-                log.debug("[{}] %{f}: new live set is {f}", .{ pass, inst, fmtInstSet(&data.live_set) });
+                log.debug("[{t}] {f}: new live set is {f}", .{ pass, inst, fmtInstSet(&data.live_set) });
             }
 
             const else_death_count = @as(u32, @intCast(mirrored_deaths[ncases].items.len));
@@ -1506,7 +1506,7 @@ fn AnalyzeBigOperands(comptime pass: LivenessPass) type {
 
                 .main_analysis => {
                     if ((try big.data.live_set.fetchPut(gpa, operand, {})) == null) {
-                        log.debug("[{}] %{f}: added %{f} to live set (operand dies here)", .{ pass, big.inst, operand });
+                        log.debug("[{t}] {f}: added {f} to live set (operand dies here)", .{ pass, big.inst, operand });
                         big.extra_tombs[extra_byte] |= @as(u32, 1) << extra_bit;
                     }
                 },
@@ -1568,9 +1568,9 @@ const FmtInstSet = struct {
             return;
         }
         var it = val.set.keyIterator();
-        try w.print("%{f}", .{it.next().?.*});
+        try w.print("{f}", .{it.next().?.*});
         while (it.next()) |key| {
-            try w.print(" %{f}", .{key.*});
+            try w.print(" {f}", .{key.*});
         }
     }
 };
@@ -1587,9 +1587,9 @@ const FmtInstList = struct {
             try w.writeAll("[no instructions]");
             return;
         }
-        try w.print("%{f}", .{val.list[0]});
+        try w.print("{f}", .{val.list[0]});
         for (val.list[1..]) |inst| {
-            try w.print(" %{f}", .{inst});
+            try w.print(" {f}", .{inst});
         }
     }
 };

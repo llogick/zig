@@ -4114,7 +4114,10 @@ fn airIsErr(cg: *CodeGen, inst: Air.Inst.Index, opcode: std.wasm.Opcode, op_kind
     const zcu = cg.pt.zcu;
     const un_op = cg.air.instructions.items(.data)[@intFromEnum(inst)].un_op;
     const operand = try cg.resolveInst(un_op);
-    const err_union_ty = cg.typeOf(un_op);
+    const err_union_ty = switch (op_kind) {
+        .value => cg.typeOf(un_op),
+        .ptr => cg.typeOf(un_op).childType(zcu),
+    };
     const pl_ty = err_union_ty.errorUnionPayload(zcu);
 
     const result: WValue = result: {

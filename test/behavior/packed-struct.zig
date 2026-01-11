@@ -513,35 +513,21 @@ test "@intFromPtr on a packed struct field unaligned and nested" {
         };
     };
 
-    switch (comptime @alignOf(S2)) {
-        4 => {
-            comptime assert(@TypeOf(&S2.s.base) == *align(4) u8);
-            comptime assert(@TypeOf(&S2.s.p0.a) == *align(1:0:2) u4);
-            comptime assert(@TypeOf(&S2.s.p0.b) == *align(1:4:2) u4);
-            comptime assert(@TypeOf(&S2.s.p0.c) == *u8);
-            comptime assert(@TypeOf(&S2.s.bit0) == *align(4:24:8) u1);
-            comptime assert(@TypeOf(&S2.s.p1.a) == *align(4:25:8) u8);
-            comptime assert(@TypeOf(&S2.s.p2.a) == *align(4:33:8) u7);
-            comptime assert(@TypeOf(&S2.s.p2.b) == *u8);
-            comptime assert(@TypeOf(&S2.s.p3.a) == *align(2:0:2) u4);
-            comptime assert(@TypeOf(&S2.s.p3.b) == *align(2:4:2) u4);
-            comptime assert(@TypeOf(&S2.s.p3.c) == *u8);
-        },
-        8 => {
-            comptime assert(@TypeOf(&S2.s.base) == *align(8) u8);
-            comptime assert(@TypeOf(&S2.s.p0.a) == *align(1:0:2) u4);
-            comptime assert(@TypeOf(&S2.s.p0.b) == *align(1:4:2) u4);
-            comptime assert(@TypeOf(&S2.s.p0.c) == *u8);
-            comptime assert(@TypeOf(&S2.s.bit0) == *align(8:24:8) u1);
-            comptime assert(@TypeOf(&S2.s.p1.a) == *align(8:25:8) u8);
-            comptime assert(@TypeOf(&S2.s.p2.a) == *align(8:33:8) u7);
-            comptime assert(@TypeOf(&S2.s.p2.b) == *u8);
-            comptime assert(@TypeOf(&S2.s.p3.a) == *align(2:0:2) u4);
-            comptime assert(@TypeOf(&S2.s.p3.b) == *align(2:4:2) u4);
-            comptime assert(@TypeOf(&S2.s.p3.c) == *u8);
-        },
-        else => {},
+    {
+        const a = @alignOf(S2);
+        comptime assert(@TypeOf(&S2.s.base) == *align(a:0:8) u8);
+        comptime assert(@TypeOf(&S2.s.p0.a) == *align(a:8:8) u4);
+        comptime assert(@TypeOf(&S2.s.p0.b) == *align(a:12:8) u4);
+        comptime assert(@TypeOf(&S2.s.p0.c) == *align(a:16:8) u8);
+        comptime assert(@TypeOf(&S2.s.bit0) == *align(a:24:8) u1);
+        comptime assert(@TypeOf(&S2.s.p1.a) == *align(a:25:8) u8);
+        comptime assert(@TypeOf(&S2.s.p2.a) == *align(a:33:8) u7);
+        comptime assert(@TypeOf(&S2.s.p2.b) == *align(a:40:8) u8);
+        comptime assert(@TypeOf(&S2.s.p3.a) == *align(a:48:8) u4);
+        comptime assert(@TypeOf(&S2.s.p3.b) == *align(a:52:8) u4);
+        comptime assert(@TypeOf(&S2.s.p3.c) == *align(a:56:8) u8);
     }
+
     try expect(@intFromPtr(&S2.s.base) - @intFromPtr(&S2.s) == 0);
     try expect(@intFromPtr(&S2.s.p0.a) - @intFromPtr(&S2.s) == 0);
     try expect(@intFromPtr(&S2.s.p0.b) - @intFromPtr(&S2.s) == 0);

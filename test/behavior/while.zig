@@ -399,3 +399,20 @@ test "breaking from a loop in an if statement" {
     } else 2;
     _ = opt;
 }
+
+test "labeled break from else" {
+    const S = struct {
+        fn doTheTest(x: u32) !void {
+            const arr: []const u32 = &.{ 1, 3, 10 };
+            const ok = label: for (arr) |y| {
+                if (y == x) break :label false;
+            } else {
+                break :label true;
+            };
+            try expect(ok);
+        }
+    };
+
+    try S.doTheTest(5);
+    try comptime S.doTheTest(5);
+}

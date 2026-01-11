@@ -1,5 +1,6 @@
 const builtin = @import("builtin");
 const std = @import("std");
+const assert = std.debug.assert;
 const expect = std.testing.expect;
 
 test "simple switch loop" {
@@ -267,6 +268,244 @@ test "switch loop on non-exhaustive enum" {
             try expect(result == 123);
         }
     };
+    try S.doTheTest();
+    try comptime S.doTheTest();
+}
+
+test "switch loop with discarded tag capture" {
+    if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_c) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+
+    const S = struct {
+        const U = union(enum) {
+            a: u32,
+            b: u32,
+            c: u32,
+        };
+
+        fn doTheTest() void {
+            const a: U = .{ .a = 10 };
+            blk: switch (a) {
+                inline .b => |_, tag| {
+                    _ = tag;
+                    continue :blk .{ .c = 20 };
+                },
+                else => {},
+            }
+        }
+    };
+    S.doTheTest();
+    comptime S.doTheTest();
+}
+
+test "switch loop with single catch-all prong" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+
+    const S = struct {
+        const E = enum { a, b, c };
+        const U = union(E) { a: u32, b: u16, c: u8 };
+
+        fn doTheTest() !void {
+            var x: usize = 0;
+            label: switch (E.a) {
+                else => {
+                    x += 1;
+                    if (x == 10) break :label;
+                    if (x >= 5) continue :label .b;
+                    continue :label .c;
+                },
+            }
+            try expect(x == 10);
+
+            label: switch (E.a) {
+                .a, .b, .c => {
+                    x += 1;
+                    if (x == 20) break :label;
+                    if (x >= 15) continue :label .b;
+                    continue :label .c;
+                },
+            }
+            try expect(x == 20);
+
+            label: switch (E.a) {
+                else => if (false) continue :label true,
+            }
+
+            const ok = label: switch (U{ .a = 123 }) {
+                else => |u| {
+                    const y: u32 = switch (u) {
+                        inline else => |y| y,
+                    };
+                    if (y == 456) break :label true;
+                    continue :label .{ .b = 456 };
+                },
+            };
+            comptime assert(ok);
+        }
+    };
+    try S.doTheTest();
+    try comptime S.doTheTest();
+}
+
+test "switch loop on type with opv" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+
+    const S = struct {
+        const E = enum { opv };
+        const U = union(E) { opv: u0 };
+
+        fn doTheTest() !void {
+            var x: usize = 0;
+            label: switch (E.opv) {
+                .opv => {
+                    x += 1;
+                    if (x == 10) break :label;
+                    if (x >= 5) continue :label .opv;
+                    continue :label .opv;
+                },
+            }
+            try expect(x == 10);
+
+            label: switch (E.opv) {
+                else => {
+                    x += 1;
+                    if (x == 20) break :label;
+                    if (x >= 15) continue :label .opv;
+                    continue :label .opv;
+                },
+            }
+            try expect(x == 20);
+
+            label: switch (E.opv) {
+                .opv => if (false) continue :label true,
+            }
+
+            label: switch (U{ .opv = 0 }) {
+                .opv => |val| {
+                    x += 1;
+                    if (x == 30) break :label;
+                    if (x >= 25) continue :label .{ .opv = val };
+                    continue :label .{ .opv = 0 };
+                },
+            }
+            try expect(x == 30);
+        }
+    };
+    try S.doTheTest();
+    try comptime S.doTheTest();
+}
+
+test "switch loop with tag capture" {
+    const U = union(enum) {
+        a,
+        b: i32,
+        c: u8,
+        d: i32,
+        e: noreturn,
+
+        fn doTheTest() !void {
+            try doTheSwitch(.a);
+            try doTheSwitch(.{ .b = 123 });
+            try doTheSwitch(.{ .c = 0xFF });
+        }
+        fn doTheSwitch(u: @This()) !void {
+            const ok1 = label: switch (u) {
+                .a => |nothing, tag| {
+                    comptime assert(nothing == {});
+                    comptime assert(tag == .a);
+                    try expect(@intFromEnum(tag) == @intFromEnum(@This().a));
+                    continue :label .{ .d = 456 };
+                },
+                .b, .d => |_, tag| {
+                    try expect(tag == .b or tag == .d);
+                    continue :label .{ .c = 0x0F };
+                },
+                .e => |payload, tag| {
+                    _ = &payload;
+                    _ = &tag;
+                    return error.AnalyzedNoreturnProng;
+                },
+                else => |un, tag| {
+                    try expect(tag == .c);
+                    try expect(un == .c);
+                    if (un.c == 0xFF) continue :label .a;
+                    if (un.c == 0x00) break :label false;
+                    break :label true;
+                },
+            };
+            try expect(ok1);
+
+            const ok2 = label: switch (u) {
+                inline .a, .b, .c => |payload, tag| {
+                    if (@TypeOf(payload) == void) {
+                        comptime assert(tag == .a);
+                        continue :label .{ .b = 456 };
+                    }
+                    if (@TypeOf(payload) == i32) {
+                        comptime assert(tag == .b);
+                        continue :label .{ .d = payload };
+                    }
+                    if (@TypeOf(payload) == u8) {
+                        comptime assert(tag == .c);
+                        continue :label .{ .d = payload };
+                    }
+                },
+                inline else => |payload, tag| {
+                    if (@TypeOf(payload) == i32) comptime assert(tag == .d);
+                    comptime assert(tag != .e);
+                    if (payload == 0) break :label false;
+                    break :label true;
+                },
+            };
+            try expect(ok2);
+        }
+    };
+
+    try U.doTheTest();
+    try comptime U.doTheTest();
+}
+
+test "switch loop for error handling" {
+    const Error = error{ MyError, MyOtherError };
+    const S = struct {
+        fn doTheTest() !void {
+            try doThePayloadSwitch(123);
+            try doTheErrSwitch(error.MyError);
+            try doTheErrSwitch(error.MyOtherError);
+        }
+        fn doThePayloadSwitch(eu: Error!u32) !void {
+            const x = eu catch |err| label: switch (err) {
+                error.MyError => continue :label error.MyOtherError,
+                error.MyOtherError => break :label 0,
+            };
+            try expect(x == 123);
+
+            const y = if (eu) |payload| label: {
+                break :label payload * 2;
+            } else |err| label: switch (err) {
+                error.MyError => continue :label error.MyOtherError,
+                error.MyOtherError => break :label 0,
+            };
+            try expect(y == 246);
+        }
+        fn doTheErrSwitch(eu: Error!u32) !void {
+            const x = eu catch |err| label: switch (err) {
+                error.MyError => continue :label error.MyOtherError,
+                error.MyOtherError => break :label 123,
+            };
+            try expect(x == 123);
+
+            const y = if (eu) |payload| label: {
+                break :label payload * 2;
+            } else |err| label: switch (err) {
+                error.MyError => continue :label error.MyOtherError,
+                error.MyOtherError => break :label 123,
+            };
+            try expect(y == 123);
+        }
+    };
+
     try S.doTheTest();
     try comptime S.doTheTest();
 }

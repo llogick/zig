@@ -524,3 +524,20 @@ test "for loop 0 length range" {
         comptime unreachable;
     }
 }
+
+test "labeled break from else" {
+    const S = struct {
+        fn doTheTest(x: u32) !void {
+            var y: u32 = 0;
+            const ok = label: while (y < x) : (y += 1) {
+                if (y == 10) break :label false;
+            } else {
+                break :label true;
+            };
+            try expect(ok);
+        }
+    };
+
+    try S.doTheTest(5);
+    try comptime S.doTheTest(5);
+}

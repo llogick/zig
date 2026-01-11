@@ -1120,3 +1120,190 @@ test "switch on non-exhaustive enum" {
     try E.doTheTest(.a);
     try comptime E.doTheTest(.a);
 }
+
+test "decl literals as switch cases" {
+    const E = enum(u8) {
+        bar = 3,
+        _,
+
+        const foo: @This() = @enumFromInt(0xa);
+
+        fn doTheTest(e: @This()) !void {
+            switch (e) {
+                .bar => return error.TestFailed,
+                .foo => {},
+                else => return error.TestFailed,
+            }
+        }
+    };
+
+    try E.doTheTest(.foo);
+    try comptime E.doTheTest(.foo);
+}
+
+// TODO audit after #15909 and/or #19855 are decided/implemented
+test "switch with uninstantiable union fields" {
+    const U = union(enum) {
+        ok: void,
+        a: noreturn,
+        b: noreturn,
+        c: error{},
+
+        fn doTheTest(u: @This()) void {
+            switch (u) {
+                .ok => {},
+                .a => comptime unreachable,
+                .b => comptime unreachable,
+                .c => comptime unreachable,
+            }
+            switch (u) {
+                .ok => {},
+                .a, .b, .c => comptime unreachable,
+            }
+            switch (u) {
+                .ok => {},
+                else => comptime unreachable,
+            }
+            switch (u) {
+                .a => comptime unreachable,
+                .ok, .b, .c => {},
+            }
+        }
+    };
+
+    U.doTheTest(.ok);
+    comptime U.doTheTest(.ok);
+}
+
+test "switch with tag capture" {
+    const U = union(enum) {
+        a,
+        b: i32,
+        c: u8,
+        d: i32,
+        e: noreturn,
+
+        fn doTheTest() !void {
+            try doTheSwitch(.a);
+            try doTheSwitch(.{ .b = 123 });
+            try doTheSwitch(.{ .c = 0xFF });
+        }
+        fn doTheSwitch(u: @This()) !void {
+            switch (u) {
+                .a => |nothing, tag| {
+                    comptime assert(nothing == {});
+                    comptime assert(tag == .a);
+                    try expect(@intFromEnum(tag) == @intFromEnum(@This().a));
+                },
+                .b, .d => |_, tag| {
+                    try expect(tag == .b or tag == .d);
+                },
+                .e => |payload, tag| {
+                    _ = &payload;
+                    _ = &tag;
+                    comptime unreachable;
+                },
+                else => |un, tag| {
+                    try expect(tag == .c);
+                    try expect(un == .c);
+                    try expect(un.c == 0xFF);
+                },
+            }
+            switch (u) {
+                inline .a, .b, .c => |payload, tag| {
+                    if (@TypeOf(payload) == void) comptime assert(tag == .a);
+                    if (@TypeOf(payload) == i32) comptime assert(tag == .b);
+                    if (@TypeOf(payload) == u8) comptime assert(tag == .c);
+                },
+                inline else => |payload, tag| {
+                    if (@TypeOf(payload) == i32) comptime assert(tag == .d);
+                    comptime assert(tag != .e);
+                },
+            }
+        }
+    };
+
+    try U.doTheTest();
+    try comptime U.doTheTest();
+}
+
+test "switch with complex item expressions" {
+    const S = struct {
+        fn doTheTest() !void {
+            try doTheSwitch(2000, 20);
+            try doTheSwitch(2000, 10);
+            try doTheSwitch(2000, 5);
+
+            try doTheOtherSwitch(@enumFromInt(123));
+            try doTheOtherSwitch(@enumFromInt(456));
+        }
+        fn doTheSwitch(x: u32, comptime factor: u32) !void {
+            const ok = switch (x) {
+                num(factor) => true,
+                typedNum(u32, factor) => true,
+                blk: {
+                    var val = 400;
+                    val *= factor;
+                    break :blk val;
+                } => true,
+                else => false,
+            };
+            try expect(ok);
+        }
+        fn num(factor: u32) u32 {
+            return 100 * factor;
+        }
+        fn typedNum(comptime T: type, factor: T) T {
+            return 200 * factor;
+        }
+
+        const E = enum(u32) { _ };
+        fn doTheOtherSwitch(e: E) !void {
+            const ok = switch (e) {
+                @enumFromInt(123) => true,
+                @enumFromInt(456) => true,
+                else => false,
+            };
+            try expect(ok);
+        }
+    };
+
+    try S.doTheTest();
+    try comptime S.doTheTest();
+}
+
+test "switch evaluation order" {
+    const eu: anyerror!u32 = 0;
+    _ = eu catch |err| switch (err) {
+        if (true) @compileError("unreachable") => unreachable,
+        else => unreachable,
+    };
+}
+
+test "switch resolves lazy values correctly" {
+    const S = extern struct {
+        a: u16,
+        b: i16,
+    };
+    switch (@sizeOf(S)) {
+        4 => {},
+        else => comptime unreachable,
+    }
+}
+
+test "single-item prong in switch on enum has comptime-known capture" {
+    const E = enum {
+        a,
+        b,
+        c,
+        fn doTheTest(e: @This()) !void {
+            switch (e) {
+                .a => |tag| comptime assert(tag == .a),
+                .b => return error.TestFailed,
+                .c => return error.TestFailed,
+            }
+        }
+    };
+    try E.doTheTest(.a);
+    try comptime E.doTheTest(.a);
+}

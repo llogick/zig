@@ -878,7 +878,7 @@ pub const Namespace = struct {
         ns: Namespace,
         zcu: *Zcu,
         name: InternPool.NullTerminatedString,
-        writer: anytype,
+        writer: *Writer,
     ) @TypeOf(writer).Error!void {
         const sep: u8 = if (ns.parent.unwrap()) |parent| sep: {
             try zcu.namespacePtr(parent).renderFullyQualifiedDebugName(
@@ -1125,7 +1125,7 @@ pub const File = struct {
         return file.sub_file_path.len - ext.len;
     }
 
-    pub fn renderFullyQualifiedName(file: File, writer: anytype) !void {
+    pub fn renderFullyQualifiedName(file: File, writer: *Writer) !void {
         // Convert all the slashes into dots and truncate the extension.
         const ext = std.fs.path.extension(file.sub_file_path);
         const noext = file.sub_file_path[0 .. file.sub_file_path.len - ext.len];
@@ -1135,7 +1135,7 @@ pub const File = struct {
         };
     }
 
-    pub fn renderFullyQualifiedDebugName(file: File, writer: anytype) !void {
+    pub fn renderFullyQualifiedDebugName(file: File, writer: *Writer) !void {
         for (file.sub_file_path) |byte| switch (byte) {
             '/', '\\' => try writer.writeByte('/'),
             else => try writer.writeByte(byte),
@@ -1742,27 +1742,6 @@ pub const SrcLoc = struct {
                 } else unreachable;
             },
 
-            .node_offset_switch_under_prong => |node_off| {
-                const tree = try src_loc.file_scope.getTree(zcu);
-                const switch_node = node_off.toAbsolute(src_loc.base_node);
-                _, const extra_index = tree.nodeData(switch_node).node_and_extra;
-                const case_nodes = tree.extraDataSlice(tree.extraData(extra_index, Ast.Node.SubRange), Ast.Node.Index);
-                for (case_nodes) |case_node| {
-                    const case = tree.fullSwitchCase(case_node).?;
-                    for (case.ast.values) |val| {
-                        if (tree.nodeTag(val) == .identifier and
-                            mem.eql(u8, tree.tokenSlice(tree.nodeMainToken(val)), "_"))
-                        {
-                            return tree.tokensToSpan(
-                                tree.firstToken(case_node),
-                                tree.lastToken(case_node),
-                                tree.nodeMainToken(val),
-                            );
-                        }
-                    }
-                } else unreachable;
-            },
-
             .node_offset_switch_range => |node_off| {
                 const tree = try src_loc.file_scope.getTree(zcu);
                 const switch_node = node_off.toAbsolute(src_loc.base_node);
@@ -2176,34 +2155,22 @@ pub const SrcLoc = struct {
 
                 var multi_i: u32 = 0;
                 var scalar_i: u32 = 0;
-                var underscore_node: Ast.Node.OptionalIndex = .none;
-                const case = case: for (case_nodes) |case_node| {
+                const case: Ast.full.SwitchCase = case: for (case_nodes) |case_node| {
                     const case = tree.fullSwitchCase(case_node).?;
                     if (case.ast.values.len == 0) {
-                        if (want_case_idx == LazySrcLoc.Offset.SwitchCaseIndex.special_else) {
+                        if (want_case_idx == Zir.UnwrappedSwitchBlock.Case.Index.@"else") {
                             break :case case;
                         }
                         continue :case;
                     }
-                    if (underscore_node == .none) for (case.ast.values) |val_node| {
-                        if (tree.nodeTag(val_node) == .identifier and
-                            mem.eql(u8, tree.tokenSlice(tree.nodeMainToken(val_node)), "_"))
-                        {
-                            underscore_node = val_node.toOptional();
-                            if (want_case_idx == LazySrcLoc.Offset.SwitchCaseIndex.special_under) {
-                                break :case case;
-                            }
-                            continue :case;
-                        }
-                    };
 
                     const is_multi = case.ast.values.len != 1 or
                         tree.nodeTag(case.ast.values[0]) == .switch_range;
 
                     switch (want_case_idx.kind) {
-                        .scalar => if (!is_multi and want_case_idx.index == scalar_i)
+                        .scalar => if (!is_multi and want_case_idx.value == scalar_i)
                             break :case case,
-                        .multi => if (is_multi and want_case_idx.index == multi_i)
+                        .multi => if (is_multi and want_case_idx.value == multi_i)
                             break :case case,
                     }
 
@@ -2214,12 +2181,12 @@ pub const SrcLoc = struct {
                     }
                 } else unreachable;
 
-                const want_item = switch (src_loc.lazy) {
+                const want_item_idx = switch (src_loc.lazy) {
                     .switch_case_item,
                     .switch_case_item_range_first,
                     .switch_case_item_range_last,
                     => |x| item_idx: {
-                        assert(want_case_idx != LazySrcLoc.Offset.SwitchCaseIndex.special_else);
+                        assert(want_case_idx != Zir.UnwrappedSwitchBlock.Case.Index.@"else");
                         break :item_idx x.item_idx;
                     },
                     .switch_capture, .switch_tag_capture => {
@@ -2242,16 +2209,14 @@ pub const SrcLoc = struct {
                     else => unreachable,
                 };
 
-                switch (want_item.kind) {
+                switch (want_item_idx.kind) {
                     .single => {
                         var item_i: u32 = 0;
                         for (case.ast.values) |item_node| {
-                            if (item_node.toOptional() == underscore_node or
-                                tree.nodeTag(item_node) == .switch_range)
-                            {
+                            if (tree.nodeTag(item_node) == .switch_range) {
                                 continue;
                             }
-                            if (item_i != want_item.index) {
+                            if (item_i != want_item_idx.value) {
                                 item_i += 1;
                                 continue;
                             }
@@ -2264,7 +2229,7 @@ pub const SrcLoc = struct {
                             if (tree.nodeTag(item_node) != .switch_range) {
                                 continue;
                             }
-                            if (range_i != want_item.index) {
+                            if (range_i != want_item_idx.value) {
                                 range_i += 1;
                                 continue;
                             }
@@ -2446,10 +2411,6 @@ pub const LazySrcLoc = struct {
         /// by taking this AST node index offset from the containing base node,
         /// which points to a switch expression AST node. Next, navigate to the else prong.
         node_offset_switch_else_prong: Ast.Node.Offset,
-        /// The source location points to the `_` prong of a switch expression, found
-        /// by taking this AST node index offset from the containing base node,
-        /// which points to a switch expression AST node. Next, navigate to the `_` prong.
-        node_offset_switch_under_prong: Ast.Node.Offset,
         /// The source location points to all the ranges of a switch expression, found
         /// by taking this AST node index offset from the containing base node,
         /// which points to a switch expression AST node. Next, navigate to any of the
@@ -2642,29 +2603,21 @@ pub const LazySrcLoc = struct {
             /// The offset of the switch AST node.
             switch_node_offset: Ast.Node.Offset,
             /// The index of the case to point to within this switch.
-            case_idx: SwitchCaseIndex,
+            case_idx: Zir.UnwrappedSwitchBlock.Case.Index,
             /// The index of the item to point to within this case.
-            item_idx: SwitchItemIndex,
+            item_idx: SwitchItem.Index,
+
+            pub const Index = packed struct(u32) {
+                kind: enum(u1) { single, range },
+                value: u31,
+            };
         };
 
         pub const SwitchCapture = struct {
             /// The offset of the switch AST node.
             switch_node_offset: Ast.Node.Offset,
             /// The index of the case whose capture to point to.
-            case_idx: SwitchCaseIndex,
-        };
-
-        pub const SwitchCaseIndex = packed struct(u32) {
-            kind: enum(u1) { scalar, multi },
-            index: u31,
-
-            pub const special_else: SwitchCaseIndex = @bitCast(@as(u32, std.math.maxInt(u32)));
-            pub const special_under: SwitchCaseIndex = @bitCast(@as(u32, std.math.maxInt(u32) - 1));
-        };
-
-        pub const SwitchItemIndex = packed struct(u32) {
-            kind: enum(u1) { single, range },
-            index: u31,
+            case_idx: Zir.UnwrappedSwitchBlock.Case.Index,
         };
 
         pub const ArrayCat = struct {

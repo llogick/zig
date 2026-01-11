@@ -5,6 +5,5 @@ pub fn main() void {
 }
 
 // error
-// target=x86_64-linux
 //
-// :2:23: error: expected error union type, found 'bool'
+// :2:11: error: expected error union type, found 'bool'

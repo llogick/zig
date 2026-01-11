@@ -447,9 +447,8 @@ const Writer = struct {
 
             .switch_block,
             .switch_block_ref,
+            .switch_block_err_union,
             => try self.writeSwitchBlock(stream, inst),
-
-            .switch_block_err_union => try self.writeSwitchBlockErrUnion(stream, inst),
 
             .field_ptr_load,
             .field_ptr,
@@ -1987,322 +1986,140 @@ const Writer = struct {
         try self.writeSrcNode(stream, inst_data.src_node);
     }
 
-    fn writeSwitchBlockErrUnion(self: *Writer, stream: *std.Io.Writer, inst: Zir.Inst.Index) !void {
-        const inst_data = self.code.instructions.items(.data)[@intFromEnum(inst)].pl_node;
-        const extra = self.code.extraData(Zir.Inst.SwitchBlockErrUnion, inst_data.payload_index);
+    fn writeSwitchBlock(
+        self: *Writer,
+        stream: *std.Io.Writer,
+        inst: Zir.Inst.Index,
+    ) !void {
+        const zir_switch = self.code.getSwitchBlock(inst);
+        var extra_index = zir_switch.end;
 
-        var extra_index: usize = extra.end;
-
-        const multi_cases_len = if (extra.data.bits.has_multi_cases) blk: {
-            const multi_cases_len = self.code.extra[extra_index];
-            extra_index += 1;
-            break :blk multi_cases_len;
-        } else 0;
-
-        const err_capture_inst: Zir.Inst.Index = if (extra.data.bits.any_uses_err_capture) blk: {
-            const tag_capture_inst = self.code.extra[extra_index];
-            extra_index += 1;
-            break :blk @enumFromInt(tag_capture_inst);
-        } else undefined;
-
-        try self.writeInstRef(stream, extra.data.operand);
-
-        if (extra.data.bits.any_uses_err_capture) {
-            try stream.writeAll(", err_capture=");
-            try self.writeInstIndex(stream, err_capture_inst);
-        }
+        try self.writeInstRef(stream, zir_switch.main_operand);
 
         self.indent += 2;
 
-        {
-            const info = @as(Zir.Inst.SwitchBlock.ProngInfo, @bitCast(self.code.extra[extra_index]));
-            extra_index += 1;
-
-            assert(!info.is_inline);
-            const body = self.code.bodySlice(extra_index, info.body_len);
-            extra_index += body.len;
+        if (zir_switch.non_err_case) |non_err_case| {
+            if (non_err_case.operand_is_ref) try stream.writeAll(" ref");
 
             try stream.writeAll(",\n");
             try stream.splatByteAll(' ', self.indent);
+
+            try self.writeSwitchCaptures(stream, non_err_case.capture, false, inst, &zir_switch);
+
             try stream.writeAll("non_err => ");
-            try self.writeBracedBody(stream, body);
+            try self.writeBracedBody(stream, non_err_case.body);
+            try stream.writeAll(" ");
+            try self.writeSrcNode(stream, zir_switch.catch_or_if_src_node_offset.unwrap().?);
         }
-
-        if (extra.data.bits.has_else) {
-            const info = @as(Zir.Inst.SwitchBlock.ProngInfo, @bitCast(self.code.extra[extra_index]));
-            extra_index += 1;
-            const capture_text = switch (info.capture) {
-                .none => "",
-                .by_val => "by_val ",
-                .by_ref => "by_ref ",
-            };
-            const inline_text = if (info.is_inline) "inline " else "";
-            const body = self.code.bodySlice(extra_index, info.body_len);
-            extra_index += body.len;
-
+        if (zir_switch.else_case) |else_case| {
             try stream.writeAll(",\n");
             try stream.splatByteAll(' ', self.indent);
-            try stream.print("{s}{s}else => ", .{ capture_text, inline_text });
-            try self.writeBracedBody(stream, body);
+
+            try self.writeSwitchCaptures(stream, else_case.capture, else_case.has_tag_capture, inst, &zir_switch);
+            if (else_case.is_inline) try stream.writeAll("inline ");
+
+            try stream.writeAll("else => ");
+            try self.writeBracedBody(stream, else_case.body);
         }
 
-        {
-            const scalar_cases_len = extra.data.bits.scalar_cases_len;
-            var scalar_i: usize = 0;
-            while (scalar_i < scalar_cases_len) : (scalar_i += 1) {
-                const item_ref = @as(Zir.Inst.Ref, @enumFromInt(self.code.extra[extra_index]));
-                extra_index += 1;
-                const info = @as(Zir.Inst.SwitchBlock.ProngInfo, @bitCast(self.code.extra[extra_index]));
-                extra_index += 1;
-                const body = self.code.bodySlice(extra_index, info.body_len);
-                extra_index += info.body_len;
+        var case_it = zir_switch.iterateCases();
+        while (case_it.next()) |case| {
+            try stream.writeAll(",\n");
+            try stream.splatByteAll(' ', self.indent);
 
-                try stream.writeAll(",\n");
-                try stream.splatByteAll(' ', self.indent);
-                switch (info.capture) {
-                    .none => {},
-                    .by_val => try stream.writeAll("by_val "),
-                    .by_ref => try stream.writeAll("by_ref "),
+            const prong_info = case.prong_info;
+            try self.writeSwitchCaptures(stream, prong_info.capture, prong_info.has_tag_capture, inst, &zir_switch);
+            if (prong_info.is_inline) try stream.writeAll("inline ");
+
+            const prong_body = self.code.bodySlice(extra_index, prong_info.body_len);
+            extra_index += prong_body.len;
+
+            for (case.item_infos, 0..) |item_info, i| {
+                if (i > 0) try stream.writeAll(", ");
+
+                switch (item_info.unwrap()) {
+                    .enum_literal => |str_index| {
+                        const str = self.code.nullTerminatedString(str_index);
+                        try stream.print("\".{f}\"", .{std.zig.fmtString(str)});
+                    },
+                    .error_value => |str_index| {
+                        const str = self.code.nullTerminatedString(str_index);
+                        try stream.print("\"error.{f}\"", .{std.zig.fmtString(str)});
+                    },
+                    .under => try stream.writeByte('_'),
+                    .body_len => |body_len| {
+                        const item_body = self.code.bodySlice(extra_index, body_len);
+                        extra_index += item_body.len;
+                        try self.writeBracedDecl(stream, item_body);
+                    },
                 }
-                if (info.is_inline) try stream.writeAll("inline ");
-                try self.writeInstRef(stream, item_ref);
-                try stream.writeAll(" => ");
-                try self.writeBracedBody(stream, body);
             }
-        }
-        {
-            var multi_i: usize = 0;
-            while (multi_i < multi_cases_len) : (multi_i += 1) {
-                const items_len = self.code.extra[extra_index];
-                extra_index += 1;
-                const ranges_len = self.code.extra[extra_index];
-                extra_index += 1;
-                const info = @as(Zir.Inst.SwitchBlock.ProngInfo, @bitCast(self.code.extra[extra_index]));
-                extra_index += 1;
-                const items = self.code.refSlice(extra_index, items_len);
-                extra_index += items_len;
-
-                try stream.writeAll(",\n");
-                try stream.splatByteAll(' ', self.indent);
-                switch (info.capture) {
-                    .none => {},
-                    .by_val => try stream.writeAll("by_val "),
-                    .by_ref => try stream.writeAll("by_ref "),
+            for (case.range_infos, 0..) |range_info, i| {
+                if (i > 0 and case.item_infos.len == 0) try stream.writeAll(", ");
+                switch (range_info[0].unwrap()) {
+                    .enum_literal => |str_index| {
+                        const str = self.code.nullTerminatedString(str_index);
+                        try stream.print("\".{f}\"", .{std.zig.fmtString(str)});
+                    },
+                    .error_value => |str_index| {
+                        const str = self.code.nullTerminatedString(str_index);
+                        try stream.print("\"error.{f}\"", .{std.zig.fmtString(str)});
+                    },
+                    .under => unreachable, // '_..._' is not allowed
+                    .body_len => |body_len| {
+                        const item_body = self.code.bodySlice(extra_index, body_len);
+                        extra_index += item_body.len;
+                        try self.writeBracedDecl(stream, item_body);
+                    },
                 }
-                if (info.is_inline) try stream.writeAll("inline ");
-
-                for (items, 0..) |item_ref, item_i| {
-                    if (item_i != 0) try stream.writeAll(", ");
-                    try self.writeInstRef(stream, item_ref);
+                try stream.writeAll("...");
+                switch (range_info[1].unwrap()) {
+                    .enum_literal => |str_index| {
+                        const str = self.code.nullTerminatedString(str_index);
+                        try stream.print("\".{f}\"", .{std.zig.fmtString(str)});
+                    },
+                    .error_value => |str_index| {
+                        const str = self.code.nullTerminatedString(str_index);
+                        try stream.print("\"error.{f}\"", .{std.zig.fmtString(str)});
+                    },
+                    .under => unreachable, // '_..._' is not allowed
+                    .body_len => |body_len| {
+                        const item_body = self.code.bodySlice(extra_index, body_len);
+                        extra_index += item_body.len;
+                        try self.writeBracedDecl(stream, item_body);
+                    },
                 }
-
-                var range_i: usize = 0;
-                while (range_i < ranges_len) : (range_i += 1) {
-                    const item_first = @as(Zir.Inst.Ref, @enumFromInt(self.code.extra[extra_index]));
-                    extra_index += 1;
-                    const item_last = @as(Zir.Inst.Ref, @enumFromInt(self.code.extra[extra_index]));
-                    extra_index += 1;
-
-                    if (range_i != 0 or items.len != 0) {
-                        try stream.writeAll(", ");
-                    }
-                    try self.writeInstRef(stream, item_first);
-                    try stream.writeAll("...");
-                    try self.writeInstRef(stream, item_last);
-                }
-
-                const body = self.code.bodySlice(extra_index, info.body_len);
-                extra_index += info.body_len;
-                try stream.writeAll(" => ");
-                try self.writeBracedBody(stream, body);
             }
+            try stream.writeAll(" => ");
+            try self.writeBracedBody(stream, prong_body);
         }
 
         self.indent -= 2;
 
         try stream.writeAll(") ");
-        try self.writeSrcNode(stream, inst_data.src_node);
+        try self.writeSrcNode(stream, zir_switch.switch_src_node_offset);
     }
 
-    fn writeSwitchBlock(self: *Writer, stream: *std.Io.Writer, inst: Zir.Inst.Index) !void {
-        const inst_data = self.code.instructions.items(.data)[@intFromEnum(inst)].pl_node;
-        const extra = self.code.extraData(Zir.Inst.SwitchBlock, inst_data.payload_index);
-
-        var extra_index: usize = extra.end;
-
-        const multi_cases_len = if (extra.data.bits.has_multi_cases) blk: {
-            const multi_cases_len = self.code.extra[extra_index];
-            extra_index += 1;
-            break :blk multi_cases_len;
-        } else 0;
-
-        const tag_capture_inst: Zir.Inst.Index = if (extra.data.bits.any_has_tag_capture) blk: {
-            const tag_capture_inst = self.code.extra[extra_index];
-            extra_index += 1;
-            break :blk @enumFromInt(tag_capture_inst);
-        } else undefined;
-
-        try self.writeInstRef(stream, extra.data.operand);
-
-        if (extra.data.bits.any_has_tag_capture) {
-            try stream.writeAll(", tag_capture=");
-            try self.writeInstIndex(stream, tag_capture_inst);
+    fn writeSwitchCaptures(
+        self: *Writer,
+        stream: *std.Io.Writer,
+        capture: Zir.Inst.SwitchBlock.ProngInfo.Capture,
+        has_tag_capture: bool,
+        switch_inst: Zir.Inst.Index,
+        zir_switch: *const Zir.UnwrappedSwitchBlock,
+    ) !void {
+        if (capture != .none) {
+            try stream.print("{t}=", .{capture});
+            const capture_inst = zir_switch.payload_capture_placeholder.unwrap() orelse switch_inst;
+            try self.writeInstIndex(stream, capture_inst);
+            try stream.writeAll(" ");
         }
-
-        self.indent += 2;
-
-        const special_prongs = extra.data.bits.special_prongs;
-
-        if (special_prongs.hasElse()) {
-            const info: Zir.Inst.SwitchBlock.ProngInfo = @bitCast(self.code.extra[extra_index]);
-            const capture_text = switch (info.capture) {
-                .none => "",
-                .by_val => "by_val ",
-                .by_ref => "by_ref ",
-            };
-            const inline_text = if (info.is_inline) "inline " else "";
-            extra_index += 1;
-            const body = self.code.bodySlice(extra_index, info.body_len);
-            extra_index += body.len;
-
-            try stream.writeAll(",\n");
-            try stream.splatByteAll(' ', self.indent);
-            try stream.print("{s}{s}else => ", .{ capture_text, inline_text });
-            try self.writeBracedBody(stream, body);
+        if (has_tag_capture) {
+            try stream.writeAll("tag=");
+            const capture_inst = zir_switch.tag_capture_placeholder.unwrap() orelse switch_inst;
+            try self.writeInstIndex(stream, capture_inst);
+            try stream.writeAll(" ");
         }
-
-        if (special_prongs.hasUnder()) {
-            var single_item_ref: Zir.Inst.Ref = .none;
-            var items_len: u32 = 0;
-            var ranges_len: u32 = 0;
-            if (special_prongs.hasOneAdditionalItem()) {
-                single_item_ref = @enumFromInt(self.code.extra[extra_index]);
-                extra_index += 1;
-            } else if (special_prongs.hasManyAdditionalItems()) {
-                items_len = self.code.extra[extra_index];
-                extra_index += 1;
-                ranges_len = self.code.extra[extra_index];
-                extra_index += 1;
-            }
-            const info: Zir.Inst.SwitchBlock.ProngInfo = @bitCast(self.code.extra[extra_index]);
-            extra_index += 1;
-            const items = self.code.refSlice(extra_index, items_len);
-            extra_index += items_len;
-
-            try stream.writeAll(",\n");
-            try stream.splatByteAll(' ', self.indent);
-            switch (info.capture) {
-                .none => {},
-                .by_val => try stream.writeAll("by_val "),
-                .by_ref => try stream.writeAll("by_ref "),
-            }
-            if (info.is_inline) try stream.writeAll("inline ");
-
-            try stream.writeAll("_");
-            if (single_item_ref != .none) {
-                try stream.writeAll(", ");
-                try self.writeInstRef(stream, single_item_ref);
-            }
-            for (items) |item_ref| {
-                try stream.writeAll(", ");
-                try self.writeInstRef(stream, item_ref);
-            }
-
-            var range_i: usize = 0;
-            while (range_i < ranges_len) : (range_i += 1) {
-                const item_first: Zir.Inst.Ref = @enumFromInt(self.code.extra[extra_index]);
-                extra_index += 1;
-                const item_last: Zir.Inst.Ref = @enumFromInt(self.code.extra[extra_index]);
-                extra_index += 1;
-
-                try stream.writeAll(", ");
-                try self.writeInstRef(stream, item_first);
-                try stream.writeAll("...");
-                try self.writeInstRef(stream, item_last);
-            }
-
-            const body = self.code.bodySlice(extra_index, info.body_len);
-            extra_index += info.body_len;
-            try stream.writeAll(" => ");
-            try self.writeBracedBody(stream, body);
-        }
-
-        {
-            const scalar_cases_len = extra.data.bits.scalar_cases_len;
-            var scalar_i: usize = 0;
-            while (scalar_i < scalar_cases_len) : (scalar_i += 1) {
-                const item_ref: Zir.Inst.Ref = @enumFromInt(self.code.extra[extra_index]);
-                extra_index += 1;
-                const info: Zir.Inst.SwitchBlock.ProngInfo = @bitCast(self.code.extra[extra_index]);
-                extra_index += 1;
-                const body = self.code.bodySlice(extra_index, info.body_len);
-                extra_index += info.body_len;
-
-                try stream.writeAll(",\n");
-                try stream.splatByteAll(' ', self.indent);
-                switch (info.capture) {
-                    .none => {},
-                    .by_val => try stream.writeAll("by_val "),
-                    .by_ref => try stream.writeAll("by_ref "),
-                }
-                if (info.is_inline) try stream.writeAll("inline ");
-                try self.writeInstRef(stream, item_ref);
-                try stream.writeAll(" => ");
-                try self.writeBracedBody(stream, body);
-            }
-        }
-        {
-            var multi_i: usize = 0;
-            while (multi_i < multi_cases_len) : (multi_i += 1) {
-                const items_len = self.code.extra[extra_index];
-                extra_index += 1;
-                const ranges_len = self.code.extra[extra_index];
-                extra_index += 1;
-                const info: Zir.Inst.SwitchBlock.ProngInfo = @bitCast(self.code.extra[extra_index]);
-                extra_index += 1;
-                const items = self.code.refSlice(extra_index, items_len);
-                extra_index += items_len;
-
-                try stream.writeAll(",\n");
-                try stream.splatByteAll(' ', self.indent);
-                switch (info.capture) {
-                    .none => {},
-                    .by_val => try stream.writeAll("by_val "),
-                    .by_ref => try stream.writeAll("by_ref "),
-                }
-                if (info.is_inline) try stream.writeAll("inline ");
-
-                for (items, 0..) |item_ref, item_i| {
-                    if (item_i != 0) try stream.writeAll(", ");
-                    try self.writeInstRef(stream, item_ref);
-                }
-
-                var range_i: usize = 0;
-                while (range_i < ranges_len) : (range_i += 1) {
-                    const item_first: Zir.Inst.Ref = @enumFromInt(self.code.extra[extra_index]);
-                    extra_index += 1;
-                    const item_last: Zir.Inst.Ref = @enumFromInt(self.code.extra[extra_index]);
-                    extra_index += 1;
-
-                    if (range_i != 0 or items.len != 0) {
-                        try stream.writeAll(", ");
-                    }
-                    try self.writeInstRef(stream, item_first);
-                    try stream.writeAll("...");
-                    try self.writeInstRef(stream, item_last);
-                }
-
-                const body = self.code.bodySlice(extra_index, info.body_len);
-                extra_index += info.body_len;
-                try stream.writeAll(" => ");
-                try self.writeBracedBody(stream, body);
-            }
-        }
-
-        self.indent -= 2;
-
-        try stream.writeAll(") ");
-        try self.writeSrcNode(stream, inst_data.src_node);
     }
 
     fn writePlNodeField(self: *Writer, stream: *std.Io.Writer, inst: Zir.Inst.Index) !void {
