@@ -17,7 +17,9 @@ test "switch on error union catch capture" {
             try testElse();
             try testCapture();
             try testInline();
+            try testEmptyErrSet();
             try testUnreachableElseProng();
+            try testErrNotInSet();
             try testAddressOf();
         }
 
@@ -384,8 +386,11 @@ test "switch on error union if else capture" {
             try testCapturePtr();
             try testInline();
             try testInlinePtr();
+            try testEmptyErrSet();
+            try testEmptyErrSetPtr();
             try testUnreachableElseProng();
             try testUnreachableElseProngPtr();
+            try testErrNotInSet();
             try testAddressOf();
         }
 
@@ -835,7 +840,7 @@ test "switch on error union if else capture" {
                 var a: error{}!u64 = 0;
                 _ = &a;
                 const b = if (a) |*x| x.* else |err| switch (err) {
-                    error.undefined => @compileError("unreachable"),
+                    undefined => @compileError("unreachable"),
                 };
                 try expectEqual(@as(u64, 0), b);
             }

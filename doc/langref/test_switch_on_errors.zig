@@ -12,7 +12,10 @@ test "unreachable else prong" {
     switch (openFile0()) {
         error.AccessDenied, error.FileNotFound => |e| return e,
         error.OutOfMemory => {},
-        else => unreachable, // technically unreachable, but will still compile!
+        // 'openFile0' cannot return any more errors, so an 'else' prong would be
+        // statically known to be unreachable. Nonetheless, in this case, adding
+        // one does not raise an "unreachable else prong" compile error:
+        else => unreachable,
     }
 
     // Allowed unreachable else prongs are:

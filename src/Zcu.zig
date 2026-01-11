@@ -2221,16 +2221,7 @@ pub const SrcLoc = struct {
                                 continue;
                             }
                             return tree.nodeToSpan(item_node);
-                        } else {
-                            for (case.ast.values) |item_node| {
-                                const item_span = tree.nodeToSpan(item_node);
-                                std.debug.print("{s}\n", .{tree.source[item_span.start..item_span.end]});
-                            }
-                            std.debug.print("want_case_idx={any}\n", .{want_case_idx});
-                            std.debug.print("want_item_idx={any}\n", .{want_item_idx});
-                            unreachable;
-                        }
-                        // } else unreachable;
+                        } else unreachable;
                     },
                     .range => {
                         var range_i: u32 = 0;

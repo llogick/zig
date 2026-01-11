@@ -1128,20 +1128,17 @@ test "decl literals as switch cases" {
 
         const foo: @This() = @enumFromInt(0xa);
 
-        fn doTheTest() !void {
-            var e: @This() = .foo;
-            _ = &e;
-            const ok = switch (e) {
-                .bar => false,
-                .foo => true,
-                else => false,
-            };
-            try expect(ok);
+        fn doTheTest(e: @This()) !void {
+            switch (e) {
+                .bar => return error.TestFailed,
+                .foo => {},
+                else => return error.TestFailed,
+            }
         }
     };
 
-    try E.doTheTest();
-    try comptime E.doTheTest();
+    try E.doTheTest(.foo);
+    try comptime E.doTheTest(.foo);
 }
 
 // TODO audit after #15909 and/or #19855 are decided/implemented
@@ -1152,32 +1149,30 @@ test "switch with uninstantiable union fields" {
         b: noreturn,
         c: error{},
 
-        fn doTheTest() !void {
-            var u: @This() = .ok;
-            _ = &u;
-            try expect(switch (u) {
-                .ok => true,
+        fn doTheTest(u: @This()) void {
+            switch (u) {
+                .ok => {},
                 .a => comptime unreachable,
                 .b => comptime unreachable,
                 .c => comptime unreachable,
-            });
-            try expect(switch (u) {
-                .ok => true,
+            }
+            switch (u) {
+                .ok => {},
                 .a, .b, .c => comptime unreachable,
-            });
-            try expect(switch (u) {
-                .ok => true,
+            }
+            switch (u) {
+                .ok => {},
                 else => comptime unreachable,
-            });
-            try expect(switch (u) {
+            }
+            switch (u) {
                 .a => comptime unreachable,
-                .ok, .b, .c => true,
-            });
+                .ok, .b, .c => {},
+            }
         }
     };
 
-    try U.doTheTest();
-    try comptime U.doTheTest();
+    U.doTheTest(.ok);
+    comptime U.doTheTest(.ok);
 }
 
 test "switch with tag capture" {
@@ -1196,8 +1191,8 @@ test "switch with tag capture" {
         fn doTheSwitch(u: @This()) !void {
             switch (u) {
                 .a => |nothing, tag| {
-                    try expect(nothing == {});
-                    try expect(tag == .a);
+                    comptime assert(nothing == {});
+                    comptime assert(tag == .a);
                     try expect(@intFromEnum(tag) == @intFromEnum(@This().a));
                 },
                 .b, .d => |_, tag| {
@@ -1216,13 +1211,13 @@ test "switch with tag capture" {
             }
             switch (u) {
                 inline .a, .b, .c => |payload, tag| {
-                    if (@TypeOf(payload) == void) try expect(tag == .a);
-                    if (@TypeOf(payload) == i32) try expect(tag == .b);
-                    if (@TypeOf(payload) == u8) try expect(tag == .c);
+                    if (@TypeOf(payload) == void) comptime assert(tag == .a);
+                    if (@TypeOf(payload) == i32) comptime assert(tag == .b);
+                    if (@TypeOf(payload) == u8) comptime assert(tag == .c);
                 },
                 inline else => |payload, tag| {
-                    if (@TypeOf(payload) == i32) try expect(tag == .d);
-                    try expect(tag != .e);
+                    if (@TypeOf(payload) == i32) comptime assert(tag == .d);
+                    comptime assert(tag != .e);
                 },
             }
         }
@@ -1232,7 +1227,7 @@ test "switch with tag capture" {
     try comptime U.doTheTest();
 }
 
-test "switch with advanced prong items" {
+test "switch with complex item expressions" {
     const S = struct {
         fn doTheTest() !void {
             try doTheSwitch(2000, 20);
@@ -1278,19 +1273,11 @@ test "switch with advanced prong items" {
 }
 
 test "switch evaluation order" {
-    const eval = comptime eval: {
-        var eval = false;
-        const eu: anyerror!u32 = 0;
-        _ = eu catch |err| switch (err) {
-            blk: {
-                eval = true;
-                break :blk error.MyError;
-            } => {},
-            else => unreachable,
-        };
-        break :eval eval;
+    const eu: anyerror!u32 = 0;
+    _ = eu catch |err| switch (err) {
+        if (true) @compileError("unreachable") => unreachable,
+        else => unreachable,
     };
-    try comptime expect(!eval);
 }
 
 test "switch resolves lazy values correctly" {
@@ -1298,13 +1285,25 @@ test "switch resolves lazy values correctly" {
         a: u16,
         b: i16,
     };
-    const ok1 = switch (@sizeOf(S)) {
-        4 => true,
-        else => false,
+    switch (@sizeOf(S)) {
+        4 => {},
+        else => comptime unreachable,
+    }
+}
+
+test "single-item prong in switch on enum has comptime-known capture" {
+    const E = enum {
+        a,
+        b,
+        c,
+        fn doTheTest(e: @This()) !void {
+            switch (e) {
+                .a => |tag| comptime assert(tag == .a),
+                .b => return error.TestFailed,
+                .c => return error.TestFailed,
+            }
+        }
     };
-    const ok2 = switch (@sizeOf(S)) {
-        4 => true,
-        else => false,
-    };
-    try comptime expect(ok1 == ok2);
+    try E.doTheTest(.a);
+    try comptime E.doTheTest(.a);
 }

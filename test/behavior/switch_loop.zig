@@ -1,5 +1,6 @@
 const builtin = @import("builtin");
 const std = @import("std");
+const assert = std.debug.assert;
 const expect = std.testing.expect;
 
 test "simple switch loop" {
@@ -340,7 +341,7 @@ test "switch loop with single catch-all prong" {
                     continue :label .{ .b = 456 };
                 },
             };
-            try expect(ok);
+            comptime assert(ok);
         }
     };
     try S.doTheTest();
@@ -411,8 +412,8 @@ test "switch loop with tag capture" {
         fn doTheSwitch(u: @This()) !void {
             const ok1 = label: switch (u) {
                 .a => |nothing, tag| {
-                    try expect(nothing == {});
-                    try expect(tag == .a);
+                    comptime assert(nothing == {});
+                    comptime assert(tag == .a);
                     try expect(@intFromEnum(tag) == @intFromEnum(@This().a));
                     continue :label .{ .d = 456 };
                 },
@@ -438,21 +439,21 @@ test "switch loop with tag capture" {
             const ok2 = label: switch (u) {
                 inline .a, .b, .c => |payload, tag| {
                     if (@TypeOf(payload) == void) {
-                        try expect(tag == .a);
+                        comptime assert(tag == .a);
                         continue :label .{ .b = 456 };
                     }
                     if (@TypeOf(payload) == i32) {
-                        try expect(tag == .b);
+                        comptime assert(tag == .b);
                         continue :label .{ .d = payload };
                     }
                     if (@TypeOf(payload) == u8) {
-                        try expect(tag == .c);
+                        comptime assert(tag == .c);
                         continue :label .{ .d = payload };
                     }
                 },
                 inline else => |payload, tag| {
-                    if (@TypeOf(payload) == i32) try expect(tag == .d);
-                    try expect(tag != .e);
+                    if (@TypeOf(payload) == i32) comptime assert(tag == .d);
+                    comptime assert(tag != .e);
                     if (payload == 0) break :label false;
                     break :label true;
                 },

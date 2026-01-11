@@ -12591,6 +12591,7 @@ fn resolveSwitchProng(
             sema.typeOf(operand.simple.by_val),
             capture_src,
             inline_case_capture,
+            kind,
         );
         sema.inst_map.putAssumeCapacity(tag_inst, tag_ref);
         break :inst tag_inst;
@@ -12723,6 +12724,7 @@ fn analyzeSwitchProng(
             operand_ty,
             capture_src,
             inline_case_capture,
+            kind,
         );
         sema.inst_map.putAssumeCapacity(tag_inst, tag_ref);
         break :inst tag_inst;
@@ -12743,6 +12745,7 @@ fn analyzeSwitchTagCapture(
     operand_ty: Type,
     capture_src: LazySrcLoc,
     inline_case_capture: Air.Inst.Ref,
+    kind: SwitchProngKind,
 ) CompileError!Air.Inst.Ref {
     const pt = sema.pt;
     const zcu = pt.zcu;
@@ -12759,6 +12762,10 @@ fn analyzeSwitchTagCapture(
     }
     if (inline_case_capture != .none) {
         return inline_case_capture; // this already is the tag, it's what we're switching on!
+    }
+    switch (kind) {
+        .has_ranges, .special => {},
+        .item_refs => |refs| if (refs.len == 1) return refs[0],
     }
     const tag_ty = operand_ty.unionTagType(zcu).?;
     return sema.unionToTag(case_block, tag_ty, operand_val, tag_capture_src);
@@ -13150,10 +13157,12 @@ fn analyzeSwitchPayloadCapture(
             return sema.bitCast(case_block, error_ty, operand_val, operand_src, null);
         },
         else => {
-            // In this case the capture value is just the passed-through value
-            // of the switch condition.
+            // In this case the capture value is just the passed-through value of the
+            // switch condition. It is comptime-known if there is only one item.
             if (capture_by_ref) {
                 return operand_ptr;
+            } else if (case_vals.len == 1) {
+                return case_vals[0];
             } else {
                 return operand_val;
             }
@@ -31361,17 +31370,19 @@ fn resolvePtrIsNonErrVal(
     assert(ptr_ty.zigTypeTag(zcu) == .pointer);
     const child_ty = ptr_ty.childType(zcu);
 
-    const child_tag = child_ty.zigTypeTag(zcu);
-    if (child_tag != .error_set and child_tag != .error_union) return .true;
-    if (child_tag == .error_set) return .false;
-    assert(child_tag == .error_union);
+    if (try sema.resolveIsNonErrFromType(block, src, child_ty)) |res| {
+        return res;
+    }
+    assert(child_ty.zigTypeTag(zcu) == .error_union);
 
-    if (try sema.resolveValue(operand)) |ptr_val| {
-        if (ptr_val.isUndef(zcu)) return .undef_bool;
-        if (try sema.pointerDeref(block, src, ptr_val, ptr_ty)) |val| {
-            return try sema.resolveIsNonErrVal(block, src, .fromValue(val));
+    if (try sema.resolveValue(operand)) |eu_ptr_val| {
+        if (eu_ptr_val.isUndef(zcu)) return .undef_bool;
+        if (try sema.pointerDeref(block, src, eu_ptr_val, ptr_ty)) |err_union| {
+            if (err_union.isUndef(zcu)) return .undef_bool;
+            return .makeBool(err_union.getErrorName(zcu) == .none);
         }
     }
+
     return null;
 }
 
@@ -31381,10 +31392,29 @@ fn resolveIsNonErrVal(
     src: LazySrcLoc,
     operand: Air.Inst.Ref,
 ) CompileError!?Value {
+    const zcu = sema.pt.zcu;
+    if (try sema.resolveIsNonErrFromType(block, src, sema.typeOf(operand))) |res| {
+        return res;
+    }
+    assert(sema.typeOf(operand).zigTypeTag(zcu) == .error_union);
+
+    if (try sema.resolveValue(operand)) |err_union| {
+        if (err_union.isUndef(zcu)) return .undef_bool;
+        return .makeBool(err_union.getErrorName(zcu) == .none);
+    }
+
+    return null;
+}
+
+fn resolveIsNonErrFromType(
+    sema: *Sema,
+    block: *Block,
+    src: LazySrcLoc,
+    operand_ty: Type,
+) CompileError!?Value {
     const pt = sema.pt;
     const zcu = pt.zcu;
     const ip = &zcu.intern_pool;
-    const operand_ty = sema.typeOf(operand);
     const ot = operand_ty.zigTypeTag(zcu);
     if (ot != .error_set and ot != .error_union) return .true;
     if (ot == .error_set) return .false;
@@ -31394,15 +31424,6 @@ fn resolveIsNonErrVal(
     if (payload_ty.zigTypeTag(zcu) == .noreturn) {
         return .false;
     }
-
-    if (operand == .undef) {
-        return .undef_bool;
-    } else if (@intFromEnum(operand) < InternPool.static_len) {
-        // None of the ref tags can be errors.
-        return .true;
-    }
-
-    const maybe_operand_val = try sema.resolveValue(operand);
 
     // exception if the error union error set is known to be empty,
     // we allow the comparison but always make it comptime-known.
@@ -31419,9 +31440,6 @@ fn resolveIsNonErrVal(
                 else => |i| if (ip.indexToKey(i).error_set_type.names.len != 0) break :blk,
             }
 
-            if (maybe_operand_val != null) break :blk;
-
-            // Try to avoid resolving inferred error set if possible.
             if (ies.errors.count() != 0) return null;
             switch (ies.resolved) {
                 .anyerror_type => return null,
@@ -31450,7 +31468,6 @@ fn resolveIsNonErrVal(
                     .none => {},
                     else => |i| if (ip.indexToKey(i).error_set_type.names.len != 0) break :blk,
                 }
-                if (maybe_operand_val != null) break :blk;
                 if (sema.fn_ret_ty_ies) |ies| {
                     if (ies.func == func_index) {
                         // Try to avoid resolving inferred error set if possible.
@@ -31479,9 +31496,6 @@ fn resolveIsNonErrVal(
         },
     }
 
-    if (maybe_operand_val) |err_union| {
-        return if (err_union.isUndef(zcu)) .undef_bool else if (err_union.getErrorName(zcu) == .none) .true else .false;
-    }
     return null;
 }
 

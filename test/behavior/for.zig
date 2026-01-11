@@ -525,7 +525,7 @@ test "for loop 0 length range" {
     }
 }
 
-test "labeled break from else prong" {
+test "labeled break from else" {
     const S = struct {
         fn doTheTest(x: u32) !void {
             var y: u32 = 0;

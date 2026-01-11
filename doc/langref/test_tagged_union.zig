@@ -20,7 +20,10 @@ test "switch on tagged union" {
     }
 
     switch (c) {
-        .ok => |_, tag| try expect(tag == .ok),
+        .ok => |_, tag| {
+            // Because we're in the '.ok' prong, 'tag' is compile-time known to be '.ok':
+            comptime std.debug.assert(tag == .ok);
+        },
         .not_ok => unreachable,
     }
 }

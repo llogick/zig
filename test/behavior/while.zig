@@ -400,12 +400,12 @@ test "breaking from a loop in an if statement" {
     _ = opt;
 }
 
-test "labeled break from else prong" {
+test "labeled break from else" {
     const S = struct {
         fn doTheTest(x: u32) !void {
-            var y: u32 = 0;
-            const ok = label: while (y < x) : (y += 1) {
-                if (y == 10) break :label false;
+            const arr: []const u32 = &.{ 1, 3, 10 };
+            const ok = label: for (arr) |y| {
+                if (y == x) break :label false;
             } else {
                 break :label true;
             };

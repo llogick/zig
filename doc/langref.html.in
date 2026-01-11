@@ -2595,7 +2595,7 @@ or
 
       {#header_close#}
 
-      {#header_open|Switching on errors#}
+      {#header_open|Switching on Errors#}
       <p>
       When switching on errors, some special cases are allowed to simplify generic programming patterns:
       </p>

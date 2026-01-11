@@ -176,10 +176,7 @@ pub fn analyze(zcu: *Zcu, air: Air, intern_pool: *InternPool) Allocator.Error!Li
         data.old_extra = a.extra;
         a.extra = .{};
         try analyzeBody(&a, .main_analysis, &data, main_body);
-        if (std.debug.runtime_safety and data.live_set.count() != 0) {
-            log.debug("instructions still in live set after analysis: {f}", .{fmtInstSet(&data.live_set)});
-            @panic("liveness analysis failed");
-        }
+        assert(data.live_set.count() == 0);
     }
 
     return .{
