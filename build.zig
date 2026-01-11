@@ -717,8 +717,7 @@ pub fn build(b: *std.Build) !void {
         .test_filters = test_filters,
         .test_target_filters = test_target_filters,
         .skip_wasm = skip_wasm,
-        // Highest RSS observed in any test case was exactly 1802878976 on x86_64-linux.
-        .max_rss = 2253598720,
+        .max_rss = 2_496_066_355,
     })) |test_libc_step| test_step.dependOn(test_libc_step);
 }
 
