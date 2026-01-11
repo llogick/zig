@@ -3303,34 +3303,25 @@ pub const Inst = struct {
     /// 3. catch_or_if_src_node_offset: Ast.Node.Offset, // If inst is switch_block_err_union.
     /// 4. non_err_info: ProngInfo.NonErr, // If inst is switch_block_err_union.
     /// 5. else_info: ProngInfo.Else, // If has_else is set.
-    /// 6. under_info: ProngInfo.Under, // If has_under is set and
-    ///                                 // under_is_bare is set.
-    /// 7. under_index: u32, // If has_under is set and
-    ///                      // under_is_bare is *not* set.
-    ///                      // Index into switch cases.
-    /// 8. scalar_prong_info: ProngInfo, // for every scalar_cases_len
-    /// 9. multi_prong_info: ProngInfo, // for every multi_cases_len
-    /// 10. multi_case_items_len: u32, // for every multi_cases_len
-    /// 11. multi_case_ranges_len: u32, // If has_ranges is set: for every multi_cases_len
-    /// 12. scalar_item_info: ItemInfo, // for every scalar_cases_len
-    /// 13. multi_items_info: { // for every multi_cases_len
+    /// 6. scalar_prong_info: ProngInfo, // for every scalar_cases_len
+    /// 7. multi_prong_info: ProngInfo, // for every multi_cases_len
+    /// 8. multi_case_items_len: u32, // for every multi_cases_len
+    /// 9. multi_case_ranges_len: u32, // If has_ranges is set: for every multi_cases_len
+    /// 10. scalar_item_info: ItemInfo, // for every scalar_cases_len
+    /// 11. multi_items_info: { // for every multi_cases_len
     ///        item_info: ItemInfo, // for each multi_case_items_len
     ///        range_items_info: { // for each multi_case_ranges_len
     ///            first_info: ItemInfo,
     ///            last_info: ItemInfo,
     ///        }
     ///    }
-    /// 14. non_err_body {
+    /// 12. non_err_body {
     ///        body_inst: Index // for every non_err_info.body_len
     ///     }
-    /// 15. else_body: { // If has_else is set.
+    /// 13. else_body: { // If has_else is set.
     ///        body_inst: Inst.Index, // for every else_info.body_len
     ///    }
-    /// 16. under_body: { // If has_under is set and
-    ///                   // under_is_bare is set.
-    ///        body_inst: Inst.Index, // for every under_info.body_len
-    ///    }
-    /// 17. scalar_bodies: { // for every scalar_cases_len
+    /// 14. scalar_bodies: { // for every scalar_cases_len
     ///        prong_body: { // for each body_len in scalar_prong_info
     ///            body_inst: Inst.Index, // for every body_len
     ///        }
@@ -3338,7 +3329,7 @@ pub const Inst = struct {
     ///            body_inst: Inst.Index, // for every body_len
     ///        }
     ///    }
-    /// 18. multi_bodies: { // for each multi_items_info
+    /// 15. multi_bodies: { // for each multi_items_info
     ///        prong_body: {
     ///            body_inst: Inst.Index, // for each multi_prong_info.body_len
     ///        }
@@ -3363,8 +3354,6 @@ pub const Inst = struct {
             any_ranges: bool,
             has_else: bool,
             has_under: bool,
-            /// Only valid if `has_under` is also set.
-            under_is_bare: bool,
             /// If true, at least one prong contains a `continue`.
             /// Only valid if `has_label` is set.
             has_continue: bool,
@@ -3377,7 +3366,7 @@ pub const Inst = struct {
             // NOTE maybe don't steal any more bits from poor `scalar_cases_len`
             // and split `Bits` into two parts instead, `raw_operand` surely
             // wouldn't mind donating a couple of bits for that purpose...
-            pub const ScalarCasesLen = u23;
+            pub const ScalarCasesLen = u24;
         };
 
         pub const ProngInfo = packed struct(u32) {
@@ -3406,12 +3395,6 @@ pub const Inst = struct {
                 has_tag_capture: bool,
                 is_simple_noreturn: bool,
             };
-
-            pub const BareUnder = packed struct(u32) {
-                body_len: u29,
-                capture: ProngInfo.Capture,
-                has_tag_capture: bool,
-            };
         };
 
         pub const ItemInfo = packed struct(u32) {
@@ -3421,23 +3404,23 @@ pub const Inst = struct {
             pub const Kind = enum(u2) {
                 enum_literal,
                 error_value,
-                number_literal,
                 body_len,
+                under,
             };
 
             pub const Unwrapped = union(ItemInfo.Kind) {
                 enum_literal: Zir.NullTerminatedString,
                 error_value: Zir.NullTerminatedString,
-                number_literal: Inst.Ref,
                 body_len: u32,
+                under,
             };
 
             pub fn wrap(unwrapped: ItemInfo.Unwrapped) ItemInfo {
                 const data_uncasted: u32 = switch (unwrapped) {
                     .enum_literal => |str_index| @intFromEnum(str_index),
                     .error_value => |str_index| @intFromEnum(str_index),
-                    .number_literal => |zir_ref| @intFromEnum(zir_ref),
                     .body_len => |body_len| body_len,
+                    .under => 0,
                 };
                 return .{ .kind = unwrapped, .data = @intCast(data_uncasted) };
             }
@@ -3446,8 +3429,8 @@ pub const Inst = struct {
                 return switch (item_info.kind) {
                     .enum_literal => .{ .enum_literal = @enumFromInt(item_info.data) },
                     .error_value => .{ .error_value = @enumFromInt(item_info.data) },
-                    .number_literal => .{ .number_literal = @enumFromInt(item_info.data) },
                     .body_len => .{ .body_len = item_info.data },
+                    .under => .under,
                 };
             }
 
@@ -4818,9 +4801,6 @@ fn findTrackableInner(
             if (zir_switch.else_case) |else_case| {
                 try zir.findTrackableBody(gpa, contents, defers, else_case.body);
             }
-            if (zir_switch.under_case.resolve()) |under_case| {
-                try zir.findTrackableBody(gpa, contents, defers, under_case.body);
-            }
             var extra_index = zir_switch.end;
             var case_it = zir_switch.iterateCases();
             while (case_it.next()) |case| {
@@ -5268,16 +5248,6 @@ pub fn getSwitchBlock(zir: *const Zir, switch_inst: Inst.Index) UnwrappedSwitchB
         extra_index += 1;
         break :else_info else_info;
     } else undefined;
-    const bare_under_info: Inst.SwitchBlock.ProngInfo.BareUnder = if (bits.has_under and bits.under_is_bare) bare_under_info: {
-        const bare_under_info: Inst.SwitchBlock.ProngInfo.BareUnder = @bitCast(zir.extra[extra_index]);
-        extra_index += 1;
-        break :bare_under_info bare_under_info;
-    } else undefined;
-    const under_index: u32 = if (bits.has_under and !bits.under_is_bare) under_index: {
-        const under_index = zir.extra[extra_index];
-        extra_index += 1;
-        break :under_index under_index;
-    } else undefined;
     const scalar_cases_len: u32 = bits.scalar_cases_len;
     const prong_infos: []const Inst.SwitchBlock.ProngInfo =
         @ptrCast(zir.extra[extra_index..][0 .. scalar_cases_len + multi_cases_len]);
@@ -5320,20 +5290,6 @@ pub fn getSwitchBlock(zir: *const Zir, switch_inst: Inst.Index) UnwrappedSwitchB
             .is_simple_noreturn = else_info.is_simple_noreturn,
         };
     } else null;
-    const under_case: UnwrappedSwitchBlock.Case.Under = if (bits.has_under) under_case: {
-        if (bits.under_is_bare) {
-            const body = zir.bodySlice(extra_index, bare_under_info.body_len);
-            extra_index += body.len;
-            break :under_case .{ .bare = .{
-                .index = .bare_under,
-                .body = body,
-                .capture = bare_under_info.capture,
-                .has_tag_capture = bare_under_info.has_tag_capture,
-            } };
-        } else {
-            break :under_case .{ .index = under_index };
-        }
-    } else .none;
     return .{
         .main_operand = extra.data.raw_operand,
         .switch_src_node_offset = inst_data.src_node,
@@ -5344,7 +5300,7 @@ pub fn getSwitchBlock(zir: *const Zir, switch_inst: Inst.Index) UnwrappedSwitchB
         .any_maybe_runtime_capture = bits.any_maybe_runtime_capture,
         .non_err_case = non_err_case,
         .else_case = else_case,
-        .under_case = under_case,
+        .has_under = bits.has_under,
         .prong_infos = prong_infos,
         .multi_case_items_lens = multi_case_items_lens,
         .multi_case_ranges_lens = multi_case_ranges_lens,
@@ -5377,7 +5333,7 @@ pub const UnwrappedSwitchBlock = struct {
     any_maybe_runtime_capture: bool,
     non_err_case: ?Case.NonErr,
     else_case: ?Case.Else,
-    under_case: Case.Under,
+    has_under: bool,
     // Refer to doc comment and `iterateCases` to access everything below correctly.
     prong_infos: []const Inst.SwitchBlock.ProngInfo,
     multi_case_items_lens: []const u32,
@@ -5411,25 +5367,13 @@ pub const UnwrappedSwitchBlock = struct {
         item_infos: []const Inst.SwitchBlock.ItemInfo,
         range_infos: []const [2]Inst.SwitchBlock.ItemInfo,
 
-        pub fn isUnder(case: *const Case) bool {
-            return case.index.is_under;
-        }
-
         pub const Index = packed struct(u32) {
             kind: enum(u1) { scalar, multi },
-            is_under: bool,
-            value: u30,
+            value: u31,
 
             pub const @"else": Case.Index = .{
                 .kind = .scalar,
-                .is_under = false,
-                .value = std.math.maxInt(u30),
-            };
-
-            pub const bare_under: Case.Index = .{
-                .kind = .scalar,
-                .is_under = true,
-                .value = std.math.maxInt(u30),
+                .value = std.math.maxInt(u31),
             };
         };
 
@@ -5448,31 +5392,8 @@ pub const UnwrappedSwitchBlock = struct {
             is_simple_noreturn: bool,
         };
 
-        pub const Under = union(enum) {
-            none,
-            bare: Under.Resolved,
-            index: u32,
-
-            pub const Resolved = struct {
-                index: Case.Index,
-                body: []const Inst.Index,
-                capture: Inst.SwitchBlock.ProngInfo.Capture,
-                has_tag_capture: bool,
-            };
-
-            /// If this returns `null` and `under` is not `.none`, you'll have to
-            /// find the under case by iterating all cases and using `isUnder`!
-            pub fn resolve(under: Under) ?Under.Resolved {
-                return switch (under) {
-                    .bare => |resolved| resolved,
-                    .none, .index => null,
-                };
-            }
-        };
-
         pub const Iterator = struct {
             next_idx: u32,
-            under_idx: ?u32,
             prong_infos: []const Inst.SwitchBlock.ProngInfo,
             multi_case_items_lens: []const u32,
             multi_case_ranges_lens: ?[]const u32,
@@ -5486,7 +5407,6 @@ pub const UnwrappedSwitchBlock = struct {
                 return if (idx < scalar_cases_len) .{
                     .index = .{
                         .kind = .scalar,
-                        .is_under = idx == it.under_idx,
                         .value = @intCast(idx),
                     },
                     .prong_info = it.prong_infos[idx],
@@ -5495,7 +5415,6 @@ pub const UnwrappedSwitchBlock = struct {
                 } else .{
                     .index = .{
                         .kind = .multi,
-                        .is_under = idx == it.under_idx,
                         .value = @intCast(idx - scalar_cases_len),
                     },
                     .prong_info = it.prong_infos[idx],
@@ -5516,10 +5435,6 @@ pub const UnwrappedSwitchBlock = struct {
     pub fn iterateCases(unwrapped: UnwrappedSwitchBlock) Case.Iterator {
         return .{
             .next_idx = 0,
-            .under_idx = switch (unwrapped.under_case) {
-                .none, .bare => null,
-                .index => |index| index,
-            },
             .prong_infos = unwrapped.prong_infos,
             .multi_case_items_lens = unwrapped.multi_case_items_lens,
             .multi_case_ranges_lens = unwrapped.multi_case_ranges_lens,

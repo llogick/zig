@@ -2021,15 +2021,6 @@ const Writer = struct {
             try stream.writeAll("else => ");
             try self.writeBracedBody(stream, else_case.body);
         }
-        if (zir_switch.under_case.resolve()) |under_case| {
-            try stream.writeAll(",\n");
-            try stream.splatByteAll(' ', self.indent);
-
-            try self.writeSwitchCaptures(stream, under_case.capture, under_case.has_tag_capture, inst, &zir_switch);
-
-            try stream.writeAll("_ => ");
-            try self.writeBracedBody(stream, under_case.body);
-        }
 
         var case_it = zir_switch.iterateCases();
         while (case_it.next()) |case| {
@@ -2043,14 +2034,8 @@ const Writer = struct {
             const prong_body = self.code.bodySlice(extra_index, prong_info.body_len);
             extra_index += prong_body.len;
 
-            var first_item: bool = true;
-            if (case.isUnder()) {
-                try stream.writeAll("_");
-                first_item = false;
-            }
-            for (case.item_infos) |item_info| {
-                if (!first_item) try stream.writeAll(", ");
-                first_item = false;
+            for (case.item_infos, 0..) |item_info, i| {
+                if (i > 0) try stream.writeAll(", ");
 
                 switch (item_info.unwrap()) {
                     .enum_literal => |str_index| {
@@ -2061,9 +2046,7 @@ const Writer = struct {
                         const str = self.code.nullTerminatedString(str_index);
                         try stream.print("\"error.{f}\"", .{std.zig.fmtString(str)});
                     },
-                    .number_literal => |zir_ref| {
-                        try self.writeInstRef(stream, zir_ref);
-                    },
+                    .under => try stream.writeByte('_'),
                     .body_len => |body_len| {
                         const item_body = self.code.bodySlice(extra_index, body_len);
                         extra_index += item_body.len;
@@ -2071,33 +2054,40 @@ const Writer = struct {
                     },
                 }
             }
-            for (case.range_infos) |range_info| {
-                if (!first_item) try stream.writeAll(", ");
-                first_item = false;
-
-                var first_range_item = true;
-                for (&range_info) |item_info| {
-                    if (!first_range_item) try stream.writeAll("...");
-                    first_range_item = false;
-
-                    switch (item_info.unwrap()) {
-                        .enum_literal => |str_index| {
-                            const str = self.code.nullTerminatedString(str_index);
-                            try stream.print("\".{f}\"", .{std.zig.fmtString(str)});
-                        },
-                        .error_value => |str_index| {
-                            const str = self.code.nullTerminatedString(str_index);
-                            try stream.print("\"error.{f}\"", .{std.zig.fmtString(str)});
-                        },
-                        .number_literal => |zir_ref| {
-                            try self.writeInstRef(stream, zir_ref);
-                        },
-                        .body_len => |body_len| {
-                            const item_body = self.code.bodySlice(extra_index, body_len);
-                            extra_index += item_body.len;
-                            try self.writeBracedDecl(stream, item_body);
-                        },
-                    }
+            for (case.range_infos, 0..) |range_info, i| {
+                if (i > 0 and case.item_infos.len == 0) try stream.writeAll(", ");
+                switch (range_info[0].unwrap()) {
+                    .enum_literal => |str_index| {
+                        const str = self.code.nullTerminatedString(str_index);
+                        try stream.print("\".{f}\"", .{std.zig.fmtString(str)});
+                    },
+                    .error_value => |str_index| {
+                        const str = self.code.nullTerminatedString(str_index);
+                        try stream.print("\"error.{f}\"", .{std.zig.fmtString(str)});
+                    },
+                    .under => unreachable, // '_..._' is not allowed
+                    .body_len => |body_len| {
+                        const item_body = self.code.bodySlice(extra_index, body_len);
+                        extra_index += item_body.len;
+                        try self.writeBracedDecl(stream, item_body);
+                    },
+                }
+                try stream.writeAll("...");
+                switch (range_info[1].unwrap()) {
+                    .enum_literal => |str_index| {
+                        const str = self.code.nullTerminatedString(str_index);
+                        try stream.print("\".{f}\"", .{std.zig.fmtString(str)});
+                    },
+                    .error_value => |str_index| {
+                        const str = self.code.nullTerminatedString(str_index);
+                        try stream.print("\"error.{f}\"", .{std.zig.fmtString(str)});
+                    },
+                    .under => unreachable, // '_..._' is not allowed
+                    .body_len => |body_len| {
+                        const item_body = self.code.bodySlice(extra_index, body_len);
+                        extra_index += item_body.len;
+                        try self.writeBracedDecl(stream, item_body);
+                    },
                 }
             }
             try stream.writeAll(" => ");

@@ -10753,10 +10753,9 @@ fn analyzeSwitchBlock(
     const operand_src = block.src(.{ .node_offset_switch_operand = src_node_offset });
 
     const has_else = zir_switch.else_case != null;
-    const has_under = zir_switch.under_case != .none;
+    const has_under = zir_switch.has_under;
 
     const else_case = validated_switch.else_case;
-    const under_case = validated_switch.under_case;
 
     const operand: SwitchOperand, const operand_ty: Type, const maybe_operand_opv: ?Value, const item_ty: Type = operand: {
         const val, const ref = if (operand_is_ref)
@@ -10933,9 +10932,6 @@ fn analyzeSwitchBlock(
                 // we allow simple noreturn else prongs when switching on error sets!
                 break :find_prong .{ else_case.index, else_case.body, else_case.capture, else_case.has_tag_capture, else_case.is_inline, true };
             }
-            if (has_under) {
-                break :find_prong .{ under_case.index, under_case.body, under_case.capture, under_case.has_tag_capture, false, true };
-            }
             unreachable; // malformed validated switch
         };
 
@@ -11083,10 +11079,9 @@ fn finishSwitchBr(
     const operand_src = block.src(.{ .node_offset_switch_operand = src_node_offset });
 
     const has_else = zir_switch.else_case != null;
-    const has_under = zir_switch.under_case != .none;
+    const has_under = zir_switch.has_under;
 
     const else_case = validated_switch.else_case;
-    const under_case = validated_switch.under_case;
 
     const scalar_cases_len = zir_switch.scalarCasesLen();
     const multi_cases_len = zir_switch.multiCasesLen();
@@ -11138,20 +11133,15 @@ fn finishSwitchBr(
     var case_it = zir_switch.iterateCases();
     var extra_index = zir_switch.end;
 
+    var under_prong: ?struct {
+        index: Zir.UnwrappedSwitchBlock.Case.Index,
+        body: []const Zir.Inst.Index,
+        capture: Zir.Inst.SwitchBlock.ProngInfo.Capture,
+        has_tag_capture: bool,
+    } = null;
+
     var cases_len: u32 = 0;
     while (case_it.next()) |case| {
-        if (case.isUnder()) { // we'll deal with this later
-            extra_index += case.prong_info.body_len;
-            for (case.item_infos) |item_info| {
-                if (item_info.bodyLen()) |body_len| extra_index += body_len;
-            }
-            for (case.range_infos) |range_info| {
-                if (range_info[0].bodyLen()) |body_len| extra_index += body_len;
-                if (range_info[1].bodyLen()) |body_len| extra_index += body_len;
-            }
-            continue;
-        }
-
         const item_refs = case_vals[case_val_idx..][0..case.item_infos.len];
         case_val_idx += item_refs.len;
         const range_refs: []const [2]Air.Inst.Ref =
@@ -11171,7 +11161,9 @@ fn finishSwitchBr(
 
         var emit_bb = false;
         var any_analyze_body = false;
+        var is_under_prong = false;
         for (case.item_infos, item_refs, 0..) |item_info, item_ref, item_i| {
+            if (item_ref == .none) is_under_prong = true;
             if (item_info.bodyLen()) |body_len| extra_index += body_len;
 
             const analyze_body = sema.wantSwitchProngBodyAnalysis(block, item_ref, operand_ty, union_originally, err_set, prong_info.is_comptime_unreach);
@@ -11319,48 +11311,58 @@ fn finishSwitchBr(
             }
         }
 
-        if (!prong_info.is_inline) {
-            cases_len += 1;
-            case_block.instructions.clearRetainingCapacity();
-            case_block.error_return_trace_index = child_block.error_return_trace_index;
+        if (prong_info.is_inline) continue; // handled above
 
-            const prong_hint: std.builtin.BranchHint = hint: {
-                if (any_analyze_body) break :hint try sema.analyzeSwitchProng(
-                    &case_block,
-                    operand,
-                    operand_ty,
-                    raw_operand_ty,
-                    prong_body,
-                    block.src(.{ .switch_capture = .{
-                        .switch_node_offset = src_node_offset,
-                        .case_idx = case.index,
-                    } }),
-                    prong_info.capture,
-                    prong_info.has_tag_capture,
-                    .none,
-                    .{ .item_refs = item_refs },
-                    validated_switch.else_err_ty,
-                    switch_inst,
-                    zir_switch,
-                );
-                _ = try case_block.addNoOp(.unreach);
-                break :hint .cold; // unreachable branches are cold
+        if (is_under_prong) {
+            under_prong = .{
+                .index = case.index,
+                .body = prong_body,
+                .capture = case.prong_info.capture,
+                .has_tag_capture = case.prong_info.has_tag_capture,
             };
-            try branch_hints.append(gpa, prong_hint);
-
-            try cases_extra.ensureUnusedCapacity(gpa, @typeInfo(Air.SwitchBr.Case).@"struct".fields.len +
-                item_refs.len +
-                2 * range_refs.len +
-                case_block.instructions.items.len);
-            cases_extra.appendSliceAssumeCapacity(&payloadToExtraItems(Air.SwitchBr.Case{
-                .items_len = @intCast(item_refs.len),
-                .ranges_len = @intCast(range_refs.len),
-                .body_len = @intCast(case_block.instructions.items.len),
-            }));
-            cases_extra.appendSliceAssumeCapacity(@ptrCast(item_refs));
-            cases_extra.appendSliceAssumeCapacity(@ptrCast(range_refs));
-            cases_extra.appendSliceAssumeCapacity(@ptrCast(case_block.instructions.items));
+            continue;
         }
+
+        cases_len += 1;
+        case_block.instructions.clearRetainingCapacity();
+        case_block.error_return_trace_index = child_block.error_return_trace_index;
+
+        const prong_hint: std.builtin.BranchHint = hint: {
+            if (any_analyze_body) break :hint try sema.analyzeSwitchProng(
+                &case_block,
+                operand,
+                operand_ty,
+                raw_operand_ty,
+                prong_body,
+                block.src(.{ .switch_capture = .{
+                    .switch_node_offset = src_node_offset,
+                    .case_idx = case.index,
+                } }),
+                prong_info.capture,
+                prong_info.has_tag_capture,
+                .none,
+                .{ .item_refs = item_refs },
+                validated_switch.else_err_ty,
+                switch_inst,
+                zir_switch,
+            );
+            _ = try case_block.addNoOp(.unreach);
+            break :hint .cold; // unreachable branches are cold
+        };
+        try branch_hints.append(gpa, prong_hint);
+
+        try cases_extra.ensureUnusedCapacity(gpa, @typeInfo(Air.SwitchBr.Case).@"struct".fields.len +
+            item_refs.len +
+            2 * range_refs.len +
+            case_block.instructions.items.len);
+        cases_extra.appendSliceAssumeCapacity(&payloadToExtraItems(Air.SwitchBr.Case{
+            .items_len = @intCast(item_refs.len),
+            .ranges_len = @intCast(range_refs.len),
+            .body_len = @intCast(case_block.instructions.items.len),
+        }));
+        cases_extra.appendSliceAssumeCapacity(@ptrCast(item_refs));
+        cases_extra.appendSliceAssumeCapacity(@ptrCast(range_refs));
+        cases_extra.appendSliceAssumeCapacity(@ptrCast(case_block.instructions.items));
     }
 
     const catch_all_extra: []const u32 = catch_all_extra: {
@@ -11499,7 +11501,7 @@ fn finishSwitchBr(
             try branch_hints.append(gpa, prong_hint);
 
             try cases_extra.ensureUnusedCapacity(gpa, @typeInfo(Air.SwitchBr.Case).@"struct".fields.len +
-                (validated_switch.seen_enum_fields.len - zir_switch.totalItemsLen()) +
+                (validated_switch.seen_enum_fields.len + 1 - zir_switch.totalItemsLen()) + // +1 because totalItemsLen includes the _
                 case_block.instructions.items.len);
             const extra_case = cases_extra.addManyAsArrayAssumeCapacity(
                 @typeInfo(Air.SwitchBr.Case).@"struct".fields.len,
@@ -11555,7 +11557,7 @@ fn finishSwitchBr(
             if (analyze_catch_all_body) {
                 const index, const body, const capture, const has_tag_capture = switch (catch_all_case) {
                     .@"else" => .{ else_case.index, else_case.body, else_case.capture, else_case.has_tag_capture },
-                    .under => .{ under_case.index, under_case.body, under_case.capture, under_case.has_tag_capture },
+                    .under => .{ under_prong.?.index, under_prong.?.body, under_prong.?.capture, under_prong.?.has_tag_capture },
                     .none => unreachable,
                 };
                 break :hint try sema.analyzeSwitchProng(
@@ -11734,7 +11736,6 @@ fn fixupSwitchContinues(
 const ValidatedSwitchBlock = struct {
     seen_enum_fields: []const ?LazySrcLoc,
     seen_errors: std.AutoHashMapUnmanaged(InternPool.NullTerminatedString, LazySrcLoc),
-    seen_sparse_values: std.AutoHashMapUnmanaged(InternPool.Index, LazySrcLoc),
     seen_ranges: []const RangeSet.Range,
     true_src: ?LazySrcLoc,
     false_src: ?LazySrcLoc,
@@ -11742,7 +11743,6 @@ const ValidatedSwitchBlock = struct {
 
     case_vals: []const Air.Inst.Ref,
     else_case: Zir.UnwrappedSwitchBlock.Case.Else,
-    under_case: Zir.UnwrappedSwitchBlock.Case.Under.Resolved,
     else_err_ty: ?Type,
 
     fn iterateUnhandledItems(
@@ -11868,7 +11868,6 @@ fn validateSwitchBlock(
     const src = block.nodeOffset(src_node_offset);
     const operand_src = block.src(.{ .node_offset_switch_operand = src_node_offset });
     const else_prong_src = block.src(.{ .node_offset_switch_else_prong = src_node_offset });
-    const under_prong_src = block.src(.{ .node_offset_switch_under_prong = src_node_offset });
     var extra_index = zir_switch.end;
 
     // We want to map values to our placeholders later on.
@@ -11948,33 +11947,7 @@ fn validateSwitchBlock(
     };
 
     const has_else = zir_switch.else_case != null;
-    const has_under = zir_switch.under_case != .none;
-
-    // Validate usage of '_' prongs.
-    if (has_under and !operand_ty.isNonexhaustiveEnum(zcu)) {
-        const msg = msg: {
-            const msg = try sema.errMsg(
-                src,
-                "'_' prong only allowed when switching on non-exhaustive enums",
-                .{},
-            );
-            errdefer msg.destroy(gpa);
-            try sema.errNote(
-                under_prong_src,
-                msg,
-                "'_' prong here",
-                .{},
-            );
-            try sema.errNote(
-                src,
-                msg,
-                "consider using 'else'",
-                .{},
-            );
-            break :msg msg;
-        };
-        return sema.failWithOwnedErrorMsg(block, msg);
-    }
+    const has_under = zir_switch.has_under;
 
     var case_vals: std.ArrayList(Air.Inst.Ref) = .empty;
     try case_vals.ensureUnusedCapacity(arena, zir_switch.item_infos.len);
@@ -11991,7 +11964,6 @@ fn validateSwitchBlock(
     var else_err_ty: ?Type = null;
 
     const else_case = zir_switch.else_case orelse undefined;
-    var under_case = zir_switch.under_case.resolve() orelse undefined;
 
     switch (item_ty.zigTypeTag(zcu)) {
         .@"union" => unreachable,
@@ -12020,16 +11992,6 @@ fn validateSwitchBlock(
     var case_it = zir_switch.iterateCases();
     while (case_it.next()) |case| {
         const prong_info = case.prong_info;
-        const is_under = case.isUnder();
-        if (is_under) {
-            assert(!prong_info.is_inline);
-            under_case = .{
-                .index = case.index,
-                .body = sema.code.bodySlice(extra_index, prong_info.body_len),
-                .capture = prong_info.capture,
-                .has_tag_capture = prong_info.has_tag_capture,
-            };
-        }
         extra_index += prong_info.body_len;
         for (case.item_infos, 0..) |item_info, item_i| {
             const item_src = block.src(.{ .switch_case_item = .{
@@ -12037,9 +11999,34 @@ fn validateSwitchBlock(
                 .case_idx = case.index,
                 .item_idx = .{ .kind = .single, .value = @intCast(item_i) },
             } });
-            const item, extra_index = try sema.resolveSwitchItem(block, item_src, item_ty, item_info, extra_index, switch_inst, prong_info.is_comptime_unreach, prong_info.is_inline);
-            try sema.validateSwitchItemOrRange(block, item_src, item.val, null, item_ty, seen_enum_fields, &seen_errors, &seen_sparse_values, &range_set, &true_src, &false_src, &void_src);
-            if (!is_under) case_vals.appendAssumeCapacity(item.ref);
+            if (item_info.unwrap() == .under) {
+                if (!operand_ty.isNonexhaustiveEnum(zcu)) return sema.failWithOwnedErrorMsg(block, msg: {
+                    const msg = try sema.errMsg(
+                        src,
+                        "'_' prong only allowed when switching on non-exhaustive enums",
+                        .{},
+                    );
+                    errdefer msg.destroy(gpa);
+                    try sema.errNote(
+                        item_src,
+                        msg,
+                        "'_' prong here",
+                        .{},
+                    );
+                    try sema.errNote(
+                        src,
+                        msg,
+                        "consider using 'else'",
+                        .{},
+                    );
+                    break :msg msg;
+                });
+                case_vals.appendAssumeCapacity(.none);
+            } else {
+                const item, extra_index = try sema.resolveSwitchItem(block, item_src, item_ty, item_info, extra_index, switch_inst, prong_info.is_comptime_unreach);
+                try sema.validateSwitchItemOrRange(block, item_src, item.val, null, item_ty, seen_enum_fields, &seen_errors, &seen_sparse_values, &range_set, &true_src, &false_src, &void_src);
+                case_vals.appendAssumeCapacity(item.ref);
+            }
         }
         for (case.range_infos, 0..) |range_info, range_i| {
             const range_offset: LazySrcLoc.Offset.SwitchItem = .{
@@ -12050,10 +12037,10 @@ fn validateSwitchBlock(
             const range_src = block.src(.{ .switch_case_item = range_offset });
             const first_src = block.src(.{ .switch_case_item_range_first = range_offset });
             const last_src = block.src(.{ .switch_case_item_range_last = range_offset });
-            const first_item, extra_index = try sema.resolveSwitchItem(block, first_src, item_ty, range_info[0], extra_index, switch_inst, prong_info.is_comptime_unreach, prong_info.is_inline);
-            const last_item, extra_index = try sema.resolveSwitchItem(block, last_src, item_ty, range_info[1], extra_index, switch_inst, prong_info.is_comptime_unreach, prong_info.is_inline);
+            const first_item, extra_index = try sema.resolveSwitchItem(block, first_src, item_ty, range_info[0], extra_index, switch_inst, prong_info.is_comptime_unreach);
+            const last_item, extra_index = try sema.resolveSwitchItem(block, last_src, item_ty, range_info[1], extra_index, switch_inst, prong_info.is_comptime_unreach);
             try sema.validateSwitchItemOrRange(block, range_src, first_item.val, last_item.val, item_ty, seen_enum_fields, &seen_errors, &seen_sparse_values, &range_set, &true_src, &false_src, &void_src);
-            if (!is_under) case_vals.appendSliceAssumeCapacity(&.{ first_item.ref, last_item.ref });
+            case_vals.appendSliceAssumeCapacity(&.{ first_item.ref, last_item.ref });
         }
     }
 
@@ -12285,7 +12272,6 @@ fn validateSwitchBlock(
     return .{
         .seen_enum_fields = seen_enum_fields,
         .seen_errors = seen_errors,
-        .seen_sparse_values = seen_sparse_values,
         .seen_ranges = range_set.ranges.items,
         .true_src = true_src,
         .false_src = false_src,
@@ -12293,7 +12279,6 @@ fn validateSwitchBlock(
 
         .case_vals = case_vals.items,
         .else_case = else_case,
-        .under_case = under_case,
         .else_err_ty = else_err_ty,
     };
 }
@@ -12334,19 +12319,13 @@ fn resolveSwitchBlock(
     var case_val_idx: usize = 0;
     var extra_index = zir_switch.end;
     var case_it = zir_switch.iterateCases();
+    var under_prong: ?struct {
+        index: Zir.UnwrappedSwitchBlock.Case.Index,
+        body: []const Zir.Inst.Index,
+        capture: Zir.Inst.SwitchBlock.ProngInfo.Capture,
+        has_tag_capture: bool,
+    } = null;
     while (case_it.next()) |case| {
-        if (case.isUnder()) { // we'll deal with this later
-            extra_index += case.prong_info.body_len;
-            for (case.item_infos) |item_info| {
-                if (item_info.bodyLen()) |body_len| extra_index += body_len;
-            }
-            for (case.range_infos) |range_info| {
-                if (range_info[0].bodyLen()) |body_len| extra_index += body_len;
-                if (range_info[1].bodyLen()) |body_len| extra_index += body_len;
-            }
-            continue;
-        }
-
         const prong_info = case.prong_info;
         const prong_body = sema.code.bodySlice(extra_index, prong_info.body_len);
         extra_index += prong_body.len;
@@ -12363,6 +12342,15 @@ fn resolveSwitchBlock(
         const range_refs: []const [2]Air.Inst.Ref = @ptrCast(case_vals[case_val_idx..][0 .. 2 * case.range_infos.len]);
         case_val_idx += 2 * range_refs.len;
         for (item_refs) |item_ref| {
+            if (item_ref == .none) {
+                under_prong = .{
+                    .index = case.index,
+                    .body = prong_body,
+                    .capture = case.prong_info.capture,
+                    .has_tag_capture = case.prong_info.has_tag_capture,
+                };
+                continue;
+            }
             const item_val = sema.resolveConstDefinedValue(child_block, .unneeded, item_ref, undefined) catch unreachable;
             if (cond_val.eql(item_val, item_ty, zcu)) {
                 if (err_set) try sema.maybeErrorUnwrapComptime(child_block, prong_body, cond_ref);
@@ -12421,7 +12409,6 @@ fn resolveSwitchBlock(
     }
 
     const else_case = validated_switch.else_case;
-    const under_case = validated_switch.under_case;
 
     // named-only prong
 
@@ -12452,7 +12439,7 @@ fn resolveSwitchBlock(
 
     const index, const body, const capture, const has_tag_capture, const is_inline = switch (catch_all_case) {
         .@"else" => .{ else_case.index, else_case.body, else_case.capture, else_case.has_tag_capture, else_case.is_inline },
-        .under => .{ under_case.index, under_case.body, under_case.capture, under_case.has_tag_capture, false },
+        .under => .{ under_prong.?.index, under_prong.?.body, under_prong.?.capture, under_prong.?.has_tag_capture, false },
         .none => unreachable,
     };
     if (err_set) try sema.maybeErrorUnwrapComptime(child_block, body, cond_ref);
@@ -13169,7 +13156,6 @@ fn resolveSwitchItem(
     extra_index: usize,
     switch_inst: Zir.Inst.Index,
     prong_is_comptime_unreach: bool,
-    prong_is_inline: bool,
 ) CompileError!ResolvedSwitchItemAndExtraIndex {
     const pt = sema.pt;
     const zcu = pt.zcu;
@@ -13180,6 +13166,7 @@ fn resolveSwitchItem(
 
     var end = extra_index;
     const uncoerced: Air.Inst.Ref, const uncoerced_ty: Type = uncoerced: switch (item_info.unwrap()) {
+        .under => unreachable, // caller must check this before calling us
         .enum_literal => |str_index| {
             const zir_str = sema.code.nullTerminatedString(str_index);
             const name = try ip.getOrPutString(gpa, io, pt.tid, zir_str, .no_embedded_nulls);
@@ -13197,10 +13184,6 @@ fn resolveSwitchItem(
                 .name = name,
             } }));
             break :uncoerced .{ uncoerced, err_set_ty };
-        },
-        .number_literal => |zir_ref| {
-            const uncoerced = try sema.resolveInst(zir_ref);
-            break :uncoerced .{ uncoerced, sema.typeOf(uncoerced) };
         },
         .body_len => |body_len| {
             const body = sema.code.bodySlice(extra_index, body_len);
@@ -13231,7 +13214,7 @@ fn resolveSwitchItem(
                 .ok => if (try sema.resolveValue(uncoerced)) |uncoerced_val| {
                     break :item_ref try sema.coerceInMemory(uncoerced_val, item_ty);
                 },
-                .missing_error => if (prong_is_comptime_unreach and !prong_is_inline) {
+                .missing_error => if (prong_is_comptime_unreach) {
                     break :item_ref uncoerced;
                 },
                 .from_anyerror => {},

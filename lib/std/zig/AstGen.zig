@@ -7267,11 +7267,7 @@ fn switchExpr(
     var total_items_len: usize = 0;
     var total_ranges_len: usize = 0;
     var else_case_node: Ast.Node.OptionalIndex = .none;
-    var else_src: ?Ast.TokenIndex = null;
-    var under_case_node: Ast.Node.OptionalIndex = .none;
     var underscore_node: Ast.Node.OptionalIndex = .none;
-    var underscore_src: ?Ast.TokenIndex = null;
-    var under_is_bare = false;
     for (case_nodes) |case_node| {
         const case = tree.fullSwitchCase(case_node).?;
         if (case.payload_token) |payload_token| {
@@ -7304,22 +7300,21 @@ fn switchExpr(
 
         // Check for else prong.
         if (case.ast.values.len == 0) {
-            const case_src = case.ast.arrow_token - 1;
-            if (else_src) |src| {
+            if (else_case_node.unwrap()) |prev_case_node| {
+                const prev_else_tok = tree.fullSwitchCase(prev_case_node).?.ast.arrow_token - 1;
+                const else_tok = case.ast.arrow_token - 1;
                 return astgen.failTokNotes(
-                    case_src,
+                    else_tok,
                     "multiple else prongs in switch expression",
                     .{},
-                    &.{try astgen.errNoteTok(src, "previous else prong here", .{})},
+                    &.{try astgen.errNoteTok(prev_else_tok, "previous else prong here", .{})},
                 );
             }
             else_case_node = case_node.toOptional();
-            else_src = case_src;
             continue;
         }
 
         // Check for '_' prong and ranges.
-        var case_has_underscore = false;
         var case_has_ranges = false;
         for (case.ast.values) |val| {
             switch (tree.nodeTag(val)) {
@@ -7329,10 +7324,10 @@ fn switchExpr(
                 },
                 .string_literal => return astgen.failNode(val, "cannot switch on strings", .{}),
                 else => |tag| {
+                    total_items_len += 1;
                     if (tag == .identifier and
                         mem.eql(u8, tree.tokenSlice(tree.nodeMainToken(val)), "_"))
                     {
-                        const val_src = tree.nodeMainToken(val);
                         if (is_err_switch) {
                             const case_src = case.ast.arrow_token - 1;
                             return astgen.failTokNotes(
@@ -7348,30 +7343,24 @@ fn switchExpr(
                                 },
                             );
                         }
-                        if (underscore_src) |src| {
-                            return astgen.failTokNotes(
-                                val_src,
+                        if (underscore_node.unwrap()) |prev_src| {
+                            return astgen.failNodeNotes(
+                                val,
                                 "multiple '_' prongs in switch expression",
                                 .{},
-                                &.{try astgen.errNoteTok(src, "previous '_' prong here", .{})},
+                                &.{try astgen.errNoteNode(prev_src, "previous '_' prong here", .{})},
                             );
                         }
                         if (case.inline_token != null) {
-                            return astgen.failTok(val_src, "cannot inline '_' prong", .{});
+                            return astgen.failNode(val, "cannot inline '_' prong", .{});
                         }
-                        under_case_node = case_node.toOptional();
-                        underscore_src = val_src;
                         underscore_node = val.toOptional();
-                        under_is_bare = case.ast.values.len == 1;
-                        case_has_underscore = true;
-                    } else {
-                        total_items_len += 1;
                     }
                 },
             }
         }
 
-        const case_len = case.ast.values.len - @intFromBool(case_has_underscore);
+        const case_len = case.ast.values.len;
         if (case_len == 1 and !case_has_ranges) {
             scalar_cases_len += 1;
         } else if (case_len >= 1) {
@@ -7379,9 +7368,8 @@ fn switchExpr(
         }
     }
 
-    const has_else = else_src != null;
-    const has_under = underscore_src != null;
-    if (under_is_bare) assert(has_under); // make sure that the former implies the latter
+    const has_else = else_case_node != .none;
+    const has_under = underscore_node != .none;
     if (is_err_switch) assert(!has_under); // should have failed by now
     const any_ranges = total_ranges_len > 0;
 
@@ -7430,10 +7418,8 @@ fn switchExpr(
 
     var non_err_prong_body_start: u32 = undefined;
     var else_prong_body_start: u32 = undefined;
-    var bare_under_prong_body_start: u32 = undefined;
     var non_err_info: Zir.Inst.SwitchBlock.ProngInfo.NonErr = undefined;
     var else_info: Zir.Inst.SwitchBlock.ProngInfo.Else = undefined;
-    var under_extra: u32 = undefined;
 
     var block_scope = parent_gz.makeSubBlock(scope);
     // block_scope not used for collecting instructions
@@ -7688,7 +7674,6 @@ fn switchExpr(
     for (case_nodes) |case_node| {
         const case = tree.fullSwitchCase(case_node).?;
 
-        const case_has_under = case_node.toOptional() == under_case_node;
         const ranges_len: u32 = if (any_ranges) blk: {
             var ranges_len: u32 = 0;
             for (case.ast.values) |value| {
@@ -7696,14 +7681,13 @@ fn switchExpr(
             }
             break :blk ranges_len;
         } else 0;
-        const items_len: u32 = @intCast(case.ast.values.len - ranges_len - @intFromBool(case_has_under));
+        const items_len: u32 = @intCast(case.ast.values.len - ranges_len);
         const is_multi_case = items_len > 1 or ranges_len > 0;
 
         // item/range bodies in order of occurence
         var item_i: usize = 0;
         var range_i: usize = 0;
         for (case.ast.values) |value| {
-            if (value.toOptional() == underscore_node) continue;
             const is_range = tree.nodeTag(value) == .switch_range;
             const range: [2]Ast.Node.Index = if (is_range) tree.nodeData(value).node_and_node else undefined;
             const nodes: []const Ast.Node.Index = if (is_range) &range else &.{value};
@@ -7722,16 +7706,9 @@ fn switchExpr(
                         const str_index = try astgen.identAsString(ident_token);
                         break :blk .wrap(.{ .error_value = str_index });
                     },
-                    .number_literal => {
-                        // We don't actually need a final result type for number
-                        // literals, they can just be turned into `comptime_int`
-                        // or `comptime_float` as usual and then be coerced to
-                        // the correct type later during semantic analysis.
-                        assert(scratch_scope.instructions_top == GenZir.unstacked_top); // important! we emit into `parent_gz` which `scratch_scope` is stacked on top of
-                        const zir_ref = try comptimeExpr(parent_gz, scope, .{ .rl = .none }, item, .switch_item);
-                        break :blk .wrap(.{ .number_literal = zir_ref });
-                    },
-                    else => {
+                    else => if (value.toOptional() == underscore_node) {
+                        break :blk .wrap(.under);
+                    } else {
                         scratch_scope.instructions_top = parent_gz.instructions.items.len;
                         defer scratch_scope.unstack();
                         const item_result = try fullBodyExpr(&scratch_scope, scope, item_ri, item, .normal);
@@ -7957,25 +7934,6 @@ fn switchExpr(
                 break :prong_body;
             }
 
-            if (case_has_under) {
-                // We're either writing under_prong_info or under_index here.
-                if (under_is_bare) {
-                    assert(case.ast.values.len == 1); // only `_`
-                    const bare_under_info: Zir.Inst.SwitchBlock.ProngInfo.BareUnder = .{
-                        .body_len = @intCast(body_len),
-                        .capture = capture,
-                        .has_tag_capture = has_tag_capture,
-                    };
-                    under_extra = @bitCast(bare_under_info);
-                    bare_under_prong_body_start = body_start;
-                    break :prong_body;
-                } else if (is_multi_case) {
-                    under_extra = scalar_cases_len + multi_case_index;
-                } else {
-                    under_extra = scalar_case_index;
-                }
-            }
-
             // We allow prongs with error items which are not inside the error set
             // being switched on if their body is `=> comptime unreachable,`.
             const is_comptime_unreach = comptime_unreach: {
@@ -8003,7 +7961,7 @@ fn switchExpr(
             }
         }
     }
-    assert(scalar_case_index + multi_case_index + @intFromBool(has_else) + @intFromBool(under_is_bare) == case_nodes.len);
+    assert(scalar_case_index + multi_case_index + @intFromBool(has_else) == case_nodes.len);
     assert(multi_items_infos_start + multi_item_offset == bodies_start);
 
     if (switch_full.label_token) |label_token| if (!block_scope.label.?.used) {
@@ -8024,7 +7982,6 @@ fn switchExpr(
         @intFromBool(needs_non_err_handling) + // catch_or_if_src_node_offset
         @intFromBool(needs_non_err_handling) + // non_err_info
         @intFromBool(has_else) + // else_info
-        @intFromBool(has_under) + // under_prong_info or under_index
         payloads.items.len - body_table_end); // item infos and bodies
 
     // singular pieces of data
@@ -8035,7 +7992,6 @@ fn switchExpr(
             .any_ranges = any_ranges,
             .has_else = has_else,
             .has_under = has_under,
-            .under_is_bare = under_is_bare,
             .has_continue = switch_full.label_token != null and block_scope.label.?.used_for_continue,
             .any_maybe_runtime_capture = any_maybe_runtime_capture,
             .payload_capture_inst_is_placeholder = payload_capture_inst_is_placeholder,
@@ -8054,7 +8010,6 @@ fn switchExpr(
         astgen.extra.appendAssumeCapacity(@bitCast(non_err_info));
     }
     if (has_else) astgen.extra.appendAssumeCapacity(@bitCast(else_info));
-    if (has_under) astgen.extra.appendAssumeCapacity(under_extra);
 
     const extra_payloads_start = astgen.extra.items.len;
 
@@ -8068,11 +8023,6 @@ fn switchExpr(
     }
     if (has_else) {
         const body = payloads.items[else_prong_body_start..][0..else_info.body_len];
-        astgen.extra.appendSliceAssumeCapacity(body);
-    }
-    if (under_is_bare) {
-        const under_prong_info: Zir.Inst.SwitchBlock.ProngInfo = @bitCast(under_extra);
-        const body = payloads.items[bare_under_prong_body_start..][0..under_prong_info.body_len];
         astgen.extra.appendSliceAssumeCapacity(body);
     }
     for (0..scalar_cases_len) |scalar_i| {

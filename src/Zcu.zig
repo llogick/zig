@@ -1742,27 +1742,6 @@ pub const SrcLoc = struct {
                 } else unreachable;
             },
 
-            .node_offset_switch_under_prong => |node_off| {
-                const tree = try src_loc.file_scope.getTree(zcu);
-                const switch_node = node_off.toAbsolute(src_loc.base_node);
-                _, const extra_index = tree.nodeData(switch_node).node_and_extra;
-                const case_nodes = tree.extraDataSlice(tree.extraData(extra_index, Ast.Node.SubRange), Ast.Node.Index);
-                for (case_nodes) |case_node| {
-                    const case = tree.fullSwitchCase(case_node).?;
-                    for (case.ast.values) |val| {
-                        if (tree.nodeTag(val) == .identifier and
-                            mem.eql(u8, tree.tokenSlice(tree.nodeMainToken(val)), "_"))
-                        {
-                            return tree.tokensToSpan(
-                                tree.firstToken(case_node),
-                                tree.lastToken(case_node),
-                                tree.nodeMainToken(val),
-                            );
-                        }
-                    }
-                } else unreachable;
-            },
-
             .node_offset_switch_range => |node_off| {
                 const tree = try src_loc.file_scope.getTree(zcu);
                 const switch_node = node_off.toAbsolute(src_loc.base_node);
@@ -2176,7 +2155,6 @@ pub const SrcLoc = struct {
 
                 var multi_i: u32 = 0;
                 var scalar_i: u32 = 0;
-                var underscore_node: Ast.Node.OptionalIndex = .none;
                 const case: Ast.full.SwitchCase = case: for (case_nodes) |case_node| {
                     const case = tree.fullSwitchCase(case_node).?;
                     if (case.ast.values.len == 0) {
@@ -2184,17 +2162,6 @@ pub const SrcLoc = struct {
                             break :case case;
                         }
                         continue :case;
-                    }
-                    if (underscore_node == .none) {
-                        for (case.ast.values) |value| {
-                            if (tree.nodeTag(value) == .identifier and
-                                mem.eql(u8, tree.tokenSlice(tree.nodeMainToken(value)), "_"))
-                            {
-                                underscore_node = value.toOptional();
-                                if (want_case_idx.is_under) break :case case;
-                                if (case.ast.values.len == 1) continue :case;
-                            }
-                        }
                     }
 
                     const is_multi = case.ast.values.len != 1 or
@@ -2220,7 +2187,6 @@ pub const SrcLoc = struct {
                     .switch_case_item_range_last,
                     => |x| item_idx: {
                         assert(want_case_idx != Zir.UnwrappedSwitchBlock.Case.Index.@"else");
-                        assert(want_case_idx != Zir.UnwrappedSwitchBlock.Case.Index.bare_under);
                         break :item_idx x.item_idx;
                     },
                     .switch_capture, .switch_tag_capture => {
@@ -2247,9 +2213,7 @@ pub const SrcLoc = struct {
                     .single => {
                         var item_i: u32 = 0;
                         for (case.ast.values) |item_node| {
-                            if (item_node.toOptional() == underscore_node or
-                                tree.nodeTag(item_node) == .switch_range)
-                            {
+                            if (tree.nodeTag(item_node) == .switch_range) {
                                 continue;
                             }
                             if (item_i != want_item_idx.value) {
@@ -2456,10 +2420,6 @@ pub const LazySrcLoc = struct {
         /// by taking this AST node index offset from the containing base node,
         /// which points to a switch expression AST node. Next, navigate to the else prong.
         node_offset_switch_else_prong: Ast.Node.Offset,
-        /// The source location points to the `_` prong of a switch expression, found
-        /// by taking this AST node index offset from the containing base node,
-        /// which points to a switch expression AST node. Next, navigate to the `_` prong.
-        node_offset_switch_under_prong: Ast.Node.Offset,
         /// The source location points to all the ranges of a switch expression, found
         /// by taking this AST node index offset from the containing base node,
         /// which points to a switch expression AST node. Next, navigate to any of the
