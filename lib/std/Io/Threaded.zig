@@ -7987,6 +7987,9 @@ fn fileReadStreamingWindows(userdata: ?*anyopaque, file: File, data: []const []u
             .LOCK_VIOLATION => return syscall.fail(error.LockViolation),
             .ACCESS_DENIED => return syscall.fail(error.AccessDenied),
             .INVALID_HANDLE => return syscall.fail(error.NotOpenForReading),
+            // TODO: Determine if INVALID_FUNCTION is possible in more scenarios than just passing
+            // a handle to a directory.
+            .INVALID_FUNCTION => return syscall.fail(error.IsDir),
             else => |err| {
                 syscall.finish();
                 return windows.unexpectedError(err);
@@ -8144,6 +8147,9 @@ fn fileReadPositionalWindows(userdata: ?*anyopaque, file: File, data: []const []
             .LOCK_VIOLATION => return syscall.fail(error.LockViolation),
             .ACCESS_DENIED => return syscall.fail(error.AccessDenied),
             .INVALID_HANDLE => return syscall.fail(error.NotOpenForReading),
+            // TODO: Determine if INVALID_FUNCTION is possible in more scenarios than just passing
+            // a handle to a directory.
+            .INVALID_FUNCTION => return syscall.fail(error.IsDir),
             else => |err| {
                 syscall.finish();
                 return windows.unexpectedError(err);

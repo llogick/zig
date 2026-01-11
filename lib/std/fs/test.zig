@@ -182,20 +182,21 @@ fn testWithPathTypeIfSupported(comptime path_type: PathType, comptime path_sep: 
 }
 
 // For use in test setup.  If the symlink creation fails on Windows with
-// AccessDenied, then make the test failure silent (it is not a Zig failure).
+// AccessDenied/PermissionDenied/FileSystem, then make the test failure silent (it is not a Zig failure).
 fn setupSymlink(io: Io, dir: Dir, target: []const u8, link: []const u8, flags: SymLinkFlags) !void {
     return dir.symLink(io, target, link, flags) catch |err| switch (err) {
-        // Symlink requires admin privileges on windows, so this test can legitimately fail.
-        error.AccessDenied => if (native_os == .windows) return error.SkipZigTest else return err,
+        // On Windows, symlinks require admin privileges and the underlying filesystem must support symlinks
+        error.AccessDenied, error.PermissionDenied, error.FileSystem => if (native_os == .windows) return error.SkipZigTest else return err,
         else => return err,
     };
 }
 
 // For use in test setup.  If the symlink creation fails on Windows with
-// AccessDenied, then make the test failure silent (it is not a Zig failure).
+// AccessDeniedPermissionDenied/FileSystem, then make the test failure silent (it is not a Zig failure).
 fn setupSymlinkAbsolute(io: Io, target: []const u8, link: []const u8, flags: SymLinkFlags) !void {
     return Dir.symLinkAbsolute(io, target, link, flags) catch |err| switch (err) {
-        error.AccessDenied => if (native_os == .windows) return error.SkipZigTest else return err,
+        // On Windows, symlinks require admin privileges and the underlying filesystem must support symlinks
+        error.AccessDenied, error.PermissionDenied, error.FileSystem => if (native_os == .windows) return error.SkipZigTest else return err,
         else => return err,
     };
 }
@@ -847,7 +848,16 @@ test "file operations on directories" {
 
             {
                 const handle = try ctx.dir.openFile(io, test_dir_name, .{ .allow_directory = true, .mode = .read_only });
-                handle.close(io);
+                defer handle.close(io);
+
+                // Reading from the handle should fail
+                const expected_err = switch (native_os) {
+                    .wasi => error.NotOpenForReading,
+                    else => error.IsDir,
+                };
+                var buf: [1]u8 = undefined;
+                try expectError(expected_err, handle.readStreaming(io, &.{&buf}));
+                try expectError(expected_err, handle.readPositional(io, &.{&buf}, 0));
             }
             try expectError(error.IsDir, ctx.dir.openFile(io, test_dir_name, .{ .allow_directory = false, .mode = .read_only }));
 
@@ -2364,13 +2374,7 @@ test "readlinkat" {
     try tmp.dir.writeFile(io, .{ .sub_path = "file.txt", .data = "nonsense" });
 
     // create a symbolic link
-    tmp.dir.symLink(io, "file.txt", "link", .{}) catch |err| switch (err) {
-        error.AccessDenied => {
-            // Symlink requires admin privileges on windows, so this test can legitimately fail.
-            if (native_os == .windows) return error.SkipZigTest;
-        },
-        else => |e| return e,
-    };
+    try setupSymlink(io, tmp.dir, "file.txt", "link", .{});
 
     // read the link
     var buffer: [Dir.max_path_bytes]u8 = undefined;
