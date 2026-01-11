@@ -11108,11 +11108,37 @@ fn finishSwitchBr(
     const estimated_cases_len: u32 = scalar_cases_len + multi_cases_len +
         @intFromBool(has_else or has_under);
 
+    const BranchHints = struct {
+        bags: std.ArrayList(u32),
+        count: u32,
+        const hints_per_bag = 10;
+        fn ensureUnusedCapacity(hints: *@This(), gpa_inner: Allocator, additional_count: u32) Allocator.Error!void {
+            const unused_hints = hints.bags.capacity * hints_per_bag - hints.count;
+            if (unused_hints >= additional_count) return;
+            const bags_required = std.math.divCeil(u32, hints.count + additional_count, hints_per_bag) catch unreachable;
+            return hints.bags.ensureUnusedCapacity(gpa_inner, bags_required);
+        }
+        fn appendAssumeCapacity(hints: *@This(), hint: std.builtin.BranchHint) void {
+            const idx_in_bag = hints.count % hints_per_bag;
+            var bag: u32 = if (idx_in_bag > 0) hints.bags.pop().? else 0;
+            bag |= @as(u32, @intFromEnum(hint)) << @intCast(@bitSizeOf(std.builtin.BranchHint) * idx_in_bag);
+            hints.count += 1;
+            return hints.bags.appendAssumeCapacity(bag);
+        }
+        fn append(hints: *@This(), gpa_inner: Allocator, hint: std.builtin.BranchHint) Allocator.Error!void {
+            try hints.ensureUnusedCapacity(gpa_inner, 1);
+            return hints.appendAssumeCapacity(hint);
+        }
+    };
+    var branch_hints: BranchHints = hints: {
+        const num_bags = std.math.divCeil(u32, estimated_cases_len, BranchHints.hints_per_bag) catch unreachable;
+        break :hints .{ .bags = try .initCapacity(gpa, num_bags), .count = 0 };
+    };
+    defer branch_hints.bags.deinit(gpa);
+
     var cases_extra: std.ArrayList(u32) = try .initCapacity(gpa, estimated_cases_len *
         @typeInfo(Air.SwitchBr.Case).@"struct".fields.len);
     defer cases_extra.deinit(gpa);
-    var branch_hints: Air.SwitchBr.BranchHints = try .initCapacity(gpa, estimated_cases_len);
-    defer branch_hints.deinit(gpa);
 
     // We will reuse this block for each case.
     var case_block = child_block.makeSubBlock();
