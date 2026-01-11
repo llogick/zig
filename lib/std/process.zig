@@ -1066,10 +1066,11 @@ pub fn protectMemory(
     return error.UnsupportedOperation;
 }
 
+var test_page: [std.heap.page_size_max]u8 align(std.heap.page_size_max) = undefined;
+
 test lockMemory {
-    var page: [std.heap.page_size_min]u8 align(std.heap.page_size_min) = undefined;
-    lockMemory(&page, .{}) catch return error.SkipZigTest;
-    unlockMemory(&page) catch return error.SkipZigTest;
+    lockMemory(&test_page, .{}) catch return error.SkipZigTest;
+    unlockMemory(&test_page) catch return error.SkipZigTest;
 }
 
 test lockMemoryAll {
@@ -1078,8 +1079,6 @@ test lockMemoryAll {
 }
 
 test protectMemory {
-    if (builtin.cpu.arch == .hexagon) return error.SkipZigTest; // TODO
-    var page: [std.heap.page_size_min]u8 align(std.heap.page_size_min) = undefined;
-    protectMemory(&page, .{}) catch return error.SkipZigTest;
-    protectMemory(&page, .{ .read = true, .write = true }) catch return error.SkipZigTest;
+    protectMemory(&test_page, .{}) catch return error.SkipZigTest;
+    protectMemory(&test_page, .{ .read = true, .write = true }) catch return error.SkipZigTest;
 }
