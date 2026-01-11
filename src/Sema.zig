@@ -13210,6 +13210,12 @@ fn resolveSwitchItem(
                 // The result location of item bodies is `.{ .coerce_ty = switch_inst }`.
                 sema.inst_map.putAssumeCapacity(switch_inst, .fromType(item_ty));
                 defer assert(sema.inst_map.remove(switch_inst));
+                const old_comptime_reason = block.comptime_reason;
+                defer block.comptime_reason = old_comptime_reason;
+                block.comptime_reason = .{ .reason = .{
+                    .src = item_src,
+                    .r = .{ .simple = .switch_item },
+                } };
                 break :ref try sema.resolveInlineBody(block, body, switch_inst);
             };
             break :uncoerced .{ uncoerced, sema.typeOf(uncoerced) };
