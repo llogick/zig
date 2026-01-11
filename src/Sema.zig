@@ -10581,7 +10581,7 @@ fn zirSwitchBlockErrUnion(sema: *Sema, block: *Block, inst: Zir.Inst.Index) Comp
     // Then we analyze the non-error prong if it's not comptime-unreachable.
     // Lastly, we analyze the error prong(s) as a regular switch.
 
-    const raw_switch_operand, const non_err_reachable, const non_err_cond, const non_err_hint, const err_set_empty = non_err: {
+    const raw_switch_operand, const non_err_cond, const non_err_hint = non_err: {
         const eu_maybe_ptr = try sema.resolveInst(zir_switch.main_operand);
         const err_union_ty: Type = err_union_ty: {
             const raw_operand_ty = sema.typeOf(eu_maybe_ptr);
@@ -10600,17 +10600,9 @@ fn zirSwitchBlockErrUnion(sema: *Sema, block: *Block, inst: Zir.Inst.Index) Comp
         else
             try sema.analyzeIsNonErr(block, operand_src, eu_maybe_ptr);
 
-        const is_non_err = try sema.resolveDefinedValue(block, operand_src, non_err_cond);
-        const non_err_reachable = if (is_non_err) |val| val.toBool() else true;
-
-        const err_set_empty = err_set_empty: {
-            const err_set_ty = err_union_ty.errorUnionSet(zcu);
-            break :err_set_empty err_set_ty.errorSetIsEmpty(zcu);
-        };
-
         const non_err_hint: std.builtin.BranchHint = hint: {
             // don't analyze the non-error body if it's unreachable
-            if (!non_err_reachable) {
+            if (non_err_cond == .bool_false) {
                 break :hint undefined;
             }
 
@@ -10622,8 +10614,7 @@ fn zirSwitchBlockErrUnion(sema: *Sema, block: *Block, inst: Zir.Inst.Index) Comp
             if (non_err_case.capture != .none) sema.inst_map.putAssumeCapacity(inst, eu_payload);
             defer if (non_err_case.capture != .none) assert(sema.inst_map.remove(inst));
 
-            const always_non_err = if (is_non_err) |val| val.toBool() else err_set_empty;
-            if (always_non_err) {
+            if (non_err_cond == .bool_true) {
                 // Early return; we don't analyze the switch as it's unreachable.
                 return sema.resolveBlockBody(block, src, &non_err_block, non_err_case.body, inst, merges);
             }
@@ -10636,20 +10627,23 @@ fn zirSwitchBlockErrUnion(sema: *Sema, block: *Block, inst: Zir.Inst.Index) Comp
         else
             try sema.analyzeErrUnionCode(&switch_block, operand_src, eu_maybe_ptr);
 
-        break :non_err .{ eu_code, non_err_reachable, non_err_cond, non_err_hint, err_set_empty };
+        break :non_err .{
+            eu_code,
+            non_err_cond,
+            non_err_hint,
+        };
     };
 
     const validated_switch = try sema.validateSwitchBlock(block, raw_switch_operand, false, inst, &zir_switch);
 
     const maybe_switch_ref: ?Air.Inst.Ref = ref: {
-        if (err_set_empty) break :ref .unreachable_value;
         // make err capture (i.e. switch operand) available to switch prong bodies
         sema.inst_map.putAssumeCapacityNoClobber(inst, raw_switch_operand);
         defer assert(sema.inst_map.remove(inst));
         break :ref try sema.analyzeSwitchBlock(block, &switch_block, raw_switch_operand, false, merges, inst, &zir_switch, &validated_switch);
     };
 
-    if (!non_err_reachable) {
+    if (non_err_cond == .bool_false) {
         return maybe_switch_ref orelse {
             const switch_src = block.nodeOffset(zir_switch.switch_src_node_offset);
             return sema.resolveAnalyzedBlock(block, switch_src, &switch_block, merges, false);
