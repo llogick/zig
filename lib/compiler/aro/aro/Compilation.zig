@@ -838,6 +838,9 @@ fn generateSystemDefines(comp: *Compilation, w: *Io.Writer) !void {
                 try define(w, "__VX__");
             }
         },
+        .riscv32, .riscv32be, .riscv64, .riscv64be => {
+            try w.print("#define __riscv_xlen {d}\n", .{ptr_width});
+        },
         else => {},
     }
 
