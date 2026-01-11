@@ -1004,6 +1004,10 @@ pub fn unlockMemoryAll() UnlockMemoryError!void {
 
 pub const ProtectMemoryError = error{
     UnsupportedOperation,
+    /// OpenBSD will refuse to change memory protection if the specified region
+    /// contains any pages that have previously been marked immutable using the
+    /// `mimmutable` function.
+    PermissionDenied,
     /// The memory cannot be given the specified access. This can happen, for
     /// example, if you memory map a file to which you have read-only access,
     /// then use `protectMemory` to mark it writable.
@@ -1052,6 +1056,7 @@ pub fn protectMemory(
         };
         switch (posix.errno(posix.system.mprotect(memory.ptr, memory.len, flags))) {
             .SUCCESS => return,
+            .PERM => return error.PermissionDenied,
             .INVAL => |err| return std.Io.Threaded.errnoBug(err),
             .ACCES => return error.AccessDenied,
             .NOMEM => return error.OutOfMemory,
@@ -1061,10 +1066,11 @@ pub fn protectMemory(
     return error.UnsupportedOperation;
 }
 
+var test_page: [std.heap.page_size_max]u8 align(std.heap.page_size_max) = undefined;
+
 test lockMemory {
-    var page: [std.heap.page_size_min]u8 align(std.heap.page_size_min) = undefined;
-    lockMemory(&page, .{}) catch return error.SkipZigTest;
-    unlockMemory(&page) catch return error.SkipZigTest;
+    lockMemory(&test_page, .{}) catch return error.SkipZigTest;
+    unlockMemory(&test_page) catch return error.SkipZigTest;
 }
 
 test lockMemoryAll {
@@ -1073,8 +1079,6 @@ test lockMemoryAll {
 }
 
 test protectMemory {
-    if (builtin.cpu.arch == .hexagon) return error.SkipZigTest; // TODO
-    var page: [std.heap.page_size_min]u8 align(std.heap.page_size_min) = undefined;
-    protectMemory(&page, .{}) catch return error.SkipZigTest;
-    protectMemory(&page, .{ .read = true, .write = true }) catch return error.SkipZigTest;
+    protectMemory(&test_page, .{}) catch return error.SkipZigTest;
+    protectMemory(&test_page, .{ .read = true, .write = true }) catch return error.SkipZigTest;
 }
