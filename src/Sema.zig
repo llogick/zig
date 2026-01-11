@@ -10970,8 +10970,7 @@ fn analyzeSwitchBlock(
                                     .case_idx = index,
                                 } }),
                                 capture == .by_ref,
-                                is_special,
-                                if (!is_special) case_vals else undefined,
+                                if (is_special) .special else .{ .item_refs = &.{.fromValue(item_opv)} },
                                 if (is_inline) .fromValue(item_opv) else .none,
                                 validated_switch.else_err_ty,
                             );
@@ -12569,11 +12568,7 @@ fn resolveSwitchProng(
             operand_src,
             capture_src,
             capture == .by_ref,
-            kind == .special,
-            switch (kind) {
-                .item_refs => |item_refs| item_refs,
-                .has_ranges, .special => undefined,
-            },
+            kind,
             inline_case_capture,
             else_err_ty,
         );
@@ -12702,11 +12697,7 @@ fn analyzeSwitchProng(
             operand_src,
             capture_src,
             capture == .by_ref,
-            kind == .special,
-            switch (kind) {
-                .item_refs => |item_refs| item_refs,
-                .has_ranges, .special => undefined,
-            },
+            kind,
             inline_case_capture,
             else_err_ty,
         );
@@ -12783,9 +12774,7 @@ fn analyzeSwitchPayloadCapture(
     operand_src: LazySrcLoc,
     capture_src: LazySrcLoc,
     capture_by_ref: bool,
-    is_special_prong: bool,
-    /// May be `undefined` if `is_special_prong` is `true`.
-    case_vals: []const Air.Inst.Ref,
+    kind: SwitchProngKind,
     /// If this is not `.none`, this is an inline capture.
     inline_case_capture: Air.Inst.Ref,
     else_err_ty: ?Type,
@@ -12829,7 +12818,7 @@ fn analyzeSwitchPayloadCapture(
 
     const operand_ptr_ty = if (capture_by_ref) sema.typeOf(operand_ptr) else undefined;
 
-    if (is_special_prong) {
+    if (kind == .special) {
         if (capture_by_ref) return operand_ptr;
         return switch (operand_ty.zigTypeTag(zcu)) {
             .error_set => e: {
@@ -12846,6 +12835,8 @@ fn analyzeSwitchPayloadCapture(
 
     switch (operand_ty.zigTypeTag(zcu)) {
         .@"union" => {
+            const case_vals = kind.item_refs;
+
             const union_obj = zcu.typeToUnion(operand_ty).?;
             const first_item_val = sema.resolveConstDefinedValue(case_block, .unneeded, case_vals[0], undefined) catch unreachable;
 
@@ -13141,6 +13132,7 @@ fn analyzeSwitchPayloadCapture(
                 );
             }
 
+            const case_vals = kind.item_refs;
             if (case_vals.len == 1) {
                 const item_val = sema.resolveConstDefinedValue(case_block, .unneeded, case_vals[0], undefined) catch unreachable;
                 const item_ty = try pt.singleErrorSetType(item_val.getErrorName(zcu).unwrap().?);
@@ -13161,11 +13153,16 @@ fn analyzeSwitchPayloadCapture(
             // switch condition. It is comptime-known if there is only one item.
             if (capture_by_ref) {
                 return operand_ptr;
-            } else if (case_vals.len == 1) {
-                return case_vals[0];
-            } else {
-                return operand_val;
             }
+            switch (kind) {
+                .special => unreachable,
+                .item_refs => |case_vals| {
+                    // If there's only a single item, the capture is comptime-known!
+                    if (case_vals.len == 1) return case_vals[0];
+                },
+                .has_ranges => {},
+            }
+            return operand_val;
         },
     }
 }
