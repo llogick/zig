@@ -255,6 +255,8 @@ pub fn generate(info: *UnwindInfo, macho_file: *MachO) !void {
                 page.kind = .compressed;
             }
 
+            page.size = page.calcSize();
+
             log.debug("{f}", .{page.fmt(info.*)});
 
             try info.pages.append(gpa, page);
@@ -285,7 +287,9 @@ pub fn calcSize(info: UnwindInfo) usize {
     total_size += @as(usize, @intCast(info.personalities_count)) * @sizeOf(u32);
     total_size += (info.pages.items.len + 1) * @sizeOf(macho.unwind_info_section_header_index_entry);
     total_size += info.lsdas.items.len * @sizeOf(macho.unwind_info_section_header_lsda_index_entry);
-    total_size += info.pages.items.len * second_level_page_bytes;
+    for (info.pages.items) |page| {
+        total_size += page.size;
+    }
     return total_size;
 }
 
@@ -318,18 +322,27 @@ pub fn write(info: UnwindInfo, macho_file: *MachO, buffer: []u8) !void {
         try writer.writeInt(u32, @intCast(sym.getGotAddress(macho_file) - seg.vmaddr), .little);
     }
 
-    const pages_base_offset = @as(u32, @intCast(header.size - (info.pages.items.len * second_level_page_bytes)));
+    // Calculate total size of all pages
+    var total_pages_size: u32 = 0;
+    for (info.pages.items) |page| {
+        total_pages_size += page.size;
+    }
+
+    const pages_base_offset = @as(u32, @intCast(header.size - total_pages_size));
     const lsda_base_offset = @as(u32, @intCast(pages_base_offset -
         (info.lsdas.items.len * @sizeOf(macho.unwind_info_section_header_lsda_index_entry))));
-    for (info.pages.items, 0..) |page, i| {
+
+    var page_offset: u32 = pages_base_offset;
+    for (info.pages.items) |page| {
         assert(page.count > 0);
         const rec = info.records.items[page.start].getUnwindRecord(macho_file);
         try writer.writeStruct(@as(macho.unwind_info_section_header_index_entry, .{
             .functionOffset = @as(u32, @intCast(rec.getAtomAddress(macho_file) - seg.vmaddr)),
-            .secondLevelPagesSectionOffset = @as(u32, @intCast(pages_base_offset + i * second_level_page_bytes)),
+            .secondLevelPagesSectionOffset = page_offset,
             .lsdaIndexArraySectionOffset = lsda_base_offset +
                 info.lsdas_lookup.items[page.start] * @sizeOf(macho.unwind_info_section_header_lsda_index_entry),
         }), .little);
+        page_offset += page.size;
     }
 
     const last_rec = info.records.items[info.records.items.len - 1].getUnwindRecord(macho_file);
@@ -350,16 +363,10 @@ pub fn write(info: UnwindInfo, macho_file: *MachO, buffer: []u8) !void {
     }
 
     for (info.pages.items) |page| {
-        const start = writer.end;
         try page.write(info, macho_file, &writer);
-        const nwritten = writer.end - start;
-        if (nwritten < second_level_page_bytes) {
-            const padding = math.cast(usize, second_level_page_bytes - nwritten) orelse return error.Overflow;
-            try writer.splatByteAll(0, padding);
-        }
     }
 
-    @memset(buffer[writer.end..], 0);
+    assert(writer.end == header.size);
 }
 
 fn getOrPutPersonalityFunction(info: *UnwindInfo, ref: MachO.Ref) error{TooManyPersonalities}!u2 {
@@ -567,6 +574,7 @@ const Page = struct {
     count: u16,
     page_encodings: [max_compact_encodings]Encoding = undefined,
     page_encodings_count: u9 = 0,
+    size: u32 = 0,
 
     fn appendPageEncoding(page: *Page, enc: Encoding) void {
         assert(page.page_encodings_count <= max_compact_encodings);
@@ -583,6 +591,16 @@ const Page = struct {
             }
         }
         return null;
+    }
+
+    fn calcSize(page: Page) u32 {
+        return switch (page.kind) {
+            .regular => @sizeOf(macho.unwind_info_regular_second_level_page_header) +
+                @as(u32, page.count) * @sizeOf(macho.unwind_info_regular_second_level_entry),
+            .compressed => @sizeOf(macho.unwind_info_compressed_second_level_page_header) +
+                @as(u32, page.page_encodings_count) * @sizeOf(u32) +
+                @as(u32, page.count) * @sizeOf(u32),
+        };
     }
 
     const Format = struct {
