@@ -470,6 +470,7 @@ fn WinStartup() callconv(.withStackAlign(.c, 1)) noreturn {
         _ = @import("os/windows/tls.zig");
     }
 
+    std.Thread.maybeAttachSignalStack();
     std.debug.maybeEnableSegfaultHandler();
 
     const cmd_line = std.os.windows.peb().ProcessParameters.CommandLine;
@@ -486,6 +487,7 @@ fn wWinMainCRTStartup() callconv(.withStackAlign(.c, 1)) noreturn {
         _ = @import("os/windows/tls.zig");
     }
 
+    std.Thread.maybeAttachSignalStack();
     std.debug.maybeEnableSegfaultHandler();
 
     const result: std.os.windows.INT = call_wWinMain();
@@ -622,6 +624,7 @@ inline fn callMainWithArgs(argc: usize, argv: [*][*:0]u8, envp: [:null]?[*:0]u8)
         if (@sizeOf(std.Io.Threaded.Argv0) != 0) t.argv0.value = argv[0];
         t.environ = .{ .process_environ = .{ .block = envp } };
     }
+    std.Thread.maybeAttachSignalStack();
     std.debug.maybeEnableSegfaultHandler();
     return callMain(argv[0..argc], envp);
 }
@@ -641,6 +644,7 @@ fn main(c_argc: c_int, c_argv: [*][*:0]c_char, c_envp: [*:null]?[*:0]c_char) cal
         .windows => {
             // On Windows, we ignore libc environment and argv and get those
             // values in their intended encoding from the PEB instead.
+            std.Thread.maybeAttachSignalStack();
             std.debug.maybeEnableSegfaultHandler();
             const cmd_line = std.os.windows.peb().ProcessParameters.CommandLine;
             const cmd_line_w = cmd_line.Buffer.?[0..@divExact(cmd_line.Length, 2)];

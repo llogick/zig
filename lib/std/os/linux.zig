@@ -2488,7 +2488,7 @@ pub fn capset(hdrp: *cap_user_header_t, datap: *const cap_user_data_t) usize {
     return syscall2(.capset, @intFromPtr(hdrp), @intFromPtr(datap));
 }
 
-pub fn sigaltstack(ss: ?*stack_t, old_ss: ?*stack_t) usize {
+pub fn sigaltstack(ss: ?*const stack_t, old_ss: ?*stack_t) usize {
     return syscall2(.sigaltstack, @intFromPtr(ss), @intFromPtr(old_ss));
 }
 

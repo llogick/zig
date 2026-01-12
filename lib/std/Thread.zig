@@ -540,13 +540,16 @@ const Completion = std.atomic.Value(enum(if (builtin.zig_backend == .stage2_risc
     completed,
 });
 
-/// Used by the Thread implementations to call the spawned function with the arguments.
+/// Performs implementation-agnostic thread setup (`maybeAttachSignalStack`), then calls the given
+/// thread entry point `f` with `args` and handles the result.
 fn callFn(comptime f: anytype, args: anytype) switch (Impl) {
     WindowsThreadImpl => windows.DWORD,
     LinuxThreadImpl => u8,
     PosixThreadImpl => ?*anyopaque,
     else => unreachable,
 } {
+    maybeAttachSignalStack();
+
     const default_value = if (Impl == PosixThreadImpl) null else 0;
     const bad_fn_ret = "expected return type of startFn to be 'u8', 'noreturn', '!noreturn', 'void', or '!void'";
 
@@ -1916,4 +1919,28 @@ test "ResetEvent broadcast" {
     defer for (threads) |t| t.join();
 
     ctx.run();
+}
+
+/// Configures the per-thread alternative signal stack requested by `std.options.signal_stack_size`.
+pub fn maybeAttachSignalStack() void {
+    const size = std.options.signal_stack_size orelse return;
+    switch (builtin.target.os.tag) {
+        // TODO: Windows vectored exception handlers always run on the main stack, but we could use
+        // some target-specific inline assembly to swap the stack pointer.
+        .windows => return,
+        .wasi => return,
+        else => {},
+    }
+    const global = struct {
+        threadlocal var signal_stack: [size]u8 = undefined;
+    };
+    std.posix.sigaltstack(&.{
+        .sp = &global.signal_stack,
+        .flags = 0,
+        .size = size,
+    }, null) catch |err| switch (err) {
+        error.SizeTooSmall => unreachable, // `std.options.signal_stack_size` must be sufficient for the target
+        error.PermissionDenied => unreachable, // called `maybeAttachSignalStack` from a signal handler
+        error.Unexpected => @panic("unexpected error attaching signal stack"),
+    };
 }

@@ -1411,6 +1411,9 @@ pub fn updateSegfaultHandler(act: ?*const posix.Sigaction) void {
 /// trace if possible. This implementation does not just call the panic handler, because unwinding
 /// the stack (for a stack trace) when a signal is received requires special target-specific logic.
 ///
+/// On POSIX targets, the signal handler is configured to use the alternative signal stack. Such a
+/// stack is configured by the Zig Standard Library if `std.options.signal_stack_size` is set.
+///
 /// The signals for which a handler is installed are:
 /// * SIGSEGV (segmentation fault)
 /// * SIGILL (illegal instruction)
@@ -1424,10 +1427,10 @@ pub fn attachSegfaultHandler() void {
         windows_segfault_handle = windows.ntdll.RtlAddVectoredExceptionHandler(0, handleSegfaultWindows);
         return;
     }
-    const act = posix.Sigaction{
+    const act: posix.Sigaction = .{
         .handler = .{ .sigaction = handleSegfaultPosix },
         .mask = posix.sigemptyset(),
-        .flags = (posix.SA.SIGINFO | posix.SA.RESTART | posix.SA.RESETHAND),
+        .flags = (posix.SA.SIGINFO | posix.SA.RESTART | posix.SA.RESETHAND | posix.SA.ONSTACK),
     };
     updateSegfaultHandler(&act);
 }

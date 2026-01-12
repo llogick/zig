@@ -1310,7 +1310,7 @@ pub const SigaltstackError = error{
     PermissionDenied,
 } || UnexpectedError;
 
-pub fn sigaltstack(ss: ?*stack_t, old_ss: ?*stack_t) SigaltstackError!void {
+pub fn sigaltstack(ss: ?*const stack_t, old_ss: ?*stack_t) SigaltstackError!void {
     switch (errno(system.sigaltstack(ss, old_ss))) {
         .SUCCESS => return,
         .FAULT => unreachable,
