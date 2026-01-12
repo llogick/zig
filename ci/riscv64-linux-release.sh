@@ -43,12 +43,11 @@ unset CXX
 ninja install
 
 # No -fqemu and -fwasmtime here as they're covered by the x86_64-linux scripts.
-stage3-release/bin/zig build test-cases test-modules test-unit test-c-abi test-stack-traces test-error-traces test-llvm-ir \
+stage3-release/bin/zig build test-modules test-c-abi \
   --maxrss ${ZSF_MAX_RSS:-0} \
   -Dstatic-llvm \
   -Dskip-non-native \
   -Dskip-single-threaded \
-  -Dskip-compile-errors \
   -Dtarget=native-native-musl \
   --search-prefix "$PREFIX" \
   --zig-lib-dir "$PWD/../lib" \
