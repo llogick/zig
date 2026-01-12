@@ -128,7 +128,7 @@ fn strtoumax(noalias str: [*:0]const c_char, noalias str_end: ?*[*:0]const c_cha
 fn stringToInteger(comptime T: type, noalias buf: [*:0]const u8, noalias maybe_end: ?*[*:0]const u8, base: c_int) T {
     comptime assert(std.math.isPowerOfTwo(@bitSizeOf(T)));
 
-    if (base == 1 or base > 36) {
+    if (base < 0 or base == 1 or base > 36) {
         if (maybe_end) |end| {
             end.* = buf;
         }
