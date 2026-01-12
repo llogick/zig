@@ -10747,8 +10747,6 @@ fn analyzeSwitchBlock(
     const operand_src = block.src(.{ .node_offset_switch_operand = src_node_offset });
 
     const has_else = zir_switch.else_case != null;
-    const has_under = zir_switch.has_under;
-
     const else_case = validated_switch.else_case;
 
     const operand: SwitchOperand, const operand_ty: Type, const maybe_operand_opv: ?Value, const item_ty: Type = operand: {
@@ -10813,11 +10811,6 @@ fn analyzeSwitchBlock(
         .loop => |l| l.init_cond,
     };
 
-    // We treat `else` and `_` the same, except if both are present.
-    const else_is_named_only = has_else and has_under;
-    const catch_all_case: CatchAllSwitchCase =
-        if (has_under) .under else if (has_else) .@"else" else .none;
-
     resolve_at_comptime: {
         // always runtime; evaluation in comptime scope uses `simple`
         if (operand == .loop) break :resolve_at_comptime;
@@ -10834,8 +10827,6 @@ fn analyzeSwitchBlock(
                 cur_operand,
                 raw_operand_ty,
                 cur_cond_val,
-                catch_all_case,
-                else_is_named_only,
                 merges,
                 switch_inst,
                 zir_switch,
@@ -10958,6 +10949,11 @@ fn analyzeSwitchBlock(
                                     }
                                 },
                             };
+                            const prong_kind: SwitchProngKind = kind: {
+                                if (is_inline) break :kind .{ .inline_ref = .fromValue(item_opv) };
+                                if (is_special) break :kind .special;
+                                break :kind .{ .item_refs = &.{.fromValue(item_opv)} };
+                            };
                             break :payload_ref try sema.analyzeSwitchPayloadCapture(
                                 &case_block,
                                 operand,
@@ -10970,8 +10966,7 @@ fn analyzeSwitchBlock(
                                     .case_idx = index,
                                 } }),
                                 capture == .by_ref,
-                                if (is_special) .special else .{ .item_refs = &.{.fromValue(item_opv)} },
-                                if (is_inline) .fromValue(item_opv) else .none,
+                                prong_kind,
                                 validated_switch.else_err_ty,
                             );
                         },
@@ -11094,8 +11089,6 @@ fn finishSwitchBr(
     const cond_dbg_node_index: Zir.Inst.Index = @enumFromInt(@intFromEnum(switch_inst) - 1);
 
     const else_is_named_only = has_else and has_under;
-    const catch_all_case: CatchAllSwitchCase =
-        if (has_under) .under else if (has_else) .@"else" else .none;
 
     const item_ty = switch (operand_ty.zigTypeTag(zcu)) {
         .@"union" => operand_ty.unionTagType(zcu).?,
@@ -11216,8 +11209,7 @@ fn finishSwitchBr(
                         } }),
                         prong_info.capture,
                         prong_info.has_tag_capture,
-                        item_ref,
-                        .{ .item_refs = &.{item_ref} },
+                        .{ .inline_ref = item_ref },
                         validated_switch.else_err_ty,
                         switch_inst,
                         zir_switch,
@@ -11308,8 +11300,7 @@ fn finishSwitchBr(
                         } }),
                         prong_info.capture,
                         prong_info.has_tag_capture,
-                        item_ref,
-                        .has_ranges,
+                        .{ .inline_ref = item_ref },
                         validated_switch.else_err_ty,
                         switch_inst,
                         zir_switch,
@@ -11333,6 +11324,9 @@ fn finishSwitchBr(
         if (prong_info.is_inline) continue; // handled above
 
         if (is_under_prong) {
+            // We will handle this later. If there are any named items specified
+            // along with the `_`, we don't have to actually emit any AIR for them
+            // as they will be 'absorbed' by the `_` (the catch-all prong) anyway.
             under_prong = .{
                 .index = case.index,
                 .body = prong_body,
@@ -11359,8 +11353,7 @@ fn finishSwitchBr(
                 } }),
                 prong_info.capture,
                 prong_info.has_tag_capture,
-                .none,
-                .{ .item_refs = item_refs },
+                if (range_refs.len > 0) .has_ranges else .{ .item_refs = item_refs },
                 validated_switch.else_err_ty,
                 switch_inst,
                 zir_switch,
@@ -11385,7 +11378,7 @@ fn finishSwitchBr(
     }
 
     const catch_all_extra: []const u32 = catch_all_extra: {
-        if (catch_all_case == .none and !case_block.wantSafety()) {
+        if (!has_else and !has_under and !case_block.wantSafety()) {
             try branch_hints.append(gpa, .none);
             break :catch_all_extra &.{};
         }
@@ -11445,8 +11438,7 @@ fn finishSwitchBr(
                         } }),
                         else_case.capture,
                         else_case.has_tag_capture,
-                        item_ref,
-                        .special,
+                        .{ .inline_ref = item_ref },
                         validated_switch.else_err_ty,
                         switch_inst,
                         zir_switch,
@@ -11473,7 +11465,7 @@ fn finishSwitchBr(
         case_block.error_return_trace_index = child_block.error_return_trace_index;
 
         if (zcu.backendSupportsFeature(.is_named_enum_value) and
-            catch_all_case != .none and block.wantSafety() and
+            (has_else or has_under) and block.wantSafety() and
             item_ty.zigTypeTag(zcu) == .@"enum" and
             (!operand_ty.isNonexhaustiveEnum(zcu) or union_originally))
         {
@@ -11508,7 +11500,6 @@ fn finishSwitchBr(
                     } }),
                     else_case.capture,
                     else_case.has_tag_capture,
-                    .none,
                     .special,
                     validated_switch.else_err_ty,
                     switch_inst,
@@ -11548,10 +11539,12 @@ fn finishSwitchBr(
         }
 
         const analyze_catch_all_body = analyze_body: {
-            switch (catch_all_case) {
-                .none => break :analyze_body false, // we still may want a safety check!
-                .under => break :analyze_body true, // can't be a union anyway
-                .@"else" => if (else_case.is_inline) break :analyze_body false,
+            if (has_under) {
+                break :analyze_body true; // can't be a union or an error set, never inlined
+            } else if (has_else) {
+                if (else_case.is_inline) break :analyze_body false; // already handled above
+            } else {
+                break :analyze_body false; // we still may want a safety check!
             }
             if (union_originally) {
                 const union_obj = zcu.typeToUnion(operand_ty).?;
@@ -11574,11 +11567,10 @@ fn finishSwitchBr(
 
         const catch_all_hint = hint: {
             if (analyze_catch_all_body) {
-                const index, const body, const capture, const has_tag_capture = switch (catch_all_case) {
-                    .@"else" => .{ else_case.index, else_case.body, else_case.capture, else_case.has_tag_capture },
-                    .under => .{ under_prong.?.index, under_prong.?.body, under_prong.?.capture, under_prong.?.has_tag_capture },
-                    .none => unreachable,
-                };
+                const index, const body, const capture, const has_tag_capture = if (under_prong) |under|
+                    .{ under.index, under.body, under.capture, under.has_tag_capture }
+                else
+                    .{ else_case.index, else_case.body, else_case.capture, else_case.has_tag_capture };
                 break :hint try sema.analyzeSwitchProng(
                     &case_block,
                     operand,
@@ -11591,7 +11583,6 @@ fn finishSwitchBr(
                     } }),
                     capture,
                     has_tag_capture,
-                    .none,
                     .special,
                     validated_switch.else_err_ty,
                     switch_inst,
@@ -12072,9 +12063,9 @@ fn validateSwitchBlock(
                 const msg = try sema.errMsg(
                     operand_src,
                     "ranges not allowed when switching on type '{f}'",
-                    .{operand_ty.fmt(sema.pt)},
+                    .{operand_ty.fmt(pt)},
                 );
-                errdefer msg.destroy(sema.gpa);
+                errdefer msg.destroy(gpa);
                 try sema.errNote(
                     range_src,
                     msg,
@@ -12309,8 +12300,6 @@ fn resolveSwitchBlock(
     operand: SwitchOperand,
     raw_operand_ty: Type,
     maybe_lazy_cond_val: Value,
-    catch_all_case: CatchAllSwitchCase,
-    else_is_named_only: bool,
     merges: *Block.Merges,
     switch_inst: Zir.Inst.Index,
     zir_switch: *const Zir.UnwrappedSwitchBlock,
@@ -12377,6 +12366,11 @@ fn resolveSwitchBlock(
                     // This prong should be unreachable!
                     return .unreachable_value;
                 }
+                const prong_kind: SwitchProngKind = kind: {
+                    if (prong_info.is_inline) break :kind .{ .inline_ref = cond_ref };
+                    if (range_refs.len > 0) break :kind .has_ranges;
+                    break :kind .{ .item_refs = item_refs };
+                };
                 return sema.resolveSwitchProng(
                     block,
                     child_block,
@@ -12389,8 +12383,7 @@ fn resolveSwitchBlock(
                     } }),
                     prong_info.capture,
                     prong_info.has_tag_capture,
-                    if (prong_info.is_inline) cond_ref else .none,
-                    .{ .item_refs = item_refs },
+                    prong_kind,
                     validated_switch.else_err_ty,
                     merges,
                     switch_inst,
@@ -12404,6 +12397,10 @@ fn resolveSwitchBlock(
             if ((try sema.compareAll(cond_val, .gte, first_val, item_ty)) and
                 (try sema.compareAll(cond_val, .lte, last_val, item_ty)))
             {
+                const prong_kind: SwitchProngKind = if (prong_info.is_inline)
+                    .{ .inline_ref = cond_ref }
+                else
+                    .has_ranges;
                 return sema.resolveSwitchProng(
                     block,
                     child_block,
@@ -12416,8 +12413,7 @@ fn resolveSwitchBlock(
                     } }),
                     prong_info.capture,
                     prong_info.has_tag_capture,
-                    if (prong_info.is_inline) cond_ref else .none,
-                    .has_ranges,
+                    prong_kind,
                     validated_switch.else_err_ty,
                     merges,
                     switch_inst,
@@ -12428,11 +12424,16 @@ fn resolveSwitchBlock(
     }
 
     const else_case = validated_switch.else_case;
+    const else_is_named_only = zir_switch.else_case != null and under_prong != null;
 
     // named-only prong
 
     if (else_is_named_only and item_ty.enumTagFieldIndex(cond_val, zcu) != null) {
         assert(item_ty.isNonexhaustiveEnum(zcu));
+        const prong_kind: SwitchProngKind = if (else_case.is_inline)
+            .{ .inline_ref = cond_ref }
+        else
+            .special;
         return sema.resolveSwitchProng(
             block,
             child_block,
@@ -12445,8 +12446,7 @@ fn resolveSwitchBlock(
             } }),
             else_case.capture,
             else_case.has_tag_capture,
-            if (else_case.is_inline) cond_ref else .none,
-            .special,
+            prong_kind,
             validated_switch.else_err_ty,
             merges,
             switch_inst,
@@ -12456,11 +12456,10 @@ fn resolveSwitchBlock(
 
     // catch-all prong
 
-    const index, const body, const capture, const has_tag_capture, const is_inline = switch (catch_all_case) {
-        .@"else" => .{ else_case.index, else_case.body, else_case.capture, else_case.has_tag_capture, else_case.is_inline },
-        .under => .{ under_prong.?.index, under_prong.?.body, under_prong.?.capture, under_prong.?.has_tag_capture, false },
-        .none => unreachable,
-    };
+    const index, const body, const capture, const has_tag_capture, const is_inline = if (under_prong) |under|
+        .{ under.index, under.body, under.capture, under.has_tag_capture, false }
+    else
+        .{ else_case.index, else_case.body, else_case.capture, else_case.has_tag_capture, else_case.is_inline };
     if (err_set) try sema.maybeErrorUnwrapComptime(child_block, body, cond_ref);
     if (union_originally) {
         for (validated_switch.seen_enum_fields, 0..) |maybe_seen, field_i| {
@@ -12471,6 +12470,10 @@ fn resolveSwitchBlock(
             return .unreachable_value;
         }
     }
+    const prong_kind: SwitchProngKind = if (is_inline)
+        .{ .inline_ref = cond_ref }
+    else
+        .special;
     return sema.resolveSwitchProng(
         block,
         child_block,
@@ -12483,8 +12486,7 @@ fn resolveSwitchBlock(
         } }),
         capture,
         has_tag_capture,
-        if (is_inline) cond_ref else .none,
-        .special,
+        prong_kind,
         validated_switch.else_err_ty,
         merges,
         switch_inst,
@@ -12520,9 +12522,9 @@ const SwitchOperand = union(enum) {
     },
 };
 
-const CatchAllSwitchCase = enum { none, @"else", under };
-
 const SwitchProngKind = union(enum) {
+    /// Prefer populating this field over the others, if possible.
+    inline_ref: Air.Inst.Ref,
     item_refs: []const Air.Inst.Ref,
     has_ranges,
     special,
@@ -12541,7 +12543,6 @@ fn resolveSwitchProng(
     capture_src: LazySrcLoc,
     capture: Zir.Inst.SwitchBlock.ProngInfo.Capture,
     has_tag_capture: bool,
-    inline_case_capture: Air.Inst.Ref,
     kind: SwitchProngKind,
     else_err_ty: ?Type,
     merges: *Block.Merges,
@@ -12569,7 +12570,6 @@ fn resolveSwitchProng(
             capture_src,
             capture == .by_ref,
             kind,
-            inline_case_capture,
             else_err_ty,
         );
         assert(!sema.typeOf(payload_ref).isNoReturn(sema.pt.zcu));
@@ -12585,7 +12585,6 @@ fn resolveSwitchProng(
             operand.simple.by_val,
             sema.typeOf(operand.simple.by_val),
             capture_src,
-            inline_case_capture,
             kind,
         );
         sema.inst_map.putAssumeCapacity(tag_inst, tag_ref);
@@ -12637,7 +12636,6 @@ fn analyzeSwitchProng(
     capture_src: LazySrcLoc,
     capture: Zir.Inst.SwitchBlock.ProngInfo.Capture,
     has_tag_capture: bool,
-    inline_case_capture: Air.Inst.Ref,
     kind: SwitchProngKind,
     else_err_ty: ?Type,
     switch_inst: Zir.Inst.Index,
@@ -12664,7 +12662,7 @@ fn analyzeSwitchProng(
             // No need to load the operand for this prong!
             break :load_operand .{ undefined, undefined };
         }
-        if (inline_case_capture != .none and
+        if (kind == .inline_ref and
             !(capture != .none and operand_ty.zigTypeTag(zcu) == .@"union"))
         {
             // We only need to load the operand if there's a union payload capture
@@ -12698,7 +12696,6 @@ fn analyzeSwitchProng(
             capture_src,
             capture == .by_ref,
             kind,
-            inline_case_capture,
             else_err_ty,
         );
         assert(!sema.typeOf(payload_ref).isNoReturn(sema.pt.zcu));
@@ -12714,7 +12711,6 @@ fn analyzeSwitchProng(
             operand_val,
             operand_ty,
             capture_src,
-            inline_case_capture,
             kind,
         );
         sema.inst_map.putAssumeCapacity(tag_inst, tag_ref);
@@ -12735,7 +12731,6 @@ fn analyzeSwitchTagCapture(
     operand_val: Air.Inst.Ref,
     operand_ty: Type,
     capture_src: LazySrcLoc,
-    inline_case_capture: Air.Inst.Ref,
     kind: SwitchProngKind,
 ) CompileError!Air.Inst.Ref {
     const pt = sema.pt;
@@ -12751,12 +12746,11 @@ fn analyzeSwitchTagCapture(
             operand_ty.fmt(pt),
         });
     }
-    if (inline_case_capture != .none) {
-        return inline_case_capture; // this already is the tag, it's what we're switching on!
-    }
     switch (kind) {
-        .has_ranges, .special => {},
+        .has_ranges => unreachable,
+        .inline_ref => |ref| return ref,
         .item_refs => |refs| if (refs.len == 1) return refs[0],
+        .special => {},
     }
     const tag_ty = operand_ty.unionTagType(zcu).?;
     return sema.unionToTag(case_block, tag_ty, operand_val, tag_capture_src);
@@ -12775,8 +12769,6 @@ fn analyzeSwitchPayloadCapture(
     capture_src: LazySrcLoc,
     capture_by_ref: bool,
     kind: SwitchProngKind,
-    /// If this is not `.none`, this is an inline capture.
-    inline_case_capture: Air.Inst.Ref,
     else_err_ty: ?Type,
 ) CompileError!Air.Inst.Ref {
     const pt = sema.pt;
@@ -12785,8 +12777,8 @@ fn analyzeSwitchPayloadCapture(
 
     const switch_node_offset = operand_src.offset.node_offset_switch_operand;
 
-    if (inline_case_capture != .none) {
-        const item_val = sema.resolveConstDefinedValue(case_block, .unneeded, inline_case_capture, undefined) catch unreachable;
+    if (kind == .inline_ref) {
+        const item_val = sema.resolveConstDefinedValue(case_block, .unneeded, kind.inline_ref, undefined) catch unreachable;
         if (operand_ty.zigTypeTag(zcu) == .@"union") {
             const field_index: u32 = @intCast(operand_ty.unionTagFieldIndex(item_val, zcu).?);
             const union_obj = zcu.typeToUnion(operand_ty).?;
@@ -12812,7 +12804,7 @@ fn analyzeSwitchPayloadCapture(
         } else if (capture_by_ref) {
             return sema.uavRef(item_val.toIntern());
         } else {
-            return inline_case_capture;
+            return kind.inline_ref;
         }
     }
 
@@ -13155,7 +13147,7 @@ fn analyzeSwitchPayloadCapture(
                 return operand_ptr;
             }
             switch (kind) {
-                .special => unreachable,
+                .inline_ref, .special => unreachable,
                 .item_refs => |case_vals| {
                     // If there's only a single item, the capture is comptime-known!
                     if (case_vals.len == 1) return case_vals[0];

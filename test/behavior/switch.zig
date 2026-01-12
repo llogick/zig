@@ -1308,11 +1308,17 @@ test "single-item prong in switch on enum has comptime-known capture" {
     try comptime E.doTheTest(.a);
 }
 
-test "single-range switch prong capture" {
+test "single range switch prong capture" {
     const S = struct {
         fn doTheTest(x: u8) !void {
             switch (x) {
                 1...5 => |val| {
+                    try expect(val == 2);
+                },
+                else => return error.TestFailed,
+            }
+            switch (x) {
+                1...5, 6 => |val| {
                     try expect(val == 2);
                 },
                 else => return error.TestFailed,

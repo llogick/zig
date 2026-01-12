@@ -3438,8 +3438,6 @@ pub const Inst = struct {
                 return if (item_info.kind == .body_len) item_info.data else null;
             }
         };
-
-        pub const Kind = enum { default, ref, err_union };
     };
 
     pub const ArrayInitRefTy = struct {
