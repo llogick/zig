@@ -2024,6 +2024,7 @@ fn groupConcurrent(
 
 fn groupAwait(userdata: ?*anyopaque, type_erased: *Io.Group, initial_token: *anyopaque) Io.Cancelable!void {
     _ = initial_token; // we need to load `token` *after* the group finishes
+    if (builtin.single_threaded) unreachable; // nothing to await
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const g: Group = .{ .ptr = type_erased };
 
@@ -2082,6 +2083,7 @@ fn groupAwait(userdata: ?*anyopaque, type_erased: *Io.Group, initial_token: *any
 
 fn groupCancel(userdata: ?*anyopaque, type_erased: *Io.Group, initial_token: *anyopaque) void {
     _ = initial_token;
+    if (builtin.single_threaded) unreachable; // nothing to cancel
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const g: Group = .{ .ptr = type_erased };
 
@@ -2152,6 +2154,7 @@ fn await(
     result_alignment: Alignment,
 ) void {
     _ = result_alignment;
+    if (builtin.single_threaded) unreachable; // nothing to await
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const future: *Future = @ptrCast(@alignCast(any_future));
 
@@ -2218,6 +2221,7 @@ fn cancel(
     result_alignment: Alignment,
 ) void {
     _ = result_alignment;
+    if (builtin.single_threaded) unreachable; // nothing to cancel
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const future: *Future = @ptrCast(@alignCast(any_future));
 
@@ -4959,7 +4963,7 @@ fn dirReadUnimplemented(userdata: ?*anyopaque, dir_reader: *Dir.Reader, buffer: 
     _ = userdata;
     _ = dir_reader;
     _ = buffer;
-    return error.Unimplemented;
+    return error.Unexpected;
 }
 
 const dirRealPathFile = switch (native_os) {
@@ -13224,7 +13228,7 @@ fn processSpawnPath(userdata: ?*anyopaque, dir: Dir, options: process.SpawnOptio
 }
 
 const processSpawn = switch (native_os) {
-    .wasi, .ios, .tvos, .visionos, .watchos => processSpawnUnsupported,
+    .wasi, .emscripten, .ios, .tvos, .visionos, .watchos => processSpawnUnsupported,
     .windows => processSpawnWindows,
     else => processSpawnPosix,
 };

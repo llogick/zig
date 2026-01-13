@@ -97,6 +97,7 @@ pub const off_t = switch (native_os) {
 pub const timespec = switch (native_os) {
     .linux => linux.timespec,
     .emscripten => emscripten.timespec,
+    // lib/libc/include/wasm-wasi-musl/__struct_timespec.h
     .wasi => extern struct {
         sec: time_t,
         nsec: isize,
@@ -115,16 +116,18 @@ pub const timespec = switch (native_os) {
                 @as(wasi.timestamp_t, @intCast(ts.nsec));
         }
 
+        // lib/libc/include/wasm-wasi-musl/__header_sys_stat.h
+
         /// For use with `utimensat` and `futimens`.
         pub const NOW: timespec = .{
             .sec = 0,
-            .nsec = 0x3fffffff,
+            .nsec = -1,
         };
 
         /// For use with `utimensat` and `futimens`.
         pub const OMIT: timespec = .{
             .sec = 0,
-            .nsec = 0x3ffffffe,
+            .nsec = -2,
         };
     },
     // https://github.com/SerenityOS/serenity/blob/0a78056453578c18e0a04a0b45ebfb1c96d59005/Kernel/API/POSIX/time.h#L17-L20
@@ -7007,6 +7010,7 @@ pub const time_t = switch (native_os) {
     .linux => linux.time_t,
     .emscripten => emscripten.time_t,
     .haiku, .dragonfly => isize,
+    // lib/libc/include/wasm-wasi-musl/__typedef_time_t.h
     // https://github.com/SerenityOS/serenity/blob/b98f537f117b341788023ab82e0c11ca9ae29a57/Kernel/API/POSIX/sys/types.h#L47
     else => i64,
 };
