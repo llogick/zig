@@ -254,6 +254,8 @@ test "Group.cancel" {
 }
 
 test "Group.concurrent" {
+    if (builtin.os.tag == .linux and !builtin.link_libc) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/30096
+
     const io = testing.io;
 
     var group: Io.Group = .init;
