@@ -8,6 +8,7 @@ const lldiv_t = std.c.lldiv_t;
 
 comptime {
     _ = @import("stdlib/rand.zig");
+    _ = @import("stdlib/drand48.zig");
 
     if (builtin.target.isMuslLibC() or builtin.target.isWasiLibC()) {
         // Functions specific to musl and wasi-libc.
