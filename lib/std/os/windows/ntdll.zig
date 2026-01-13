@@ -203,7 +203,10 @@ pub extern "ntdll" fn NtReadFile(
 pub extern "ntdll" fn NtSetInformationFile(
     FileHandle: HANDLE,
     IoStatusBlock: *IO_STATUS_BLOCK,
-    FileInformation: *const anyopaque,
+    /// This can't be const as providing read-only memory could result in ACCESS_VIOLATION
+    /// in certain scenarios. This has been seen when using FILE_DISPOSITION_INFORMATION_EX
+    /// and targeting x86-windows.
+    FileInformation: *anyopaque,
     Length: ULONG,
     FileInformationClass: FILE.INFORMATION_CLASS,
 ) callconv(.winapi) NTSTATUS;

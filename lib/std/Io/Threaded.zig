@@ -5550,7 +5550,7 @@ fn dirDeleteWindows(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, remov
     // FileDispositionInformation if the return value lets us know that some aspect of it is not supported.
     const rc = rc: {
         // Deletion with posix semantics if the filesystem supports it.
-        const info: w.FILE.DISPOSITION.INFORMATION.EX = .{ .Flags = .{
+        var info: w.FILE.DISPOSITION.INFORMATION.EX = .{ .Flags = .{
             .DELETE = true,
             .POSIX_SEMANTICS = true,
             .IGNORE_READONLY_ATTRIBUTE = true,
@@ -5585,7 +5585,7 @@ fn dirDeleteWindows(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, remov
 
         // Deletion with file pending semantics, which requires waiting or moving
         // files to get them removed (from here).
-        const file_dispo: w.FILE.DISPOSITION.INFORMATION = .{
+        var file_dispo: w.FILE.DISPOSITION.INFORMATION = .{
             .DeleteFile = w.TRUE,
         };
 
@@ -5801,7 +5801,7 @@ fn dirRenameWindowsInner(
     // The strategy here is just to try using FileRenameInformationEx and fall back to
     // FileRenameInformation if the return value lets us know that some aspect of it is not supported.
     const need_fallback = need_fallback: {
-        const rename_info: w.FILE.RENAME_INFORMATION = .init(.{
+        var rename_info: w.FILE.RENAME_INFORMATION = .init(.{
             .Flags = .{
                 .REPLACE_IF_EXISTS = replace_if_exists,
                 .POSIX_SEMANTICS = true,
@@ -5834,7 +5834,7 @@ fn dirRenameWindowsInner(
     };
 
     if (need_fallback) {
-        const rename_info: w.FILE.RENAME_INFORMATION = .init(.{
+        var rename_info: w.FILE.RENAME_INFORMATION = .init(.{
             .Flags = .{ .REPLACE_IF_EXISTS = replace_if_exists },
             .RootDirectory = if (Dir.path.isAbsoluteWindowsWtf16(new_path_w)) null else new_dir.handle,
             .FileName = new_path_w,
@@ -7104,7 +7104,7 @@ fn fileSetLength(userdata: ?*anyopaque, file: File, length: u64) File.SetLengthE
 
     if (is_windows) {
         var io_status_block: windows.IO_STATUS_BLOCK = undefined;
-        const eof_info: windows.FILE.END_OF_FILE_INFORMATION = .{
+        var eof_info: windows.FILE.END_OF_FILE_INFORMATION = .{
             .EndOfFile = signed_len,
         };
 
@@ -7195,7 +7195,7 @@ fn fileSetPermissions(userdata: ?*anyopaque, file: File, permissions: File.Permi
     switch (native_os) {
         .windows => {
             var io_status_block: windows.IO_STATUS_BLOCK = undefined;
-            const info: windows.FILE.BASIC_INFORMATION = .{
+            var info: windows.FILE.BASIC_INFORMATION = .{
                 .CreationTime = 0,
                 .LastAccessTime = 0,
                 .LastWriteTime = 0,

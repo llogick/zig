@@ -265,8 +265,8 @@ pub const FILE = struct {
             return ri.FileName[0..@divExact(ri.FileNameLength, @sizeOf(WCHAR))];
         }
 
-        pub fn toBuffer(fri: *const RENAME_INFORMATION) []const u8 {
-            const start: [*]const u8 = @ptrCast(fri);
+        pub fn toBuffer(fri: *RENAME_INFORMATION) []u8 {
+            const start: [*]u8 = @ptrCast(fri);
             // The ABI size of the documented struct is 24 bytes, and attempting to use any size
             // less than that will trigger INFO_LENGTH_MISMATCH, so enforce a minimum in cases where,
             // for example, FileNameLength is 1 so only 22 bytes are technically needed.
@@ -3134,7 +3134,7 @@ pub fn DeleteFile(sub_path_w: []const u16, options: DeleteFileOptions) DeleteFil
     // FileDispositionInformation if the return value lets us know that some aspect of it is not supported.
     const need_fallback = need_fallback: {
         // Deletion with posix semantics if the filesystem supports it.
-        const info: FILE.DISPOSITION.INFORMATION.EX = .{ .Flags = .{
+        var info: FILE.DISPOSITION.INFORMATION.EX = .{ .Flags = .{
             .DELETE = true,
             .POSIX_SEMANTICS = true,
             .IGNORE_READONLY_ATTRIBUTE = true,
@@ -3163,7 +3163,7 @@ pub fn DeleteFile(sub_path_w: []const u16, options: DeleteFileOptions) DeleteFil
     if (need_fallback) {
         // Deletion with file pending semantics, which requires waiting or moving
         // files to get them removed (from here).
-        const file_dispo: FILE.DISPOSITION.INFORMATION = .{
+        var file_dispo: FILE.DISPOSITION.INFORMATION = .{
             .DeleteFile = TRUE,
         };
         rc = ntdll.NtSetInformationFile(
@@ -3242,7 +3242,7 @@ pub fn RenameFile(
     // The strategy here is just to try using FileRenameInformationEx and fall back to
     // FileRenameInformation if the return value lets us know that some aspect of it is not supported.
     const need_fallback = need_fallback: {
-        const rename_info: FILE.RENAME_INFORMATION = .init(.{
+        var rename_info: FILE.RENAME_INFORMATION = .init(.{
             .Flags = .{
                 .REPLACE_IF_EXISTS = replace_if_exists,
                 .POSIX_SEMANTICS = true,
@@ -3275,7 +3275,7 @@ pub fn RenameFile(
     };
 
     if (need_fallback) {
-        const rename_info: FILE.RENAME_INFORMATION = .init(.{
+        var rename_info: FILE.RENAME_INFORMATION = .init(.{
             .Flags = .{ .REPLACE_IF_EXISTS = replace_if_exists },
             .RootDirectory = if (std.fs.path.isAbsoluteWindowsWtf16(new_path_w)) null else new_dir_fd,
             .FileName = new_path_w,
