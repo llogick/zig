@@ -116,6 +116,7 @@ pub const Fde = struct {
     cie: Cie.Index,
     atom: Atom.Index = 0,
     atom_offset: u32 = 0,
+    pc_range: u64 = 0,
     lsda: Atom.Index = 0,
     lsda_offset: u32 = 0,
     lsda_ptr_offset: u32 = 0,
@@ -141,6 +142,9 @@ pub const Fde = struct {
         };
         const atom = fde.getAtom(macho_file);
         fde.atom_offset = @intCast(taddr - atom.getInputAddress(macho_file));
+
+        // Parse pc_range (function size)
+        fde.pc_range = std.mem.readInt(u64, data[16..][0..8], .little);
 
         // Associate with a CIE
         const cie_ptr = std.mem.readInt(u32, data[4..8], .little);
@@ -350,7 +354,7 @@ pub fn write(macho_file: *MachO, buffer: []u8) void {
                 std.mem.writeInt(
                     i32,
                     buffer[offset..][0..4],
-                    @intCast(@as(i64, @intCast(taddr)) - @as(i64, @intCast(saddr)) + addend),
+                    @intCast(@as(i64, @intCast(taddr)) - @as(i64, @intCast(saddr))),
                     .little,
                 );
             }
@@ -373,7 +377,7 @@ pub fn write(macho_file: *MachO, buffer: []u8) void {
             {
                 const offset = fde.out_offset + 8;
                 const saddr = sect.addr + offset;
-                const taddr = fde.getAtom(macho_file).getAddress(macho_file);
+                const taddr = fde.getAtom(macho_file).getAddress(macho_file) + fde.atom_offset;
                 std.mem.writeInt(
                     i64,
                     buffer[offset..][0..8],
@@ -460,7 +464,7 @@ pub fn writeRelocs(macho_file: *MachO, code: []u8, relocs: []macho.relocation_in
             {
                 const offset = fde.out_offset + 8;
                 const saddr = sect.addr + offset;
-                const taddr = fde.getAtom(macho_file).getAddress(macho_file);
+                const taddr = fde.getAtom(macho_file).getAddress(macho_file) + fde.atom_offset;
                 std.mem.writeInt(
                     i64,
                     code[offset..][0..8],

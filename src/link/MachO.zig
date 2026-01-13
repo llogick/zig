@@ -1707,7 +1707,9 @@ fn initSyntheticSections(self: *MachO) !void {
     } else false;
     if (needs_eh_frame) {
         assert(needs_unwind_info);
-        self.eh_frame_sect_index = try self.addSection("__TEXT", "__eh_frame", .{});
+        self.eh_frame_sect_index = try self.addSection("__TEXT", "__eh_frame", .{
+            .flags = macho.S_COALESCED | macho.S_ATTR_NO_TOC | macho.S_ATTR_STRIP_STATIC_SYMS | macho.S_ATTR_LIVE_SUPPORT,
+        });
     }
 
     if (self.getInternalObject()) |obj| {
