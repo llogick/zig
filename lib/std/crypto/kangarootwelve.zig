@@ -1308,6 +1308,11 @@ pub const KT128 = KTHash(KT128Variant, turboShake128MultiSliceToBuffer);
 pub const KT256 = KTHash(KT256Variant, turboShake256MultiSliceToBuffer);
 
 test "KT128 sequential and parallel produce same output for small inputs" {
+    if (true) {
+        // https://codeberg.org/ziglang/zig/issues/30676
+        return error.SkipZigTest;
+    }
+
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
@@ -1412,6 +1417,11 @@ test "KT128 sequential and parallel produce same output for many random lengths"
 }
 
 test "KT128 sequential and parallel produce same output with customization" {
+    if (true) {
+        // https://codeberg.org/ziglang/zig/issues/30676
+        return error.SkipZigTest;
+    }
+
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
@@ -1440,6 +1450,11 @@ test "KT128 sequential and parallel produce same output with customization" {
 }
 
 test "KT256 sequential and parallel produce same output for small inputs" {
+    if (true) {
+        // https://codeberg.org/ziglang/zig/issues/30676
+        return error.SkipZigTest;
+    }
+
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
@@ -1471,6 +1486,11 @@ test "KT256 sequential and parallel produce same output for small inputs" {
 }
 
 test "KT256 sequential and parallel produce same output for large inputs" {
+    if (true) {
+        // https://codeberg.org/ziglang/zig/issues/30676
+        return error.SkipZigTest;
+    }
+
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
@@ -1506,6 +1526,11 @@ test "KT256 sequential and parallel produce same output for large inputs" {
 }
 
 test "KT256 sequential and parallel produce same output with customization" {
+    if (true) {
+        // https://codeberg.org/ziglang/zig/issues/30676
+        return error.SkipZigTest;
+    }
+
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
