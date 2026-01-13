@@ -672,6 +672,7 @@ const usage_build_generic =
     \\  --test-cmd-bin                 Appends test binary path to test cmd args
     \\  --test-no-exec                 Compiles test binary without running it
     \\  --test-runner [path]           Specify a custom test runner
+    \\  --test-execve                  Runs the test binary with execve if available instead of as a child process
     \\
     \\Debug Options (Zig Compiler Development):
     \\  -fopt-bisect-limit=[limit]   Only run [limit] first LLVM optimization passes
@@ -888,6 +889,7 @@ fn buildOutputType(
     var linker_optimization: ?[]const u8 = null;
     var linker_module_definition_file: ?[]const u8 = null;
     var test_no_exec = false;
+    var test_execve = false;
     var entry: Compilation.CreateOptions.Entry = .default;
     var force_undefined_symbols: std.StringArrayHashMapUnmanaged(void) = .empty;
     var stack_size: ?u64 = null;
@@ -1393,6 +1395,8 @@ fn buildOutputType(
                         test_no_exec = true;
                     } else if (mem.eql(u8, arg, "--time-report")) {
                         time_report = true;
+                    } else if (mem.eql(u8, arg, "--test-execve")) {
+                        test_execve = true;
                     } else if (mem.eql(u8, arg, "-fstack-report")) {
                         stack_report = true;
                     } else if (mem.eql(u8, arg, "-fPIC")) {
@@ -3770,6 +3774,7 @@ fn buildOutputType(
             all_args,
             runtime_args_start,
             create_module.resolved_options.link_libc,
+            test_execve,
             environ_map,
         );
     }
@@ -4407,6 +4412,7 @@ fn runOrTest(
     all_args: []const []const u8,
     runtime_args_start: ?usize,
     link_libc: bool,
+    test_execve: bool,
     environ_map: *process.Environ.Map,
 ) !void {
     const raw_emit_bin = comp.emit_bin orelse return;
@@ -4448,7 +4454,7 @@ fn runOrTest(
 
     // We do not execve for tests because if the test fails we want to print
     // the error message and invocation below.
-    if (process.can_replace and arg_mode == .run) {
+    if (process.can_replace and (arg_mode == .run or (arg_mode == .zig_test and test_execve))) {
         // process replacement releases the locks; no need to destroy the Compilation here.
         _ = try io.lockStderr(&.{}, .no_color);
         const err = process.replace(io, .{ .argv = argv.items, .environ_map = environ_map });
