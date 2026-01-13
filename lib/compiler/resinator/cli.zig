@@ -128,13 +128,17 @@ pub const Diagnostics = struct {
     pub fn renderToStderr(self: *Diagnostics, io: Io, args: []const []const u8) Io.Cancelable!void {
         const stderr = try io.lockStderr(&.{}, null);
         defer io.unlockStderr();
-        self.renderToWriter(args, stderr.terminal()) catch return;
+        self.renderToTerminal(stderr.terminal(), args) catch return;
     }
 
-    pub fn renderToWriter(self: *Diagnostics, args: []const []const u8, t: Io.Terminal) !void {
+    pub fn renderToTerminal(self: *Diagnostics, terminal: Io.Terminal, args: []const []const u8) !void {
         for (self.errors.items) |err_details| {
-            try renderErrorMessage(t, err_details, args);
+            try renderErrorMessage(terminal, err_details, args);
         }
+    }
+
+    pub fn renderToWriter(self: *Diagnostics, writer: *Io.Writer, args: []const []const u8) !void {
+        return self.renderToTerminal(.{ .writer = writer, .mode = .no_color }, args);
     }
 
     pub fn hasError(self: *const Diagnostics) bool {
@@ -1475,9 +1479,9 @@ fn testParseOutput(args: []const []const u8, expected_output: []const u8) !?Opti
     var output: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer output.deinit();
 
-    var options = parse(std.testing.allocator, args, &diagnostics) catch |err| switch (err) {
+    var options = parse(std.testing.allocator, std.testing.io, args, &diagnostics) catch |err| switch (err) {
         error.ParseError => {
-            try diagnostics.renderToWriter(args, &output.writer, .no_color);
+            try diagnostics.renderToWriter(&output.writer, args);
             try std.testing.expectEqualStrings(expected_output, output.written());
             return null;
         },
@@ -1485,7 +1489,7 @@ fn testParseOutput(args: []const []const u8, expected_output: []const u8) !?Opti
     };
     errdefer options.deinit();
 
-    try diagnostics.renderToWriter(args, &output.writer, .no_color);
+    try diagnostics.renderToWriter(&output.writer, args);
     try std.testing.expectEqualStrings(expected_output, output.written());
     return options;
 }

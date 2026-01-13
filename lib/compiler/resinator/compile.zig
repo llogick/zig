@@ -59,6 +59,7 @@ pub const CompileOptions = struct {
     max_string_literal_codepoints: u15 = lex.default_max_string_literal_codepoints,
     silent_duplicate_control_ids: bool = false,
     warn_instead_of_error_on_invalid_code_page: bool = false,
+    include_env_value: ?[]const u8 = null,
 };
 
 pub const Dependencies = struct {
@@ -80,7 +81,7 @@ pub const Dependencies = struct {
     }
 };
 
-pub fn compile(allocator: Allocator, io: Io, source: []const u8, writer: *std.Io.Writer, options: CompileOptions, environ_map: *const std.process.Environ.Map) !void {
+pub fn compile(allocator: Allocator, io: Io, source: []const u8, writer: *std.Io.Writer, options: CompileOptions) !void {
     var lexer = lex.Lexer.init(source, .{
         .default_code_page = options.default_code_page,
         .source_mappings = options.source_mappings,
@@ -148,7 +149,7 @@ pub fn compile(allocator: Allocator, io: Io, source: []const u8, writer: *std.Io
         try search_dirs.append(allocator, .{ .dir = dir, .path = try allocator.dupe(u8, system_include_path) });
     }
     if (!options.ignore_include_env_var) {
-        const INCLUDE = environ_map.get("INCLUDE") orelse "";
+        const INCLUDE = options.include_env_value orelse "";
 
         // The only precedence here is llvm-rc which also uses the platform-specific
         // delimiter. There's no precedence set by `rc.exe` since it's Windows-only.
@@ -405,7 +406,7 @@ pub const Compiler = struct {
         // `/test.bin` relative to include paths and instead only treats it as
         // an absolute path.
         if (std.fs.path.isAbsolute(path)) {
-            const file = try utils.openFileNotDir(Io.Dir.cwd(), io, path, .{});
+            const file = try Io.Dir.cwd().openFile(io, path, .{ .allow_directory = false });
             errdefer file.close(io);
 
             if (self.dependencies) |dependencies| {
@@ -417,7 +418,7 @@ pub const Compiler = struct {
 
         var first_error: ?(std.Io.File.OpenError || std.Io.File.StatError) = null;
         for (self.search_dirs) |search_dir| {
-            if (utils.openFileNotDir(search_dir.dir, io, path, .{})) |file| {
+            if (search_dir.dir.openFile(io, path, .{ .allow_directory = false })) |file| {
                 errdefer file.close(io);
 
                 if (self.dependencies) |dependencies| {

@@ -24,12 +24,10 @@ pub const Diagnostics = struct {
     /// Expects to own all strings within the list.
     strings: std.ArrayList([]const u8) = .empty,
     allocator: Allocator,
-    io: Io,
 
-    pub fn init(allocator: Allocator, io: Io) Diagnostics {
+    pub fn init(allocator: Allocator) Diagnostics {
         return .{
             .allocator = allocator,
-            .io = io,
         };
     }
 
@@ -67,8 +65,7 @@ pub const Diagnostics = struct {
         return @intCast(index);
     }
 
-    pub fn renderToStderr(self: *Diagnostics, cwd: Io.Dir, source: []const u8, source_mappings: ?SourceMappings) Io.Cancelable!void {
-        const io = self.io;
+    pub fn renderToStderr(self: *Diagnostics, io: Io, cwd: Io.Dir, source: []const u8, source_mappings: ?SourceMappings) Io.Cancelable!void {
         const stderr = try io.lockStderr(&.{}, null);
         defer io.unlockStderr();
         for (self.errors.items) |err_details| {
@@ -1120,7 +1117,7 @@ const CorrespondingLines = struct {
 
         var corresponding_lines = CorrespondingLines{
             .span = corresponding_span,
-            .file = try utils.openFileNotDir(cwd, io, corresponding_file, .{}),
+            .file = try cwd.openFile(io, corresponding_file, .{ .allow_directory = false }),
             .code_page = err_details.code_page,
             .file_reader = undefined,
         };

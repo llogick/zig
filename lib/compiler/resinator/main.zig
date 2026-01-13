@@ -12,7 +12,6 @@ const Diagnostics = @import("errors.zig").Diagnostics;
 const cli = @import("cli.zig");
 const preprocess = @import("preprocess.zig");
 const renderErrorMessage = @import("utils.zig").renderErrorMessage;
-const openFileNotDir = @import("utils.zig").openFileNotDir;
 const cvtres = @import("cvtres.zig");
 const hasDisjointCodePage = @import("disjoint_code_page.zig").hasDisjointCodePage;
 const fmtResourceType = @import("res.zig").NameOrOrdinal.fmtResourceType;
@@ -141,7 +140,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
             } };
             defer {
                 diagnostics.deinit();
-                if (!zig_integration) std.debug.unlockStderr();
+                if (!zig_integration) io.unlockStderr();
             }
 
             var comp = aro.Compilation.init(aro_arena, aro_arena, io, &diagnostics, Io.Dir.cwd());
@@ -152,7 +151,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
             try argv.append(aro_arena, "arocc"); // dummy command name
             const resolved_include_paths = try include_paths.get(&error_handler, &environ_map);
-            try preprocess.appendAroArgs(aro_arena, &argv, options, resolved_include_paths, &environ_map);
+            try preprocess.appendAroArgs(aro_arena, &argv, options, resolved_include_paths, environ_map.get("INCLUDE"));
             try argv.append(aro_arena, switch (options.input_source) {
                 .stdio => "-",
                 .filename => |filename| filename,
@@ -194,13 +193,13 @@ pub fn main(init: std.process.Init.Minimal) !void {
                 .stdio => |file| {
                     var file_reader = file.reader(io, &.{});
                     break :full_input file_reader.interface.allocRemaining(gpa, .unlimited) catch |err| {
-                        try error_handler.emitMessage(gpa, io, .err, "unable to read input from stdin: {s}", .{@errorName(err)});
+                        try error_handler.emitMessage(gpa, io, .err, "unable to read input from stdin: {t}", .{file_reader.err orelse err});
                         std.process.exit(1);
                     };
                 },
                 .filename => |input_filename| {
                     break :full_input Io.Dir.cwd().readFileAlloc(io, input_filename, gpa, .unlimited) catch |err| {
-                        try error_handler.emitMessage(gpa, io, .err, "unable to read input file path '{s}': {s}", .{ input_filename, @errorName(err) });
+                        try error_handler.emitMessage(gpa, io, .err, "unable to read input file path '{s}': {t}", .{ input_filename, err });
                         std.process.exit(1);
                     };
                 },
@@ -271,7 +270,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
                 const final_input = try removeComments(mapping_results.result, mapping_results.result, &mapping_results.mappings);
 
-                var diagnostics = Diagnostics.init(gpa, io);
+                var diagnostics = Diagnostics.init(gpa);
                 defer diagnostics.deinit();
 
                 var output_buffer: [4096]u8 = undefined;
@@ -295,9 +294,10 @@ pub fn main(init: std.process.Init.Minimal) !void {
                     .max_string_literal_codepoints = options.max_string_literal_codepoints,
                     .silent_duplicate_control_ids = options.silent_duplicate_control_ids,
                     .warn_instead_of_error_on_invalid_code_page = options.warn_instead_of_error_on_invalid_code_page,
-                }, &environ_map) catch |err| switch (err) {
+                    .include_env_value = environ_map.get("INCLUDE"),
+                }) catch |err| switch (err) {
                     error.ParseError, error.CompileError => {
-                        try error_handler.emitDiagnostics(gpa, Io.Dir.cwd(), final_input, &diagnostics, mapping_results.mappings);
+                        try error_handler.emitDiagnostics(gpa, io, Io.Dir.cwd(), final_input, &diagnostics, mapping_results.mappings);
                         // Delete the output file on error
                         res_stream.cleanupAfterError(io);
                         std.process.exit(1);
@@ -309,7 +309,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
                 // print any warnings/notes
                 if (!zig_integration) {
-                    try diagnostics.renderToStderr(Io.Dir.cwd(), final_input, mapping_results.mappings);
+                    try diagnostics.renderToStderr(io, Io.Dir.cwd(), final_input, mapping_results.mappings);
                 }
 
                 // write the depfile
@@ -460,7 +460,7 @@ const IoStream = struct {
             switch (source) {
                 .filename => |filename| return .{
                     .file = switch (io_direction) {
-                        .input => try openFileNotDir(Io.Dir.cwd(), io, filename, .{}),
+                        .input => try Io.Dir.cwd().openFile(io, filename, .{ .allow_directory = false }),
                         .output => try Io.Dir.cwd().createFile(io, filename, .{}),
                     },
                 },
@@ -733,6 +733,7 @@ const ErrorHandler = union(enum) {
     pub fn emitDiagnostics(
         self: *ErrorHandler,
         allocator: Allocator,
+        io: Io,
         cwd: Io.Dir,
         source: []const u8,
         diagnostics: *Diagnostics,
@@ -745,7 +746,7 @@ const ErrorHandler = union(enum) {
 
                 try server.serveErrorBundle(error_bundle);
             },
-            .stderr => return diagnostics.renderToStderr(cwd, source, mappings),
+            .stderr => return diagnostics.renderToStderr(io, cwd, source, mappings),
         }
     }
 
