@@ -421,7 +421,6 @@ pub fn resolveTargetQuery(io: Io, query: Target.Query) DetectError!Target {
         error.BrokenPipe => return error.Unexpected,
         error.ConnectionResetByPeer => return error.Unexpected,
         error.Timeout => return error.Unexpected,
-        error.NotOpenForReading => return error.Unexpected,
         error.SocketUnconnected => return error.Unexpected,
 
         error.AccessDenied,

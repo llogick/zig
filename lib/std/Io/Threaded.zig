@@ -22,6 +22,12 @@ const windows = std.os.windows;
 const ws2_32 = std.os.windows.ws2_32;
 
 /// Thread-safe.
+///
+/// Used for:
+/// * allocating `Io.Future` and `Io.Group` closures.
+/// * formatting spawning child processes
+/// * scanning environment variables on some targets
+/// * memory-mapping when mmap or equivalent is not available
 allocator: Allocator,
 mutex: std.Thread.Mutex = .{},
 cond: std.Thread.Condition = .{},
@@ -1490,6 +1496,12 @@ pub fn io(t: *Threaded) Io {
             .fileRealPath = fileRealPath,
             .fileHardLink = fileHardLink,
 
+            .fileMemoryMapCreate = fileMemoryMapCreate,
+            .fileMemoryMapDestroy = fileMemoryMapDestroy,
+            .fileMemoryMapSetLength = fileMemoryMapSetLength,
+            .fileMemoryMapRead = fileMemoryMapRead,
+            .fileMemoryMapWrite = fileMemoryMapWrite,
+
             .processExecutableOpen = processExecutableOpen,
             .processExecutablePath = processExecutablePath,
             .lockStderr = lockStderr,
@@ -1642,6 +1654,12 @@ pub fn ioBasic(t: *Threaded) Io {
             .fileRealPath = fileRealPath,
             .fileHardLink = fileHardLink,
 
+            .fileMemoryMapCreate = fileMemoryMapCreate,
+            .fileMemoryMapDestroy = fileMemoryMapDestroy,
+            .fileMemoryMapSetLength = fileMemoryMapSetLength,
+            .fileMemoryMapRead = fileMemoryMapRead,
+            .fileMemoryMapWrite = fileMemoryMapWrite,
+
             .processExecutableOpen = processExecutableOpen,
             .processExecutablePath = processExecutablePath,
             .lockStderr = lockStderr,
@@ -1733,15 +1751,24 @@ const have_wait4 = switch (native_os) {
     else => false,
 };
 
+const have_mmap = switch (native_os) {
+    .wasi, .windows => false,
+    else => true,
+};
+
 const open_sym = if (posix.lfs64_abi) posix.system.open64 else posix.system.open;
 const openat_sym = if (posix.lfs64_abi) posix.system.openat64 else posix.system.openat;
 const fstat_sym = if (posix.lfs64_abi) posix.system.fstat64 else posix.system.fstat;
 const fstatat_sym = if (posix.lfs64_abi) posix.system.fstatat64 else posix.system.fstatat;
 const lseek_sym = if (posix.lfs64_abi) posix.system.lseek64 else posix.system.lseek;
 const preadv_sym = if (posix.lfs64_abi) posix.system.preadv64 else posix.system.preadv;
+const pread_sym = if (posix.lfs64_abi) posix.system.pread64 else posix.system.pread;
 const ftruncate_sym = if (posix.lfs64_abi) posix.system.ftruncate64 else posix.system.ftruncate;
 const pwritev_sym = if (posix.lfs64_abi) posix.system.pwritev64 else posix.system.pwritev;
+const pwrite_sym = if (posix.lfs64_abi) posix.system.pwrite64 else posix.system.pwrite;
 const sendfile_sym = if (posix.lfs64_abi) posix.system.sendfile64 else posix.system.sendfile;
+const mmap_sym = if (posix.lfs64_abi) posix.system.mmap64 else posix.system.mmap;
+
 const linux_copy_file_range_use_c = std.c.versionCheck(if (builtin.abi.isAndroid()) .{
     .major = 34,
     .minor = 0,
@@ -8028,27 +8055,22 @@ fn fileReadPositionalPosix(userdata: ?*anyopaque, file: File, data: []const []u8
                     try syscall.checkCancel();
                     continue;
                 },
-                else => |e| {
-                    syscall.finish();
-                    switch (e) {
-                        .INVAL => |err| return errnoBug(err),
-                        .FAULT => |err| return errnoBug(err),
-                        .AGAIN => |err| return errnoBug(err),
-                        .BADF => return error.NotOpenForReading, // File operation on directory.
-                        .IO => return error.InputOutput,
-                        .ISDIR => return error.IsDir,
-                        .NOBUFS => return error.SystemResources,
-                        .NOMEM => return error.SystemResources,
-                        .NOTCONN => return error.SocketUnconnected,
-                        .CONNRESET => return error.ConnectionResetByPeer,
-                        .TIMEDOUT => return error.Timeout,
-                        .NXIO => return error.Unseekable,
-                        .SPIPE => return error.Unseekable,
-                        .OVERFLOW => return error.Unseekable,
-                        .NOTCAPABLE => return error.AccessDenied,
-                        else => |err| return posix.unexpectedErrno(err),
-                    }
-                },
+                .NOTCONN => |err| return syscall.errnoBug(err), // not a socket
+                .CONNRESET => |err| return syscall.errnoBug(err), // not a socket
+                .BADF => |err| return syscall.errnoBug(err), // use after free
+                .INVAL => |err| return syscall.errnoBug(err),
+                .FAULT => |err| return syscall.errnoBug(err), // segmentation fault
+                .AGAIN => |err| return syscall.errnoBug(err),
+                .IO => return syscall.fail(error.InputOutput),
+                .ISDIR => return syscall.fail(error.IsDir),
+                .NOBUFS => return syscall.fail(error.SystemResources),
+                .NOMEM => return syscall.fail(error.SystemResources),
+                .TIMEDOUT => return syscall.fail(error.Timeout),
+                .NXIO => return syscall.fail(error.Unseekable),
+                .SPIPE => return syscall.fail(error.Unseekable),
+                .OVERFLOW => return syscall.fail(error.Unseekable),
+                .NOTCAPABLE => return syscall.fail(error.AccessDenied),
+                else => |err| return syscall.unexpectedErrno(err),
             }
         }
     }
@@ -8061,33 +8083,28 @@ fn fileReadPositionalPosix(userdata: ?*anyopaque, file: File, data: []const []u8
                 syscall.finish();
                 return @bitCast(rc);
             },
-            .INTR => {
+            .INTR, .TIMEDOUT => {
                 try syscall.checkCancel();
                 continue;
             },
-            else => |e| {
+            .NXIO => return syscall.fail(error.Unseekable),
+            .SPIPE => return syscall.fail(error.Unseekable),
+            .OVERFLOW => return syscall.fail(error.Unseekable),
+            .NOBUFS => return syscall.fail(error.SystemResources),
+            .NOMEM => return syscall.fail(error.SystemResources),
+            .AGAIN => return syscall.fail(error.WouldBlock),
+            .IO => return syscall.fail(error.InputOutput),
+            .ISDIR => return syscall.fail(error.IsDir),
+            .NOTCONN => |err| return syscall.errnoBug(err), // not a socket
+            .CONNRESET => |err| return syscall.errnoBug(err), // not a socket
+            .INVAL => |err| return syscall.errnoBug(err),
+            .FAULT => |err| return syscall.errnoBug(err),
+            .BADF => |err| {
                 syscall.finish();
-                switch (e) {
-                    .INVAL => |err| return errnoBug(err),
-                    .FAULT => |err| return errnoBug(err),
-                    .AGAIN => return error.WouldBlock,
-                    .BADF => |err| {
-                        if (native_os == .wasi) return error.NotOpenForReading; // File operation on directory.
-                        return errnoBug(err); // File descriptor used after closed.
-                    },
-                    .IO => return error.InputOutput,
-                    .ISDIR => return error.IsDir,
-                    .NOBUFS => return error.SystemResources,
-                    .NOMEM => return error.SystemResources,
-                    .NOTCONN => return error.SocketUnconnected,
-                    .CONNRESET => return error.ConnectionResetByPeer,
-                    .TIMEDOUT => return error.Timeout,
-                    .NXIO => return error.Unseekable,
-                    .SPIPE => return error.Unseekable,
-                    .OVERFLOW => return error.Unseekable,
-                    else => |err| return posix.unexpectedErrno(err),
-                }
+                if (native_os == .wasi) return error.IsDir; // File operation on directory.
+                return errnoBug(err); // File descriptor used after closed.
             },
+            else => |err| return syscall.unexpectedErrno(err),
         }
     }
 }
@@ -8770,29 +8787,24 @@ fn fileWritePositional(
                 try syscall.checkCancel();
                 continue;
             },
-            else => |e| {
-                syscall.finish();
-                switch (e) {
-                    .INVAL => |err| return errnoBug(err),
-                    .FAULT => |err| return errnoBug(err),
-                    .AGAIN => return error.WouldBlock,
-                    .BADF => return error.NotOpenForWriting, // Usually a race condition.
-                    .DESTADDRREQ => |err| return errnoBug(err), // `connect` was never called.
-                    .DQUOT => return error.DiskQuota,
-                    .FBIG => return error.FileTooBig,
-                    .IO => return error.InputOutput,
-                    .NOSPC => return error.NoSpaceLeft,
-                    .PERM => return error.PermissionDenied,
-                    .PIPE => return error.BrokenPipe,
-                    .CONNRESET => |err| return errnoBug(err), // Not a socket handle.
-                    .BUSY => return error.DeviceBusy,
-                    .TXTBSY => return error.FileBusy,
-                    .NXIO => return error.Unseekable,
-                    .SPIPE => return error.Unseekable,
-                    .OVERFLOW => return error.Unseekable,
-                    else => |err| return posix.unexpectedErrno(err),
-                }
-            },
+            .INVAL => |err| return syscall.errnoBug(err),
+            .FAULT => |err| return syscall.errnoBug(err),
+            .DESTADDRREQ => |err| return syscall.errnoBug(err), // `connect` was never called.
+            .CONNRESET => |err| return syscall.errnoBug(err), // Not a socket handle.
+            .BADF => |err| return syscall.errnoBug(err), // use after free
+            .AGAIN => return syscall.fail(error.WouldBlock),
+            .DQUOT => return syscall.fail(error.DiskQuota),
+            .FBIG => return syscall.fail(error.FileTooBig),
+            .IO => return syscall.fail(error.InputOutput),
+            .NOSPC => return syscall.fail(error.NoSpaceLeft),
+            .PERM => return syscall.fail(error.PermissionDenied),
+            .PIPE => return syscall.fail(error.BrokenPipe),
+            .BUSY => return syscall.fail(error.DeviceBusy),
+            .TXTBSY => return syscall.fail(error.FileBusy),
+            .NXIO => return syscall.fail(error.Unseekable),
+            .SPIPE => return syscall.fail(error.Unseekable),
+            .OVERFLOW => return syscall.fail(error.Unseekable),
+            else => |err| return syscall.unexpectedErrno(err),
         }
     }
 }
@@ -16106,4 +16118,382 @@ pub fn chdir(dir_path: []const u8) ChdirError!void {
         .FAULT => |err| return syscall.errnoBug(err),
         else => |err| return syscall.unexpectedErrno(err),
     };
+}
+
+fn fileMemoryMapCreate(
+    userdata: ?*anyopaque,
+    file: File,
+    options: File.MemoryMap.CreateOptions,
+) File.MemoryMap.CreateError!File.MemoryMap {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const offset = options.offset;
+
+    const page_size = std.heap.pageSize();
+    const aligned_len: usize = options.len.?; // TODO query if necessary
+
+    if (createFileMap(file, options.protection, offset, options.populate, aligned_len)) |result| {
+        return result;
+    } else |err| switch (err) {
+        error.Unseekable, error.Canceled => |e| return e,
+        else => {
+            if (builtin.mode == .Debug)
+                std.log.warn("memory mapping failed with {t}, falling back to file operations", .{err});
+        },
+    }
+
+    const gpa = t.allocator;
+    const alignment: Alignment = .fromByteUnits(page_size);
+    const memory = m: {
+        const ptr = gpa.rawAlloc(aligned_len, alignment, @returnAddress()) orelse
+            return error.OutOfMemory;
+        break :m ptr[0..aligned_len];
+    };
+    errdefer gpa.rawFree(memory, alignment, @returnAddress());
+
+    // If the mapping does not have read permissions, no need to populate the contents.
+    if (options.protection.read) try mmSyncRead(file, memory, offset);
+
+    return .{
+        .file = file,
+        .offset = offset,
+        .memory = memory,
+        .section = null,
+    };
+}
+
+const CreateFileMapError = error{
+    /// MaximumSize is greater than the system-defined maximum for sections, or
+    /// greater than the specified file and the section is not writable.
+    SectionOversize,
+    /// A file descriptor refers to a non-regular file. Or a file mapping was requested,
+    /// but the file descriptor is not open for reading. Or `MAP.SHARED` was requested
+    /// and `PROT_WRITE` is set, but the file descriptor is not open in `RDWR` mode.
+    /// Or `PROT_WRITE` is set, but the file is append-only.
+    AccessDenied,
+    /// The `prot` argument asks for `PROT_EXEC` but the mapped area belongs to a file on
+    /// a filesystem that was mounted no-exec.
+    PermissionDenied,
+    FileBusy,
+    LockedMemoryLimitExceeded,
+    OperationUnsupported,
+    ProcessFdQuotaExceeded,
+    SystemFdQuotaExceeded,
+    OutOfMemory,
+    MappingAlreadyExists,
+    Unseekable,
+} || Io.Cancelable || Io.UnexpectedError;
+
+fn createFileMap(
+    file: File,
+    protection: std.process.MemoryProtection,
+    offset: usize,
+    populate: bool,
+    aligned_len: usize,
+) CreateFileMapError!File.MemoryMap {
+    if (is_windows) {
+        try Thread.checkCancel();
+
+        var section = windows.INVALID_HANDLE_VALUE;
+        switch (windows.ntdll.NtCreateSection(
+            &section,
+            .{
+                .SPECIFIC = .{ .SECTION = .{
+                    .QUERY = true,
+                    .MAP_WRITE = protection.write,
+                    .MAP_READ = protection.read,
+                    .MAP_EXECUTE = protection.execute,
+                    .EXTEND_SIZE = true,
+                } },
+                .STANDARD = .{ .RIGHTS = .REQUIRED },
+            },
+            null,
+            @constCast(&@as(i64, @intCast(aligned_len))),
+            .{ .READWRITE = true },
+            .{ .COMMIT = populate },
+            file.handle,
+        )) {
+            .SUCCESS => {},
+            .FILE_LOCK_CONFLICT => return error.FileLocked,
+            .INVALID_FILE_FOR_SECTION => return error.OperationUnsupported,
+            else => |status| return windows.unexpectedStatus(status),
+        }
+        const current_process: windows.HANDLE = @ptrFromInt(@as(usize, @bitCast(@as(isize, -1))));
+        var contents_ptr: ?[*]u8 = null;
+        var contents_len = aligned_len;
+        switch (windows.ntdll.NtMapViewOfSection(
+            section,
+            current_process,
+            @ptrCast(&contents_ptr),
+            null,
+            0,
+            null,
+            &contents_len,
+            .Unmap,
+            .{},
+            .{ .READWRITE = true },
+        )) {
+            .SUCCESS => {},
+            .CONFLICTING_ADDRESSES => return error.MappingAlreadyExists,
+            .SECTION_PROTECTION => return error.PermissionDenied,
+            else => |status| return windows.unexpectedStatus(status),
+        }
+        return .{
+            .file = file,
+            .offset = offset,
+            .memory = contents_ptr.?[0..contents_len],
+            .section = section,
+        };
+    } else if (have_mmap) {
+        const prot: posix.PROT = .{
+            .READ = protection.read,
+            .WRITE = protection.write,
+            .EXEC = protection.execute,
+        };
+        const flags: posix.MAP = .{
+            .TYPE = if (native_os == .linux) .SHARED_VALIDATE else .SHARED,
+            .POPULATE = populate,
+        };
+
+        const contents = while (true) {
+            const syscall: Syscall = try .start();
+            const casted_offset = std.math.cast(i64, offset) orelse return error.Unseekable;
+            const rc = mmap_sym(null, aligned_len, prot, flags, file.handle, casted_offset);
+            syscall.finish();
+            const err: posix.E = if (builtin.link_libc) e: {
+                if (rc != std.c.MAP_FAILED) {
+                    break @as([*]u8, @ptrCast(@alignCast(rc)))[0..aligned_len];
+                }
+                break :e @enumFromInt(posix.system._errno().*);
+            } else e: {
+                const err = posix.errno(rc);
+                if (err == .SUCCESS) {
+                    break @as([*]u8, @ptrFromInt(rc))[0..aligned_len];
+                }
+                break :e err;
+            };
+            switch (err) {
+                .SUCCESS => unreachable,
+                .INTR => continue,
+                .ACCES => return error.AccessDenied,
+                .AGAIN => return error.LockedMemoryLimitExceeded,
+                .EXIST => return error.MappingAlreadyExists,
+                .MFILE => return error.ProcessFdQuotaExceeded,
+                .NFILE => return error.SystemFdQuotaExceeded,
+                .NODEV => return error.OperationUnsupported,
+                .NOMEM => return error.OutOfMemory,
+                .PERM => return error.PermissionDenied,
+                .TXTBSY => return error.FileBusy,
+                .OVERFLOW => return error.Unseekable,
+                .BADF => return errnoBug(err), // Always a race condition.
+                .INVAL => return errnoBug(err), // Invalid parameters to mmap()
+                else => return posix.unexpectedErrno(err),
+            }
+        };
+        return .{
+            .file = file,
+            .offset = offset,
+            .memory = contents,
+            .section = {},
+        };
+    }
+
+    return error.OperationUnsupported;
+}
+
+fn fileMemoryMapDestroy(userdata: ?*anyopaque, mm: *File.MemoryMap) void {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const memory = mm.memory;
+    if (mm.section) |section| {
+        if (is_windows) {
+            const current_process: windows.HANDLE = @ptrFromInt(@as(usize, @bitCast(@as(isize, -1))));
+            _ = windows.ntdll.NtUnmapViewOfSection(current_process, memory.ptr);
+            windows.CloseHandle(section);
+        } else {
+            switch (posix.errno(posix.system.munmap(memory.ptr, memory.len))) {
+                .SUCCESS => {},
+                else => |e| {
+                    if (builtin.mode == .Debug)
+                        std.log.err("failed to unmap {d} bytes at {*}: {t}", .{ memory.len, memory.ptr, e });
+                },
+            }
+        }
+    } else {
+        const gpa = t.allocator;
+        const page_size = std.heap.pageSize();
+        const alignment: Alignment = .fromByteUnits(page_size);
+        gpa.rawFree(memory, alignment, @returnAddress());
+    }
+    mm.* = undefined;
+}
+
+fn fileMemoryMapSetLength(
+    userdata: ?*anyopaque,
+    mm: *File.MemoryMap,
+    new_len: usize,
+) File.MemoryMap.SetLengthError!void {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    if (mm.section) |section| switch (native_os) {
+        .windows => {
+            _ = section;
+            @panic("TODO");
+        },
+        .wasi => unreachable,
+        else => {
+            const flags: posix.MREMAP = .{ .MAYMOVE = true };
+            const addr_hint: ?[*]const u8 = null;
+            const new_memory = while (true) {
+                const syscall: Syscall = try .start();
+                const rc = posix.system.mremap(mm.memory.ptr, mm.memory.len, new_len, flags, addr_hint);
+                syscall.finish();
+                const err: posix.E = if (builtin.link_libc) e: {
+                    if (rc != std.c.MAP_FAILED) break @as([*]u8, @ptrCast(@alignCast(rc)))[0..new_len];
+                    break :e @enumFromInt(posix.system._errno().*);
+                } else e: {
+                    const err = posix.errno(rc);
+                    if (err == .SUCCESS) break @as([*]u8, @ptrFromInt(rc))[0..new_len];
+                    break :e err;
+                };
+                switch (err) {
+                    .SUCCESS => unreachable,
+                    .INTR => continue,
+                    .AGAIN => return error.LockedMemoryLimitExceeded,
+                    .NOMEM => return error.OutOfMemory,
+                    .INVAL => return errnoBug(err),
+                    .FAULT => return errnoBug(err),
+                    else => return posix.unexpectedErrno(err),
+                }
+            };
+            mm.memory = new_memory;
+        },
+    } else {
+        const gpa = t.allocator;
+        const page_size = std.heap.pageSize();
+        const alignment: Alignment = .fromByteUnits(page_size);
+        if (gpa.rawRemap(mm.memory, alignment, new_len, @returnAddress())) |new_ptr| {
+            mm.memory = new_ptr[0..new_len];
+        } else {
+            const new_ptr = gpa.rawAlloc(new_len, alignment, @returnAddress()) orelse
+                return error.OutOfMemory;
+            const copy_len = @min(new_len, mm.memory.len);
+            @memcpy(new_ptr[0..copy_len], mm.memory[0..copy_len]);
+            mm.memory = new_ptr[0..new_len];
+        }
+    }
+}
+
+fn fileMemoryMapRead(userdata: ?*anyopaque, mm: *File.MemoryMap) File.ReadPositionalError!void {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    _ = t;
+    if (mm.section != null) return;
+    return mmSyncRead(mm.file, mm.memory, mm.offset);
+}
+
+fn fileMemoryMapWrite(userdata: ?*anyopaque, mm: *File.MemoryMap) File.WritePositionalError!void {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    _ = t;
+    if (mm.section != null) return;
+    return mmSyncWrite(mm.file, mm.memory, mm.offset);
+}
+
+fn mmSyncRead(file: File, memory: []u8, offset: u64) File.ReadPositionalError!void {
+    switch (native_os) {
+        .windows => @panic("TODO"),
+        .wasi => @panic("TODO"),
+        else => {
+            var i: usize = 0;
+            const syscall: Syscall = try .start();
+            while (true) {
+                const buf = memory[i..];
+                if (buf.len == 0) {
+                    syscall.finish();
+                    break;
+                }
+                const rc = pread_sym(file.handle, buf.ptr, buf.len, @intCast(offset + i));
+                switch (posix.errno(rc)) {
+                    .SUCCESS => {
+                        const n: usize = @intCast(rc);
+                        if (n == 0) {
+                            syscall.finish();
+                            @memset(memory[i..], 0);
+                            break;
+                        }
+                        i += n;
+                        try syscall.checkCancel();
+                        continue;
+                    },
+                    .INTR, .TIMEDOUT => {
+                        try syscall.checkCancel();
+                        continue;
+                    },
+                    .NXIO => return syscall.fail(error.Unseekable),
+                    .SPIPE => return syscall.fail(error.Unseekable),
+                    .OVERFLOW => return syscall.fail(error.Unseekable),
+                    .NOBUFS => return syscall.fail(error.SystemResources),
+                    .NOMEM => return syscall.fail(error.SystemResources),
+                    .AGAIN => return syscall.fail(error.WouldBlock),
+                    .IO => return syscall.fail(error.InputOutput),
+                    .ISDIR => return syscall.fail(error.IsDir),
+                    .NOTCONN => |err| return syscall.errnoBug(err), // not a socket
+                    .CONNRESET => |err| return syscall.errnoBug(err), // not a socket
+                    .INVAL => |err| return syscall.errnoBug(err),
+                    .FAULT => |err| return syscall.errnoBug(err),
+                    .BADF => |err| {
+                        syscall.finish();
+                        if (native_os == .wasi) return error.IsDir; // File operation on directory.
+                        return errnoBug(err); // File descriptor used after closed.
+                    },
+                    else => |err| return syscall.unexpectedErrno(err),
+                }
+            }
+        },
+    }
+}
+
+fn mmSyncWrite(file: File, memory: []u8, offset: u64) File.WritePositionalError!void {
+    switch (native_os) {
+        .windows => @panic("TODO"),
+        .wasi => @panic("TODO"),
+        else => {
+            var i: usize = 0;
+            const syscall: Syscall = try .start();
+            while (true) {
+                const buf = memory[i..];
+                if (buf.len == 0) {
+                    syscall.finish();
+                    break;
+                }
+                const rc = pwrite_sym(file.handle, buf.ptr, buf.len, @intCast(offset));
+                switch (posix.errno(rc)) {
+                    .SUCCESS => {
+                        const n: usize = @bitCast(rc);
+                        i += n;
+                        try syscall.checkCancel();
+                        continue;
+                    },
+                    .INTR => {
+                        try syscall.checkCancel();
+                        continue;
+                    },
+                    .INVAL => |err| return syscall.errnoBug(err),
+                    .FAULT => |err| return syscall.errnoBug(err),
+                    .DESTADDRREQ => |err| return syscall.errnoBug(err), // not a socket
+                    .CONNRESET => |err| return syscall.errnoBug(err), // not a socket
+                    .BADF => |err| return syscall.errnoBug(err), // use after free
+                    .AGAIN => return syscall.fail(error.WouldBlock),
+                    .DQUOT => return syscall.fail(error.DiskQuota),
+                    .FBIG => return syscall.fail(error.FileTooBig),
+                    .IO => return syscall.fail(error.InputOutput),
+                    .NOSPC => return syscall.fail(error.NoSpaceLeft),
+                    .PERM => return syscall.fail(error.PermissionDenied),
+                    .PIPE => return syscall.fail(error.BrokenPipe),
+                    .BUSY => return syscall.fail(error.DeviceBusy),
+                    .TXTBSY => return syscall.fail(error.FileBusy),
+                    .NXIO => return syscall.fail(error.Unseekable),
+                    .SPIPE => return syscall.fail(error.Unseekable),
+                    .OVERFLOW => return syscall.fail(error.Unseekable),
+                    else => |err| return syscall.unexpectedErrno(err),
+                }
+            }
+        },
+    }
 }

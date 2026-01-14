@@ -433,7 +433,7 @@ pub fn read(fd: fd_t, buf: []u8) ReadError!usize {
             .FAULT => unreachable,
             .AGAIN => return error.WouldBlock,
             .CANCELED => return error.Canceled,
-            .BADF => return error.NotOpenForReading, // Can be a race condition.
+            .BADF => return error.Unexpected, // use after free
             .IO => return error.InputOutput,
             .ISDIR => return error.IsDir,
             .NOBUFS => return error.SystemResources,

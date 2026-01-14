@@ -1,4 +1,3 @@
-/// TODO add a mapped file abstraction to std.Io
 const MappedFile = @This();
 
 const builtin = @import("builtin");
