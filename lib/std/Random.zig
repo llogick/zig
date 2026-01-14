@@ -26,6 +26,7 @@ pub const Sfc64 = @import("Random/Sfc64.zig");
 pub const RomuTrio = @import("Random/RomuTrio.zig");
 pub const SplitMix64 = @import("Random/SplitMix64.zig");
 pub const ziggurat = @import("Random/ziggurat.zig");
+pub const lcg = @import("Random/lcg.zig");
 
 /// Any comparison of this field may result in illegal behavior, since it may be set to
 /// `undefined` in cases where the random implementation does not have any associated
