@@ -34,7 +34,7 @@ fn erand48(xsubi: *[3]c_ushort) callconv(.c) f64 {
     const next_xi = separate_lcg.next();
 
     xsubi.* = .{ @truncate(next_xi & 0xFFFF), @truncate((next_xi >> 16) & 0xFFFF), @truncate((next_xi >> 32) & 0xFFFF) };
-    return @as(f64, next_xi) / @as(f64, std.math.maxInt(u48));
+    return @as(f64, @bitCast(0x3ff0000000000000 | (@as(u64, next_xi) << 4))) - 1.0;
 }
 
 fn jrand48(xsubi: *[3]c_ushort) callconv(.c) c_long {
@@ -58,7 +58,7 @@ fn nrand48(xsubi: *[3]c_ushort) callconv(.c) c_long {
 }
 
 fn drand48() callconv(.c) f64 {
-    return 2e-48 * @as(f64, lcg.next());
+    return @as(f64, @bitCast(0x3ff0000000000000 | (@as(u64, lcg.next()) << 4))) - 1.0;
 }
 
 fn lrand48() callconv(.c) c_long {
