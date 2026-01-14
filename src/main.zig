@@ -665,6 +665,7 @@ const usage_build_generic =
     \\  -weak_framework [name]         (Darwin) link against framework and mark it and all referenced symbols as weak
     \\  -F[dir]                        (Darwin) add search path for frameworks
     \\  --export=[value]               (WebAssembly) Force a symbol to be exported
+    \\  --exported_symbols_list [file] (Darwin) Force symbols in the file to be exported
     \\
     \\Test Options:
     \\  --test-filter [text]           Skip tests that do not match any filter
@@ -2612,6 +2613,16 @@ fn buildOutputType(
                     };
                 } else if (mem.eql(u8, arg, "--export")) {
                     try linker_export_symbol_names.append(arena, linker_args_it.nextOrFatal());
+                } else if (mem.eql(u8, arg, "-exported_symbols_list")) {
+                    const exported_symbols_list = linker_args_it.nextOrFatal();
+                    const content = Io.Dir.cwd().readFileAlloc(io, exported_symbols_list, arena, .limited(10 * 1024 * 1024)) catch |err| {
+                        fatal("unable to read exported symbols list '{s}': {s}", .{ exported_symbols_list, @errorName(err) });
+                    };
+                    var symbols_it = mem.splitScalar(u8, content, '\n');
+                    while (symbols_it.next()) |line| {
+                        if (line.len == 0) continue;
+                        try linker_export_symbol_names.append(arena, line);
+                    }
                 } else if (mem.eql(u8, arg, "--compress-debug-sections")) {
                     const arg1 = linker_args_it.nextOrFatal();
                     linker_compress_debug_sections = std.meta.stringToEnum(std.zig.CompressDebugSections, arg1) orelse {
