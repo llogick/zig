@@ -16150,8 +16150,7 @@ fn fileMemoryMapCreate(
     };
     errdefer gpa.rawFree(memory, alignment, @returnAddress());
 
-    // If the mapping does not have read permissions, no need to populate the contents.
-    if (options.protection.read) try mmSyncRead(file, memory, offset);
+    if (!options.undefined_contents) try mmSyncRead(file, memory, offset);
 
     return .{
         .file = file,

@@ -592,3 +592,44 @@ test "randomSecure" {
     // that two sets of 50 bytes were equal.
     try expect(!mem.eql(u8, &buf_a, &buf_b));
 }
+
+test "memory mapping" {
+    const io = testing.io;
+
+    var tmp = tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "blah.txt",
+        .data = "this is my data123",
+    });
+
+    {
+        var file = try tmp.dir.openFile(io, "blah.txt", .{});
+        defer file.close(io);
+
+        var mm = try file.createMemoryMap(io, .{});
+        defer mm.destroy(io);
+
+        try expectEqualStrings("this is my data123", mm.memory);
+        mm.memory[5] = '9';
+        mm.memory[8] = '9';
+
+        try mm.write(io);
+    }
+
+    var buffer: [100]u8 = undefined;
+    const updated_contents = try tmp.dir.readFile(io, "blah.txt", &buffer);
+    try expectEqualStrings("this9is9my data123", updated_contents);
+
+    var file = try tmp.dir.openFile(io, "blah.txt", .{});
+    defer file.close(io);
+
+    var mm = try file.createMemoryMap(io, .{
+        .protection = .{ .read = true },
+        .offset = 2,
+    });
+    defer mm.destroy(io);
+
+    try expectEqualStrings("is9is9my data123", mm.memory);
+}

@@ -784,6 +784,10 @@ pub fn hardLink(
     return io.vtable.fileHardLink(io.userdata, file, new_dir, new_sub_path, options);
 }
 
+pub fn createMemoryMap(file: File, io: Io, options: MemoryMap.CreateOptions) MemoryMap.CreateError!MemoryMap {
+    return .create(io, file, options);
+}
+
 test {
     _ = Reader;
     _ = Writer;

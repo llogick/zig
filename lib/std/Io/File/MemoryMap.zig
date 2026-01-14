@@ -36,7 +36,14 @@ pub const CreateError = error{
 } || Allocator.Error || File.ReadPositionalError;
 
 pub const CreateOptions = struct {
+    /// When this has read set to false, bytes that are not modified before a
+    /// sync may have the original file contents, or may be set to zero.
     protection: std.process.MemoryProtection = .{ .read = true, .write = true },
+    /// If set to `true`, allows bytes observed before calling `read` to be
+    /// undefined, and bytes unwritten before calling `write` to write
+    /// undefined memory to the file.
+    undefined_contents: bool = false,
+    /// Prefault the pages.
     populate: bool = true,
     /// Byte index of file to start from.
     offset: u64 = 0,
@@ -46,6 +53,8 @@ pub const CreateOptions = struct {
     len: ?usize = null,
 };
 
+/// To release the resources associated with the returned `MemoryMap`, call
+/// `destroy`.
 pub fn create(io: Io, file: File, options: CreateOptions) CreateError!MemoryMap {
     return io.vtable.fileMemoryMapCreate(io.userdata, file, options);
 }
