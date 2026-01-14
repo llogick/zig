@@ -665,7 +665,6 @@ const usage_build_generic =
     \\  -weak_framework [name]         (Darwin) link against framework and mark it and all referenced symbols as weak
     \\  -F[dir]                        (Darwin) add search path for frameworks
     \\  --export=[value]               (WebAssembly) Force a symbol to be exported
-    \\  --exported_symbols_list [file] (Darwin) Force symbols in the file to be exported
     \\
     \\Test Options:
     \\  --test-filter [text]           Skip tests that do not match any filter
