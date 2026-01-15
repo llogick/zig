@@ -958,46 +958,48 @@ fn addStaticLlvmOptionsToModule(mod: *std.Build.Module, options: struct {
         .flags = &zig_cpp_cflags,
     });
 
+    const lsl_options: std.Build.Module.LinkSystemLibraryOptions = .{ .use_pkg_config = .no };
+
     for (clang_libs) |lib_name| {
-        mod.linkSystemLibrary(lib_name, .{});
+        mod.linkSystemLibrary(lib_name, lsl_options);
     }
 
     for (lld_libs) |lib_name| {
-        mod.linkSystemLibrary(lib_name, .{});
+        mod.linkSystemLibrary(lib_name, lsl_options);
     }
 
     for (llvm_libs) |lib_name| {
-        mod.linkSystemLibrary(lib_name, .{});
+        mod.linkSystemLibrary(lib_name, lsl_options);
     }
 
     if (options.llvm_has_m68k) for (llvm_libs_m68k) |lib_name| {
-        mod.linkSystemLibrary(lib_name, .{});
+        mod.linkSystemLibrary(lib_name, lsl_options);
     };
 
     if (options.llvm_has_csky) for (llvm_libs_csky) |lib_name| {
-        mod.linkSystemLibrary(lib_name, .{});
+        mod.linkSystemLibrary(lib_name, lsl_options);
     };
 
     if (options.llvm_has_arc) for (llvm_libs_arc) |lib_name| {
-        mod.linkSystemLibrary(lib_name, .{});
+        mod.linkSystemLibrary(lib_name, lsl_options);
     };
 
     if (options.llvm_has_xtensa) for (llvm_libs_xtensa) |lib_name| {
-        mod.linkSystemLibrary(lib_name, .{});
+        mod.linkSystemLibrary(lib_name, lsl_options);
     };
 
-    mod.linkSystemLibrary("z", .{});
-    mod.linkSystemLibrary("zstd", .{});
+    mod.linkSystemLibrary("z", lsl_options);
+    mod.linkSystemLibrary("zstd", lsl_options);
 
     if (mod.resolved_target.?.result.os.tag != .windows or mod.resolved_target.?.result.abi != .msvc) {
         // This means we rely on clang-or-zig-built LLVM, Clang, LLD libraries.
-        mod.linkSystemLibrary("c++", .{});
+        mod.linkSystemLibrary("c++", lsl_options);
     }
 
     if (mod.resolved_target.?.result.os.tag == .windows) {
-        mod.linkSystemLibrary("version", .{});
-        mod.linkSystemLibrary("uuid", .{});
-        mod.linkSystemLibrary("ole32", .{});
+        mod.linkSystemLibrary("version", lsl_options);
+        mod.linkSystemLibrary("uuid", lsl_options);
+        mod.linkSystemLibrary("ole32", lsl_options);
     }
 }
 
