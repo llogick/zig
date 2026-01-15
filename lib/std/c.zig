@@ -3863,11 +3863,11 @@ pub const W = switch (native_os) {
         }
 
         pub fn IFCONTINUED(s: u32) bool {
-            return ((s & 0x7f) == 0xffff);
+            return (s == CONTINUED);
         }
 
         pub fn IFSTOPPED(s: u32) bool {
-            return ((s & 0x7f != 0x7f) and !IFCONTINUED(s));
+            return (((s & 0x7f) == STOPPED) and !IFCONTINUED(s));
         }
 
         pub fn IFSIGNALED(s: u32) bool {
