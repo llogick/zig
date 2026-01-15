@@ -629,19 +629,20 @@ test "memory mapping" {
     try expectEqualStrings("this9is9my data123", updated_contents);
 
     {
-        var file = try tmp.dir.openFile(io, "blah.txt", .{ .mode = .read_only });
+        var file = try tmp.dir.openFile(io, "blah.txt", .{ .mode = .read_write });
         defer file.close(io);
 
         var mm = try file.createMemoryMap(io, .{
             .len = "this9is9my".len,
-            .protection = .{ .read = true },
         });
         defer mm.destroy(io);
 
         try expectEqualStrings("this9is9my", mm.memory);
 
         // Cross a page boundary to require an actual remap.
-        try mm.setLength(io, .{ .len = std.heap.pageSize() * 2 });
+        try mm.setLength(io, .{
+            .len = std.heap.pageSize() * 2,
+        });
         try mm.read(io);
 
         try expectEqualStrings("this9is9my data123\x00\x00", mm.memory[0.."this9is9my data123\x00\x00".len]);

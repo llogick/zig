@@ -16238,6 +16238,8 @@ fn createFileMap(
         try Thread.checkCancel();
 
         var section = windows.INVALID_HANDLE_VALUE;
+        const section_size: windows.LARGE_INTEGER = @intCast(len);
+        const page = windows.PAGE.fromProtection(protection) orelse return error.AccessDenied;
         switch (windows.ntdll.NtCreateSection(
             &section,
             .{
@@ -16251,8 +16253,8 @@ fn createFileMap(
                 .STANDARD = .{ .RIGHTS = .REQUIRED },
             },
             null,
-            @constCast(&@as(i64, @intCast(len))),
-            .{ .READWRITE = true },
+            &section_size,
+            page,
             .{ .COMMIT = populate },
             file.handle,
         )) {
@@ -16260,6 +16262,7 @@ fn createFileMap(
             .FILE_LOCK_CONFLICT => return error.FileLockConflict,
             .INVALID_FILE_FOR_SECTION => return error.OperationUnsupported,
             .ACCESS_DENIED => return error.AccessDenied,
+            .SECTION_TOO_BIG => return error.SectionOversize,
             else => |status| return windows.unexpectedStatus(status),
         }
         var contents_ptr: ?[*]align(std.heap.page_size_min) u8 = null;
@@ -16274,7 +16277,7 @@ fn createFileMap(
             &contents_len,
             .Unmap,
             .{},
-            .{ .READWRITE = true },
+            page,
         )) {
             .SUCCESS => {},
             .CONFLICTING_ADDRESSES => return error.MappingAlreadyExists,
@@ -16363,16 +16366,20 @@ fn fileMemoryMapDestroy(userdata: ?*anyopaque, mm: *File.MemoryMap) void {
     const memory = mm.memory;
     if (mm.section) |section| switch (native_os) {
         .windows => {
+            if (section == windows.INVALID_HANDLE_VALUE) return;
             _ = windows.ntdll.NtUnmapViewOfSection(windows.current_process, memory.ptr);
             windows.CloseHandle(section);
         },
         .wasi => unreachable,
-        else => switch (posix.errno(posix.system.munmap(memory.ptr, memory.len))) {
-            .SUCCESS => {},
-            else => |e| {
-                if (builtin.mode == .Debug)
-                    std.log.err("failed to unmap {d} bytes at {*}: {t}", .{ memory.len, memory.ptr, e });
-            },
+        else => {
+            if (memory.len == 0) return;
+            switch (posix.errno(posix.system.munmap(memory.ptr, memory.len))) {
+                .SUCCESS => {},
+                else => |e| {
+                    if (builtin.mode == .Debug)
+                        std.log.err("failed to unmap {d} bytes at {*}: {t}", .{ memory.len, memory.ptr, e });
+                },
+            }
         },
     } else {
         const gpa = t.allocator;
@@ -16394,47 +16401,16 @@ fn fileMemoryMapSetLength(
     const new_len = options.len;
 
     if (mm.section) |section| {
-        const aligned_old_len = alignment.forward(old_memory.len);
-        const aligned_new_len = alignment.forward(new_len);
-        if (aligned_new_len == aligned_old_len) {
+        if (alignment.forward(new_len) == alignment.forward(old_memory.len)) {
             mm.memory.len = new_len;
             return;
         }
         switch (native_os) {
             .windows => {
-                if (aligned_new_len > aligned_old_len) {
-                    var new_section_size: windows.LARGE_INTEGER = @intCast(aligned_new_len);
-                    switch (windows.ntdll.NtExtendSection(section, &new_section_size)) {
-                        .SUCCESS => {},
-                        else => |status| return windows.unexpectedStatus(status),
-                    }
-                    assert(new_section_size == aligned_new_len);
-                    mm.memory.len = new_len;
-                } else {
-                    _ = windows.ntdll.NtUnmapViewOfSection(windows.current_process, old_memory.ptr);
-                    windows.CloseHandle(section);
-                    var contents_len = aligned_new_len;
-                    var contents_ptr: ?[*]align(std.heap.page_size_min) u8 = null;
-                    switch (windows.ntdll.NtMapViewOfSection(
-                        section,
-                        windows.current_process,
-                        @ptrCast(&contents_ptr),
-                        null,
-                        0,
-                        null,
-                        &contents_len,
-                        .Unmap,
-                        .{},
-                        .{ .READWRITE = true },
-                    )) {
-                        .SUCCESS => {},
-                        .SECTION_PROTECTION => return error.PermissionDenied,
-                        .INVALID_VIEW_SIZE => |status| return windows.statusBug(status),
-                        else => |status| return windows.unexpectedStatus(status),
-                    }
-                    assert(contents_len == aligned_new_len);
-                    mm.memory = contents_ptr.?[0..new_len];
-                }
+                _ = windows.ntdll.NtUnmapViewOfSection(windows.current_process, old_memory.ptr);
+                windows.CloseHandle(section);
+                mm.section = windows.INVALID_HANDLE_VALUE;
+                mm.memory = &.{};
             },
             .wasi => unreachable,
             .linux => {
@@ -16463,6 +16439,7 @@ fn fileMemoryMapSetLength(
                     }
                 };
                 mm.memory = new_memory;
+                return;
             },
             else => {
                 switch (posix.errno(posix.system.munmap(old_memory.ptr, old_memory.len))) {
@@ -16475,19 +16452,20 @@ fn fileMemoryMapSetLength(
                         return error.Unexpected;
                     },
                 }
-                if (createFileMap(mm.file, options.protection, mm.offset, options.populate, new_len)) |result| {
-                    mm.* = result;
-                    return;
-                } else |err| switch (err) {
-                    error.OperationUnsupported,
-                    error.Unseekable,
-                    error.SectionOversize,
-                    error.MappingAlreadyExists,
-                    error.FileLockConflict,
-                    => return error.Unexpected, // It worked before on the same open file.
-                    else => |e| return e,
-                }
+                mm.memory = &.{};
             },
+        }
+        if (createFileMap(mm.file, options.protection, mm.offset, options.populate, new_len)) |result| {
+            mm.* = result;
+            return;
+        } else |err| switch (err) {
+            error.OperationUnsupported,
+            error.Unseekable,
+            error.SectionOversize,
+            error.MappingAlreadyExists,
+            error.FileLockConflict,
+            => return error.Unexpected, // It worked before on the same open file.
+            else => |e| return e,
         }
     } else {
         const gpa = t.allocator;

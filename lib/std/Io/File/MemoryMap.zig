@@ -95,6 +95,11 @@ pub const SetLengthError = error{
 /// `options` is needed because the mapping may need to be destroyed and
 /// re-created. All the same options must be provided except for `len` which is
 /// the new length.
+///
+/// This operation cannot be completed atomically on all operating systems.
+/// When this function fails, the `MemoryMap` may be left in an unmapped state,
+/// which can be detected by checking if `memory.len` is zero. In such case it
+/// is safe to call `destroy` which will have no effect.
 pub fn setLength(mm: *MemoryMap, io: Io, options: CreateOptions) SetLengthError!void {
     return io.vtable.fileMemoryMapSetLength(io.userdata, mm, options);
 }

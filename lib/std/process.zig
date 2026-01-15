@@ -1030,16 +1030,7 @@ pub fn protectMemory(memory: []align(std.heap.page_size_min) u8, protection: Mem
         var size = memory.len; // ntdll takes an extra level of indirection here
         var old: windows.PAGE = undefined;
         const current_process: windows.HANDLE = @ptrFromInt(@as(usize, @bitCast(@as(isize, -1))));
-        const new: windows.PAGE = switch (@as(u3, @bitCast(protection))) {
-            0b000 => .{ .NOACCESS = true },
-            0b001 => .{ .READONLY = true },
-            0b010 => return error.AccessDenied, // +w -r not allowed
-            0b011 => .{ .READWRITE = true },
-            0b100 => .{ .EXECUTE = true },
-            0b101 => .{ .EXECUTE_READ = true },
-            0b110 => return error.AccessDenied, // +w -r not allowed
-            0b111 => .{ .EXECUTE_READWRITE = true },
-        };
+        const new = windows.PAGE.fromProtection(protection) orelse return error.AccessDenied;
         switch (windows.ntdll.NtProtectVirtualMemory(current_process, @ptrCast(&addr), &size, new, &old)) {
             .SUCCESS => return,
             .INVALID_ADDRESS => return error.AccessDenied,
