@@ -7963,7 +7963,7 @@ fn fileReadStreamingPosix(userdata: ?*anyopaque, file: File, data: []const []u8)
                     switch (e) {
                         .INVAL => |err| return errnoBug(err),
                         .FAULT => |err| return errnoBug(err),
-                        .BADF => return error.NotOpenForReading, // File operation on directory.
+                        .BADF => return error.IsDir, // File operation on directory.
                         .IO => return error.InputOutput,
                         .ISDIR => return error.IsDir,
                         .NOBUFS => return error.SystemResources,
@@ -8793,7 +8793,7 @@ fn fileWritePositional(
                         .INVAL => |err| return errnoBug(err),
                         .FAULT => |err| return errnoBug(err),
                         .AGAIN => |err| return errnoBug(err),
-                        .BADF => return error.NotOpenForWriting, // can be a race condition.
+                        .BADF => |err| return errnoBug(err), // use after free
                         .DESTADDRREQ => |err| return errnoBug(err), // `connect` was never called.
                         .DQUOT => return error.DiskQuota,
                         .FBIG => return error.FileTooBig,
@@ -16176,6 +16176,7 @@ fn fileMemoryMapCreate(
             return result;
         } else |err| switch (err) {
             error.Unseekable, error.Canceled, error.AccessDenied => |e| return e,
+            error.OperationUnsupported => {},
             else => {
                 if (builtin.mode == .Debug)
                     std.log.warn("memory mapping failed with {t}, falling back to file operations", .{err});
@@ -16478,104 +16479,178 @@ fn fileMemoryMapWrite(userdata: ?*anyopaque, mm: *File.MemoryMap) File.WritePosi
 }
 
 fn mmSyncRead(file: File, memory: []u8, offset: u64) File.ReadPositionalError!void {
-    switch (native_os) {
-        .windows => @panic("TODO"),
-        .wasi => @panic("TODO"),
-        else => {
-            var i: usize = 0;
-            const syscall: Syscall = try .start();
-            while (true) {
-                const buf = memory[i..];
-                if (buf.len == 0) {
-                    syscall.finish();
-                    break;
-                }
-                const rc = pread_sym(file.handle, buf.ptr, buf.len, @intCast(offset + i));
-                switch (posix.errno(rc)) {
-                    .SUCCESS => {
-                        const n: usize = @intCast(rc);
-                        if (n == 0) {
-                            syscall.finish();
-                            @memset(memory[i..], 0);
-                            break;
-                        }
-                        i += n;
-                        try syscall.checkCancel();
-                        continue;
-                    },
-                    .INTR, .TIMEDOUT => {
-                        try syscall.checkCancel();
-                        continue;
-                    },
-                    .NXIO => return syscall.fail(error.Unseekable),
-                    .SPIPE => return syscall.fail(error.Unseekable),
-                    .OVERFLOW => return syscall.fail(error.Unseekable),
-                    .NOBUFS => return syscall.fail(error.SystemResources),
-                    .NOMEM => return syscall.fail(error.SystemResources),
-                    .AGAIN => return syscall.fail(error.WouldBlock),
-                    .IO => return syscall.fail(error.InputOutput),
-                    .ISDIR => return syscall.fail(error.IsDir),
-                    .NOTCONN => |err| return syscall.errnoBug(err), // not a socket
-                    .CONNRESET => |err| return syscall.errnoBug(err), // not a socket
-                    .INVAL => |err| return syscall.errnoBug(err),
-                    .FAULT => |err| return syscall.errnoBug(err),
-                    .BADF => |err| {
-                        syscall.finish();
-                        if (native_os == .wasi) return error.IsDir; // File operation on directory.
-                        return errnoBug(err); // File descriptor used after closed.
-                    },
-                    else => |err| return syscall.unexpectedErrno(err),
-                }
+    if (is_windows) {
+        @panic("TODO");
+    } else if (native_os == .wasi and !builtin.link_libc) {
+        var i: usize = 0;
+        const syscall: Syscall = try .start();
+        while (true) {
+            const buf = memory[i..];
+            if (buf.len == 0) {
+                syscall.finish();
+                break;
             }
-        },
+            var n: usize = undefined;
+            const vec: std.os.wasi.iovec_t = .{ .base = buf.ptr, .len = buf.len };
+            switch (std.os.wasi.fd_pread(file.handle, (&vec)[0..1], 1, offset + i, &n)) {
+                .SUCCESS => {
+                    if (n == 0) {
+                        syscall.finish();
+                        @memset(memory[i..], 0);
+                        break;
+                    }
+                    i += n;
+                    try syscall.checkCancel();
+                    continue;
+                },
+                .INTR, .TIMEDOUT => {
+                    try syscall.checkCancel();
+                    continue;
+                },
+                .NOTCONN => |err| return syscall.errnoBug(err), // not a socket
+                .CONNRESET => |err| return syscall.errnoBug(err), // not a socket
+                .BADF => |err| return syscall.errnoBug(err), // use after free
+                .INVAL => |err| return syscall.errnoBug(err),
+                .FAULT => |err| return syscall.errnoBug(err), // segmentation fault
+                .AGAIN => |err| return syscall.errnoBug(err),
+                .IO => return syscall.fail(error.InputOutput),
+                .ISDIR => return syscall.fail(error.IsDir),
+                .NOBUFS => return syscall.fail(error.SystemResources),
+                .NOMEM => return syscall.fail(error.SystemResources),
+                .NXIO => return syscall.fail(error.Unseekable),
+                .SPIPE => return syscall.fail(error.Unseekable),
+                .OVERFLOW => return syscall.fail(error.Unseekable),
+                .NOTCAPABLE => return syscall.fail(error.AccessDenied),
+                else => |err| return syscall.unexpectedErrno(err),
+            }
+        }
+    } else {
+        var i: usize = 0;
+        const syscall: Syscall = try .start();
+        while (true) {
+            const buf = memory[i..];
+            if (buf.len == 0) {
+                syscall.finish();
+                break;
+            }
+            const rc = pread_sym(file.handle, buf.ptr, buf.len, @intCast(offset + i));
+            switch (posix.errno(rc)) {
+                .SUCCESS => {
+                    const n: usize = @intCast(rc);
+                    if (n == 0) {
+                        syscall.finish();
+                        @memset(memory[i..], 0);
+                        break;
+                    }
+                    i += n;
+                    try syscall.checkCancel();
+                    continue;
+                },
+                .INTR, .TIMEDOUT => {
+                    try syscall.checkCancel();
+                    continue;
+                },
+                .NXIO => return syscall.fail(error.Unseekable),
+                .SPIPE => return syscall.fail(error.Unseekable),
+                .OVERFLOW => return syscall.fail(error.Unseekable),
+                .NOBUFS => return syscall.fail(error.SystemResources),
+                .NOMEM => return syscall.fail(error.SystemResources),
+                .AGAIN => return syscall.fail(error.WouldBlock),
+                .IO => return syscall.fail(error.InputOutput),
+                .ISDIR => return syscall.fail(error.IsDir),
+                .NOTCONN => |err| return syscall.errnoBug(err), // not a socket
+                .CONNRESET => |err| return syscall.errnoBug(err), // not a socket
+                .INVAL => |err| return syscall.errnoBug(err),
+                .FAULT => |err| return syscall.errnoBug(err),
+                .BADF => |err| return syscall.errnoBug(err), // use after free
+                else => |err| return syscall.unexpectedErrno(err),
+            }
+        }
     }
 }
 
 fn mmSyncWrite(file: File, memory: []u8, offset: u64) File.WritePositionalError!void {
-    switch (native_os) {
-        .windows => @panic("TODO"),
-        .wasi => @panic("TODO"),
-        else => {
-            var i: usize = 0;
-            const syscall: Syscall = try .start();
-            while (true) {
-                const buf = memory[i..];
-                if (buf.len == 0) {
-                    syscall.finish();
-                    break;
-                }
-                const rc = pwrite_sym(file.handle, buf.ptr, buf.len, @intCast(offset));
-                switch (posix.errno(rc)) {
-                    .SUCCESS => {
-                        const n: usize = @bitCast(rc);
-                        i += n;
-                        try syscall.checkCancel();
-                        continue;
-                    },
-                    .INTR => {
-                        try syscall.checkCancel();
-                        continue;
-                    },
-                    .INVAL => |err| return syscall.errnoBug(err),
-                    .FAULT => |err| return syscall.errnoBug(err),
-                    .DESTADDRREQ => |err| return syscall.errnoBug(err), // not a socket
-                    .CONNRESET => |err| return syscall.errnoBug(err), // not a socket
-                    .BADF => |err| return syscall.errnoBug(err), // use after free
-                    .AGAIN => return syscall.fail(error.WouldBlock),
-                    .DQUOT => return syscall.fail(error.DiskQuota),
-                    .FBIG => return syscall.fail(error.FileTooBig),
-                    .IO => return syscall.fail(error.InputOutput),
-                    .NOSPC => return syscall.fail(error.NoSpaceLeft),
-                    .PERM => return syscall.fail(error.PermissionDenied),
-                    .PIPE => return syscall.fail(error.BrokenPipe),
-                    .BUSY => return syscall.fail(error.DeviceBusy),
-                    .TXTBSY => return syscall.fail(error.FileBusy),
-                    .NXIO => return syscall.fail(error.Unseekable),
-                    .SPIPE => return syscall.fail(error.Unseekable),
-                    .OVERFLOW => return syscall.fail(error.Unseekable),
-                    else => |err| return syscall.unexpectedErrno(err),
-                }
+    if (is_windows) {
+        @panic("TODO");
+    } else if (native_os == .wasi and !builtin.link_libc) {
+        var i: usize = 0;
+        var n: usize = undefined;
+        const syscall: Syscall = try .start();
+        while (true) {
+            const buf = memory[i..];
+            if (buf.len == 0) {
+                syscall.finish();
+                break;
             }
-        },
+            const iovec: std.os.wasi.ciovec_t = .{ .base = buf.ptr, .len = buf.len };
+            switch (std.os.wasi.fd_pwrite(file.handle, (&iovec)[0..1], 1, offset + i, &n)) {
+                .SUCCESS => {
+                    i += n;
+                    try syscall.checkCancel();
+                    continue;
+                },
+                .INTR => {
+                    try syscall.checkCancel();
+                    continue;
+                },
+                .DQUOT => return syscall.fail(error.DiskQuota),
+                .FBIG => return syscall.fail(error.FileTooBig),
+                .IO => return syscall.fail(error.InputOutput),
+                .NOSPC => return syscall.fail(error.NoSpaceLeft),
+                .PERM => return syscall.fail(error.PermissionDenied),
+                .PIPE => return syscall.fail(error.BrokenPipe),
+                .NOTCAPABLE => return syscall.fail(error.AccessDenied),
+                .NXIO => return syscall.fail(error.Unseekable),
+                .SPIPE => return syscall.fail(error.Unseekable),
+                .OVERFLOW => return syscall.fail(error.Unseekable),
+                .INVAL => |err| return syscall.errnoBug(err),
+                .FAULT => |err| return syscall.errnoBug(err),
+                .AGAIN => |err| return syscall.errnoBug(err),
+                .BADF => |err| return syscall.errnoBug(err), // use after free
+                .DESTADDRREQ => |err| return syscall.errnoBug(err), // not a socket
+                else => |err| return syscall.unexpectedErrno(err),
+            }
+        }
+    } else {
+        var i: usize = 0;
+        const syscall: Syscall = try .start();
+        while (true) {
+            const buf = memory[i..];
+            if (buf.len == 0) {
+                syscall.finish();
+                break;
+            }
+            const rc = pwrite_sym(file.handle, buf.ptr, buf.len, @intCast(offset + i));
+            switch (posix.errno(rc)) {
+                .SUCCESS => {
+                    const n: usize = @bitCast(rc);
+                    i += n;
+                    try syscall.checkCancel();
+                    continue;
+                },
+                .INTR => {
+                    try syscall.checkCancel();
+                    continue;
+                },
+                .INVAL => |err| return syscall.errnoBug(err),
+                .FAULT => |err| return syscall.errnoBug(err),
+                .DESTADDRREQ => |err| return syscall.errnoBug(err), // not a socket
+                .CONNRESET => |err| return syscall.errnoBug(err), // not a socket
+                .BADF => |err| return syscall.errnoBug(err), // use after free
+                .AGAIN => return syscall.fail(error.WouldBlock),
+                .DQUOT => return syscall.fail(error.DiskQuota),
+                .FBIG => return syscall.fail(error.FileTooBig),
+                .IO => return syscall.fail(error.InputOutput),
+                .NOSPC => return syscall.fail(error.NoSpaceLeft),
+                .PERM => return syscall.fail(error.PermissionDenied),
+                .PIPE => return syscall.fail(error.BrokenPipe),
+                .BUSY => return syscall.fail(error.DeviceBusy),
+                .TXTBSY => return syscall.fail(error.FileBusy),
+                .NXIO => return syscall.fail(error.Unseekable),
+                .SPIPE => return syscall.fail(error.Unseekable),
+                .OVERFLOW => return syscall.fail(error.Unseekable),
+                else => |err| return syscall.unexpectedErrno(err),
+            }
+        }
     }
 }
