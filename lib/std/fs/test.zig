@@ -827,11 +827,6 @@ test "file operations on directories" {
                     const buf = try ctx.dir.readFileAlloc(io, test_dir_name, testing.allocator, .unlimited);
                     testing.allocator.free(buf);
                 },
-                .wasi => {
-                    // WASI return EBADF, which gets mapped to NotOpenForReading.
-                    // See https://github.com/bytecodealliance/wasmtime/issues/1935
-                    try expectError(error.NotOpenForReading, ctx.dir.readFileAlloc(io, test_dir_name, testing.allocator, .unlimited));
-                },
                 else => {
                     try expectError(error.IsDir, ctx.dir.readFileAlloc(io, test_dir_name, testing.allocator, .unlimited));
                 },
@@ -851,13 +846,9 @@ test "file operations on directories" {
                 defer handle.close(io);
 
                 // Reading from the handle should fail
-                const expected_err = switch (native_os) {
-                    .wasi => error.NotOpenForReading,
-                    else => error.IsDir,
-                };
                 var buf: [1]u8 = undefined;
-                try expectError(expected_err, handle.readStreaming(io, &.{&buf}));
-                try expectError(expected_err, handle.readPositional(io, &.{&buf}, 0));
+                try expectError(error.IsDir, handle.readStreaming(io, &.{&buf}));
+                try expectError(error.IsDir, handle.readPositional(io, &.{&buf}, 0));
             }
             try expectError(error.IsDir, ctx.dir.openFile(io, test_dir_name, .{ .allow_directory = false, .mode = .read_only }));
 
