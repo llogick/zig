@@ -13,9 +13,9 @@ file: File,
 /// Byte index inside `file` where `memory` starts. Page-aligned.
 offset: u64,
 /// Memory that may or may not remain consistent with file contents. Use `read`
-/// and `write` to ensure synchronization points. Pointer is page-aligned but
-/// length is not.
-memory: []u8,
+/// and `write` to ensure synchronization points. Length has no alignment
+/// requirement.
+memory: []align(std.heap.page_size_min) u8,
 /// Tells whether it is memory-mapped or file operations. On Windows this also
 /// has a section handle.
 section: ?Section,

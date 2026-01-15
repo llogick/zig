@@ -16198,7 +16198,7 @@ fn fileMemoryMapCreate(
     return .{
         .file = file,
         .offset = offset,
-        .memory = memory,
+        .memory = @alignCast(memory),
         .section = null,
     };
 }
@@ -16283,7 +16283,7 @@ fn createFileMap(
         return .{
             .file = file,
             .offset = offset,
-            .memory = contents_ptr.?[0..contents_len],
+            .memory = @alignCast(contents_ptr.?[0..contents_len]),
             .section = section,
         };
     } else if (have_mmap) {
@@ -16297,6 +16297,8 @@ fn createFileMap(
             .POPULATE = populate,
         };
 
+        const page_align = std.heap.page_size_min;
+
         const contents = while (true) {
             const syscall: Syscall = try .start();
             const casted_offset = std.math.cast(i64, offset) orelse return error.Unseekable;
@@ -16304,13 +16306,13 @@ fn createFileMap(
             syscall.finish();
             const err: posix.E = if (builtin.link_libc) e: {
                 if (rc != std.c.MAP_FAILED) {
-                    break @as([*]u8, @ptrCast(@alignCast(rc)))[0..aligned_len];
+                    break @as([*]align(page_align) u8, @ptrCast(@alignCast(rc)))[0..aligned_len];
                 }
                 break :e @enumFromInt(posix.system._errno().*);
             } else e: {
                 const err = posix.errno(rc);
                 if (err == .SUCCESS) {
-                    break @as([*]u8, @ptrFromInt(rc))[0..aligned_len];
+                    break @as([*]align(page_align) u8, @ptrFromInt(rc))[0..aligned_len];
                 }
                 break :e err;
             };
@@ -16375,6 +16377,7 @@ fn fileMemoryMapSetLength(
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const page_size = std.heap.pageSize();
     const alignment: Alignment = .fromByteUnits(page_size);
+    const page_align = std.heap.page_size_min;
 
     if (mm.section) |section| {
         if (alignment.forward(new_len) == alignment.forward(mm.memory.len)) {
@@ -16395,11 +16398,11 @@ fn fileMemoryMapSetLength(
                     const rc = posix.system.mremap(mm.memory.ptr, mm.memory.len, new_len, flags, addr_hint);
                     syscall.finish();
                     const err: posix.E = if (builtin.link_libc) e: {
-                        if (rc != std.c.MAP_FAILED) break @as([*]u8, @ptrCast(@alignCast(rc)))[0..new_len];
+                        if (rc != std.c.MAP_FAILED) break @as([*]align(page_align) u8, @ptrCast(@alignCast(rc)))[0..new_len];
                         break :e @enumFromInt(posix.system._errno().*);
                     } else e: {
                         const err = posix.errno(rc);
-                        if (err == .SUCCESS) break @as([*]u8, @ptrFromInt(rc))[0..new_len];
+                        if (err == .SUCCESS) break @as([*]align(page_align) u8, @ptrFromInt(rc))[0..new_len];
                         break :e err;
                     };
                     switch (err) {
@@ -16418,10 +16421,11 @@ fn fileMemoryMapSetLength(
     } else {
         const gpa = t.allocator;
         if (gpa.rawRemap(mm.memory, alignment, new_len, @returnAddress())) |new_ptr| {
-            mm.memory = new_ptr[0..new_len];
+            mm.memory = @alignCast(new_ptr[0..new_len]);
         } else {
-            const new_ptr = gpa.rawAlloc(new_len, alignment, @returnAddress()) orelse
-                return error.OutOfMemory;
+            const new_ptr: [*]align(page_align) u8 = @alignCast(
+                gpa.rawAlloc(new_len, alignment, @returnAddress()) orelse return error.OutOfMemory,
+            );
             const copy_len = @min(new_len, mm.memory.len);
             @memcpy(new_ptr[0..copy_len], mm.memory[0..copy_len]);
             mm.memory = new_ptr[0..new_len];
