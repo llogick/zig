@@ -74,6 +74,7 @@ pub fn testAll(b: *Build, build_opts: BuildOptions) *Step {
     macho_step.dependOn(testUnwindInfo(b, .{ .target = default_target }));
     macho_step.dependOn(testUnwindInfoNoSubsectionsX64(b, .{ .target = x86_64_target }));
     macho_step.dependOn(testUnwindInfoNoSubsectionsArm64(b, .{ .target = aarch64_target }));
+    macho_step.dependOn(testEhFramePointerEncodingSdata4(b, .{ .target = aarch64_target }));
     macho_step.dependOn(testWeakBind(b, .{ .target = x86_64_target }));
     macho_step.dependOn(testWeakRef(b, .{ .target = b.resolveTargetQuery(.{
         .cpu_arch = .x86_64,
@@ -2848,6 +2849,71 @@ fn testUnwindInfo(b: *Build, opts: Options) *Step {
     check.checkInSymtab();
     check.checkContains("(was private external) ___gxx_personality_v0");
     test_step.dependOn(&check.step);
+
+    return test_step;
+}
+
+fn testEhFramePointerEncodingSdata4(b: *Build, opts: Options) *Step {
+    const test_step = addTestStep(b, "eh_frame-pointer-encoding-sdata4", opts);
+
+    const a_o = addObject(b, opts, .{ .name = "foo", .asm_source_bytes =
+        \\.global _foo
+        \\.align 2
+        \\_foo:
+        \\  mov w0, #100
+        \\  ret
+        \\LEND_foo:
+        \\
+        \\.section __TEXT,__gcc_except_tab
+        \\LLSDA_foo:
+        \\  .byte 0xff
+        \\  .byte 0xff
+        \\  .byte 0x01
+        \\  .uleb128 0
+        \\
+        \\.section __TEXT,__eh_frame,coalesced,no_toc+strip_static_syms+live_support
+        \\LCIE:
+        \\  .long LCIE_end - LCIE_start
+        \\LCIE_start:
+        \\  .long 0      ; CIE ID
+        \\  .byte 1      ; Version
+        \\  .asciz "zLR" ; Augmentation string
+        \\  .uleb128 1   ; Code alignment factor
+        \\  .sleb128 -8  ; Data alignment factor
+        \\  .byte 30     ; Return address register
+        \\  .uleb128 2   ; Augmentation data length
+        \\  .byte 0x1b   ; LSDA pointer encoding (DW_EH_PE_pcrel | DW_EH_PE_sdata4)
+        \\  .byte 0x1b   ; FDE pointer encoding (DW_EH_PE_pcrel | DW_EH_PE_sdata4)
+        \\  .byte 0x0c   ; DW_CFA_def_cfa
+        \\  .uleb128 31  ; Reg 31
+        \\  .uleb128 0   ; Offset 0
+        \\  .align 3
+        \\LCIE_end:
+        \\LFDE:
+        \\  .long LFDE_end - LFDE_start
+        \\LFDE_start:
+        \\  .long LFDE_start - LCIE ; CIE pointer
+        \\  .long _foo - .          ; PC begin
+        \\  .long LEND_foo - _foo   ; PC range
+        \\  .uleb128 4              ; Augmentation data length
+        \\  .long LLSDA_foo - .     ; LSDA pointer
+        \\  .align 3
+        \\LFDE_end:
+    });
+
+    const exe = addExecutable(b, opts, .{ .name = "main", .c_source_bytes =
+        \\#include <stdio.h>
+        \\int foo();
+        \\int main() {
+        \\  printf("%d\n", foo());
+        \\  return 0;
+        \\}
+    });
+    exe.root_module.addObject(a_o);
+
+    const run = addRunArtifact(exe);
+    run.expectStdOutEqual("100\n");
+    test_step.dependOn(&run.step);
 
     return test_step;
 }

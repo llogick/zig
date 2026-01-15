@@ -3,6 +3,7 @@ pub const Cie = struct {
     offset: u32,
     out_offset: u32 = 0,
     size: u32,
+    address_ptr_size: enum { p32, p64 } = .p64,
     lsda_size: ?enum { p32, p64 } = null,
     personality: ?Personality = null,
     file: File.Index = 0,
@@ -27,8 +28,14 @@ pub const Cie = struct {
         for (aug[1..]) |ch| switch (ch) {
             'R' => {
                 const enc: DW.EH.PE = @bitCast(try reader.takeByte());
-                if (enc != @as(DW.EH.PE, .{ .type = .absptr, .rel = .pcrel })) {
+                if (enc.rel != .pcrel) {
                     @panic("unexpected pointer encoding"); // TODO error
+                }
+
+                switch (enc.type) {
+                    .sdata4 => cie.address_ptr_size = .p32,
+                    .absptr => cie.address_ptr_size = .p64,
+                    else => @panic("unexpected pointer encoding"), // TODO error
                 }
             },
             'P' => {
@@ -131,21 +138,6 @@ pub const Fde = struct {
         const object = fde.getObject(macho_file);
         const sect = object.sections.items(.header)[object.eh_frame_sect_index.?];
 
-        // Parse target atom index
-        const pc_begin = std.mem.readInt(i64, data[8..][0..8], .little);
-        const taddr: u64 = @intCast(@as(i64, @intCast(sect.addr + fde.offset + 8)) + pc_begin);
-        fde.atom = object.findAtom(taddr) orelse {
-            try macho_file.reportParseError2(object.index, "{s},{s}: 0x{x}: invalid function reference in FDE", .{
-                sect.segName(), sect.sectName(), fde.offset + 8,
-            });
-            return error.MalformedObject;
-        };
-        const atom = fde.getAtom(macho_file);
-        fde.atom_offset = @intCast(taddr - atom.getInputAddress(macho_file));
-
-        // Parse pc_range (function size)
-        fde.pc_range = std.mem.readInt(u64, data[16..][0..8], .little);
-
         // Associate with a CIE
         const cie_ptr = std.mem.readInt(u32, data[4..8], .little);
         const cie_offset = fde.offset + 4 - cie_ptr;
@@ -163,10 +155,34 @@ pub const Fde = struct {
 
         const cie = fde.getCie(macho_file);
 
+        // Parse target atom index
+        const pc_begin = switch (cie.address_ptr_size) {
+            .p32 => std.mem.readInt(i32, data[8..][0..4], .little),
+            .p64 => std.mem.readInt(i64, data[8..][0..8], .little),
+        };
+        const taddr: u64 = @intCast(@as(i64, @intCast(sect.addr + fde.offset + 8)) + pc_begin);
+        fde.atom = object.findAtom(taddr) orelse {
+            try macho_file.reportParseError2(object.index, "{s},{s}: 0x{x}: invalid function reference in FDE", .{
+                sect.segName(), sect.sectName(), fde.offset + 8,
+            });
+            return error.MalformedObject;
+        };
+        const atom = fde.getAtom(macho_file);
+        fde.atom_offset = @intCast(taddr - atom.getInputAddress(macho_file));
+
+        // Parse pc_range (function size)
+        fde.pc_range = switch (cie.address_ptr_size) {
+            .p32 => std.mem.readInt(u32, data[12..][0..4], .little),
+            .p64 => std.mem.readInt(u64, data[16..][0..8], .little),
+        };
+
         // Parse LSDA atom index if any
         if (cie.lsda_size) |lsda_size| {
             var reader: std.Io.Reader = .fixed(data);
-            reader.seek = 24;
+            reader.seek = switch (cie.address_ptr_size) {
+                .p32 => 16,
+                .p64 => 24,
+            };
             _ = try reader.takeLeb128(u64); // augmentation length
             fde.lsda_ptr_offset = @intCast(reader.seek);
             const lsda_ptr = switch (lsda_size) {
@@ -378,12 +394,21 @@ pub fn write(macho_file: *MachO, buffer: []u8) void {
                 const offset = fde.out_offset + 8;
                 const saddr = sect.addr + offset;
                 const taddr = fde.getAtom(macho_file).getAddress(macho_file) + fde.atom_offset;
-                std.mem.writeInt(
-                    i64,
-                    buffer[offset..][0..8],
-                    @as(i64, @intCast(taddr)) - @as(i64, @intCast(saddr)),
-                    .little,
-                );
+
+                switch (fde.getCie(macho_file).address_ptr_size) {
+                    .p32 => std.mem.writeInt(
+                        i32,
+                        buffer[offset..][0..4],
+                        @intCast(@as(i64, @intCast(taddr)) - @as(i64, @intCast(saddr))),
+                        .little,
+                    ),
+                    .p64 => std.mem.writeInt(
+                        i64,
+                        buffer[offset..][0..8],
+                        @as(i64, @intCast(taddr)) - @as(i64, @intCast(saddr)),
+                        .little,
+                    ),
+                }
             }
 
             if (fde.getLsdaAtom(macho_file)) |atom| {
@@ -465,12 +490,21 @@ pub fn writeRelocs(macho_file: *MachO, code: []u8, relocs: []macho.relocation_in
                 const offset = fde.out_offset + 8;
                 const saddr = sect.addr + offset;
                 const taddr = fde.getAtom(macho_file).getAddress(macho_file) + fde.atom_offset;
-                std.mem.writeInt(
-                    i64,
-                    code[offset..][0..8],
-                    @as(i64, @intCast(taddr)) - @as(i64, @intCast(saddr)),
-                    .little,
-                );
+
+                switch (fde.getCie(macho_file).address_ptr_size) {
+                    .p32 => std.mem.writeInt(
+                        i32,
+                        code[offset..][0..4],
+                        @intCast(@as(i64, @intCast(taddr)) - @as(i64, @intCast(saddr))),
+                        .little,
+                    ),
+                    .p64 => std.mem.writeInt(
+                        i64,
+                        code[offset..][0..8],
+                        @as(i64, @intCast(taddr)) - @as(i64, @intCast(saddr)),
+                        .little,
+                    ),
+                }
             }
 
             if (fde.getLsdaAtom(macho_file)) |atom| {
