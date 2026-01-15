@@ -16474,15 +16474,16 @@ fn fileMemoryMapSetLength(
         }
     } else {
         const gpa = t.allocator;
-        if (gpa.rawRemap(mm.memory, alignment, new_len, @returnAddress())) |new_ptr| {
+        if (gpa.rawRemap(old_memory, alignment, new_len, @returnAddress())) |new_ptr| {
             mm.memory = @alignCast(new_ptr[0..new_len]);
         } else {
             const new_ptr: [*]align(page_align) u8 = @alignCast(
                 gpa.rawAlloc(new_len, alignment, @returnAddress()) orelse return error.OutOfMemory,
             );
-            const copy_len = @min(new_len, mm.memory.len);
-            @memcpy(new_ptr[0..copy_len], mm.memory[0..copy_len]);
+            const copy_len = @min(new_len, old_memory.len);
+            @memcpy(new_ptr[0..copy_len], old_memory[0..copy_len]);
             mm.memory = new_ptr[0..new_len];
+            gpa.rawFree(old_memory, alignment, @returnAddress());
         }
     }
 }
