@@ -16172,8 +16172,6 @@ fn fileMemoryMapCreate(
     const offset = options.offset;
     const len = options.len;
 
-    assert(std.mem.isAligned(len, std.heap.page_size_min));
-
     if (!t.disable_memory_mapping) {
         if (createFileMap(file, options.protection, offset, options.populate, len)) |result| {
             return result;
@@ -16187,12 +16185,13 @@ fn fileMemoryMapCreate(
     }
 
     const gpa = t.allocator;
+    const page_size = std.heap.pageSize();
+    const alignment: Alignment = .fromByteUnits(page_size);
     const memory = m: {
-        const ptr = gpa.rawAlloc(len, .@"1", @returnAddress()) orelse
-            return error.OutOfMemory;
+        const ptr = gpa.rawAlloc(len, alignment, @returnAddress()) orelse return error.OutOfMemory;
         break :m ptr[0..len];
     };
-    errdefer gpa.rawFree(memory, .@"1", @returnAddress());
+    errdefer gpa.rawFree(memory, alignment, @returnAddress());
 
     if (!options.undefined_contents) try mmSyncRead(file, memory, offset);
 
@@ -16363,7 +16362,7 @@ fn fileMemoryMapDestroy(userdata: ?*anyopaque, mm: *File.MemoryMap) void {
         }
     } else {
         const gpa = t.allocator;
-        gpa.rawFree(memory, .@"1", @returnAddress());
+        gpa.rawFree(memory, .fromByteUnits(std.heap.pageSize()), @returnAddress());
     }
     mm.* = undefined;
 }
@@ -16374,46 +16373,54 @@ fn fileMemoryMapSetLength(
     new_len: usize,
 ) File.MemoryMap.SetLengthError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    assert(std.mem.isAligned(new_len, std.heap.page_size_min));
-    if (mm.section) |section| switch (native_os) {
-        .windows => {
-            _ = section;
-            @panic("TODO");
-        },
-        .wasi => unreachable,
-        else => {
-            const flags: posix.MREMAP = .{ .MAYMOVE = true };
-            const addr_hint: ?[*]const u8 = null;
-            const new_memory = while (true) {
-                const syscall: Syscall = try .start();
-                const rc = posix.system.mremap(mm.memory.ptr, mm.memory.len, new_len, flags, addr_hint);
-                syscall.finish();
-                const err: posix.E = if (builtin.link_libc) e: {
-                    if (rc != std.c.MAP_FAILED) break @as([*]u8, @ptrCast(@alignCast(rc)))[0..new_len];
-                    break :e @enumFromInt(posix.system._errno().*);
-                } else e: {
-                    const err = posix.errno(rc);
-                    if (err == .SUCCESS) break @as([*]u8, @ptrFromInt(rc))[0..new_len];
-                    break :e err;
+    const page_size = std.heap.pageSize();
+    const alignment: Alignment = .fromByteUnits(page_size);
+
+    if (mm.section) |section| {
+        if (alignment.forward(new_len) == alignment.forward(mm.memory.len)) {
+            mm.memory.len = new_len;
+            return;
+        }
+        switch (native_os) {
+            .windows => {
+                _ = section;
+                @panic("TODO");
+            },
+            .wasi => unreachable,
+            else => {
+                const flags: posix.MREMAP = .{ .MAYMOVE = true };
+                const addr_hint: ?[*]const u8 = null;
+                const new_memory = while (true) {
+                    const syscall: Syscall = try .start();
+                    const rc = posix.system.mremap(mm.memory.ptr, mm.memory.len, new_len, flags, addr_hint);
+                    syscall.finish();
+                    const err: posix.E = if (builtin.link_libc) e: {
+                        if (rc != std.c.MAP_FAILED) break @as([*]u8, @ptrCast(@alignCast(rc)))[0..new_len];
+                        break :e @enumFromInt(posix.system._errno().*);
+                    } else e: {
+                        const err = posix.errno(rc);
+                        if (err == .SUCCESS) break @as([*]u8, @ptrFromInt(rc))[0..new_len];
+                        break :e err;
+                    };
+                    switch (err) {
+                        .SUCCESS => unreachable,
+                        .INTR => continue,
+                        .AGAIN => return error.LockedMemoryLimitExceeded,
+                        .NOMEM => return error.OutOfMemory,
+                        .INVAL => return errnoBug(err),
+                        .FAULT => return errnoBug(err),
+                        else => return posix.unexpectedErrno(err),
+                    }
                 };
-                switch (err) {
-                    .SUCCESS => unreachable,
-                    .INTR => continue,
-                    .AGAIN => return error.LockedMemoryLimitExceeded,
-                    .NOMEM => return error.OutOfMemory,
-                    .INVAL => return errnoBug(err),
-                    .FAULT => return errnoBug(err),
-                    else => return posix.unexpectedErrno(err),
-                }
-            };
-            mm.memory = new_memory;
-        },
+                mm.memory = new_memory;
+            },
+        }
     } else {
         const gpa = t.allocator;
-        if (gpa.rawRemap(mm.memory, .@"1", new_len, @returnAddress())) |new_ptr| {
+        if (gpa.rawRemap(mm.memory, alignment, new_len, @returnAddress())) |new_ptr| {
             mm.memory = new_ptr[0..new_len];
         } else {
-            const new_ptr = gpa.rawAlloc(new_len, .@"1", @returnAddress()) orelse
+            const new_ptr = gpa.rawAlloc(new_len, alignment, @returnAddress()) orelse
                 return error.OutOfMemory;
             const copy_len = @min(new_len, mm.memory.len);
             @memcpy(new_ptr[0..copy_len], mm.memory[0..copy_len]);
@@ -16429,16 +16436,11 @@ fn fileMemoryMapRead(userdata: ?*anyopaque, mm: *File.MemoryMap) File.ReadPositi
     return mmSyncRead(mm.file, mm.memory, mm.offset);
 }
 
-fn fileMemoryMapWrite(
-    userdata: ?*anyopaque,
-    mm: *File.MemoryMap,
-    file_size: u64,
-) File.WritePositionalError!void {
+fn fileMemoryMapWrite(userdata: ?*anyopaque, mm: *File.MemoryMap) File.WritePositionalError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     _ = t;
     if (mm.section != null) return;
-    const offset = mm.offset;
-    return mmSyncWrite(mm.file, mm.memory[0..@intCast(file_size - offset)], offset);
+    return mmSyncWrite(mm.file, mm.memory, mm.offset);
 }
 
 fn mmSyncRead(file: File, memory: []u8, offset: u64) File.ReadPositionalError!void {

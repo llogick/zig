@@ -608,20 +608,35 @@ test "memory mapping" {
         var file = try tmp.dir.openFile(io, "blah.txt", .{ .mode = .read_write });
         defer file.close(io);
 
-        const stat = try file.stat(io);
-        const aligned_len = std.mem.alignForward(usize, @intCast(stat.size), std.heap.pageSize());
-
-        var mm = try file.createMemoryMap(io, .{ .len = aligned_len });
+        var mm = try file.createMemoryMap(io, .{ .len = "this is my data123".len });
         defer mm.destroy(io);
 
-        try expectEqualStrings("this is my data123", std.mem.sliceTo(mm.memory, 0));
+        try expectEqualStrings("this is my data123", mm.memory);
         mm.memory[4] = '9';
         mm.memory[7] = '9';
 
-        try mm.write(io, stat.size);
+        try mm.write(io);
     }
 
     var buffer: [100]u8 = undefined;
     const updated_contents = try tmp.dir.readFile(io, "blah.txt", &buffer);
     try expectEqualStrings("this9is9my data123", updated_contents);
+
+    {
+        var file = try tmp.dir.openFile(io, "blah.txt", .{ .mode = .read_only });
+        defer file.close(io);
+
+        var mm = try file.createMemoryMap(io, .{
+            .len = "this9is9my".len,
+            .protection = .{ .read = true },
+        });
+        defer mm.destroy(io);
+
+        try expectEqualStrings("this9is9my", mm.memory);
+
+        try mm.setLength(io, "this9is9my data123".len);
+        try mm.read(io);
+
+        try expectEqualStrings("this9is9my data123", mm.memory);
+    }
 }

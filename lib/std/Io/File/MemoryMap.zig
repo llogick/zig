@@ -13,8 +13,8 @@ file: File,
 /// Byte index inside `file` where `memory` starts. Page-aligned.
 offset: u64,
 /// Memory that may or may not remain consistent with file contents. Use `read`
-/// and `write` to ensure synchronization points. No minimum alignment on the
-/// pointer is guaranteed, but the length is page-aligned.
+/// and `write` to ensure synchronization points. Pointer is page-aligned but
+/// length is not.
 memory: []u8,
 /// Tells whether it is memory-mapped or file operations. On Windows this also
 /// has a section handle.
@@ -37,11 +37,13 @@ pub const CreateError = error{
 } || Allocator.Error || File.ReadPositionalError;
 
 pub const CreateOptions = struct {
-    /// Size of the mapping, in bytes. If this is longer than the file size, it
-    /// will be filled with zeroes.
+    /// Size of the mapping, in bytes. If this is longer than the file size,
+    /// `memory` beyond the file end will be filled with zeroes and it is
+    /// unspecified whether, after calling `write`, the file length will be
+    /// set to `len` or remain unchanged.
     ///
-    /// Asserted to be a multiple of page size which can be obtained via
-    /// `std.heap.pageSize`.
+    /// This value has no minimum alignment requirement, but may gain
+    /// efficiency benefits from being a multiple of `File.Stat.block_size`.
     len: usize,
     /// When this has read set to false, bytes that are not modified before a
     /// sync may have the original file contents, or may be set to zero.
@@ -81,10 +83,9 @@ pub fn setLength(
     mm: *MemoryMap,
     io: Io,
     /// New size of the mapping, in bytes. If this is longer than the file
-    /// size, it will be filled with zeroes. Asserted to be a multiple of page
-    /// size which can be obtained with `std.heap.pageSize`.
+    /// size, it will be filled with zeroes. No alignment requirement.
     new_length: usize,
-) File.SetLengthError!void {
+) SetLengthError!void {
     return io.vtable.fileMemoryMapSetLength(io.userdata, mm, new_length);
 }
 
@@ -95,9 +96,9 @@ pub fn read(mm: *MemoryMap, io: Io) File.ReadPositionalError!void {
 
 /// Synchronizes the contents of `memory` to `file`.
 ///
-/// Size of the mapping may be longer than the file size, so the `file_size`
-/// argument is used to avoid writing too many bytes. If `file_size` is not
-/// handy, use `File.length` to get it.
-pub fn write(mm: *MemoryMap, io: Io, file_size: u64) File.WritePositionalError!void {
-    return io.vtable.fileMemoryMapWrite(io.userdata, mm, file_size);
+/// If `memory.len` is greater than file size, the bytes beyond the end of the
+/// file may be dropped, or they may be written, extending the size of the
+/// file.
+pub fn write(mm: *MemoryMap, io: Io) File.WritePositionalError!void {
+    return io.vtable.fileMemoryMapWrite(io.userdata, mm);
 }

@@ -658,7 +658,7 @@ pub const VTable = struct {
     fileMemoryMapDestroy: *const fn (?*anyopaque, *File.MemoryMap) void,
     fileMemoryMapSetLength: *const fn (?*anyopaque, *File.MemoryMap, n: usize) File.MemoryMap.SetLengthError!void,
     fileMemoryMapRead: *const fn (?*anyopaque, *File.MemoryMap) File.ReadPositionalError!void,
-    fileMemoryMapWrite: *const fn (?*anyopaque, *File.MemoryMap, file_size: u64) File.WritePositionalError!void,
+    fileMemoryMapWrite: *const fn (?*anyopaque, *File.MemoryMap) File.WritePositionalError!void,
 
     processExecutableOpen: *const fn (?*anyopaque, File.OpenFlags) std.process.OpenExecutableError!File,
     processExecutablePath: *const fn (?*anyopaque, buffer: []u8) std.process.ExecutablePathError!usize,

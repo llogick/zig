@@ -68,11 +68,7 @@ pub const Stat = struct {
     ctime: Io.Timestamp,
     /// Smallest chunk length in bytes appropriate for optimal I/O. This will
     /// be set to `1` for operating systems or file systems that do not
-    /// recognize this concept. Not always a power of two. When creating a
-    /// `MemoryMap`, the mapping length must be a multiple of this value.
-    ///
-    /// On Windows, this is whichever is larger: PageSize or
-    /// AllocationGranularity.
+    /// recognize this concept. Not always a power of two.
     block_size: BlockSize,
 };
 
