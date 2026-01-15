@@ -8153,14 +8153,17 @@ fn fileReadPositionalWindows(userdata: ?*anyopaque, file: File, data: []const []
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     _ = t;
 
-    const DWORD = windows.DWORD;
-
     var index: usize = 0;
     while (index < data.len and data[index].len == 0) index += 1;
     if (index == data.len) return 0;
     const buffer = data[index];
-    const want_read_count: DWORD = @min(std.math.maxInt(DWORD), buffer.len);
 
+    return readFilePositionalWindows(file, buffer, offset);
+}
+
+fn readFilePositionalWindows(file: File, buffer: []u8, offset: u64) File.ReadPositionalError!usize {
+    const DWORD = windows.DWORD;
+    const want_read_count: DWORD = @min(std.math.maxInt(DWORD), buffer.len);
     var overlapped: windows.OVERLAPPED = .{
         .Internal = 0,
         .InternalHigh = 0,
@@ -16478,7 +16481,17 @@ fn fileMemoryMapWrite(userdata: ?*anyopaque, mm: *File.MemoryMap) File.WritePosi
 
 fn mmSyncRead(file: File, memory: []u8, offset: u64) File.ReadPositionalError!void {
     if (is_windows) {
-        @panic("TODO");
+        var i: usize = 0;
+        while (true) {
+            const buf = memory[i..];
+            if (buf.len == 0) break;
+            const n = try readFilePositionalWindows(file, buf, offset + i);
+            if (n == 0) {
+                @memset(memory[i..], 0);
+                break;
+            }
+            i += n;
+        }
     } else if (native_os == .wasi and !builtin.link_libc) {
         var i: usize = 0;
         const syscall: Syscall = try .start();
@@ -16569,7 +16582,12 @@ fn mmSyncRead(file: File, memory: []u8, offset: u64) File.ReadPositionalError!vo
 
 fn mmSyncWrite(file: File, memory: []u8, offset: u64) File.WritePositionalError!void {
     if (is_windows) {
-        @panic("TODO");
+        var i: usize = 0;
+        while (true) {
+            const buf = memory[i..];
+            if (buf.len == 0) break;
+            i += try writeFilePositionalWindows(file.handle, memory[i..], offset + i);
+        }
     } else if (native_os == .wasi and !builtin.link_libc) {
         var i: usize = 0;
         var n: usize = undefined;
