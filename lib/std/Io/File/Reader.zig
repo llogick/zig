@@ -33,7 +33,8 @@ pub const Error = error{
     IsDir,
     BrokenPipe,
     ConnectionResetByPeer,
-    Timeout,
+    /// File was not opened with read capability.
+    NotOpenForReading,
     SocketUnconnected,
     /// Non-blocking has been enabled, and reading from the file descriptor
     /// would block.

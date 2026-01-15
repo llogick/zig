@@ -7954,7 +7954,7 @@ fn fileReadStreamingPosix(userdata: ?*anyopaque, file: File, data: []const []u8)
                     syscall.finish();
                     return nread;
                 },
-                .INTR => {
+                .INTR, .TIMEDOUT => {
                     try syscall.checkCancel();
                     continue;
                 },
@@ -7970,7 +7970,6 @@ fn fileReadStreamingPosix(userdata: ?*anyopaque, file: File, data: []const []u8)
                         .NOMEM => return error.SystemResources,
                         .NOTCONN => return error.SocketUnconnected,
                         .CONNRESET => return error.ConnectionResetByPeer,
-                        .TIMEDOUT => return error.Timeout,
                         .NOTCAPABLE => return error.AccessDenied,
                         else => |err| return posix.unexpectedErrno(err),
                     }
@@ -7987,7 +7986,7 @@ fn fileReadStreamingPosix(userdata: ?*anyopaque, file: File, data: []const []u8)
                 syscall.finish();
                 return @intCast(rc);
             },
-            .INTR => {
+            .INTR, .TIMEDOUT => {
                 try syscall.checkCancel();
                 continue;
             },
@@ -7997,9 +7996,9 @@ fn fileReadStreamingPosix(userdata: ?*anyopaque, file: File, data: []const []u8)
                     .INVAL => |err| return errnoBug(err),
                     .FAULT => |err| return errnoBug(err),
                     .AGAIN => return error.WouldBlock,
-                    .BADF => |err| {
+                    .BADF => {
                         if (native_os == .wasi) return error.IsDir; // File operation on directory.
-                        return errnoBug(err); // File descriptor used after closed.
+                        return error.NotOpenForReading;
                     },
                     .IO => return error.InputOutput,
                     .ISDIR => return error.IsDir,
@@ -8007,7 +8006,6 @@ fn fileReadStreamingPosix(userdata: ?*anyopaque, file: File, data: []const []u8)
                     .NOMEM => return error.SystemResources,
                     .NOTCONN => return error.SocketUnconnected,
                     .CONNRESET => return error.ConnectionResetByPeer,
-                    .TIMEDOUT => return error.Timeout,
                     else => |err| return posix.unexpectedErrno(err),
                 }
             },
@@ -8136,10 +8134,10 @@ fn fileReadPositionalPosix(userdata: ?*anyopaque, file: File, data: []const []u8
             .CONNRESET => |err| return syscall.errnoBug(err), // not a socket
             .INVAL => |err| return syscall.errnoBug(err),
             .FAULT => |err| return syscall.errnoBug(err),
-            .BADF => |err| {
+            .BADF => {
                 syscall.finish();
                 if (native_os == .wasi) return error.IsDir; // File operation on directory.
-                return errnoBug(err); // File descriptor used after closed.
+                return error.NotOpenForReading;
             },
             else => |err| return syscall.unexpectedErrno(err),
         }
@@ -8793,7 +8791,7 @@ fn fileWritePositional(
                         .INVAL => |err| return errnoBug(err),
                         .FAULT => |err| return errnoBug(err),
                         .AGAIN => |err| return errnoBug(err),
-                        .BADF => |err| return errnoBug(err), // use after free
+                        .BADF => return error.NotOpenForWriting,
                         .DESTADDRREQ => |err| return errnoBug(err), // `connect` was never called.
                         .DQUOT => return error.DiskQuota,
                         .FBIG => return error.FileTooBig,
@@ -8828,7 +8826,7 @@ fn fileWritePositional(
             .FAULT => |err| return syscall.errnoBug(err),
             .DESTADDRREQ => |err| return syscall.errnoBug(err), // `connect` was never called.
             .CONNRESET => |err| return syscall.errnoBug(err), // Not a socket handle.
-            .BADF => |err| return syscall.errnoBug(err), // use after free
+            .BADF => return syscall.fail(error.NotOpenForWriting),
             .AGAIN => return syscall.fail(error.WouldBlock),
             .DQUOT => return syscall.fail(error.DiskQuota),
             .FBIG => return syscall.fail(error.FileTooBig),
@@ -16636,7 +16634,7 @@ fn mmSyncWrite(file: File, memory: []u8, offset: u64) File.WritePositionalError!
                 .FAULT => |err| return syscall.errnoBug(err),
                 .DESTADDRREQ => |err| return syscall.errnoBug(err), // not a socket
                 .CONNRESET => |err| return syscall.errnoBug(err), // not a socket
-                .BADF => |err| return syscall.errnoBug(err), // use after free
+                .BADF => return syscall.fail(error.NotOpenForWriting),
                 .AGAIN => return syscall.fail(error.WouldBlock),
                 .DQUOT => return syscall.fail(error.DiskQuota),
                 .FBIG => return syscall.fail(error.FileTooBig),

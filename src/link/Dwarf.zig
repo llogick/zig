@@ -50,13 +50,9 @@ pub const UpdateError = error{
     UnexpectedEndOfFile,
     NonResizable,
     /// TODO why is this in the error set?
-    Timeout,
-    /// TODO why is this in the error set?
     ConnectionResetByPeer,
     /// TODO why is this in the error set?
     SocketUnconnected,
-    /// TODO why is this in the error set?
-    NotOpenForWriting,
 } ||
     codegen.GenerateSymbolError ||
     Io.File.OpenError ||

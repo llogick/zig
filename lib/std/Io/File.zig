@@ -554,6 +554,8 @@ pub const ReadPositionalError = error{
     LockViolation,
     /// This file cannot be read positionally.
     Unseekable,
+    /// File was not opened with read capability.
+    NotOpenForReading,
 } || Io.Cancelable || Io.UnexpectedError;
 
 /// Returns 0 on stream end or if `buffer` has no space available for data.
@@ -588,6 +590,8 @@ pub const WritePositionalError = error{
     FileBusy,
     /// This file cannot be written positionally.
     Unseekable,
+    /// File was not opened with write capability.
+    NotOpenForWriting,
 } || Io.Cancelable || Io.UnexpectedError;
 
 /// See also:
