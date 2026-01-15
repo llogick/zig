@@ -16259,6 +16259,7 @@ fn createFileMap(
             .SUCCESS => {},
             .FILE_LOCK_CONFLICT => return error.FileLockConflict,
             .INVALID_FILE_FOR_SECTION => return error.OperationUnsupported,
+            .ACCESS_DENIED => return error.AccessDenied,
             else => |status| return windows.unexpectedStatus(status),
         }
         var contents_ptr: ?[*]align(std.heap.page_size_min) u8 = null;
@@ -16280,10 +16281,15 @@ fn createFileMap(
             .SECTION_PROTECTION => return error.PermissionDenied,
             else => |status| return windows.unexpectedStatus(status),
         }
+        if (builtin.mode == .Debug) {
+            const page_size = std.heap.pageSize();
+            const alignment: Alignment = .fromByteUnits(page_size);
+            assert(contents_len == alignment.forward(len));
+        }
         return .{
             .file = file,
             .offset = offset,
-            .memory = contents_ptr.?[0..contents_len],
+            .memory = contents_ptr.?[0..len],
             .section = section,
         };
     } else if (have_mmap) {
@@ -16410,7 +16416,8 @@ fn fileMemoryMapSetLength(
                     .SECTION_PROTECTION => return error.PermissionDenied,
                     else => |status| return windows.unexpectedStatus(status),
                 }
-                mm.memory = contents_ptr.?[0..contents_len];
+                assert(contents_len == alignment.forward(new_len));
+                mm.memory = contents_ptr.?[0..new_len];
             },
             .wasi => unreachable,
             .linux => {
@@ -16483,15 +16490,15 @@ fn fileMemoryMapSetLength(
 fn fileMemoryMapRead(userdata: ?*anyopaque, mm: *File.MemoryMap) File.ReadPositionalError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     _ = t;
-    if (mm.section != null) return;
-    return mmSyncRead(mm.file, mm.memory, mm.offset);
+    const section = mm.section orelse return mmSyncRead(mm.file, mm.memory, mm.offset);
+    _ = section;
 }
 
 fn fileMemoryMapWrite(userdata: ?*anyopaque, mm: *File.MemoryMap) File.WritePositionalError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     _ = t;
-    if (mm.section != null) return;
-    return mmSyncWrite(mm.file, mm.memory, mm.offset);
+    const section = mm.section orelse return mmSyncWrite(mm.file, mm.memory, mm.offset);
+    _ = section;
 }
 
 fn mmSyncRead(file: File, memory: []u8, offset: u64) File.ReadPositionalError!void {
