@@ -640,9 +640,10 @@ test "memory mapping" {
 
         try expectEqualStrings("this9is9my", mm.memory);
 
-        try mm.setLength(io, .{ .len = "this9is9my data123".len });
+        // Cross a page boundary to require an actual remap.
+        try mm.setLength(io, .{ .len = std.heap.pageSize() * 2 });
         try mm.read(io);
 
-        try expectEqualStrings("this9is9my data123", mm.memory);
+        try expectEqualStrings("this9is9my data123\x00\x00", mm.memory[0.."this9is9my data123\x00\x00".len]);
     }
 }

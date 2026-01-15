@@ -16232,7 +16232,7 @@ fn createFileMap(
     protection: std.process.MemoryProtection,
     offset: u64,
     populate: bool,
-    aligned_len: usize,
+    len: usize,
 ) CreateFileMapError!File.MemoryMap {
     if (is_windows) {
         try Thread.checkCancel();
@@ -16251,7 +16251,7 @@ fn createFileMap(
                 .STANDARD = .{ .RIGHTS = .REQUIRED },
             },
             null,
-            @constCast(&@as(i64, @intCast(aligned_len))),
+            @constCast(&@as(i64, @intCast(len))),
             .{ .READWRITE = true },
             .{ .COMMIT = populate },
             file.handle,
@@ -16261,12 +16261,11 @@ fn createFileMap(
             .INVALID_FILE_FOR_SECTION => return error.OperationUnsupported,
             else => |status| return windows.unexpectedStatus(status),
         }
-        const current_process: windows.HANDLE = @ptrFromInt(@as(usize, @bitCast(@as(isize, -1))));
-        var contents_ptr: ?[*]u8 = null;
-        var contents_len = aligned_len;
+        var contents_ptr: ?[*]align(std.heap.page_size_min) u8 = null;
+        var contents_len = len;
         switch (windows.ntdll.NtMapViewOfSection(
             section,
-            current_process,
+            windows.current_process,
             @ptrCast(&contents_ptr),
             null,
             0,
@@ -16284,7 +16283,7 @@ fn createFileMap(
         return .{
             .file = file,
             .offset = offset,
-            .memory = @alignCast(contents_ptr.?[0..contents_len]),
+            .memory = contents_ptr.?[0..contents_len],
             .section = section,
         };
     } else if (have_mmap) {
@@ -16308,17 +16307,17 @@ fn createFileMap(
         const contents = while (true) {
             const syscall: Syscall = try .start();
             const casted_offset = std.math.cast(i64, offset) orelse return error.Unseekable;
-            const rc = mmap_sym(null, aligned_len, prot, flags, file.handle, casted_offset);
+            const rc = mmap_sym(null, len, prot, flags, file.handle, casted_offset);
             syscall.finish();
             const err: posix.E = if (builtin.link_libc) e: {
                 if (rc != std.c.MAP_FAILED) {
-                    break @as([*]align(page_align) u8, @ptrCast(@alignCast(rc)))[0..aligned_len];
+                    break @as([*]align(page_align) u8, @ptrCast(@alignCast(rc)))[0..len];
                 }
                 break :e @enumFromInt(posix.system._errno().*);
             } else e: {
                 const err = posix.errno(rc);
                 if (err == .SUCCESS) {
-                    break @as([*]align(page_align) u8, @ptrFromInt(rc))[0..aligned_len];
+                    break @as([*]align(page_align) u8, @ptrFromInt(rc))[0..len];
                 }
                 break :e err;
             };
@@ -16356,8 +16355,7 @@ fn fileMemoryMapDestroy(userdata: ?*anyopaque, mm: *File.MemoryMap) void {
     const memory = mm.memory;
     if (mm.section) |section| switch (native_os) {
         .windows => {
-            const current_process: windows.HANDLE = @ptrFromInt(@as(usize, @bitCast(@as(isize, -1))));
-            _ = windows.ntdll.NtUnmapViewOfSection(current_process, memory.ptr);
+            _ = windows.ntdll.NtUnmapViewOfSection(windows.current_process, memory.ptr);
             windows.CloseHandle(section);
         },
         .wasi => unreachable,
@@ -16394,8 +16392,25 @@ fn fileMemoryMapSetLength(
         }
         switch (native_os) {
             .windows => {
-                _ = section;
-                @panic("TODO");
+                var contents_ptr: ?[*]align(page_align) u8 = null;
+                var contents_len = new_len;
+                switch (windows.ntdll.NtMapViewOfSection(
+                    section,
+                    windows.current_process,
+                    @ptrCast(&contents_ptr),
+                    null,
+                    0,
+                    null,
+                    &contents_len,
+                    .Unmap,
+                    .{},
+                    .{ .READWRITE = true },
+                )) {
+                    .SUCCESS => {},
+                    .SECTION_PROTECTION => return error.PermissionDenied,
+                    else => |status| return windows.unexpectedStatus(status),
+                }
+                mm.memory = contents_ptr.?[0..contents_len];
             },
             .wasi => unreachable,
             .linux => {

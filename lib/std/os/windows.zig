@@ -28,6 +28,8 @@ pub const ws2_32 = @import("windows/ws2_32.zig");
 pub const crypt32 = @import("windows/crypt32.zig");
 pub const nls = @import("windows/nls.zig");
 
+pub const current_process: HANDLE = @ptrFromInt(@as(usize, @bitCast(@as(isize, -1))));
+
 pub const FILE = struct {
     // ref: km/ntddk.h
 
