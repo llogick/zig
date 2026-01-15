@@ -432,6 +432,7 @@ pub fn addCases(cases: *@import("tests.zig").ErrorTracesContext) void {
         ,
         .disable_trace_optimized = &.{
             .{ .x86_64, .freebsd },
+            .{ .x86_64, .netbsd },
             .{ .x86_64, .linux },
             .{ .x86, .linux },
             .{ .aarch64, .linux },
