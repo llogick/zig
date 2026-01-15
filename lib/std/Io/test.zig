@@ -181,7 +181,10 @@ test "setTimestamps" {
         .modify_timestamp = .{ .new = stat_old.mtime.subDuration(.fromSeconds(5)) },
     });
     const stat_new = try file.stat(io);
-    if (stat_old.atime) |old_atime| try expect(stat_new.atime.?.nanoseconds < old_atime.nanoseconds);
+    // NetBSD with noatime will just not update the timestamp, and noatime is default in at least NetBSD 11+.
+    if (builtin.os.tag != .netbsd) {
+        if (stat_old.atime) |old_atime| try expect(stat_new.atime.?.nanoseconds < old_atime.nanoseconds);
+    }
     try expect(stat_new.mtime.nanoseconds < stat_old.mtime.nanoseconds);
 }
 
