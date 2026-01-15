@@ -129,6 +129,7 @@ fn mainServer(init: std.process.Init.Minimal) !void {
             },
 
             .run_test => {
+                testing.environ = init.environ;
                 testing.allocator_instance = .{};
                 testing.io_instance = .init(testing.allocator, .{
                     .argv0 = .init(init.args),
@@ -244,6 +245,7 @@ fn mainTerminal(init: std.process.Init.Minimal) void {
             if (testing.allocator_instance.deinit() == .leak) leaks += 1;
         }
         testing.log_level = .warn;
+        testing.environ = init.environ;
 
         const test_node = root_node.start(test_fn.name, 0);
         if (!have_tty) {
