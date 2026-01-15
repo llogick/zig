@@ -10,10 +10,11 @@ const File = Io.File;
 const Allocator = std.mem.Allocator;
 
 file: File,
-/// Byte index inside `file` where `memory` starts.
-offset: usize,
+/// Byte index inside `file` where `memory` starts. Page-aligned.
+offset: u64,
 /// Memory that may or may not remain consistent with file contents. Use `read`
-/// and `write` to ensure synchronization points.
+/// and `write` to ensure synchronization points. No minimum alignment on the
+/// pointer is guaranteed, but the length is page-aligned.
 memory: []u8,
 /// Tells whether it is memory-mapped or file operations. On Windows this also
 /// has a section handle.
@@ -22,10 +23,10 @@ section: ?Section,
 pub const Section = if (is_windows) std.os.windows.HANDLE else void;
 
 pub const CreateError = error{
-    /// A file descriptor refers to a non-regular file. Or a file mapping was requested,
-    /// but the file descriptor is not open for reading. Or `MAP.SHARED` was requested
-    /// and `PROT_WRITE` is set, but the file descriptor is not open in `RDWR` mode.
-    /// Or `PROT_WRITE` is set, but the file is append-only.
+    /// One of the following:
+    /// * The `File.Kind` is not `file`.
+    /// * The file is not open for reading and read access protections enabled.
+    /// * The file is not open for writing and write access protections enabled.
     AccessDenied,
     /// The `prot` argument asks for `PROT_EXEC` but the mapped area belongs to a file on
     /// a filesystem that was mounted no-exec.
@@ -36,6 +37,12 @@ pub const CreateError = error{
 } || Allocator.Error || File.ReadPositionalError;
 
 pub const CreateOptions = struct {
+    /// Size of the mapping, in bytes. If this is longer than the file size, it
+    /// will be filled with zeroes.
+    ///
+    /// Asserted to be a multiple of page size which can be obtained via
+    /// `std.heap.pageSize`.
+    len: usize,
     /// When this has read set to false, bytes that are not modified before a
     /// sync may have the original file contents, or may be set to zero.
     protection: std.process.MemoryProtection = .{ .read = true, .write = true },
@@ -45,12 +52,9 @@ pub const CreateOptions = struct {
     undefined_contents: bool = false,
     /// Prefault the pages.
     populate: bool = true,
-    /// Byte index of file to start from.
+    /// Asserted to be a multiple of page size which can be obtained via
+    /// `std.heap.pageSize`.
     offset: u64 = 0,
-    /// `null` indicates to map the entire file. If mapping the entire file is
-    /// desired and the file size is known, it is more efficient to populate
-    /// the value here.
-    len: ?usize = null,
 };
 
 /// To release the resources associated with the returned `MemoryMap`, call
@@ -73,8 +77,15 @@ pub const SetLengthError = error{
 /// of the file after calling this is unspecified until `write` is called.
 ///
 /// May change the pointer address of `memory`.
-pub fn setLength(mm: *MemoryMap, io: Io, n: usize) File.SetLengthError!void {
-    return io.vtable.fileMemoryMapSetLength(io.userdata, mm, n);
+pub fn setLength(
+    mm: *MemoryMap,
+    io: Io,
+    /// New size of the mapping, in bytes. If this is longer than the file
+    /// size, it will be filled with zeroes. Asserted to be a multiple of page
+    /// size which can be obtained with `std.heap.pageSize`.
+    new_length: usize,
+) File.SetLengthError!void {
+    return io.vtable.fileMemoryMapSetLength(io.userdata, mm, new_length);
 }
 
 /// Synchronizes the contents of `memory` from `file`.
@@ -83,6 +94,10 @@ pub fn read(mm: *MemoryMap, io: Io) File.ReadPositionalError!void {
 }
 
 /// Synchronizes the contents of `memory` to `file`.
-pub fn write(mm: *MemoryMap, io: Io) File.WritePositionalError!void {
-    return io.vtable.fileMemoryMapWrite(io.userdata, mm);
+///
+/// Size of the mapping may be longer than the file size, so the `file_size`
+/// argument is used to avoid writing too many bytes. If `file_size` is not
+/// handy, use `File.length` to get it.
+pub fn write(mm: *MemoryMap, io: Io, file_size: u64) File.WritePositionalError!void {
+    return io.vtable.fileMemoryMapWrite(io.userdata, mm, file_size);
 }

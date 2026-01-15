@@ -22,6 +22,7 @@ pub const INode = std.posix.ino_t;
 pub const NLink = std.posix.nlink_t;
 pub const Uid = std.posix.uid_t;
 pub const Gid = std.posix.gid_t;
+pub const BlockSize = u32;
 
 pub const Kind = enum {
     block_device,
@@ -65,6 +66,14 @@ pub const Stat = struct {
     mtime: Io.Timestamp,
     /// Last status/metadata change time in nanoseconds, relative to UTC 1970-01-01.
     ctime: Io.Timestamp,
+    /// Smallest chunk length in bytes appropriate for optimal I/O. This will
+    /// be set to `1` for operating systems or file systems that do not
+    /// recognize this concept. Not always a power of two. When creating a
+    /// `MemoryMap`, the mapping length must be a multiple of this value.
+    ///
+    /// On Windows, this is whichever is larger: PageSize or
+    /// AllocationGranularity.
+    block_size: BlockSize,
 };
 
 pub fn stdout() File {

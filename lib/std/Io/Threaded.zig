@@ -57,6 +57,7 @@ use_sendfile: UseSendfile = .default,
 use_copy_file_range: UseCopyFileRange = .default,
 use_fcopyfile: UseFcopyfile = .default,
 use_fchmodat2: UseFchmodat2 = .default,
+disable_memory_mapping: bool,
 
 stderr_writer: File.Writer = .{
     .io = undefined,
@@ -74,6 +75,13 @@ null_file: NullFile = .{},
 random_file: RandomFile = .{},
 
 csprng: Csprng = .{},
+
+system_basic_information: SystemBasicInformation = .{},
+
+const SystemBasicInformation = if (!is_windows) struct {} else struct {
+    buffer: windows.SYSTEM_BASIC_INFORMATION = undefined,
+    initialized: std.atomic.Value(bool) = .{ .raw = false },
+};
 
 pub const Csprng = struct {
     rng: std.Random.DefaultCsprng = .{
@@ -1220,6 +1228,8 @@ pub const InitOptions = struct {
     /// * `processExecutablePath` on OpenBSD and Haiku (observes "PATH").
     /// * `processSpawn`, `processSpawnPath`, `processReplace`, `processReplacePath`
     environ: process.Environ,
+    /// If set to `true`, `File.MemoryMap` APIs will always take the fallback path.
+    disable_memory_mapping: bool = false,
 };
 
 /// Related:
@@ -1247,6 +1257,7 @@ pub fn init(
         .argv0 = options.argv0,
         .environ = .{ .process_environ = options.environ },
         .worker_threads = init_single_threaded.worker_threads,
+        .disable_memory_mapping = options.disable_memory_mapping,
     };
 
     const cpu_count = std.Thread.getCpuCount();
@@ -1263,6 +1274,7 @@ pub fn init(
         .argv0 = options.argv0,
         .environ = .{ .process_environ = options.environ },
         .worker_threads = .init(null),
+        .disable_memory_mapping = options.disable_memory_mapping,
     };
 
     if (posix.Sigaction != void) {
@@ -1299,6 +1311,7 @@ pub const init_single_threaded: Threaded = .{
     .argv0 = .empty,
     .environ = .{},
     .worker_threads = .init(null),
+    .disable_memory_mapping = false,
 };
 
 var global_single_threaded_instance: Threaded = .init_single_threaded;
@@ -2935,7 +2948,11 @@ fn fileStatLinux(userdata: ?*anyopaque, file: File) File.StatError!File.Stat {
 
 fn fileStatWindows(userdata: ?*anyopaque, file: File) File.StatError!File.Stat {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    _ = t;
+
+    const block_size: u32 = if (t.systemBasicInformation()) |sbi|
+        @intCast(@max(sbi.PageSize, sbi.AllocationGranularity))
+    else
+        std.heap.page_size_max;
 
     var io_status_block: windows.IO_STATUS_BLOCK = undefined;
     var info: windows.FILE.ALL_INFORMATION = undefined;
@@ -2997,8 +3014,29 @@ fn fileStatWindows(userdata: ?*anyopaque, file: File) File.StatError!File.Stat {
         .atime = windows.fromSysTime(info.BasicInformation.LastAccessTime),
         .mtime = windows.fromSysTime(info.BasicInformation.LastWriteTime),
         .ctime = windows.fromSysTime(info.BasicInformation.ChangeTime),
-        .nlink = 0,
+        .nlink = info.StandardInformation.NumberOfLinks,
+        .block_size = block_size,
     };
+}
+
+fn systemBasicInformation(t: *Threaded) ?*const windows.SYSTEM_BASIC_INFORMATION {
+    if (!t.system_basic_information.initialized.load(.acquire)) {
+        t.mutex.lock();
+        defer t.mutex.unlock();
+
+        switch (windows.ntdll.NtQuerySystemInformation(
+            .SystemBasicInformation,
+            &t.system_basic_information.buffer,
+            @sizeOf(windows.SYSTEM_BASIC_INFORMATION),
+            null,
+        )) {
+            .SUCCESS => {},
+            else => return null,
+        }
+
+        t.system_basic_information.initialized.store(true, .release);
+    }
+    return &t.system_basic_information.buffer;
 }
 
 fn fileStatWasi(userdata: ?*anyopaque, file: File) File.StatError!File.Stat {
@@ -8008,10 +8046,10 @@ fn fileReadStreamingWindows(userdata: ?*anyopaque, file: File, data: []const []u
                 syscall.finish();
                 return 0;
             },
-            .NETNAME_DELETED => return syscall.fail(error.ConnectionResetByPeer),
+            .NETNAME_DELETED => if (is_debug) unreachable else return error.Unexpected,
             .LOCK_VIOLATION => return syscall.fail(error.LockViolation),
             .ACCESS_DENIED => return syscall.fail(error.AccessDenied),
-            .INVALID_HANDLE => return syscall.fail(error.NotOpenForReading),
+            .INVALID_HANDLE => if (is_debug) unreachable else return error.Unexpected,
             // TODO: Determine if INVALID_FUNCTION is possible in more scenarios than just passing
             // a handle to a directory.
             .INVALID_FUNCTION => return syscall.fail(error.IsDir),
@@ -8158,10 +8196,10 @@ fn fileReadPositionalWindows(userdata: ?*anyopaque, file: File, data: []const []
                 syscall.finish();
                 return 0;
             },
-            .NETNAME_DELETED => return syscall.fail(error.ConnectionResetByPeer),
+            .NETNAME_DELETED => if (is_debug) unreachable else return error.Unexpected,
             .LOCK_VIOLATION => return syscall.fail(error.LockViolation),
             .ACCESS_DENIED => return syscall.fail(error.AccessDenied),
-            .INVALID_HANDLE => return syscall.fail(error.NotOpenForReading),
+            .INVALID_HANDLE => if (is_debug) unreachable else return error.Unexpected,
             // TODO: Determine if INVALID_FUNCTION is possible in more scenarios than just passing
             // a handle to a directory.
             .INVALID_FUNCTION => return syscall.fail(error.IsDir),
@@ -8842,7 +8880,7 @@ fn writeFilePositionalWindows(
             .NOT_ENOUGH_MEMORY => return syscall.fail(error.SystemResources),
             .NOT_ENOUGH_QUOTA => return syscall.fail(error.SystemResources),
             .NO_DATA => return syscall.fail(error.BrokenPipe),
-            .INVALID_HANDLE => return syscall.fail(error.NotOpenForWriting),
+            .INVALID_HANDLE => if (is_debug) unreachable else return error.Unexpected, // use after free
             .LOCK_VIOLATION => return syscall.fail(error.LockViolation),
             .ACCESS_DENIED => return syscall.fail(error.AccessDenied),
             .WORKING_SET_QUOTA => return syscall.fail(error.SystemResources),
@@ -12470,6 +12508,7 @@ const linux_statx_request: std.os.linux.STATX = .{
     .INO = true,
     .SIZE = true,
     .NLINK = true,
+    .BLOCKS = true,
 };
 
 const linux_statx_check: std.os.linux.STATX = .{
@@ -12481,6 +12520,7 @@ const linux_statx_check: std.os.linux.STATX = .{
     .INO = true,
     .SIZE = true,
     .NLINK = true,
+    .BLOCKS = false,
 };
 
 fn statFromLinux(stx: *const std.os.linux.Statx) Io.UnexpectedError!File.Stat {
@@ -12499,6 +12539,7 @@ fn statFromLinux(stx: *const std.os.linux.Statx) Io.UnexpectedError!File.Stat {
         },
         .mtime = .{ .nanoseconds = @intCast(@as(i128, stx.mtime.sec) * std.time.ns_per_s + stx.mtime.nsec) },
         .ctime = .{ .nanoseconds = @intCast(@as(i128, stx.ctime.sec) * std.time.ns_per_s + stx.ctime.nsec) },
+        .block_size = if (stx.mask.BLOCKS) stx.blksize else 1,
     };
 }
 
@@ -12547,6 +12588,7 @@ fn statFromPosix(st: *const posix.Stat) File.Stat {
         .atime = timestampFromPosix(&atime),
         .mtime = timestampFromPosix(&mtime),
         .ctime = timestampFromPosix(&ctime),
+        .block_size = st.blksize,
     };
 }
 
@@ -12568,6 +12610,7 @@ fn statFromWasi(st: *const std.os.wasi.filestat_t) File.Stat {
         .atime = .fromNanoseconds(st.atim),
         .mtime = .fromNanoseconds(st.mtim),
         .ctime = .fromNanoseconds(st.ctim),
+        .block_size = 1,
     };
 }
 
@@ -16127,28 +16170,29 @@ fn fileMemoryMapCreate(
 ) File.MemoryMap.CreateError!File.MemoryMap {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const offset = options.offset;
+    const len = options.len;
 
-    const page_size = std.heap.pageSize();
-    const aligned_len: usize = options.len.?; // TODO query if necessary
+    assert(std.mem.isAligned(len, std.heap.page_size_min));
 
-    if (createFileMap(file, options.protection, offset, options.populate, aligned_len)) |result| {
-        return result;
-    } else |err| switch (err) {
-        error.Unseekable, error.Canceled => |e| return e,
-        else => {
-            if (builtin.mode == .Debug)
-                std.log.warn("memory mapping failed with {t}, falling back to file operations", .{err});
-        },
+    if (!t.disable_memory_mapping) {
+        if (createFileMap(file, options.protection, offset, options.populate, len)) |result| {
+            return result;
+        } else |err| switch (err) {
+            error.Unseekable, error.Canceled, error.AccessDenied => |e| return e,
+            else => {
+                if (builtin.mode == .Debug)
+                    std.log.warn("memory mapping failed with {t}, falling back to file operations", .{err});
+            },
+        }
     }
 
     const gpa = t.allocator;
-    const alignment: Alignment = .fromByteUnits(page_size);
     const memory = m: {
-        const ptr = gpa.rawAlloc(aligned_len, alignment, @returnAddress()) orelse
+        const ptr = gpa.rawAlloc(len, .@"1", @returnAddress()) orelse
             return error.OutOfMemory;
-        break :m ptr[0..aligned_len];
+        break :m ptr[0..len];
     };
-    errdefer gpa.rawFree(memory, alignment, @returnAddress());
+    errdefer gpa.rawFree(memory, .@"1", @returnAddress());
 
     if (!options.undefined_contents) try mmSyncRead(file, memory, offset);
 
@@ -16180,12 +16224,13 @@ const CreateFileMapError = error{
     OutOfMemory,
     MappingAlreadyExists,
     Unseekable,
+    FileLockConflict,
 } || Io.Cancelable || Io.UnexpectedError;
 
 fn createFileMap(
     file: File,
     protection: std.process.MemoryProtection,
-    offset: usize,
+    offset: u64,
     populate: bool,
     aligned_len: usize,
 ) CreateFileMapError!File.MemoryMap {
@@ -16212,7 +16257,7 @@ fn createFileMap(
             file.handle,
         )) {
             .SUCCESS => {},
-            .FILE_LOCK_CONFLICT => return error.FileLocked,
+            .FILE_LOCK_CONFLICT => return error.FileLockConflict,
             .INVALID_FILE_FOR_SECTION => return error.OperationUnsupported,
             else => |status| return windows.unexpectedStatus(status),
         }
@@ -16318,9 +16363,7 @@ fn fileMemoryMapDestroy(userdata: ?*anyopaque, mm: *File.MemoryMap) void {
         }
     } else {
         const gpa = t.allocator;
-        const page_size = std.heap.pageSize();
-        const alignment: Alignment = .fromByteUnits(page_size);
-        gpa.rawFree(memory, alignment, @returnAddress());
+        gpa.rawFree(memory, .@"1", @returnAddress());
     }
     mm.* = undefined;
 }
@@ -16331,6 +16374,7 @@ fn fileMemoryMapSetLength(
     new_len: usize,
 ) File.MemoryMap.SetLengthError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
+    assert(std.mem.isAligned(new_len, std.heap.page_size_min));
     if (mm.section) |section| switch (native_os) {
         .windows => {
             _ = section;
@@ -16366,12 +16410,10 @@ fn fileMemoryMapSetLength(
         },
     } else {
         const gpa = t.allocator;
-        const page_size = std.heap.pageSize();
-        const alignment: Alignment = .fromByteUnits(page_size);
-        if (gpa.rawRemap(mm.memory, alignment, new_len, @returnAddress())) |new_ptr| {
+        if (gpa.rawRemap(mm.memory, .@"1", new_len, @returnAddress())) |new_ptr| {
             mm.memory = new_ptr[0..new_len];
         } else {
-            const new_ptr = gpa.rawAlloc(new_len, alignment, @returnAddress()) orelse
+            const new_ptr = gpa.rawAlloc(new_len, .@"1", @returnAddress()) orelse
                 return error.OutOfMemory;
             const copy_len = @min(new_len, mm.memory.len);
             @memcpy(new_ptr[0..copy_len], mm.memory[0..copy_len]);
@@ -16387,11 +16429,16 @@ fn fileMemoryMapRead(userdata: ?*anyopaque, mm: *File.MemoryMap) File.ReadPositi
     return mmSyncRead(mm.file, mm.memory, mm.offset);
 }
 
-fn fileMemoryMapWrite(userdata: ?*anyopaque, mm: *File.MemoryMap) File.WritePositionalError!void {
+fn fileMemoryMapWrite(
+    userdata: ?*anyopaque,
+    mm: *File.MemoryMap,
+    file_size: u64,
+) File.WritePositionalError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     _ = t;
     if (mm.section != null) return;
-    return mmSyncWrite(mm.file, mm.memory, mm.offset);
+    const offset = mm.offset;
+    return mmSyncWrite(mm.file, mm.memory[0..@intCast(file_size - offset)], offset);
 }
 
 fn mmSyncRead(file: File, memory: []u8, offset: u64) File.ReadPositionalError!void {
