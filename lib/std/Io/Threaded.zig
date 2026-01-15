@@ -7998,7 +7998,7 @@ fn fileReadStreamingPosix(userdata: ?*anyopaque, file: File, data: []const []u8)
                     .FAULT => |err| return errnoBug(err),
                     .AGAIN => return error.WouldBlock,
                     .BADF => |err| {
-                        if (native_os == .wasi) return error.NotOpenForReading; // File operation on directory.
+                        if (native_os == .wasi) return error.IsDir; // File operation on directory.
                         return errnoBug(err); // File descriptor used after closed.
                     },
                     .IO => return error.InputOutput,
@@ -8089,7 +8089,7 @@ fn fileReadPositionalPosix(userdata: ?*anyopaque, file: File, data: []const []u8
                     syscall.finish();
                     return nread;
                 },
-                .INTR => {
+                .INTR, .TIMEDOUT => {
                     try syscall.checkCancel();
                     continue;
                 },
@@ -8103,7 +8103,6 @@ fn fileReadPositionalPosix(userdata: ?*anyopaque, file: File, data: []const []u8
                 .ISDIR => return syscall.fail(error.IsDir),
                 .NOBUFS => return syscall.fail(error.SystemResources),
                 .NOMEM => return syscall.fail(error.SystemResources),
-                .TIMEDOUT => return syscall.fail(error.Timeout),
                 .NXIO => return syscall.fail(error.Unseekable),
                 .SPIPE => return syscall.fail(error.Unseekable),
                 .OVERFLOW => return syscall.fail(error.Unseekable),
@@ -12588,7 +12587,7 @@ fn statFromPosix(st: *const posix.Stat) File.Stat {
         .atime = timestampFromPosix(&atime),
         .mtime = timestampFromPosix(&mtime),
         .ctime = timestampFromPosix(&ctime),
-        .block_size = st.blksize,
+        .block_size = @intCast(st.blksize),
     };
 }
 
@@ -16292,9 +16291,14 @@ fn createFileMap(
             .WRITE = protection.write,
             .EXEC = protection.execute,
         };
-        const flags: posix.MAP = .{
-            .TYPE = if (native_os == .linux) .SHARED_VALIDATE else .SHARED,
-            .POPULATE = populate,
+        const flags: posix.MAP = switch (native_os) {
+            .linux => .{
+                .TYPE = .SHARED_VALIDATE,
+                .POPULATE = populate,
+            },
+            else => .{
+                .TYPE = .SHARED,
+            },
         };
 
         const page_align = std.heap.page_size_min;
@@ -16348,20 +16352,20 @@ fn createFileMap(
 fn fileMemoryMapDestroy(userdata: ?*anyopaque, mm: *File.MemoryMap) void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const memory = mm.memory;
-    if (mm.section) |section| {
-        if (is_windows) {
+    if (mm.section) |section| switch (native_os) {
+        .windows => {
             const current_process: windows.HANDLE = @ptrFromInt(@as(usize, @bitCast(@as(isize, -1))));
             _ = windows.ntdll.NtUnmapViewOfSection(current_process, memory.ptr);
             windows.CloseHandle(section);
-        } else {
-            switch (posix.errno(posix.system.munmap(memory.ptr, memory.len))) {
-                .SUCCESS => {},
-                else => |e| {
-                    if (builtin.mode == .Debug)
-                        std.log.err("failed to unmap {d} bytes at {*}: {t}", .{ memory.len, memory.ptr, e });
-                },
-            }
-        }
+        },
+        .wasi => unreachable,
+        else => switch (posix.errno(posix.system.munmap(memory.ptr, memory.len))) {
+            .SUCCESS => {},
+            else => |e| {
+                if (builtin.mode == .Debug)
+                    std.log.err("failed to unmap {d} bytes at {*}: {t}", .{ memory.len, memory.ptr, e });
+            },
+        },
     } else {
         const gpa = t.allocator;
         gpa.rawFree(memory, .fromByteUnits(std.heap.pageSize()), @returnAddress());
@@ -16372,15 +16376,17 @@ fn fileMemoryMapDestroy(userdata: ?*anyopaque, mm: *File.MemoryMap) void {
 fn fileMemoryMapSetLength(
     userdata: ?*anyopaque,
     mm: *File.MemoryMap,
-    new_len: usize,
+    options: File.MemoryMap.CreateOptions,
 ) File.MemoryMap.SetLengthError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const page_size = std.heap.pageSize();
     const alignment: Alignment = .fromByteUnits(page_size);
     const page_align = std.heap.page_size_min;
+    const old_memory = mm.memory;
+    const new_len = options.len;
 
     if (mm.section) |section| {
-        if (alignment.forward(new_len) == alignment.forward(mm.memory.len)) {
+        if (alignment.forward(new_len) == alignment.forward(old_memory.len)) {
             mm.memory.len = new_len;
             return;
         }
@@ -16390,12 +16396,12 @@ fn fileMemoryMapSetLength(
                 @panic("TODO");
             },
             .wasi => unreachable,
-            else => {
+            .linux => {
                 const flags: posix.MREMAP = .{ .MAYMOVE = true };
                 const addr_hint: ?[*]const u8 = null;
                 const new_memory = while (true) {
                     const syscall: Syscall = try .start();
-                    const rc = posix.system.mremap(mm.memory.ptr, mm.memory.len, new_len, flags, addr_hint);
+                    const rc = posix.system.mremap(old_memory.ptr, old_memory.len, new_len, flags, addr_hint);
                     syscall.finish();
                     const err: posix.E = if (builtin.link_libc) e: {
                         if (rc != std.c.MAP_FAILED) break @as([*]align(page_align) u8, @ptrCast(@alignCast(rc)))[0..new_len];
@@ -16416,6 +16422,30 @@ fn fileMemoryMapSetLength(
                     }
                 };
                 mm.memory = new_memory;
+            },
+            else => {
+                switch (posix.errno(posix.system.munmap(old_memory.ptr, old_memory.len))) {
+                    .SUCCESS => {},
+                    else => |e| {
+                        if (builtin.mode == .Debug) std.log.err("failed to unmap {d} bytes at {*}: {t}", .{
+                            old_memory.len, old_memory.ptr, e,
+                        });
+                        // munmap must be infallible, or we cannot design reliable software.
+                        return error.Unexpected;
+                    },
+                }
+                if (createFileMap(mm.file, options.protection, mm.offset, options.populate, new_len)) |result| {
+                    mm.* = result;
+                    return;
+                } else |err| switch (err) {
+                    error.OperationUnsupported,
+                    error.Unseekable,
+                    error.SectionOversize,
+                    error.MappingAlreadyExists,
+                    error.FileLockConflict,
+                    => return error.Unexpected, // It worked before on the same open file.
+                    else => |e| return e,
+                }
             },
         }
     } else {

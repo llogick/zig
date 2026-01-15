@@ -594,6 +594,8 @@ test "randomSecure" {
 }
 
 test "memory mapping" {
+    if (builtin.cpu.arch == .hexagon) return error.SkipZigTest; // mmap returned EINVAL
+
     const io = testing.io;
 
     var tmp = tmpDir(.{});
@@ -634,7 +636,7 @@ test "memory mapping" {
 
         try expectEqualStrings("this9is9my", mm.memory);
 
-        try mm.setLength(io, "this9is9my data123".len);
+        try mm.setLength(io, .{ .len = "this9is9my data123".len });
         try mm.read(io);
 
         try expectEqualStrings("this9is9my data123", mm.memory);

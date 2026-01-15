@@ -255,7 +255,7 @@ test "memory mapping fallback" {
 
         try testing.expectEqualStrings("this9is9my", mm.memory);
 
-        try mm.setLength(io, "this9is9my data123".len);
+        try mm.setLength(io, .{ .len = "this9is9my data123".len });
         try mm.read(io);
 
         try testing.expectEqualStrings("this9is9my data123", mm.memory);

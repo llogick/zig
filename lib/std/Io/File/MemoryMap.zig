@@ -52,7 +52,9 @@ pub const CreateOptions = struct {
     /// undefined, and bytes unwritten before calling `write` to write
     /// undefined memory to the file.
     undefined_contents: bool = false,
-    /// Prefault the pages.
+    /// Prefault the pages. If this option is unsupported, it is silently
+    /// ignored. Aside from custom Io implementations, this option is only
+    /// supported on Linux.
     populate: bool = true,
     /// Asserted to be a multiple of page size which can be obtained via
     /// `std.heap.pageSize`.
@@ -72,21 +74,29 @@ pub fn destroy(mm: *MemoryMap, io: Io) void {
 }
 
 pub const SetLengthError = error{
+    /// One of the following:
+    /// * The `File.Kind` is not `file`.
+    /// * The file is not open for reading and read access protections enabled.
+    /// * The file is not open for writing and write access protections enabled.
+    AccessDenied,
+    /// The `prot` argument asks for `PROT_EXEC` but the mapped area belongs to a file on
+    /// a filesystem that was mounted no-exec.
+    PermissionDenied,
     LockedMemoryLimitExceeded,
+    ProcessFdQuotaExceeded,
+    SystemFdQuotaExceeded,
 } || Allocator.Error || File.SetLengthError;
 
 /// Change the size of the mapping. This does not sync the contents. The size
 /// of the file after calling this is unspecified until `write` is called.
 ///
 /// May change the pointer address of `memory`.
-pub fn setLength(
-    mm: *MemoryMap,
-    io: Io,
-    /// New size of the mapping, in bytes. If this is longer than the file
-    /// size, it will be filled with zeroes. No alignment requirement.
-    new_length: usize,
-) SetLengthError!void {
-    return io.vtable.fileMemoryMapSetLength(io.userdata, mm, new_length);
+///
+/// `options` is needed because the mapping may need to be destroyed and
+/// re-created. All the same options must be provided except for `len` which is
+/// the new length.
+pub fn setLength(mm: *MemoryMap, io: Io, options: CreateOptions) SetLengthError!void {
+    return io.vtable.fileMemoryMapSetLength(io.userdata, mm, options);
 }
 
 /// Synchronizes the contents of `memory` from `file`.
