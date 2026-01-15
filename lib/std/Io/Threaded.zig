@@ -16279,6 +16279,8 @@ fn createFileMap(
             .SUCCESS => {},
             .CONFLICTING_ADDRESSES => return error.MappingAlreadyExists,
             .SECTION_PROTECTION => return error.PermissionDenied,
+            .ACCESS_DENIED => return error.AccessDenied,
+            .INVALID_VIEW_SIZE => |status| return windows.statusBug(status),
             else => |status| return windows.unexpectedStatus(status),
         }
         if (builtin.mode == .Debug) {
@@ -16392,32 +16394,47 @@ fn fileMemoryMapSetLength(
     const new_len = options.len;
 
     if (mm.section) |section| {
-        if (alignment.forward(new_len) == alignment.forward(old_memory.len)) {
+        const aligned_old_len = alignment.forward(old_memory.len);
+        const aligned_new_len = alignment.forward(new_len);
+        if (aligned_new_len == aligned_old_len) {
             mm.memory.len = new_len;
             return;
         }
         switch (native_os) {
             .windows => {
-                var contents_ptr: ?[*]align(page_align) u8 = null;
-                var contents_len = new_len;
-                switch (windows.ntdll.NtMapViewOfSection(
-                    section,
-                    windows.current_process,
-                    @ptrCast(&contents_ptr),
-                    null,
-                    0,
-                    null,
-                    &contents_len,
-                    .Unmap,
-                    .{},
-                    .{ .READWRITE = true },
-                )) {
-                    .SUCCESS => {},
-                    .SECTION_PROTECTION => return error.PermissionDenied,
-                    else => |status| return windows.unexpectedStatus(status),
+                if (aligned_new_len > aligned_old_len) {
+                    var new_section_size: windows.LARGE_INTEGER = @intCast(aligned_new_len);
+                    switch (windows.ntdll.NtExtendSection(section, &new_section_size)) {
+                        .SUCCESS => {},
+                        else => |status| return windows.unexpectedStatus(status),
+                    }
+                    assert(new_section_size == aligned_new_len);
+                    mm.memory.len = new_len;
+                } else {
+                    _ = windows.ntdll.NtUnmapViewOfSection(windows.current_process, old_memory.ptr);
+                    windows.CloseHandle(section);
+                    var contents_len = aligned_new_len;
+                    var contents_ptr: ?[*]align(std.heap.page_size_min) u8 = null;
+                    switch (windows.ntdll.NtMapViewOfSection(
+                        section,
+                        windows.current_process,
+                        @ptrCast(&contents_ptr),
+                        null,
+                        0,
+                        null,
+                        &contents_len,
+                        .Unmap,
+                        .{},
+                        .{ .READWRITE = true },
+                    )) {
+                        .SUCCESS => {},
+                        .SECTION_PROTECTION => return error.PermissionDenied,
+                        .INVALID_VIEW_SIZE => |status| return windows.statusBug(status),
+                        else => |status| return windows.unexpectedStatus(status),
+                    }
+                    assert(contents_len == aligned_new_len);
+                    mm.memory = contents_ptr.?[0..new_len];
                 }
-                assert(contents_len == alignment.forward(new_len));
-                mm.memory = contents_ptr.?[0..new_len];
             },
             .wasi => unreachable,
             .linux => {

@@ -253,6 +253,11 @@ pub extern "ntdll" fn NtCreateSection(
     FileHandle: ?HANDLE,
 ) callconv(.winapi) NTSTATUS;
 
+pub extern "ntdll" fn NtExtendSection(
+    SectionHandle: HANDLE,
+    NewSectionSize: *LARGE_INTEGER,
+) callconv(.winapi) NTSTATUS;
+
 pub extern "ntdll" fn NtAllocateVirtualMemory(
     ProcessHandle: HANDLE,
     BaseAddress: *PVOID,
