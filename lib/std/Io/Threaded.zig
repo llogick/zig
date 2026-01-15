@@ -8095,12 +8095,12 @@ fn fileReadPositionalPosix(userdata: ?*anyopaque, file: File, data: []const []u8
                 },
                 .NOTCONN => |err| return syscall.errnoBug(err), // not a socket
                 .CONNRESET => |err| return syscall.errnoBug(err), // not a socket
-                .BADF => |err| return syscall.errnoBug(err), // use after free
                 .INVAL => |err| return syscall.errnoBug(err),
                 .FAULT => |err| return syscall.errnoBug(err), // segmentation fault
                 .AGAIN => |err| return syscall.errnoBug(err),
                 .IO => return syscall.fail(error.InputOutput),
                 .ISDIR => return syscall.fail(error.IsDir),
+                .BADF => return syscall.fail(error.IsDir),
                 .NOBUFS => return syscall.fail(error.SystemResources),
                 .NOMEM => return syscall.fail(error.SystemResources),
                 .NXIO => return syscall.fail(error.Unseekable),
