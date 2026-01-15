@@ -39,7 +39,7 @@ pub const TCIOFF = 3;
 pub const TCION = 4;
 
 pub const _ksiginfo = extern struct {
-    signo: i32,
+    signo: std.c.SIG,
     code: i32,
     errno: i32,
     // 64bit architectures insert 4bytes of padding here, this is done by
