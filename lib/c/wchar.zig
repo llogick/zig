@@ -107,7 +107,12 @@ fn wcsncmp(a: [*:0]const wchar_t, b: [*:0]const wchar_t, max: usize) callconv(.c
 }
 
 fn wcpcpy(noalias dst: [*]wchar_t, noalias src: [*:0]const wchar_t) callconv(.c) [*]wchar_t {
-    return wcpncpy(dst, src, std.math.maxInt(usize));
+    const src_slice = std.mem.span(src);
+    @memcpy(dst[0..src_slice.len], src_slice);
+    dst[src_slice.len] = 0;
+    return dst + src_slice.len;
+    // XXX: LLVM bug?
+    // return wcpncpy(dst, src, std.math.maxInt(usize));
 }
 
 fn wcpncpy(noalias dst: [*]wchar_t, noalias src: [*:0]const wchar_t, max: usize) callconv(.c) [*]wchar_t {
