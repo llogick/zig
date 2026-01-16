@@ -1828,6 +1828,8 @@ test "accept/connect/send_zc/recv" {
 }
 
 test "accept_direct" {
+    if (builtin.cpu.arch.isRISCV()) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/30854
+
     try skipKernelLessThan(.{ .major = 5, .minor = 19, .patch = 0 });
 
     var ring = IoUring.init(1, 0) catch |err| switch (err) {
