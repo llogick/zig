@@ -11067,6 +11067,16 @@ pub const imaxdiv_t = extern struct {
 pub const intmax_t = i64;
 pub const uintmax_t = u64;
 
+pub const wint_t = switch (builtin.target.os.tag) {
+    .windows => u16,
+    else => i32,
+};
+
+pub const wchar_t = switch (builtin.target.os.tag) {
+    .windows => u16,
+    else => if (builtin.target.cpu.arch.isArm() or builtin.target.cpu.arch.isAARCH64()) u32 else i32,
+};
+
 pub extern "c" fn pthread_getthreadid_np() c_int;
 pub extern "c" fn pthread_set_name_np(thread: pthread_t, name: [*:0]const u8) void;
 pub extern "c" fn pthread_get_name_np(thread: pthread_t, name: [*:0]u8, len: usize) void;
