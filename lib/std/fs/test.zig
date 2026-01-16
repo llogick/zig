@@ -20,6 +20,28 @@ const expectEqualStrings = std.testing.expectEqualStrings;
 const expectError = std.testing.expectError;
 const tmpDir = std.testing.tmpDir;
 
+// This is kept in sync with Io.Threaded.realPath .
+pub inline fn isRealPathSupported() bool {
+    return switch (native_os) {
+        .windows,
+        .driverkit,
+        .ios,
+        .maccatalyst,
+        .macos,
+        .tvos,
+        .visionos,
+        .watchos,
+        .linux,
+        .serenity,
+        .illumos,
+        .freebsd,
+        => true,
+        .dragonfly => builtin.os.version_range.semver.min.order(.{ .major = 6, .minor = 0, .patch = 0 }) != .lt,
+        .netbsd => builtin.os.version_range.semver.min.order(.{ .major = 10, .minor = 0, .patch = 0 }) != .lt,
+        else => false,
+    };
+}
+
 const PathType = enum {
     relative,
     absolute,
@@ -28,25 +50,7 @@ const PathType = enum {
     fn isSupported(self: PathType, target_os: std.Target.Os) bool {
         return switch (self) {
             .relative => true,
-            .absolute => switch (target_os.tag) {
-                .windows,
-                .driverkit,
-                .ios,
-                .maccatalyst,
-                .macos,
-                .tvos,
-                .visionos,
-                .watchos,
-                .linux,
-                .illumos,
-                .freebsd,
-                .serenity,
-                => true,
-
-                .dragonfly => target_os.version_range.semver.max.order(.{ .major = 6, .minor = 0, .patch = 0 }) != .lt,
-                .netbsd => target_os.version_range.semver.max.order(.{ .major = 10, .minor = 0, .patch = 0 }) != .lt,
-                else => false,
-            },
+            .absolute => isRealPathSupported(),
             .unc => target_os.tag == .windows,
         };
     }
@@ -314,8 +318,7 @@ test "openDir" {
 }
 
 test "accessAbsolute" {
-    if (native_os == .wasi) return error.SkipZigTest;
-    if (native_os == .openbsd) return error.SkipZigTest;
+    if (!isRealPathSupported()) return error.SkipZigTest;
 
     const io = testing.io;
     const gpa = testing.allocator;
@@ -330,8 +333,7 @@ test "accessAbsolute" {
 }
 
 test "openDirAbsolute" {
-    if (native_os == .wasi) return error.SkipZigTest;
-    if (native_os == .openbsd) return error.SkipZigTest;
+    if (!isRealPathSupported()) return error.SkipZigTest;
 
     const io = testing.io;
     const gpa = testing.allocator;
@@ -428,8 +430,7 @@ test "openDir non-cwd parent '..'" {
 }
 
 test "readLinkAbsolute" {
-    if (native_os == .wasi) return error.SkipZigTest;
-    if (native_os == .openbsd) return error.SkipZigTest;
+    if (!isRealPathSupported()) return error.SkipZigTest;
 
     const io = testing.io;
 
@@ -645,8 +646,7 @@ fn contains(entries: *const std.array_list.Managed(Dir.Entry), el: Dir.Entry) bo
 }
 
 test "Dir.realPath smoke test" {
-    if (native_os == .wasi) return error.SkipZigTest;
-    if (native_os == .openbsd) return error.SkipZigTest;
+    if (!isRealPathSupported()) return error.SkipZigTest;
 
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {
@@ -1074,8 +1074,7 @@ test "rename" {
 }
 
 test "renameAbsolute" {
-    if (native_os == .wasi) return error.SkipZigTest;
-    if (native_os == .openbsd) return error.SkipZigTest;
+    if (!isRealPathSupported()) return error.SkipZigTest;
 
     const io = testing.io;
 
@@ -2029,8 +2028,7 @@ test "'.' and '..' in Dir functions" {
 }
 
 test "'.' and '..' in absolute functions" {
-    if (native_os == .wasi) return error.SkipZigTest;
-    if (native_os == .openbsd) return error.SkipZigTest;
+    if (!isRealPathSupported()) return error.SkipZigTest;
 
     const io = testing.io;
 

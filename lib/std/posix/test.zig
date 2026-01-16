@@ -20,6 +20,8 @@ const expectEqualStrings = std.testing.expectEqualStrings;
 const expectError = std.testing.expectError;
 const tmpDir = std.testing.tmpDir;
 
+const fstest = @import("../fs/test.zig");
+
 test "check WASI CWD" {
     if (native_os == .wasi) {
         const cwd: Dir = .cwd();
@@ -444,9 +446,8 @@ test "getppid" {
 }
 
 test "rename smoke test" {
-    if (native_os == .wasi) return error.SkipZigTest;
     if (native_os == .windows) return error.SkipZigTest;
-    if (native_os == .openbsd) return error.SkipZigTest;
+    if (!fstest.isRealPathSupported()) return error.SkipZigTest;
 
     const io = testing.io;
     const gpa = testing.allocator;
