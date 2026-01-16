@@ -55,6 +55,7 @@ else switch (native_os) {
         pub const gid_t = void;
         pub const mode_t = u0;
         pub const nlink_t = u0;
+        pub const blksize_t = void;
         pub const ino_t = void;
         pub const IFNAMESIZE = {};
         pub const SIG = void;
@@ -433,14 +434,14 @@ pub fn read(fd: fd_t, buf: []u8) ReadError!usize {
             .FAULT => unreachable,
             .AGAIN => return error.WouldBlock,
             .CANCELED => return error.Canceled,
-            .BADF => return error.NotOpenForReading, // Can be a race condition.
+            .BADF => return error.Unexpected, // use after free
             .IO => return error.InputOutput,
             .ISDIR => return error.IsDir,
             .NOBUFS => return error.SystemResources,
             .NOMEM => return error.SystemResources,
             .NOTCONN => return error.SocketUnconnected,
             .CONNRESET => return error.ConnectionResetByPeer,
-            .TIMEDOUT => return error.Timeout,
+            .TIMEDOUT => return error.Unexpected,
             else => |err| return unexpectedErrno(err),
         }
     }

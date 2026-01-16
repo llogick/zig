@@ -1018,31 +1018,19 @@ pub const ProtectMemoryError = error{
     OutOfMemory,
 } || Io.UnexpectedError;
 
-pub const ProtectMemoryOptions = packed struct(u3) {
+pub const MemoryProtection = packed struct(u3) {
     read: bool = false,
     write: bool = false,
     execute: bool = false,
 };
 
-pub fn protectMemory(
-    memory: []align(std.heap.page_size_min) u8,
-    options: ProtectMemoryOptions,
-) ProtectMemoryError!void {
+pub fn protectMemory(memory: []align(std.heap.page_size_min) u8, protection: MemoryProtection) ProtectMemoryError!void {
     if (native_os == .windows) {
         var addr = memory.ptr; // ntdll takes an extra level of indirection here
         var size = memory.len; // ntdll takes an extra level of indirection here
         var old: windows.PAGE = undefined;
         const current_process: windows.HANDLE = @ptrFromInt(@as(usize, @bitCast(@as(isize, -1))));
-        const new: windows.PAGE = switch (@as(u3, @bitCast(options))) {
-            0b000 => .{ .NOACCESS = true },
-            0b001 => .{ .READONLY = true },
-            0b010 => return error.AccessDenied, // +w -r not allowed
-            0b011 => .{ .READWRITE = true },
-            0b100 => .{ .EXECUTE = true },
-            0b101 => .{ .EXECUTE_READ = true },
-            0b110 => return error.AccessDenied, // +w -r not allowed
-            0b111 => .{ .EXECUTE_READWRITE = true },
-        };
+        const new = windows.PAGE.fromProtection(protection) orelse return error.AccessDenied;
         switch (windows.ntdll.NtProtectVirtualMemory(current_process, @ptrCast(&addr), &size, new, &old)) {
             .SUCCESS => return,
             .INVALID_ADDRESS => return error.AccessDenied,
@@ -1050,9 +1038,9 @@ pub fn protectMemory(
         }
     } else if (posix.PROT != void) {
         const flags: posix.PROT = .{
-            .READ = options.read,
-            .WRITE = options.write,
-            .EXEC = options.execute,
+            .READ = protection.read,
+            .WRITE = protection.write,
+            .EXEC = protection.execute,
         };
         switch (posix.errno(posix.system.mprotect(memory.ptr, memory.len, flags))) {
             .SUCCESS => return,

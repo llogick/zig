@@ -29,12 +29,11 @@ interface: Io.Reader,
 pub const Error = error{
     InputOutput,
     SystemResources,
+    /// Trying to read a directory file descriptor as if it were a file.
     IsDir,
     BrokenPipe,
     ConnectionResetByPeer,
-    Timeout,
-    /// In WASI, EBADF is mapped to this error because it is returned when
-    /// trying to read a directory file descriptor as if it were a file.
+    /// File was not opened with read capability.
     NotOpenForReading,
     SocketUnconnected,
     /// Non-blocking has been enabled, and reading from the file descriptor

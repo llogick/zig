@@ -204,3 +204,65 @@ test "cancel blocked read from pipe" {
     try io.sleep(.fromMilliseconds(10), .awake);
     try future.cancel(io);
 }
+
+test "memory mapping fallback" {
+    if (builtin.os.tag == .wasi and builtin.link_libc) {
+        // https://github.com/ziglang/zig/issues/20747 (open fd does not have write permission)
+        return error.SkipZigTest;
+    }
+
+    var threaded: std.Io.Threaded = .init(std.testing.allocator, .{
+        .argv0 = .empty,
+        .environ = .empty,
+        .disable_memory_mapping = true,
+    });
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "blah.txt",
+        .data = "this is my data123",
+    });
+
+    {
+        var file = try tmp.dir.openFile(io, "blah.txt", .{ .mode = .read_write });
+        defer file.close(io);
+
+        // The `Io.File.MemoryMap` API does not specify what happens if we supply a
+        // length greater than file size, but this is testing specifically std.Io.Threaded
+        // with disable_memory_mapping = true.
+        var mm = try file.createMemoryMap(io, .{ .len = "this is my data123".len + 3 });
+        defer mm.destroy(io);
+
+        try testing.expectEqualStrings("this is my data123\x00\x00\x00", mm.memory);
+        mm.memory[4] = '9';
+        mm.memory[7] = '9';
+
+        try mm.write(io);
+    }
+
+    var buffer: [100]u8 = undefined;
+    const updated_contents = try tmp.dir.readFile(io, "blah.txt", &buffer);
+    try testing.expectEqualStrings("this9is9my data123\x00\x00\x00", updated_contents);
+
+    {
+        var file = try tmp.dir.openFile(io, "blah.txt", .{ .mode = .read_only });
+        defer file.close(io);
+
+        var mm = try file.createMemoryMap(io, .{
+            .len = "this9is9my".len,
+            .protection = .{ .read = true },
+        });
+        defer mm.destroy(io);
+
+        try testing.expectEqualStrings("this9is9my", mm.memory);
+
+        try mm.setLength(io, .{ .len = "this9is9my data123".len });
+        try mm.read(io);
+
+        try testing.expectEqualStrings("this9is9my data123", mm.memory);
+    }
+}

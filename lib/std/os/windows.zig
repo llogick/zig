@@ -28,6 +28,8 @@ pub const ws2_32 = @import("windows/ws2_32.zig");
 pub const crypt32 = @import("windows/crypt32.zig");
 pub const nls = @import("windows/nls.zig");
 
+pub const current_process: HANDLE = @ptrFromInt(@as(usize, @bitCast(@as(isize, -1))));
+
 pub const FILE = struct {
     // ref: km/ntddk.h
 
@@ -2124,6 +2126,20 @@ pub const PAGE = packed struct(ULONG) {
     Reserved19: u12 = 0,
 
     REVERT_TO_FILE_MAP: bool = false,
+
+    pub fn fromProtection(protection: std.process.MemoryProtection) ?PAGE {
+        // TODO https://github.com/ziglang/zig/issues/22214
+        return switch (@as(u3, @bitCast(protection))) {
+            0b000 => .{ .NOACCESS = true },
+            0b001 => .{ .READONLY = true },
+            0b010 => null,
+            0b011 => .{ .READWRITE = true },
+            0b100 => .{ .EXECUTE = true },
+            0b101 => .{ .EXECUTE_READ = true },
+            0b110 => null,
+            0b111 => .{ .EXECUTE_READWRITE = true },
+        };
+    }
 };
 
 pub const MEM = struct {

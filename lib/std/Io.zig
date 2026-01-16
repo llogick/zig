@@ -9,6 +9,7 @@
 //! * concurrent queues
 //! * wait groups and select
 //! * mutexes, futexes, events, and conditions
+//! * memory mapped files
 //! This interface allows programmers to write optimal, reusable code while
 //! participating in these operations.
 const Io = @This();
@@ -652,6 +653,12 @@ pub const VTable = struct {
     fileDowngradeLock: *const fn (?*anyopaque, File) File.DowngradeLockError!void,
     fileRealPath: *const fn (?*anyopaque, File, out_buffer: []u8) File.RealPathError!usize,
     fileHardLink: *const fn (?*anyopaque, File, Dir, []const u8, File.HardLinkOptions) File.HardLinkError!void,
+
+    fileMemoryMapCreate: *const fn (?*anyopaque, File, File.MemoryMap.CreateOptions) File.MemoryMap.CreateError!File.MemoryMap,
+    fileMemoryMapDestroy: *const fn (?*anyopaque, *File.MemoryMap) void,
+    fileMemoryMapSetLength: *const fn (?*anyopaque, *File.MemoryMap, File.MemoryMap.CreateOptions) File.MemoryMap.SetLengthError!void,
+    fileMemoryMapRead: *const fn (?*anyopaque, *File.MemoryMap) File.ReadPositionalError!void,
+    fileMemoryMapWrite: *const fn (?*anyopaque, *File.MemoryMap) File.WritePositionalError!void,
 
     processExecutableOpen: *const fn (?*anyopaque, File.OpenFlags) std.process.OpenExecutableError!File,
     processExecutablePath: *const fn (?*anyopaque, buffer: []u8) std.process.ExecutablePathError!usize,

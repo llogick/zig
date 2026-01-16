@@ -14,12 +14,15 @@ handle: Handle,
 pub const Reader = @import("File/Reader.zig");
 pub const Writer = @import("File/Writer.zig");
 pub const Atomic = @import("File/Atomic.zig");
+/// Memory intended to remain consistent with file contents.
+pub const MemoryMap = @import("File/MemoryMap.zig");
 
 pub const Handle = std.posix.fd_t;
 pub const INode = std.posix.ino_t;
 pub const NLink = std.posix.nlink_t;
 pub const Uid = std.posix.uid_t;
 pub const Gid = std.posix.gid_t;
+pub const BlockSize = u32;
 
 pub const Kind = enum {
     block_device,
@@ -63,6 +66,10 @@ pub const Stat = struct {
     mtime: Io.Timestamp,
     /// Last status/metadata change time in nanoseconds, relative to UTC 1970-01-01.
     ctime: Io.Timestamp,
+    /// Smallest chunk length in bytes appropriate for optimal I/O. This will
+    /// be set to `1` for operating systems or file systems that do not
+    /// recognize this concept. Not always a power of two.
+    block_size: BlockSize,
 };
 
 pub fn stdout() File {
@@ -529,7 +536,27 @@ pub fn readStreaming(file: File, io: Io, buffer: []const []u8) Reader.Error!usiz
     return io.vtable.fileReadStreaming(io.userdata, file, buffer);
 }
 
-pub const ReadPositionalError = Reader.Error || error{Unseekable};
+pub const ReadPositionalError = error{
+    InputOutput,
+    SystemResources,
+    /// Trying to read a directory file descriptor as if it were a file.
+    IsDir,
+    BrokenPipe,
+    /// Non-blocking has been enabled, and reading from the file descriptor
+    /// would block.
+    WouldBlock,
+    /// In WASI, this error occurs when the file descriptor does
+    /// not hold the required rights to read from it.
+    AccessDenied,
+    /// Unable to read file due to lock. Depending on the `Io` implementation,
+    /// reading from a locked file may return this error, or may ignore the
+    /// lock.
+    LockViolation,
+    /// This file cannot be read positionally.
+    Unseekable,
+    /// File was not opened with read capability.
+    NotOpenForReading,
+} || Io.Cancelable || Io.UnexpectedError;
 
 /// Returns 0 on stream end or if `buffer` has no space available for data.
 ///
@@ -539,7 +566,33 @@ pub fn readPositional(file: File, io: Io, buffer: []const []u8, offset: u64) Rea
     return io.vtable.fileReadPositional(io.userdata, file, buffer, offset);
 }
 
-pub const WritePositionalError = Writer.Error || error{Unseekable};
+pub const WritePositionalError = error{
+    DiskQuota,
+    FileTooBig,
+    InputOutput,
+    NoSpaceLeft,
+    DeviceBusy,
+    /// File descriptor does not hold the required rights to write to it.
+    AccessDenied,
+    PermissionDenied,
+    /// File is an unconnected socket, or closed its read end.
+    BrokenPipe,
+    /// Insufficient kernel memory to read from in_fd.
+    SystemResources,
+    /// The process cannot access the file because another process has locked
+    /// a portion of the file. Windows-only.
+    LockViolation,
+    /// Non-blocking has been enabled and this operation would block.
+    WouldBlock,
+    /// This error occurs when a device gets disconnected before or mid-flush
+    /// while it's being written to - errno(6): No such device or address.
+    NoDevice,
+    FileBusy,
+    /// This file cannot be written positionally.
+    Unseekable,
+    /// File was not opened with write capability.
+    NotOpenForWriting,
+} || Io.Cancelable || Io.UnexpectedError;
 
 /// See also:
 /// * `writer`
@@ -740,8 +793,13 @@ pub fn hardLink(
     return io.vtable.fileHardLink(io.userdata, file, new_dir, new_sub_path, options);
 }
 
+pub fn createMemoryMap(file: File, io: Io, options: MemoryMap.CreateOptions) MemoryMap.CreateError!MemoryMap {
+    return .create(io, file, options);
+}
+
 test {
     _ = Reader;
     _ = Writer;
     _ = Atomic;
+    _ = MemoryMap;
 }
