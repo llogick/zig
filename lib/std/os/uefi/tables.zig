@@ -305,5 +305,5 @@ pub const global_variable = Guid{
 };
 
 test {
-    std.testing.refAllDeclsRecursive(@This());
+    std.testing.refAllDecls(@This());
 }

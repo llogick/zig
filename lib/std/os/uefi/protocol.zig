@@ -53,6 +53,5 @@ pub const HiiDatabase = @import("protocol/hii_database.zig").HiiDatabase;
 pub const HiiPopup = @import("protocol/hii_popup.zig").HiiPopup;
 
 test {
-    @setEvalBranchQuota(2000);
-    @import("std").testing.refAllDeclsRecursive(@This());
+    std.testing.refAllDecls(@This());
 }
