@@ -7134,6 +7134,18 @@ coding style.
       cannot be any more specific without being incorrect.</p>
       {#header_close#}
 
+      {#header_open|Refrain from Underscore Prefixes#}
+      <p>In some programming languages, it is common to prefix identifiers with underscores
+      {#syntax#}__like_this{#endsyntax#} to indicate some vague notion of privacy or danger
+      associated with usage of the identifier.</p>
+      <p>In Zig, there are no private fields, and it is better not to pretend
+      otherwise. Fields should be named carefully to communicate their
+      semantics and documentation should indicate how to use fields without
+      violating data invariants. Underscore prefixes serve only to make code
+      authors feel better about writing clumsy, overly prescriptive, poorly
+      documented code.</p>
+      {#header_close#}
+
       {#header_open|Whitespace#}
       <ul>
         <li>
