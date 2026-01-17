@@ -464,6 +464,30 @@ pub fn orderIgnoreCase(lhs: []const u8, rhs: []const u8) std.math.Order {
     return std.math.order(lhs.len, rhs.len);
 }
 
+/// Returns the lexicographical order of two many-item pointers with NUL-termination. O(n).
+pub fn orderIgnoreCaseZ(lhs: [*:0]const u8, rhs: [*:0]const u8) std.math.Order {
+    return boundedOrderIgnoreCaseZ(lhs, rhs, std.math.maxInt(usize));
+}
+
+test orderIgnoreCaseZ {
+    try std.testing.expect(orderIgnoreCaseZ("aBcD", "Bee") == .lt);
+    try std.testing.expect(orderIgnoreCaseZ("AbC", "aBc") == .eq);
+    try std.testing.expect(orderIgnoreCaseZ("abC", "aBc0") == .lt);
+    try std.testing.expect(orderIgnoreCaseZ("", "") == .eq);
+    try std.testing.expect(orderIgnoreCaseZ("", "a") == .lt);
+
+    const s: [*:0]const u8 = "Abc";
+    try std.testing.expect(orderIgnoreCaseZ(s, s) == .eq);
+}
+
+/// Returns the lexicographical order of two many-item pointers with NUL-termination until some specified bound. O(n).
+pub fn boundedOrderIgnoreCaseZ(lhs: [*:0]const u8, rhs: [*:0]const u8, bound: usize) std.math.Order {
+    if (lhs == rhs) return .eq;
+    var i: usize = 0;
+    while (i < bound and toLower(lhs[i]) == toLower(rhs[i]) and lhs[i] != 0) : (i += 1) {}
+    return if (i < bound) std.math.order(toLower(lhs[i]), toLower(rhs[i])) else .eq;
+}
+
 /// Returns whether the lexicographical order of `lhs` is lower than `rhs`.
 pub fn lessThanIgnoreCase(lhs: []const u8, rhs: []const u8) bool {
     return orderIgnoreCase(lhs, rhs) == .lt;
