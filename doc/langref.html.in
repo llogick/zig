@@ -7108,6 +7108,7 @@ coding style.
         <li>Data</li>
         <li>Context</li>
         <li>Manager</li>
+        <li>State</li>
         <li>utils, misc, or somebody's initials</li>
       </ul>
       <p>Everything is a value, all types are data, everything is context, all logic manages state.
