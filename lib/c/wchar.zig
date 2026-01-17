@@ -26,6 +26,7 @@ comptime {
         @export(&wcsspn, .{ .name = "wcsspn", .linkage = common.linkage, .visibility = common.visibility });
         @export(&wcscspn, .{ .name = "wcscspn", .linkage = common.linkage, .visibility = common.visibility });
         @export(&wcspbrk, .{ .name = "wcspbrk", .linkage = common.linkage, .visibility = common.visibility });
+        @export(&wcstok, .{ .name = "wcstok", .linkage = common.linkage, .visibility = common.visibility });
         @export(&wcsstr, .{ .name = "wcsstr", .linkage = common.linkage, .visibility = common.visibility });
         @export(&wcswcs, .{ .name = "wcswcs", .linkage = common.linkage, .visibility = common.visibility });
     }
@@ -46,10 +47,8 @@ fn wmemchr(ptr: [*]const wchar_t, value: wchar_t, len: usize) callconv(.c) ?[*]w
 }
 
 fn wmemcmp(a: [*]const wchar_t, b: [*]const wchar_t, len: usize) callconv(.c) c_int {
-    const idx = std.mem.findDiff(wchar_t, a[0..len], b[0..len]) orelse return 0;
-
-    return switch (std.math.order(a[idx], b[idx])) {
-        .eq => unreachable,
+    return switch (std.mem.order(wchar_t, a[0..len], b[0..len])) {
+        .eq => 0,
         .gt => 1,
         .lt => -1,
     };
@@ -88,40 +87,24 @@ fn wcscmp(a: [*:0]const wchar_t, b: [*:0]const wchar_t) callconv(.c) c_int {
 }
 
 fn wcsncmp(a: [*:0]const wchar_t, b: [*:0]const wchar_t, max: usize) callconv(.c) c_int {
-    const a_slice = a[0..wcsnlen(a, max)];
-    const b_slice = b[0..wcsnlen(b, max)];
-
-    return switch (std.math.order(a_slice.len, b_slice.len)) {
-        .eq => blk: {
-            const idx = std.mem.findDiff(wchar_t, a_slice, b_slice) orelse break :blk 0;
-
-            break :blk switch (std.math.order(a[idx], b[idx])) {
-                .eq => unreachable,
-                .gt => 1,
-                .lt => -1,
-            };
-        },
+    return switch (std.mem.boundedOrderZ(wchar_t, a, b, max)) {
+        .eq => 0,
         .gt => 1,
         .lt => -1,
     };
 }
 
 fn wcpcpy(noalias dst: [*]wchar_t, noalias src: [*:0]const wchar_t) callconv(.c) [*]wchar_t {
-    const src_slice = std.mem.span(src);
-    @memcpy(dst[0..src_slice.len], src_slice);
-    dst[src_slice.len] = 0;
-    return dst + src_slice.len;
-    // XXX: LLVM bug?
-    // return wcpncpy(dst, src, std.math.maxInt(usize));
+    const src_len = std.mem.len(src);
+    @memcpy(dst[0 .. src_len + 1], src[0 .. src_len + 1]);
+    return dst + src_len;
 }
 
 fn wcpncpy(noalias dst: [*]wchar_t, noalias src: [*:0]const wchar_t, max: usize) callconv(.c) [*]wchar_t {
     const src_len = wcsnlen(src, max);
     const copying_len = @min(max, src_len);
-
     @memcpy(dst[0..copying_len], src[0..copying_len]);
-
-    if (copying_len < max) dst[copying_len] = 0;
+    @memset(dst[copying_len..][0 .. max - copying_len], 0x00);
     return dst + copying_len;
 }
 
@@ -173,6 +156,28 @@ fn wcscspn(dst: [*:0]const wchar_t, values: [*:0]const wchar_t) callconv(.c) usi
 
 fn wcspbrk(haystack: [*:0]const wchar_t, needle: [*:0]const wchar_t) callconv(.c) ?[*:0]wchar_t {
     return @constCast(haystack[std.mem.findAny(wchar_t, std.mem.span(haystack), std.mem.span(needle)) orelse return null ..]);
+}
+
+fn wcstok(noalias maybe_str: ?[*:0]wchar_t, noalias values: [*:0]const wchar_t, noalias state: *?[*:0]wchar_t) callconv(.c) ?[*:0]wchar_t {
+    const str = if (maybe_str) |str|
+        str
+    else if (state.*) |state_str|
+        state_str
+    else
+        return null;
+
+    const str_chars = std.mem.span(str);
+    const values_chars = std.mem.span(values);
+    const tok_start = std.mem.findNone(wchar_t, str_chars, values_chars) orelse return null;
+
+    if (std.mem.findAnyPos(wchar_t, str_chars, tok_start, values_chars)) |tok_end| {
+        str[tok_end] = 0;
+        state.* = str[tok_end + 1 ..];
+    } else {
+        state.* = str[str_chars.len..];
+    }
+
+    return str[tok_start..];
 }
 
 fn wcsstr(noalias haystack: [*:0]const wchar_t, noalias needle: [*:0]const wchar_t) callconv(.c) ?[*:0]wchar_t {
