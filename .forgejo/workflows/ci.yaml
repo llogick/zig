@@ -122,7 +122,7 @@ jobs:
           fetch-depth: 0
       - name: Build and Test
         run: sh ci/riscv64-linux-release.sh
-        timeout-minutes: 480
+        timeout-minutes: 540
 
   s390x-linux-debug:
     runs-on: [self-hosted, s390x-linux]
