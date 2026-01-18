@@ -28,7 +28,7 @@ pub const DevicePath = extern struct {
     pub fn next(self: *const DevicePath) ?*const DevicePath {
         const bytes: [*]const u8 = @ptrCast(self);
         const next_node: *const DevicePath = @ptrCast(bytes + self.length);
-        if (next_node.type == .end and @as(uefi.DevicePath.End.Subtype, @enumFromInt(self.subtype)) == .end_entire)
+        if (next_node.type == .end and @as(uefi.DevicePath.End.Subtype, @enumFromInt(next_node.subtype)) == .end_entire)
             return null;
 
         return next_node;
