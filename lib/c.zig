@@ -13,17 +13,20 @@ pub const panic = if (builtin.is_test)
 else
     std.debug.no_panic;
 
+// NOTE: `libzigc` aims to be a standalone libc and provide ABI compatibility with its bundled libc's.
+// Some of them like `mingw` are not fully statically linked so some symbols don't need to be exported.
+
 comptime {
     _ = @import("c/inttypes.zig");
     _ = @import("c/ctype.zig");
     _ = @import("c/stdlib.zig");
     _ = @import("c/math.zig");
+    _ = @import("c/string.zig");
+    _ = @import("c/strings.zig");
     _ = @import("c/wchar.zig");
 
     if (builtin.target.isMuslLibC() or builtin.target.isWasiLibC()) {
         // Files specific to musl and wasi-libc.
-        _ = @import("c/string.zig");
-        _ = @import("c/strings.zig");
     }
 
     if (builtin.target.isMuslLibC()) {
