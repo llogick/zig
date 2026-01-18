@@ -11330,31 +11330,29 @@ fn netSendMany(
                 try syscall.checkCancel();
                 continue;
             },
-            else => |e| {
-                syscall.finish();
-                switch (e) {
-                    .AGAIN => |err| return errnoBug(err),
-                    .ALREADY => return error.FastOpenAlreadyInProgress,
-                    .BADF => |err| return errnoBug(err), // File descriptor used after closed.
-                    .CONNRESET => return error.ConnectionResetByPeer,
-                    .DESTADDRREQ => |err| return errnoBug(err), // The socket is not connection-mode, and no peer address is set.
-                    .FAULT => |err| return errnoBug(err), // An invalid user space address was specified for an argument.
-                    .INVAL => |err| return errnoBug(err), // Invalid argument passed.
-                    .ISCONN => |err| return errnoBug(err), // connection-mode socket was connected already but a recipient was specified
-                    .MSGSIZE => return error.MessageOversize,
-                    .NOBUFS => return error.SystemResources,
-                    .NOMEM => return error.SystemResources,
-                    .NOTSOCK => |err| return errnoBug(err), // The file descriptor sockfd does not refer to a socket.
-                    .OPNOTSUPP => |err| return errnoBug(err), // Some bit in the flags argument is inappropriate for the socket type.
-                    .PIPE => return error.SocketUnconnected,
-                    .AFNOSUPPORT => return error.AddressFamilyUnsupported,
-                    .HOSTUNREACH => return error.HostUnreachable,
-                    .NETUNREACH => return error.NetworkUnreachable,
-                    .NOTCONN => return error.SocketUnconnected,
-                    .NETDOWN => return error.NetworkDown,
-                    else => |err| return posix.unexpectedErrno(err),
-                }
-            },
+            .ACCES => return syscall.fail(error.AccessDenied),
+            .ALREADY => return syscall.fail(error.FastOpenAlreadyInProgress),
+            .CONNRESET => return syscall.fail(error.ConnectionResetByPeer),
+            .MSGSIZE => return syscall.fail(error.MessageOversize),
+            .NOBUFS => return syscall.fail(error.SystemResources),
+            .NOMEM => return syscall.fail(error.SystemResources),
+            .PIPE => return syscall.fail(error.SocketUnconnected),
+            .AFNOSUPPORT => return syscall.fail(error.AddressFamilyUnsupported),
+            .HOSTUNREACH => return syscall.fail(error.HostUnreachable),
+            .NETUNREACH => return syscall.fail(error.NetworkUnreachable),
+            .NOTCONN => return syscall.fail(error.SocketUnconnected),
+            .NETDOWN => return syscall.fail(error.NetworkDown),
+
+            .AGAIN => |err| return syscall.errnoBug(err),
+            .BADF => |err| return syscall.errnoBug(err), // File descriptor used after closed.
+            .DESTADDRREQ => |err| return syscall.errnoBug(err), // The socket is not connection-mode, and no peer address is set.
+            .FAULT => |err| return syscall.errnoBug(err), // An invalid user space address was specified for an argument.
+            .INVAL => |err| return syscall.errnoBug(err), // Invalid argument passed.
+            .ISCONN => |err| return syscall.errnoBug(err), // connection-mode socket was connected already but a recipient was specified
+            .NOTSOCK => |err| return syscall.errnoBug(err), // The file descriptor sockfd does not refer to a socket.
+            .OPNOTSUPP => |err| return syscall.errnoBug(err), // Some bit in the flags argument is inappropriate for the socket type.
+
+            else => |err| return syscall.unexpectedErrno(err),
         }
     }
 }
