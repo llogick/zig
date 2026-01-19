@@ -824,7 +824,6 @@ const src_files = [_][]const u8{
     "musl/src/math/aarch64/rintf.c",
     "musl/src/math/aarch64/round.c",
     "musl/src/math/aarch64/roundf.c",
-    "musl/src/math/acos.c",
     "musl/src/math/acosf.c",
     "musl/src/math/acosh.c",
     "musl/src/math/acoshf.c",

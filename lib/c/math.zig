@@ -33,11 +33,19 @@ comptime {
         @export(&nanl, .{ .name = "nanl", .linkage = common.linkage, .visibility = common.visibility });
     }
 
+    if (builtin.target.isMuslLibC() or builtin.target.isWasiLibC()) {
+        @export(&acos, .{ .name = "acos", .linkage = common.linkage, .visibility = common.visibility });
+    }
+
     if (builtin.target.isMuslLibC()) {
         @export(&copysignf, .{ .name = "copysignf", .linkage = common.linkage, .visibility = common.visibility });
         @export(&copysign, .{ .name = "copysign", .linkage = common.linkage, .visibility = common.visibility });
     }
     @export(&copysignl, .{ .name = "copysignl", .linkage = common.linkage, .visibility = common.visibility });
+}
+
+fn acos(x: f64) callconv(.c) f64 {
+    return std.math.acos(x);
 }
 
 fn isnan(x: f64) callconv(.c) c_int {
