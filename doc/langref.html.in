@@ -437,6 +437,25 @@
 
       {#header_close#}
       {#header_close#}
+
+      {#header_open|Identifiers#}
+      <p>
+      Identifiers must start with an alphabetic character or underscore and may be followed
+      by any number of alphanumeric characters or underscores.
+      They must not overlap with any keywords. See {#link|Keyword Reference#}.
+      </p>
+
+      {#header_open|String Identifier Syntax#}
+      <p>
+      If a name that does not fit these requirements is needed, such as for
+      linking with external libraries, the {#syntax#}@""{#endsyntax#} syntax
+      may be used.
+      </p>
+      {#code|identifiers.zig#}
+      {#header_close#}
+      {#header_close#}
+
+
       {#header_open|Values#}
       {#code|values.zig#}
 
@@ -962,28 +981,15 @@
       humans and computers to do when reading code, and creates more optimization opportunities.
       </p>
       <p>
+      Variables are never allowed to shadow {#link|Identifiers#} from an outer scope.
+      </p>
+      <p>
       The {#syntax#}extern{#endsyntax#} keyword or {#link|@extern#} builtin function can be used to link against a variable that is exported
       from another object. The {#syntax#}export{#endsyntax#} keyword or {#link|@export#} builtin function
       can be used to make a variable available to other objects at link time. In both cases,
       the type of the variable must be C ABI compatible.
       </p>
       {#see_also|Exporting a C Library#}
-
-      {#header_open|Identifiers#}
-      <p>
-      Variable identifiers are never allowed to shadow identifiers from an outer scope.
-      </p>
-      <p>
-      Identifiers must start with an alphabetic character or underscore and may be followed
-      by any number of alphanumeric characters or underscores.
-      They must not overlap with any keywords. See {#link|Keyword Reference#}.
-      </p>
-      <p>
-      If a name that does not fit these requirements is needed, such as for linking with external libraries, the {#syntax#}@""{#endsyntax#} syntax may be used.
-      </p>
-      {#code|identifiers.zig#}
-
-      {#header_close#}
 
       {#header_open|Container Level Variables#}
       <p>
@@ -7135,15 +7141,28 @@ coding style.
       {#header_close#}
 
       {#header_open|Refrain from Underscore Prefixes#}
-      <p>In some programming languages, it is common to prefix identifiers with underscores
-      {#syntax#}__like_this{#endsyntax#} to indicate some vague notion of privacy or danger
-      associated with usage of the identifier.</p>
-      <p>In Zig, there are no private fields, and it is better not to pretend
-      otherwise. Fields should be named carefully to communicate their
-      semantics and documentation should indicate how to use fields without
-      violating data invariants. Underscore prefixes serve only to make code
-      authors feel better about writing clumsy, overly prescriptive, poorly
-      documented code.</p>
+      <p>In some programming languages, it is common to prefix identifiers with
+      underscores {#syntax#}_like_this{#endsyntax#} to avoid keyword
+      collisions, name collisions, or indicate additional metadata associated with usage of the
+      identifier, such as: privacy, existence of complex data invariants, exclusion from
+      semantic versioning, or context-specific type reflection meaning.
+      </p>
+      <p>In Zig, there are no private fields, and this style guide recommends
+      against pretending otherwise. Instead, fields should be named carefully
+      based on their semantics and documentation should indicate how to use
+      fields without violating data invariants. If a field is not subject to
+      the same semantic versioning rules as everything else, the exception
+      should be noted in the {#link|Doc Comments#}.
+      </p>
+      <p>As for {#link|type reflection|@typeInfo#}, it is less error prone and
+      more maintainable to use the type system than to make field names
+      meaningful.</p>
+      <p>Regarding name collisions, an underscore is insufficient to explain
+      the difference between the two otherwise identical names. If there's no
+      danger in getting them mixed up, then this guide recommends more verbose
+      names at outer scopes and more abbreviated names at inner scopes.</p>
+      <p>Finally, keyword collisions are better avoided via
+      {#link|String Identifier Syntax#}.</p>
       {#header_close#}
 
       {#header_open|Whitespace#}
