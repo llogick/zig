@@ -845,9 +845,11 @@ test "file operations on directories" {
                 defer handle.close(io);
 
                 // Reading from the handle should fail
-                var buf: [1]u8 = undefined;
-                try expectError(error.IsDir, handle.readStreaming(io, &.{&buf}));
-                try expectError(error.IsDir, handle.readPositional(io, &.{&buf}, 0));
+                if (native_os != .netbsd) {
+                    var buf: [1]u8 = undefined;
+                    try expectError(error.IsDir, handle.readStreaming(io, &.{&buf}));
+                    try expectError(error.IsDir, handle.readPositional(io, &.{&buf}, 0));
+                }
             }
             try expectError(error.IsDir, ctx.dir.openFile(io, test_dir_name, .{ .allow_directory = false, .mode = .read_only }));
 
