@@ -9,8 +9,8 @@ pub fn build(b: *std.Build) void {
     const optimize: std.builtin.OptimizeMode = .Debug;
     const target = b.graph.host;
 
-    if (target.result.os.tag == .netbsd) return; // https://codeberg.org/ziglang/zig/issues/30841
-    if (target.result.os.tag == .openbsd) return; // realpath not supported
+    if (target.result.os.tag == .netbsd) return; // F_GETPATH not reliable
+    if (target.result.os.tag == .openbsd) return; // F_GETPATH not supported
 
     const main = b.addExecutable(.{
         .name = "main",
