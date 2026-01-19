@@ -10,7 +10,7 @@ on:
 # This cancels older workflow runs on pull requests while ensuring that there
 # are no concurrency limits on pushes and manual workflow dispatches.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
