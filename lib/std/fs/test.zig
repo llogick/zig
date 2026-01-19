@@ -37,7 +37,6 @@ pub inline fn isRealPathSupported() bool {
         .freebsd,
         => true,
         .dragonfly => builtin.os.version_range.semver.min.order(.{ .major = 6, .minor = 0, .patch = 0 }) != .lt,
-        .netbsd => builtin.os.version_range.semver.min.order(.{ .major = 10, .minor = 0, .patch = 0 }) != .lt,
         else => false,
     };
 }
