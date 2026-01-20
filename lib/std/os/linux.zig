@@ -632,6 +632,20 @@ pub fn execve(path: [*:0]const u8, argv: [*:null]const ?[*:0]const u8, envp: [*:
     return syscall3(.execve, @intFromPtr(path), @intFromPtr(argv), @intFromPtr(envp));
 }
 
+pub const EXECVEAT = packed struct(u32) {
+    _1: u8 = 0, // 0x00000001
+    /// Do not follow symbolic links.
+    SYMLINK_NOFOLLOW: bool, // 0x00000100
+    _200: u3 = 0, // 0x00000200
+    /// Allow empty relative pathname.
+    EMPTY_PATH: bool, // 0x00001000
+    _: u19 = 0,
+};
+
+pub fn execveat(dirfd: fd_t, path: [*:0]const u8, argv: [*:null]const ?[*:0]const u8, envp: [*:null]const ?[*:0]const u8, flags: EXECVEAT) usize {
+    return syscall5(.execveat, fd_to_usize(dirfd), @intFromPtr(path), @intFromPtr(argv), @intFromPtr(envp), @as(u32, @bitCast(flags)));
+}
+
 pub fn fork() usize {
     if (comptime native_arch.isSPARC()) {
         return syscall_fork();
@@ -980,6 +994,118 @@ pub fn umount(special: [*:0]const u8) usize {
 
 pub fn umount2(special: [*:0]const u8, flags: u32) usize {
     return syscall2(.umount2, @intFromPtr(special), flags);
+}
+
+pub const MOVE_MOUNT = packed struct(u32) {
+    /// Follow symlinks on from path.
+    F_SYMLINKS: bool, // 0x00000001
+    /// Follow automounts on from path.
+    F_AUTOMOUNTS: bool, // 0x00000002
+    /// Empty from path permitted.
+    F_EMPTY_PATH: bool, // 0x00000004
+    _8: bool = false, // 0x00000008
+    /// Follow symlinks on to path.
+    T_SYMLINKS: bool, // 0x00000010
+    /// Follow automounts on to path.
+    T_AUTOMOUNTS: bool, // 0x00000020
+    /// Empty to path permitted.
+    T_EMPTY_PATH: bool, // 0x00000040
+    _80: bool = false, // 0x00000080
+    /// Set sharing group instead.
+    SET_GROUP: bool, // 0x00000100
+    _: u23 = 0,
+};
+
+pub fn move_mount(from_dirfd: fd_t, from_path: [*:0]const u8, to_dirfd: fd_t, to_path: [*:0]const u8, flags: MOVE_MOUNT) usize {
+    return syscall5(.move_mount, fd_to_usize(from_dirfd), @intFromPtr(from_path), fd_to_usize(to_dirfd), @intFromPtr(to_path), @as(u32, @bitCast(flags)));
+}
+
+pub const MOUNT_ATTR = packed struct(u32) {
+    /// Update atime relative to mtime/ctime.
+    RELATIME: u0, // This is the default ATIME, it's true unless a different ATIME is set.
+    /// Mount read-only.
+    RDONLY: bool, // 0x00000001
+    /// Ignore suid and sgid bits.
+    NOSUID: bool, // 0x00000002
+    /// Disallow access to device special files.
+    NODEV: bool, // 0x00000004
+    /// Disallow program execution.
+    NOEXEC: bool, // 0x00000008
+    /// Do not update access times.
+    NOATIME: bool, // 0x00000010
+    /// Always perform atime updates.
+    STRICTATIME: bool, // 0x00000020
+    _40: bool = false, // 0x00000040
+    /// Do not update directory access times.
+    NODIRATIME: bool, // 0x00000080
+    _100: u12 = 0, // 0x00000100
+    /// Idmap mount to @userns_fd in struct mount_attr.
+    IDMAP: bool, // 0x00100000
+    /// Do not follow symlinks.
+    NOSYMFOLLOW: bool, // 0x00200000
+    _: u10 = 0,
+
+    // ATIME: u32, // 0x00000070 This is a mask, not a flag.
+};
+
+pub fn mount_setattr(dirfd: fd_t, path: [*:0]const u8, flags: MOUNT_ATTR) usize {
+    return syscall3(.mount_setattr, fd_to_usize(dirfd), @intFromPtr(path), @as(u32, @bitCast(flags)));
+}
+
+pub const FSOPEN = packed struct(u32) {
+    /// Set CLOEXEC on the new fd.
+    CLOEXEC: bool, // 0x00000001
+    _: u31 = 0,
+};
+
+pub fn fsopen(fsname: [*:0]const u8, flags: FSOPEN) usize {
+    return syscall2(.fsopen, @intFromPtr(fsname), @as(u32, @bitCast(flags)));
+}
+
+pub const FSCONFIG_CMD = enum(u32) {
+    /// Set parameter, supplying no value.
+    SET_FLAG,
+    /// Set parameter, supplying a string value.
+    SET_STRING,
+    /// Set parameter, supplying a binary blob value.
+    SET_BINARY,
+    /// Set parameter, supplying an object by path.
+    SET_PATH,
+    /// Set parameter, supplying an object by (empty) path.
+    SET_PATH_EMPTY,
+    /// Set parameter, supplying an object by fd.
+    SET_FD,
+    /// Invoke superblock creation.
+    CREATE,
+    /// Invoke superblock reconfiguration.
+    RECONFIGURE,
+};
+
+pub fn fsconfig(fd: fd_t, cmd: FSCONFIG_CMD, key: ?[*:0]const u8, value: ?[*:0]const u8, aux: u32) usize {
+    return syscall5(.fsconfig, fd_to_usize(fd), @intFromEnum(cmd), @intFromPtr(key), @intFromPtr(value), aux);
+}
+
+pub const FSMOUNT = packed struct(u32) {
+    /// Set CLOEXEC on the fd.
+    CLOEXEC: bool, // 0x00000001
+    _31: u31 = 0,
+};
+
+pub fn fsmount(fsfd: fd_t, flags: FSMOUNT, attr_flags: MOUNT_ATTR) usize {
+    return syscall3(.fsmount, fd_to_usize(fsfd), @as(u32, @bitCast(flags)), @as(u32, @bitCast(attr_flags)));
+}
+
+pub const FSPICK = packed struct(u32) {
+    /// Set CLOEXEC on the new fd.
+    CLOEXEC: bool, // 0x00000001
+    SYMLINK_NOFOLLOW: bool, // 0x00000002
+    NO_AUTOMOUNT: bool, // 0x00000004
+    EMPTY_PATH: bool, // 0x00000008
+    _28: u28 = 0,
+};
+
+pub fn fspick(dirfd: fd_t, path: [*:0]const u8, flags: FSPICK) usize {
+    return syscall3(.fspick, fd_to_usize(dirfd), @intFromPtr(path), @as(u32, @bitCast(flags)));
 }
 
 pub fn pivot_root(new_root: [*:0]const u8, put_old: [*:0]const u8) usize {
@@ -1443,6 +1569,18 @@ pub fn close(fd: i32) usize {
     return syscall1(.close, @as(usize, @bitCast(@as(isize, fd))));
 }
 
+pub const CLOSE_RANGE = packed struct(u32) {
+    /// Unshare the file descriptor table before closing file descriptors.
+    UNSHARE: bool, // 0x00000001
+    /// Set the FD_CLOEXEC bit instead of closing the file descriptor.
+    CLOEXEC: bool, // 0x00000002
+    _: u30 = 0,
+};
+
+pub fn close_range(first: fd_t, last: fd_t, flags: CLOSE_RANGE) usize {
+    return syscall3(.close_range, fd_to_usize(first), fd_to_usize(last), @as(u32, @bitCast(flags)));
+}
+
 pub fn fchmod(fd: i32, mode: mode_t) usize {
     return syscall2(.fchmod, @as(usize, @bitCast(@as(isize, fd))), mode);
 }
@@ -1460,6 +1598,14 @@ pub fn fchown(fd: i32, owner: uid_t, group: gid_t) usize {
         return syscall3(.fchown32, @as(usize, @bitCast(@as(isize, fd))), owner, group);
     } else {
         return syscall3(.fchown, @as(usize, @bitCast(@as(isize, fd))), owner, group);
+    }
+}
+
+pub fn chown(path: [*:0]const u8, owner: uid_t, group: gid_t) usize {
+    if (@hasField(SYS, "chown32")) {
+        return syscall3(.chown32, @intFromPtr(path), owner, group);
+    } else {
+        return syscall3(.chown, @intFromPtr(path), owner, group);
     }
 }
 
@@ -2477,7 +2623,7 @@ pub fn unshare(flags: usize) usize {
 }
 
 pub fn setns(fd: fd_t, flags: u32) usize {
-    return syscall2(.setns, fd, flags);
+    return syscall2(.setns, @as(usize, @bitCast(@as(isize, fd))), flags);
 }
 
 pub fn capget(hdrp: *cap_user_header_t, datap: *cap_user_data_t) usize {
@@ -7794,13 +7940,13 @@ pub const SIOCOUTQ = T.IOCOUTQ;
 
 pub const SOCK_IOC_TYPE = 0x89;
 
-pub const SIOCGSTAMP_NEW = IOCTL.IOR(SOCK_IOC_TYPE, 0x06, i64[2]);
+pub const SIOCGSTAMP_NEW = IOCTL.IOR(SOCK_IOC_TYPE, 0x06, [2]i64);
 pub const SIOCGSTAMP_OLD = IOCTL.IOR('s', 100, timeval);
 
 /// Get stamp (timeval)
 pub const SIOCGSTAMP = if (native_arch == .x86_64 or @sizeOf(timeval) == 8) SIOCGSTAMP_OLD else SIOCGSTAMP_NEW;
 
-pub const SIOCGSTAMPNS_NEW = IOCTL.IOR(SOCK_IOC_TYPE, 0x07, i64[2]);
+pub const SIOCGSTAMPNS_NEW = IOCTL.IOR(SOCK_IOC_TYPE, 0x07, [2]i64);
 pub const SIOCGSTAMPNS_OLD = IOCTL.IOR('s', 101, kernel_timespec);
 
 /// Get stamp (timespec)
@@ -9948,3 +10094,7 @@ pub const cmsghdr = extern struct {
     level: i32,
     type: i32,
 };
+
+inline fn fd_to_usize(fd: fd_t) usize {
+    return @as(usize, @bitCast(@as(isize, fd)));
+}
