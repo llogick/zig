@@ -138,7 +138,7 @@ pub fn addCases(cases: *tests.LibcContext) void {
     cases.addLibcTestCase("regression/wcsncpy-read-overflow.c", true, .{});
     cases.addLibcTestCase("regression/wcsstr-false-negative.c", true, .{});
 
-    // cases.addLibcTestCase("math/acos.c", true, .{});
+    cases.addLibcTestCase("math/acos.c", true, .{});
     // cases.addLibcTestCase("math/acosf.c", true, .{});
     // cases.addLibcTestCase("math/acosh.c", true, .{});
     cases.addLibcTestCase("math/acoshf.c", true, .{});
