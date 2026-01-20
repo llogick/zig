@@ -7069,6 +7069,14 @@ pub const user_desc = switch (native_os) {
 pub const utsname = switch (native_os) {
     .linux => linux.utsname,
     .emscripten => emscripten.utsname,
+    .wasi => extern struct {
+        sysname: [64:0]u8,
+        nodename: [64:0]u8,
+        release: [64:0]u8,
+        version: [64:0]u8,
+        machine: [64:0]u8,
+        domainname: [64:0]u8,
+    },
     .illumos => extern struct {
         sysname: [256:0]u8,
         nodename: [256:0]u8,
