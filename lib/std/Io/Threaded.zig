@@ -10824,7 +10824,7 @@ fn openSocketWsa(
 ) !ws2_32.SOCKET {
     const mode = posixSocketMode(options.mode);
     const protocol = posixProtocol(options.protocol);
-    const flags: u32 = ws2_32.WSA_FLAG_OVERLAPPED | ws2_32.WSA_FLAG_NO_HANDLE_INHERIT;
+    const flags: u32 = ws2_32.WSA_FLAG_NO_HANDLE_INHERIT;
     var syscall: Syscall = try .start();
     while (true) {
         const rc = ws2_32.WSASocketW(family, @bitCast(mode), @bitCast(protocol), null, 0, flags);
