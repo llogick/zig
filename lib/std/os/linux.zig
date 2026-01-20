@@ -2477,7 +2477,7 @@ pub fn unshare(flags: usize) usize {
 }
 
 pub fn setns(fd: fd_t, flags: u32) usize {
-    return syscall2(.setns, fd, flags);
+    return syscall2(.setns, @as(usize, @bitCast(@as(isize, fd))), flags);
 }
 
 pub fn capget(hdrp: *cap_user_header_t, datap: *cap_user_data_t) usize {
@@ -7794,13 +7794,13 @@ pub const SIOCOUTQ = T.IOCOUTQ;
 
 pub const SOCK_IOC_TYPE = 0x89;
 
-pub const SIOCGSTAMP_NEW = IOCTL.IOR(SOCK_IOC_TYPE, 0x06, i64[2]);
+pub const SIOCGSTAMP_NEW = IOCTL.IOR(SOCK_IOC_TYPE, 0x06, [2]i64);
 pub const SIOCGSTAMP_OLD = IOCTL.IOR('s', 100, timeval);
 
 /// Get stamp (timeval)
 pub const SIOCGSTAMP = if (native_arch == .x86_64 or @sizeOf(timeval) == 8) SIOCGSTAMP_OLD else SIOCGSTAMP_NEW;
 
-pub const SIOCGSTAMPNS_NEW = IOCTL.IOR(SOCK_IOC_TYPE, 0x07, i64[2]);
+pub const SIOCGSTAMPNS_NEW = IOCTL.IOR(SOCK_IOC_TYPE, 0x07, [2]i64);
 pub const SIOCGSTAMPNS_OLD = IOCTL.IOR('s', 101, kernel_timespec);
 
 /// Get stamp (timespec)
