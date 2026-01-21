@@ -13,15 +13,7 @@ comptime {
 }
 
 fn unameLinux(uts: *std.os.linux.utsname) callconv(.c) c_int {
-    const linux = std.os.linux;
-
-    return switch (linux.errno(linux.uname(uts))) {
-        .SUCCESS => 0,
-        else => |err| blk: {
-            std.c._errno().* = @intFromEnum(err);
-            break :blk -1;
-        },
-    };
+    return @intCast(common.linuxErrno(std.os.linux.uname(uts)));
 }
 
 fn unameWasi(uts: *std.c.utsname) callconv(.c) c_int {
