@@ -2885,12 +2885,11 @@ const libc_targets: []const std.Target.Query = &.{
         .os_tag = .linux,
         .abi = .musl,
     },
-    // Macros like FE_INVALID are defined by musl, but they shouldn't.
-    // .{
-    //     .cpu_arch = .loongarch64,
-    //     .os_tag = .linux,
-    //     .abi = .muslsf,
-    // },
+    .{
+        .cpu_arch = .loongarch64,
+        .os_tag = .linux,
+        .abi = .muslsf,
+    },
     // .{
     //     .cpu_arch = .mips,
     //     .os_tag = .linux,
