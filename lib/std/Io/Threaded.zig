@@ -15791,7 +15791,7 @@ const parking_futex = struct {
                 );
                 switch (old_status.cancelation) {
                     .parked => {}, // state updated to `.none`
-                    .none => unreachable, // if another `wake` call is unparking this thread, it should have removed it from the list
+                    .none => continue, // race with timeout; they are about to lock `bucket.mutex` and remove themselves from the bucket
                     .canceling => continue, // race with a canceler who hasn't called `removeCanceledWaiter` yet
                     .canceled => unreachable,
                     .blocked => unreachable,
