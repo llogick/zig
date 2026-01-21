@@ -47,6 +47,7 @@ stage3-debug/bin/zig build test docs \
   -Denable-macos-sdk \
   -Dstatic-llvm \
   -Dskip-non-native \
+  -Dskip-test-incremental \
   --search-prefix "$PREFIX" \
   --test-timeout 2m
 

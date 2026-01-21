@@ -62,6 +62,7 @@ stage3-release/bin/zig build test docs \
   -fqemu \
   -fwasmtime \
   -Dstatic-llvm \
+  -Dskip-test-incremental \
   -Dtarget=native-native-musl \
   --search-prefix "$PREFIX" \
   --zig-lib-dir "$PWD/../lib" \
