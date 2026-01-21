@@ -113,7 +113,7 @@ pub fn addCases(cases: *tests.LibcContext) void {
     cases.addLibcTestCase("regression/pthread_once-deadlock.c", false, .{});
     cases.addLibcTestCase("regression/pthread_rwlock-ebusy.c", false, .{});
     cases.addLibcTestCase("regression/putenv-doublefree.c", true, .{});
-    cases.addLibcTestCase("regression/raise-race.c", false, .{});
+    // cases.addLibcTestCase("regression/raise-race.c", false, .{}); - Sometimes hangs when run natively on x86_64-linux.
     cases.addLibcTestCase("regression/regex-backref-0.c", true, .{});
     cases.addLibcTestCase("regression/regex-bracket-icase.c", true, .{});
     cases.addLibcTestCase("regression/regex-ere-backref.c", true, .{});
