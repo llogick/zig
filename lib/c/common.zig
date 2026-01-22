@@ -14,16 +14,20 @@ pub const visibility: std.builtin.SymbolVisibility = if (linkage != .internal)
 else
     .default;
 
-/// Checks whether the syscall has had an error, storing it in `std.c.errno` and returning -1.
-/// Otherwise returns the result.
-pub fn linuxErrno(r: usize) isize {
-    const linux = std.os.linux;
-
-    return switch (linux.errno(r)) {
-        .SUCCESS => @bitCast(r),
-        else => |err| blk: {
-            std.c._errno().* = @intFromEnum(err);
-            break :blk -1;
+/// Given a low-level syscall return value, sets errno and returns `-1`, or on
+/// success returns the result.
+pub fn errno(syscall_return_value: usize) c_int {
+    return switch (builtin.os.tag) {
+        .linux => {
+            const signed: isize = @bitCast(syscall_return_value);
+            const casted: c_int = @intCast(signed);
+            if (casted < 0) {
+                @branchHint(.unlikely);
+                std.c._errno().* = -casted;
+                return -1;
+            }
+            return casted;
         },
+        else => comptime unreachable,
     };
 }
