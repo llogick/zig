@@ -5,9 +5,9 @@
 set -x
 set -e
 
-TARGET="s390x-linux-musl"
-MCPU="z15"
-CACHE_BASENAME="zig+llvm+lld+clang-$TARGET-0.16.0-dev.1354+94e98bfe8"
+TARGET="x86_64-netbsd-none"
+MCPU="baseline"
+CACHE_BASENAME="zig+llvm+lld+clang-$TARGET-0.16.0-dev.2287+eb3f16db5"
 PREFIX="$HOME/deps/$CACHE_BASENAME"
 ZIG="$PREFIX/bin/zig"
 
@@ -17,16 +17,16 @@ ZIG="$PREFIX/bin/zig"
 export ZIG_GLOBAL_CACHE_DIR="$PWD/zig-global-cache"
 export ZIG_LOCAL_CACHE_DIR="$PWD/zig-local-cache"
 
-mkdir build-release
-cd build-release
+mkdir build-debug
+cd build-debug
 
 export CC="$ZIG cc -target $TARGET -mcpu=$MCPU"
 export CXX="$ZIG c++ -target $TARGET -mcpu=$MCPU"
 
 cmake .. \
-  -DCMAKE_INSTALL_PREFIX="stage3-release" \
+  -DCMAKE_INSTALL_PREFIX="stage3-debug" \
   -DCMAKE_PREFIX_PATH="$PREFIX" \
-  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_BUILD_TYPE=Debug \
   -DZIG_TARGET_TRIPLE="$TARGET" \
   -DZIG_TARGET_MCPU="$MCPU" \
   -DZIG_STATIC=ON \
@@ -43,30 +43,21 @@ unset CXX
 
 ninja install
 
-# No -fqemu and -fwasmtime here as they're covered by the x86_64-linux scripts.
-stage3-release/bin/zig build test docs \
+stage3-debug/bin/zig build test docs \
   --maxrss ${ZSF_MAX_RSS:-0} \
   -Dstatic-llvm \
   -Dskip-non-native \
   -Dskip-test-incremental \
-  -Dtarget=native-native-musl \
   --search-prefix "$PREFIX" \
   --zig-lib-dir "$PWD/../lib" \
-  --test-timeout 4m
+  --test-timeout 2m
 
-# Ensure that stage3 and stage4 are byte-for-byte identical.
-stage3-release/bin/zig build \
-  --prefix stage4-release \
+stage3-debug/bin/zig build \
+  --prefix stage4-debug \
   -Denable-llvm \
   -Dno-lib \
-  -Doptimize=ReleaseFast \
-  -Dstrip \
   -Dtarget=$TARGET \
-  -Dcpu=$MCPU \
   -Duse-zig-libcxx \
-  -Dversion-string="$(stage3-release/bin/zig version)"
+  -Dversion-string="$(stage3-debug/bin/zig version)"
 
-# diff returns an error code if the files differ.
-echo "If the following command fails, it means nondeterminism has been"
-echo "introduced, making stage3 and stage4 no longer byte-for-byte identical."
-diff stage3-release/bin/zig stage4-release/bin/zig
+stage4-debug/bin/zig test ../test/behavior.zig

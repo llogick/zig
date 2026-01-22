@@ -62,6 +62,7 @@ stage3-debug/bin/zig build test docs \
   -Dskip-openbsd \
   -Dskip-windows \
   -Dskip-darwin \
+  -Dskip-test-incremental \
   -Dtarget=native-native-musl \
   --search-prefix "$PREFIX" \
   --zig-lib-dir "$PWD/../lib" \

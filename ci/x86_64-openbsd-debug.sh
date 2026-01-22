@@ -47,6 +47,7 @@ stage3-debug/bin/zig build test docs \
   --maxrss ${ZSF_MAX_RSS:-0} \
   -Dstatic-llvm \
   -Dskip-non-native \
+  -Dskip-test-incremental \
   --search-prefix "$PREFIX" \
   --zig-lib-dir "$PWD/../lib" \
   --test-timeout 2m

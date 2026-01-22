@@ -5,9 +5,9 @@
 set -x
 set -e
 
-TARGET="s390x-linux-musl"
-MCPU="z15"
-CACHE_BASENAME="zig+llvm+lld+clang-$TARGET-0.16.0-dev.1354+94e98bfe8"
+TARGET="x86_64-netbsd-none"
+MCPU="baseline"
+CACHE_BASENAME="zig+llvm+lld+clang-$TARGET-0.16.0-dev.2287+eb3f16db5"
 PREFIX="$HOME/deps/$CACHE_BASENAME"
 ZIG="$PREFIX/bin/zig"
 
@@ -43,16 +43,14 @@ unset CXX
 
 ninja install
 
-# No -fqemu and -fwasmtime here as they're covered by the x86_64-linux scripts.
 stage3-release/bin/zig build test docs \
   --maxrss ${ZSF_MAX_RSS:-0} \
   -Dstatic-llvm \
   -Dskip-non-native \
   -Dskip-test-incremental \
-  -Dtarget=native-native-musl \
   --search-prefix "$PREFIX" \
   --zig-lib-dir "$PWD/../lib" \
-  --test-timeout 4m
+  --test-timeout 2m
 
 # Ensure that stage3 and stage4 are byte-for-byte identical.
 stage3-release/bin/zig build \
@@ -62,7 +60,6 @@ stage3-release/bin/zig build \
   -Doptimize=ReleaseFast \
   -Dstrip \
   -Dtarget=$TARGET \
-  -Dcpu=$MCPU \
   -Duse-zig-libcxx \
   -Dversion-string="$(stage3-release/bin/zig version)"
 
