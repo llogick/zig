@@ -9180,7 +9180,15 @@ pub fn handleExternLibName(
             );
             break :blk;
         }
-        if (!target.cpu.arch.isWasm() and !block.ownerModule().pic) {
+        if (!target_util.canDynamicLink(target)) {
+            return sema.fail(
+                block,
+                src_loc,
+                "dependency on dynamic library '{s}' cannot be satisfied because target does not support dynamic linking",
+                .{lib_name},
+            );
+        }
+        if (!block.ownerModule().pic and target_util.requiresPicForDynamicLink(target)) {
             return sema.fail(
                 block,
                 src_loc,

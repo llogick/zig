@@ -255,7 +255,7 @@ pub fn resolve(options: Options) ResolveError!Config {
             .Exe => true,
         };
 
-        if (target_util.cannotDynamicLink(target)) {
+        if (!target_util.canDynamicLink(target)) {
             if (options.link_mode == .dynamic) return error.TargetCannotDynamicLink;
             break :b .static;
         }
