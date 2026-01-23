@@ -11,13 +11,14 @@ const Dir = std.Io.Dir;
 
 handle: Handle,
 
+pub const Handle = std.posix.fd_t;
+
 pub const Reader = @import("File/Reader.zig");
 pub const Writer = @import("File/Writer.zig");
 pub const Atomic = @import("File/Atomic.zig");
 /// Memory intended to remain consistent with file contents.
 pub const MemoryMap = @import("File/MemoryMap.zig");
 
-pub const Handle = std.posix.fd_t;
 pub const INode = std.posix.ino_t;
 pub const NLink = std.posix.nlink_t;
 pub const Uid = std.posix.uid_t;
@@ -73,15 +74,36 @@ pub const Stat = struct {
 };
 
 pub fn stdout() File {
-    return .{ .handle = if (is_windows) std.os.windows.peb().ProcessParameters.hStdOutput else std.posix.STDOUT_FILENO };
+    return switch (native_os) {
+        .windows => .{
+            .handle = std.os.windows.peb().ProcessParameters.hStdOutput,
+        },
+        else => .{
+            .handle = std.posix.STDOUT_FILENO,
+        },
+    };
 }
 
 pub fn stderr() File {
-    return .{ .handle = if (is_windows) std.os.windows.peb().ProcessParameters.hStdError else std.posix.STDERR_FILENO };
+    return switch (native_os) {
+        .windows => .{
+            .handle = std.os.windows.peb().ProcessParameters.hStdError,
+        },
+        else => .{
+            .handle = std.posix.STDERR_FILENO,
+        },
+    };
 }
 
 pub fn stdin() File {
-    return .{ .handle = if (is_windows) std.os.windows.peb().ProcessParameters.hStdInput else std.posix.STDIN_FILENO };
+    return switch (native_os) {
+        .windows => .{
+            .handle = std.os.windows.peb().ProcessParameters.hStdInput,
+        },
+        else => .{
+            .handle = std.posix.STDIN_FILENO,
+        },
+    };
 }
 
 pub const StatError = error{

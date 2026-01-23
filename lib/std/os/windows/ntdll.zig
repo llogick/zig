@@ -567,9 +567,8 @@ pub extern "ntdll" fn NtWaitForAlertByThreadId(
     Address: ?*const anyopaque,
     Timeout: ?*const LARGE_INTEGER,
 ) callconv(.winapi) NTSTATUS;
-pub extern "ntdll" fn NtAlertThreadByThreadId(
-    ThreadId: DWORD,
-) callconv(.winapi) NTSTATUS;
+pub extern "ntdll" fn NtAlertThreadByThreadId(ThreadId: DWORD) callconv(.winapi) NTSTATUS;
+pub extern "ntdll" fn NtAlertThread(ThreadHandle: HANDLE) callconv(.winapi) NTSTATUS;
 pub extern "ntdll" fn NtAlertMultipleThreadByThreadId(
     ThreadIds: [*]const ULONG_PTR,
     ThreadCount: ULONG,
@@ -587,5 +586,18 @@ pub extern "ntdll" fn NtOpenThread(
 pub extern "ntdll" fn NtCancelSynchronousIoFile(
     ThreadHandle: HANDLE,
     RequestToCancel: ?*IO_STATUS_BLOCK,
+    IoStatusBlock: *IO_STATUS_BLOCK,
+) callconv(.winapi) NTSTATUS;
+
+pub extern "ntdll" fn NtDelayExecution(
+    Alertable: BOOLEAN,
+    DelayInterval: *const LARGE_INTEGER,
+) callconv(.winapi) NTSTATUS;
+
+pub extern "ntdll" fn NtCancelIoFileEx(
+    FileHandle: HANDLE,
+    /// Documentation has this as IO_STATUS_BLOCK but it's actually the APC
+    /// context parameter.
+    IoRequestToCancel: ?*anyopaque,
     IoStatusBlock: *IO_STATUS_BLOCK,
 ) callconv(.winapi) NTSTATUS;

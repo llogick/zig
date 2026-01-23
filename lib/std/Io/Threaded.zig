@@ -571,7 +571,7 @@ const Future = struct {
         num_completed: *std.atomic.Value(u32),
         thread: ?*Thread,
     ) void {
-        var need_signal: bool = thread != null and thread.?.cancelAwaitable(.fromFuture(future));
+        var need_signal: bool = if (thread) |th| th.cancelAwaitable(.fromFuture(future)) else false;
         var timeout_ns: u64 = 1 << 10;
         while (true) {
             need_signal = need_signal and thread.?.signalCanceledSyscall(t, .fromFuture(future));
@@ -628,7 +628,7 @@ const Thread = struct {
 
     const Handle = Handle: {
         if (std.Thread.use_pthreads) break :Handle std.c.pthread_t;
-        if (builtin.target.os.tag == .windows) break :Handle windows.HANDLE;
+        if (is_windows) break :Handle windows.HANDLE;
         break :Handle void;
     };
 
@@ -1364,7 +1364,7 @@ fn worker(t: *Threaded) void {
         .id = std.Thread.getCurrentId(),
         .handle = handle: {
             if (std.Thread.use_pthreads) break :handle std.c.pthread_self();
-            if (builtin.target.os.tag == .windows) break :handle undefined; // populated below
+            if (is_windows) break :handle undefined; // populated below
         },
         .status = .init(.{
             .cancelation = .none,
@@ -1376,7 +1376,7 @@ fn worker(t: *Threaded) void {
     };
     Thread.current = &thread;
 
-    if (builtin.target.os.tag == .windows) {
+    if (is_windows) {
         assert(windows.ntdll.NtOpenThread(
             &thread.handle,
             .{
@@ -1397,7 +1397,7 @@ fn worker(t: *Threaded) void {
             &windows.teb().ClientId,
         ) == .SUCCESS);
     }
-    defer if (builtin.target.os.tag == .windows) {
+    defer if (is_windows) {
         windows.CloseHandle(thread.handle);
     };
 
@@ -3430,53 +3430,133 @@ fn dirCreateFileWindows(
     sub_path: []const u8,
     flags: File.CreateFlags,
 ) File.OpenError!File {
-    const w = windows;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     _ = t;
 
-    const sub_path_w_array = try w.sliceToPrefixedFileW(dir.handle, sub_path);
+    if (std.mem.eql(u8, sub_path, ".")) return error.IsDir;
+    if (std.mem.eql(u8, sub_path, "..")) return error.IsDir;
+
+    const sub_path_w_array = try windows.sliceToPrefixedFileW(dir.handle, sub_path);
     const sub_path_w = sub_path_w_array.span();
+    const path_len_bytes = std.math.cast(u16, sub_path_w.len * 2) orelse return error.NameTooLong;
 
-    const handle = handle: {
-        const syscall: Syscall = try .start();
-        while (true) {
-            if (w.OpenFile(sub_path_w, .{
-                .dir = dir.handle,
-                .access_mask = .{
-                    .STANDARD = .{ .SYNCHRONIZE = true },
-                    .GENERIC = .{
-                        .WRITE = true,
-                        .READ = flags.read,
-                    },
-                },
-                .creation = if (flags.exclusive)
-                    .CREATE
-                else if (flags.truncate)
-                    .OVERWRITE_IF
-                else
-                    .OPEN_IF,
-            })) |handle| {
-                syscall.finish();
-                break :handle handle;
-            } else |err| switch (err) {
-                error.OperationCanceled => {
-                    try syscall.checkCancel();
-                    continue;
-                },
-                else => |e| return syscall.fail(e),
-            }
-        }
+    var nt_name: windows.UNICODE_STRING = .{
+        .Length = path_len_bytes,
+        .MaximumLength = path_len_bytes,
+        .Buffer = @constCast(sub_path_w.ptr),
     };
-    errdefer w.CloseHandle(handle);
+    const attr: windows.OBJECT_ATTRIBUTES = .{
+        .Length = @sizeOf(windows.OBJECT_ATTRIBUTES),
+        .RootDirectory = if (Dir.path.isAbsoluteWindowsWtf16(sub_path_w)) null else dir.handle,
+        .Attributes = .{
+            .INHERIT = false,
+        },
+        .ObjectName = &nt_name,
+        .SecurityDescriptor = null,
+        .SecurityQualityOfService = null,
+    };
+    const create_disposition: windows.FILE.CREATE_DISPOSITION = if (flags.exclusive)
+        .CREATE
+    else if (flags.truncate)
+        .OVERWRITE_IF
+    else
+        .OPEN_IF;
 
-    var io_status_block: w.IO_STATUS_BLOCK = undefined;
+    const access_mask: windows.ACCESS_MASK = .{
+        .STANDARD = .{ .SYNCHRONIZE = true },
+        .GENERIC = .{
+            .WRITE = true,
+            .READ = flags.read,
+        },
+    };
+
+    var io_status_block: windows.IO_STATUS_BLOCK = undefined;
+
+    // There are multiple kernel bugs being worked around with retries.
+    const max_attempts = 13;
+    var attempt: u5 = 0;
+
+    var handle: windows.HANDLE = undefined;
+    var syscall: Syscall = try .start();
+    while (true) switch (windows.ntdll.NtCreateFile(
+        &handle,
+        access_mask,
+        &attr,
+        &io_status_block,
+        null,
+        .{ .NORMAL = true },
+        .VALID_FLAGS, // share access
+        create_disposition,
+        .{
+            .NON_DIRECTORY_FILE = true,
+            .IO = .SYNCHRONOUS_NONALERT,
+        },
+        null,
+        0,
+    )) {
+        .SUCCESS => {
+            syscall.finish();
+            break;
+        },
+        .CANCELLED => {
+            try syscall.checkCancel();
+            continue;
+        },
+        .SHARING_VIOLATION => {
+            // This occurs if the file attempting to be opened is a running
+            // executable. However, there's a kernel bug: the error may be
+            // incorrectly returned for an indeterminate amount of time
+            // after an executable file is closed. Here we work around the
+            // kernel bug with retry attempts.
+            syscall.finish();
+            if (max_attempts - attempt == 0) return error.SharingViolation;
+            try parking_sleep.windowsRetrySleep((@as(u32, 1) << attempt) >> 1);
+            attempt += 1;
+            syscall = try .start();
+            continue;
+        },
+        .DELETE_PENDING => {
+            // This error means that there *was* a file in this location on
+            // the file system, but it was deleted. However, the OS is not
+            // finished with the deletion operation, and so this CreateFile
+            // call has failed. Here, we simulate the kernel bug being
+            // fixed by sleeping and retrying until the error goes away.
+            syscall.finish();
+            if (max_attempts - attempt == 0) return error.SharingViolation;
+            try parking_sleep.windowsRetrySleep((@as(u32, 1) << attempt) >> 1);
+            attempt += 1;
+            syscall = try .start();
+            continue;
+        },
+        .OBJECT_NAME_INVALID => return syscall.fail(error.BadPathName),
+        .OBJECT_NAME_NOT_FOUND => return syscall.fail(error.FileNotFound),
+        .OBJECT_PATH_NOT_FOUND => return syscall.fail(error.FileNotFound),
+        .BAD_NETWORK_PATH => return syscall.fail(error.NetworkNotFound), // \\server was not found
+        .BAD_NETWORK_NAME => return syscall.fail(error.NetworkNotFound), // \\server was found but \\server\share wasn't
+        .NO_MEDIA_IN_DEVICE => return syscall.fail(error.NoDevice),
+        .ACCESS_DENIED => return syscall.fail(error.AccessDenied),
+        .PIPE_BUSY => return syscall.fail(error.PipeBusy),
+        .PIPE_NOT_AVAILABLE => return syscall.fail(error.NoDevice),
+        .OBJECT_NAME_COLLISION => return syscall.fail(error.PathAlreadyExists),
+        .FILE_IS_A_DIRECTORY => return syscall.fail(error.IsDir),
+        .NOT_A_DIRECTORY => return syscall.fail(error.NotDir),
+        .USER_MAPPED_FILE => return syscall.fail(error.AccessDenied),
+        .VIRUS_INFECTED, .VIRUS_DELETED => return syscall.fail(error.AntivirusInterference),
+        .INVALID_PARAMETER => |err| return syscall.ntstatusBug(err),
+        .OBJECT_PATH_SYNTAX_BAD => |err| return syscall.ntstatusBug(err),
+        .INVALID_HANDLE => |err| return syscall.ntstatusBug(err),
+        else => |err| return syscall.unexpectedNtstatus(err),
+    };
+    errdefer windows.CloseHandle(handle);
+
     const exclusive = switch (flags.lock) {
         .none => return .{ .handle = handle },
         .shared => false,
         .exclusive => true,
     };
-    const syscall: Syscall = try .start();
-    while (true) switch (w.ntdll.NtLockFile(
+
+    syscall = try .start();
+    while (true) switch (windows.ntdll.NtLockFile(
         handle,
         null,
         null,
@@ -3968,7 +4048,10 @@ pub fn dirOpenFileWtf16(
     var attr: w.OBJECT_ATTRIBUTES = .{
         .Length = @sizeOf(w.OBJECT_ATTRIBUTES),
         .RootDirectory = dir_handle,
-        .Attributes = .{},
+        .Attributes = .{
+            // TODO should we set INHERIT=false?
+            //.INHERIT = false,
+        },
         .ObjectName = &nt_name,
         .SecurityDescriptor = null,
         .SecurityQualityOfService = null,
@@ -7923,15 +8006,14 @@ fn fileClose(userdata: ?*anyopaque, files: []const File) void {
     for (files) |file| posix.close(file.handle);
 }
 
-const fileReadStreaming = switch (native_os) {
-    .windows => fileReadStreamingWindows,
-    else => fileReadStreamingPosix,
-};
-
-fn fileReadStreamingPosix(userdata: ?*anyopaque, file: File, data: []const []u8) File.Reader.Error!usize {
+fn fileReadStreaming(userdata: ?*anyopaque, file: File, data: []const []u8) File.Reader.Error!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     _ = t;
+    if (is_windows) return fileReadStreamingWindows(file, data);
+    return fileReadStreamingPosix(file, data);
+}
 
+fn fileReadStreamingPosix(file: File, data: []const []u8) File.Reader.Error!usize {
     var iovecs_buffer: [max_iovecs_len]posix.iovec = undefined;
     var i: usize = 0;
     for (data) |buf| {
@@ -8013,10 +8095,7 @@ fn fileReadStreamingPosix(userdata: ?*anyopaque, file: File, data: []const []u8)
     }
 }
 
-fn fileReadStreamingWindows(userdata: ?*anyopaque, file: File, data: []const []u8) File.Reader.Error!usize {
-    const t: *Threaded = @ptrCast(@alignCast(userdata));
-    _ = t;
-
+fn fileReadStreamingWindows(file: File, data: []const []u8) File.Reader.Error!usize {
     const DWORD = windows.DWORD;
     var index: usize = 0;
     while (index < data.len and data[index].len == 0) index += 1;
@@ -8059,10 +8138,7 @@ fn fileReadStreamingWindows(userdata: ?*anyopaque, file: File, data: []const []u
     }
 }
 
-fn fileReadPositionalPosix(userdata: ?*anyopaque, file: File, data: []const []u8, offset: u64) File.ReadPositionalError!usize {
-    const t: *Threaded = @ptrCast(@alignCast(userdata));
-    _ = t;
-
+fn fileReadPositionalPosix(file: File, data: []const []u8, offset: u64) File.ReadPositionalError!usize {
     if (!have_preadv) @compileError("TODO implement fileReadPositionalPosix for cursed operating systems that don't support preadv (it's only Haiku)");
 
     var iovecs_buffer: [max_iovecs_len]posix.iovec = undefined;
@@ -8144,15 +8220,14 @@ fn fileReadPositionalPosix(userdata: ?*anyopaque, file: File, data: []const []u8
     }
 }
 
-const fileReadPositional = switch (native_os) {
-    .windows => fileReadPositionalWindows,
-    else => fileReadPositionalPosix,
-};
-
-fn fileReadPositionalWindows(userdata: ?*anyopaque, file: File, data: []const []u8, offset: u64) File.ReadPositionalError!usize {
+fn fileReadPositional(userdata: ?*anyopaque, file: File, data: []const []u8, offset: u64) File.ReadPositionalError!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     _ = t;
+    if (is_windows) return fileReadPositionalWindows(file, data, offset);
+    return fileReadPositionalPosix(file, data, offset);
+}
 
+fn fileReadPositionalWindows(file: File, data: []const []u8, offset: u64) File.ReadPositionalError!usize {
     var index: usize = 0;
     while (index < data.len and data[index].len == 0) index += 1;
     if (index == data.len) return 0;
@@ -8244,7 +8319,7 @@ fn fileSeekBy(userdata: ?*anyopaque, file: File, offset: i64) File.SeekError!voi
         }
     }
 
-    if (native_os == .windows) {
+    if (is_windows) {
         const syscall: Syscall = try .start();
         while (true) {
             if (windows.kernel32.SetFilePointerEx(fd, offset, null, windows.FILE_CURRENT) != 0) {
@@ -8329,7 +8404,7 @@ fn fileSeekTo(userdata: ?*anyopaque, file: File, offset: u64) File.SeekError!voi
     _ = t;
     const fd = file.handle;
 
-    if (native_os == .windows) {
+    if (is_windows) {
         // "The starting point is zero or the beginning of the file. If [FILE_BEGIN]
         // is specified, then the liDistanceToMove parameter is interpreted as an unsigned value."
         // https://docs.microsoft.com/en-us/windows/desktop/api/fileapi/nf-fileapi-setfilepointerex
@@ -11628,7 +11703,7 @@ fn netWriteWindows(
     splat: usize,
 ) net.Stream.Writer.Error!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    comptime assert(native_os == .windows);
+    comptime assert(is_windows);
 
     var iovecs: [max_iovecs_len]ws2_32.WSABUF = undefined;
     var len: u32 = 0;
@@ -11896,7 +11971,7 @@ fn netInterfaceNameResolve(
         }
     }
 
-    if (native_os == .windows) {
+    if (is_windows) {
         try Thread.checkCancel();
         @panic("TODO implement netInterfaceNameResolve for Windows");
     }
@@ -11930,7 +12005,7 @@ fn netInterfaceName(userdata: ?*anyopaque, interface: net.Interface) net.Interfa
         @panic("TODO implement netInterfaceName for linux");
     }
 
-    if (native_os == .windows) {
+    if (is_windows) {
         @panic("TODO implement netInterfaceName for windows");
     }
 
@@ -15247,11 +15322,13 @@ fn progressParentFile(userdata: ?*anyopaque) std.Progress.ParentFileError!File {
 
     const int = try t.environ.zig_progress_handle;
 
-    return .{ .handle = switch (@typeInfo(Io.File.Handle)) {
-        .int => int,
-        .pointer => @ptrFromInt(int),
-        else => return error.UnsupportedOperation,
-    } };
+    return .{
+        .handle = switch (@typeInfo(Io.File.Handle)) {
+            .int => int,
+            .pointer => @ptrFromInt(int),
+            else => return error.UnsupportedOperation,
+        },
+    };
 }
 
 pub fn environString(t: *Threaded, comptime name: []const u8) ?[:0]const u8 {
@@ -15562,13 +15639,13 @@ test {
     _ = @import("Threaded/test.zig");
 }
 
-const use_parking_futex = switch (builtin.target.os.tag) {
+const use_parking_futex = switch (native_os) {
     .windows => true, // RtlWaitOnAddress is a userland implementation anyway
     .netbsd => true, // NetBSD has `futex(2)`, but it's historically been quite buggy. TODO: evaluate whether it's okay to use now.
     .illumos => true, // Illumos has no futex mechanism
     else => false,
 };
-const use_parking_sleep = switch (builtin.target.os.tag) {
+const use_parking_sleep = switch (native_os) {
     // On Windows, we can implement sleep either with `NtDelayExecution` (which is how `SleepEx` in
     // kernel32 works) or `NtWaitForAlertByThreadId` (thread parking). We're already using the
     // latter for futex, so we may as well use it for sleeping too, to maximise code reuse. I'm
@@ -15926,7 +16003,7 @@ const parking_sleep = struct {
 /// `addr_hint` has no semantic effect, but may allow the OS to optimize this operation.
 fn park(opt_deadline: ?std.Io.Clock.Timestamp, addr_hint: ?*const anyopaque) error{Timeout}!void {
     comptime assert(use_parking_futex or use_parking_sleep);
-    switch (builtin.target.os.tag) {
+    switch (native_os) {
         .windows => {
             var timeout_buf: windows.LARGE_INTEGER = undefined;
             const raw_timeout: ?*windows.LARGE_INTEGER = if (opt_deadline) |deadline| timeout: {
@@ -15980,7 +16057,7 @@ fn park(opt_deadline: ?std.Io.Clock.Timestamp, addr_hint: ?*const anyopaque) err
     }
 }
 
-const UnparkTid = switch (builtin.target.os.tag) {
+const UnparkTid = switch (native_os) {
     // `NtAlertMultipleThreadByThreadId` is weird and wants 64-bit thread handles?
     .windows => usize,
     else => std.Thread.Id,
@@ -15988,7 +16065,7 @@ const UnparkTid = switch (builtin.target.os.tag) {
 /// `addr_hint` has no semantic effect, but may allow the OS to optimize this operation.
 fn unpark(tids: []const UnparkTid, addr_hint: ?*const anyopaque) void {
     comptime assert(use_parking_futex or use_parking_sleep);
-    switch (builtin.target.os.tag) {
+    switch (native_os) {
         .windows => {
             // TODO: this condition is currently disabled because mingw-w64 does not contain this
             // symbol. Once it's added, enable this check to use the new bulk API where possible.

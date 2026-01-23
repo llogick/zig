@@ -101,7 +101,7 @@ pub fn moveToReader(w: *Writer) File.Reader {
     defer w.* = undefined;
     return .{
         .io = w.io,
-        .file = .{ .handle = w.file.handle },
+        .file = w.file,
         .mode = w.mode,
         .pos = w.pos,
         .interface = File.Reader.initInterface(w.interface.buffer),

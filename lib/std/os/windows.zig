@@ -392,6 +392,8 @@ pub const FILE = struct {
         Characteristics: ULONG,
     };
 
+    pub const USE_FILE_POINTER_POSITION = -2;
+
     // ref: um/WinBase.h
 
     pub const ATTRIBUTE_TAG_INFO = extern struct {
@@ -466,9 +468,11 @@ pub const FILE = struct {
     pub const CREATE_DISPOSITION = enum(ULONG) {
         /// If the file already exists, replace it with the given file. If it does not, create the given file.
         SUPERSEDE = 0x00000000,
-        /// If the file already exists, open it instead of creating a new file. If it does not, fail the request and do not create a new file.
+        /// If the file already exists, open it instead of creating a new file.
+        /// If it does not, fail the request and do not create a new file.
         OPEN = 0x00000001,
-        /// If the file already exists, fail the request and do not create or open the given file. If it does not, create the given file.
+        /// If the file already exists, fail the request and do not create or
+        /// open the given file. If it does not, create the given file.
         CREATE = 0x00000002,
         /// If the file already exists, open it. If it does not, create the given file.
         OPEN_IF = 0x00000003,
@@ -482,75 +486,122 @@ pub const FILE = struct {
 
     /// Define the create/open option flags
     pub const MODE = packed struct(ULONG) {
-        /// The file being created or opened is a directory file. With this flag, the CreateDisposition parameter must be set to `.CREATE`, `.FILE_OPEN`, or `.OPEN_IF`.
-        /// With this flag, other compatible CreateOptions flags include only the following: `SYNCHRONOUS_IO`, `WRITE_THROUGH`, `OPEN_FOR_BACKUP_INTENT`, and `OPEN_BY_FILE_ID`.
+        /// The file being created or opened is a directory file. With this
+        /// flag, the CreateDisposition parameter must be set to `.CREATE`,
+        /// `.FILE_OPEN`, or `.OPEN_IF`. With this flag, other compatible
+        /// CreateOptions flags include only the following: `SYNCHRONOUS_IO`,
+        /// `WRITE_THROUGH`, `OPEN_FOR_BACKUP_INTENT`, and `OPEN_BY_FILE_ID`.
         DIRECTORY_FILE: bool = false,
-        /// Applications that write data to the file must actually transfer the data into the file before any requested write operation is considered complete.
-        /// This flag is automatically set if the CreateOptions flag `NO_INTERMEDIATE_BUFFERING` is set.
+        /// Applications that write data to the file must actually transfer the
+        /// data into the file before any requested write operation is
+        /// considered complete. This flag is automatically set if the
+        /// CreateOptions flag `NO_INTERMEDIATE_BUFFERING` is set.
         WRITE_THROUGH: bool = false,
         /// All accesses to the file are sequential.
         SEQUENTIAL_ONLY: bool = false,
-        /// The file cannot be cached or buffered in a driver's internal buffers. This flag is incompatible with the DesiredAccess `FILE_APPEND_DATA` flag.
+        /// The file cannot be cached or buffered in a driver's internal
+        /// buffers. This flag is incompatible with the DesiredAccess
+        /// `FILE_APPEND_DATA` flag.
         NO_INTERMEDIATE_BUFFERING: bool = false,
         IO: enum(u2) {
             /// All operations on the file are performed asynchronously.
             ASYNCHRONOUS = 0b00,
-            /// All operations on the file are performed synchronously. Any wait on behalf of the caller is subject to premature termination from alerts.
-            /// This flag also causes the I/O system to maintain the file position context. If this flag is set, the DesiredAccess `SYNCHRONIZE` flag also must be set.
+            /// All operations on the file are performed synchronously. Any
+            /// wait on behalf of the caller is subject to premature
+            /// termination from alerts. This flag also causes the I/O system
+            /// to maintain the file position context. If this flag is set, the
+            /// DesiredAccess `SYNCHRONIZE` flag also must be set.
             SYNCHRONOUS_ALERT = 0b01,
-            /// All operations on the file are performed synchronously. Waits in the system to synchronize I/O queuing and completion are not subject to alerts.
-            /// This flag also causes the I/O system to maintain the file position context. If this flag is set, the DesiredAccess `SYNCHRONIZE` flag also must be set.
+            /// All operations on the file are performed synchronously. Waits
+            /// in the system to synchronize I/O queuing and completion are not
+            /// subject to alerts. This flag also causes the I/O system to
+            /// maintain the file position context. If this flag is set, the
+            /// DesiredAccess `SYNCHRONIZE` flag also must be set.
             SYNCHRONOUS_NONALERT = 0b10,
             _,
 
             pub const VALID_FLAGS: @This() = @enumFromInt(0b11);
         } = .ASYNCHRONOUS,
-        /// The file being opened must not be a directory file or this call fails. The file object being opened can represent a data file, a logical, virtual, or physical
-        /// device, or a volume.
+        /// The file being opened must not be a directory file or this call
+        /// fails. The file object being opened can represent a data file, a
+        /// logical, virtual, or physical device, or a volume.
         NON_DIRECTORY_FILE: bool = false,
-        /// Create a tree connection for this file in order to open it over the network. This flag is not used by device and intermediate drivers.
+        /// Create a tree connection for this file in order to open it over the
+        /// network. This flag is not used by device and intermediate drivers.
         CREATE_TREE_CONNECTION: bool = false,
-        /// Complete this operation immediately with an alternate success code of `STATUS_OPLOCK_BREAK_IN_PROGRESS` if the target file is oplocked, rather than blocking
-        /// the caller's thread. If the file is oplocked, another caller already has access to the file. This flag is not used by device and intermediate drivers.
+        /// Complete this operation immediately with an alternate success code
+        /// of `STATUS_OPLOCK_BREAK_IN_PROGRESS` if the target file is
+        /// oplocked, rather than blocking the caller's thread. If the file is
+        /// oplocked, another caller already has access to the file. This flag
+        /// is not used by device and intermediate drivers.
         COMPLETE_IF_OPLOCKED: bool = false,
-        /// If the extended attributes on an existing file being opened indicate that the caller must understand EAs to properly interpret the file, fail this request
-        /// because the caller does not understand how to deal with EAs. This flag is irrelevant for device and intermediate drivers.
+        /// If the extended attributes on an existing file being opened
+        /// indicate that the caller must understand EAs to properly interpret
+        /// the file, fail this request because the caller does not understand
+        /// how to deal with EAs. This flag is irrelevant for device and
+        /// intermediate drivers.
         NO_EA_KNOWLEDGE: bool = false,
         OPEN_REMOTE_INSTANCE: bool = false,
-        /// Accesses to the file can be random, so no sequential read-ahead operations should be performed on the file by FSDs or the system.
+        /// Accesses to the file can be random, so no sequential read-ahead
+        /// operations should be performed on the file by FSDs or the system.
         RANDOM_ACCESS: bool = false,
-        /// Delete the file when the last handle to it is passed to `NtClose`. If this flag is set, the `DELETE` flag must be set in the DesiredAccess parameter.
+        /// Delete the file when the last handle to it is passed to `NtClose`.
+        /// If this flag is set, the `DELETE` flag must be set in the
+        /// DesiredAccess parameter.
         DELETE_ON_CLOSE: bool = false,
-        /// The file name that is specified by the `ObjectAttributes` parameter includes the 8-byte file reference number for the file. This number is assigned by and
-        /// specific to the particular file system. If the file is a reparse point, the file name will also include the name of a device. Note that the FAT file system
-        /// does not support this flag. This flag is not used by device and intermediate drivers.
+        /// The file name that is specified by the `ObjectAttributes` parameter
+        /// includes the 8-byte file reference number for the file. This number
+        /// is assigned by and specific to the particular file system. If the
+        /// file is a reparse point, the file name will also include the name
+        /// of a device. Note that the FAT file system does not support this
+        /// flag. This flag is not used by device and intermediate drivers.
         OPEN_BY_FILE_ID: bool = false,
-        /// The file is being opened for backup intent. Therefore, the system should check for certain access rights and grant the caller the appropriate access to the
-        /// file before checking the DesiredAccess parameter against the file's security descriptor. This flag not used by device and intermediate drivers.
+        /// The file is being opened for backup intent. Therefore, the system
+        /// should check for certain access rights and grant the caller the
+        /// appropriate access to the file before checking the DesiredAccess
+        /// parameter against the file's security descriptor. This flag not
+        /// used by device and intermediate drivers.
         OPEN_FOR_BACKUP_INTENT: bool = false,
-        /// Suppress inheritance of `FILE_ATTRIBUTE.COMPRESSED` from the parent directory. This allows creation of a non-compressed file in a directory that is marked
-        /// compressed.
+        /// Suppress inheritance of `FILE_ATTRIBUTE.COMPRESSED` from the parent
+        /// directory. This allows creation of a non-compressed file in a
+        /// directory that is marked compressed.
         NO_COMPRESSION: bool = false,
-        /// The file is being opened and an opportunistic lock on the file is being requested as a single atomic operation. The file system checks for oplocks before it
-        /// performs the create operation and will fail the create with a return code of STATUS_CANNOT_BREAK_OPLOCK if the result would be to break an existing oplock.
-        /// For more information, see the Remarks section.
+        /// The file is being opened and an opportunistic lock on the file is
+        /// being requested as a single atomic operation. The file system
+        /// checks for oplocks before it performs the create operation and will
+        /// fail the create with a return code of STATUS_CANNOT_BREAK_OPLOCK if
+        /// the result would be to break an existing oplock. For more
+        /// information, see the Remarks section.
         ///
-        /// Windows Server 2008, Windows Vista, Windows Server 2003 and Windows XP:  This flag is not supported.
+        /// Windows Server 2008, Windows Vista, Windows Server 2003 and Windows
+        /// XP:  This flag is not supported.
         ///
-        /// This flag is supported on the following file systems: NTFS, FAT, and exFAT.
+        /// This flag is supported on the following file systems: NTFS, FAT,
+        /// and exFAT.
         OPEN_REQUIRING_OPLOCK: bool = false,
         Reserved17: u3 = 0,
-        /// This flag allows an application to request a filter opportunistic lock to prevent other applications from getting share violations. If there are already open
-        /// handles, the create request will fail with STATUS_OPLOCK_NOT_GRANTED. For more information, see the Remarks section.
+        /// This flag allows an application to request a filter opportunistic
+        /// lock to prevent other applications from getting share violations.
+        /// If there are already open handles, the create request will fail
+        /// with STATUS_OPLOCK_NOT_GRANTED. For more information, see the
+        /// Remarks section.
         RESERVE_OPFILTER: bool = false,
-        /// Open a file with a reparse point and bypass normal reparse point processing for the file. For more information, see the Remarks section.
+        /// Open a file with a reparse point and bypass normal reparse point
+        /// processing for the file. For more information, see the Remarks
+        /// section.
         OPEN_REPARSE_POINT: bool = false,
-        /// Instructs any filters that perform offline storage or virtualization to not recall the contents of the file as a result of this open.
+        /// Instructs any filters that perform offline storage or
+        /// virtualization to not recall the contents of the file as a result
+        /// of this open.
         OPEN_NO_RECALL: bool = false,
-        /// This flag instructs the file system to capture the user associated with the calling thread. Any subsequent calls to `FltQueryVolumeInformation` or
-        /// `ZwQueryVolumeInformationFile` using the returned handle will assume the captured user, rather than the calling user at the time, for purposes of computing
-        /// the free space available to the caller. This applies to the following FsInformationClass values: `FileFsSizeInformation`, `FileFsFullSizeInformation`, and
-        /// `FileFsFullSizeInformationEx`.
+        /// This flag instructs the file system to capture the user associated
+        /// with the calling thread. Any subsequent calls to
+        /// `FltQueryVolumeInformation` or `ZwQueryVolumeInformationFile` using
+        /// the returned handle will assume the captured user, rather than the
+        /// calling user at the time, for purposes of computing the free space
+        /// available to the caller. This applies to the following
+        /// FsInformationClass values: `FileFsSizeInformation`,
+        /// `FileFsFullSizeInformation`, and `FileFsFullSizeInformationEx`.
         OPEN_FOR_FREE_SPACE_QUERY: bool = false,
         Reserved24: u8 = 0,
 
@@ -597,7 +648,8 @@ pub const FILE = struct {
         // ref: km/ntifs.h
 
         pub const INFORMATION = extern struct {
-            /// The set of flags that specify the mode in which the file can be accessed. These flags are a subset of `MODE`.
+            /// The set of flags that specify the mode in which the file can be
+            /// accessed. These flags are a subset of `MODE`.
             Mode: MODE,
         };
     };

@@ -12,6 +12,8 @@ const Allocator = std.mem.Allocator;
 
 handle: Handle,
 
+pub const Handle = std.posix.fd_t;
+
 pub const path = std.fs.path;
 
 /// The maximum length of a file path that the operating system will accept.
@@ -395,8 +397,6 @@ pub const Walker = struct {
 pub fn walk(dir: Dir, allocator: Allocator) Allocator.Error!Walker {
     return .{ .inner = try walkSelectively(dir, allocator) };
 }
-
-pub const Handle = std.posix.fd_t;
 
 pub const PathNameError = error{
     /// Returned when an insufficient buffer is provided that cannot fit the
@@ -1698,7 +1698,7 @@ pub fn copyFile(
     options: CopyFileOptions,
 ) CopyFileError!void {
     const file = try source_dir.openFile(io, source_path, .{});
-    var file_reader: File.Reader = .init(.{ .handle = file.handle }, io, &.{});
+    var file_reader: File.Reader = .init(file, io, &.{});
     defer file_reader.file.close(io);
 
     const permissions = options.permissions orelse blk: {
