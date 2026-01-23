@@ -596,8 +596,11 @@ pub extern "ntdll" fn NtDelayExecution(
 
 pub extern "ntdll" fn NtCancelIoFileEx(
     FileHandle: HANDLE,
-    /// Documentation has this as IO_STATUS_BLOCK but it's actually the APC
-    /// context parameter.
-    IoRequestToCancel: ?*anyopaque,
+    IoRequestToCancel: *const IO_STATUS_BLOCK,
     IoStatusBlock: *IO_STATUS_BLOCK,
+) callconv(.winapi) NTSTATUS;
+
+pub extern "ntdll" fn NtCancelIoFile(
+    handle: HANDLE,
+    iosbToCancel: *const IO_STATUS_BLOCK,
 ) callconv(.winapi) NTSTATUS;
