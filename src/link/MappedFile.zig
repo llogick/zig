@@ -11,7 +11,7 @@ const linux = std.os.linux;
 const windows = std.os.windows;
 
 io: Io,
-file: std.Io.File,
+file: Io.File,
 flags: packed struct {
     block_size: std.mem.Alignment,
     copy_file_range_unsupported: bool,
@@ -29,7 +29,7 @@ writers: std.SinglyLinkedList,
 
 pub const growth_factor = 4;
 
-pub const Error = std.posix.MMapError || std.posix.MRemapError || Io.File.LengthError || error{
+pub const Error = Io.File.MemoryMap.CreateError || Io.File.LengthError || error{
     NotFile,
     SystemResources,
     IsDir,
@@ -42,7 +42,7 @@ pub const Error = std.posix.MMapError || std.posix.MRemapError || Io.File.Length
     NonResizable,
 };
 
-pub fn init(file: std.Io.File, gpa: std.mem.Allocator, io: Io) !MappedFile {
+pub fn init(file: Io.File, gpa: std.mem.Allocator, io: Io) !MappedFile {
     var mf: MappedFile = .{
         .io = io,
         .file = file,
@@ -396,7 +396,7 @@ pub const Node = extern struct {
         mf: *MappedFile,
         writer_node: std.SinglyLinkedList.Node,
         ni: Node.Index,
-        interface: std.Io.Writer,
+        interface: Io.Writer,
         err: ?Error,
 
         pub fn deinit(w: *Writer) void {
@@ -404,18 +404,18 @@ pub const Node = extern struct {
             w.* = undefined;
         }
 
-        const vtable: std.Io.Writer.VTable = .{
+        const vtable: Io.Writer.VTable = .{
             .drain = drain,
             .sendFile = sendFile,
-            .flush = std.Io.Writer.noopFlush,
+            .flush = Io.Writer.noopFlush,
             .rebase = growingRebase,
         };
 
         fn drain(
-            interface: *std.Io.Writer,
+            interface: *Io.Writer,
             data: []const []const u8,
             splat: usize,
-        ) std.Io.Writer.Error!usize {
+        ) Io.Writer.Error!usize {
             const pattern = data[data.len - 1];
             const splat_len = pattern.len * splat;
             const start_len = interface.end;
@@ -442,10 +442,10 @@ pub const Node = extern struct {
         }
 
         fn sendFile(
-            interface: *std.Io.Writer,
-            file_reader: *std.Io.File.Reader,
-            limit: std.Io.Limit,
-        ) std.Io.Writer.FileError!usize {
+            interface: *Io.Writer,
+            file_reader: *Io.File.Reader,
+            limit: Io.Limit,
+        ) Io.Writer.FileError!usize {
             if (limit == .nothing) return 0;
             const pos = file_reader.logicalPos();
             const additional = if (file_reader.getSize()) |size| size - pos else |_| std.atomic.cache_line;
@@ -489,10 +489,10 @@ pub const Node = extern struct {
         }
 
         fn growingRebase(
-            interface: *std.Io.Writer,
+            interface: *Io.Writer,
             preserve: usize,
             unused_capacity: usize,
-        ) std.Io.Writer.Error!void {
+        ) Io.Writer.Error!void {
             _ = preserve;
             const total_capacity = interface.end + unused_capacity;
             if (interface.buffer.len >= total_capacity) return;
@@ -941,7 +941,7 @@ fn copyRange(mf: *MappedFile, old_file_offset: u64, new_file_offset: u64, size: 
 
 fn copyFileRange(
     mf: *MappedFile,
-    old_file: std.Io.File,
+    old_file: Io.File,
     old_file_offset: u64,
     new_file_offset: u64,
     size: u64,
