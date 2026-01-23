@@ -12,7 +12,7 @@ pub const default_stack_protector_buffer_size = 4;
 
 pub fn cannotDynamicLink(target: *const std.Target) bool {
     return switch (target.os.tag) {
-        .freestanding => true,
+        .freestanding, .uefi => true,
         else => target.cpu.arch.isSpirV(),
     };
 }
