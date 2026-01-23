@@ -28,6 +28,8 @@ const TestTarget = struct {
     use_lld: ?bool = null,
     pic: ?bool = null,
     strip: ?bool = null,
+    function_sections: ?bool = null,
+    data_sections: ?bool = null,
     skip_modules: []const []const u8 = &.{},
 
     // This is intended for targets that, for any reason, shouldn't be run as part of a normal test
@@ -40,7 +42,7 @@ const test_targets = blk: {
     // getBaselineCpuFeatures calls populateDependencies which has a O(N ^ 2) algorithm
     // (where N is roughly 160, which technically makes it O(1), but it adds up to a
     // lot of branches)
-    @setEvalBranchQuota(60000);
+    @setEvalBranchQuota(80_000);
     break :blk [_]TestTarget{
         // Native Targets
 
@@ -1526,36 +1528,43 @@ const test_targets = blk: {
         },
 
         .{
-            .target = .{
-                .cpu_arch = .thumb,
-                .os_tag = .windows,
-                .abi = .msvc,
-            },
+            .target = std.Target.Query.parse(.{
+                .arch_os_abi = "thumb-windows-msvc",
+                .cpu_features = "baseline+long_calls",
+            }) catch unreachable,
+            .pic = false, // Long calls don't work with PIC.
+            .function_sections = true,
+            .data_sections = true,
         },
         .{
-            .target = .{
-                .cpu_arch = .thumb,
-                .os_tag = .windows,
-                .abi = .msvc,
-            },
+            .target = std.Target.Query.parse(.{
+                .arch_os_abi = "thumb-windows-msvc",
+                .cpu_features = "baseline+long_calls",
+            }) catch unreachable,
             .link_libc = true,
+            .pic = false, // Long calls don't work with PIC.
+            .function_sections = true,
+            .data_sections = true,
         },
-        // https://github.com/ziglang/zig/issues/24016
-        // .{
-        //     .target = .{
-        //         .cpu_arch = .thumb,
-        //         .os_tag = .windows,
-        //         .abi = .gnu,
-        //     },
-        // },
-        // .{
-        //     .target = .{
-        //         .cpu_arch = .thumb,
-        //         .os_tag = .windows,
-        //         .abi = .gnu,
-        //     },
-        //     .link_libc = true,
-        // },
+        .{
+            .target = std.Target.Query.parse(.{
+                .arch_os_abi = "thumb-windows-gnu",
+                .cpu_features = "baseline+long_calls",
+            }) catch unreachable,
+            .pic = false, // Long calls don't work with PIC.
+            .function_sections = true,
+            .data_sections = true,
+        },
+        .{
+            .target = std.Target.Query.parse(.{
+                .arch_os_abi = "thumb-windows-gnu",
+                .cpu_features = "baseline+long_calls",
+            }) catch unreachable,
+            .link_libc = true,
+            .pic = false, // Long calls don't work with PIC.
+            .function_sections = true,
+            .data_sections = true,
+        },
 
         .{
             .target = .{
@@ -2454,6 +2463,8 @@ fn addOneModuleTest(
     if (options.build_options) |build_options| {
         these_tests.root_module.addOptions("build_options", build_options);
     }
+    if (test_target.function_sections) |fs| these_tests.link_function_sections = fs;
+    if (test_target.data_sections) |ds| these_tests.link_data_sections = ds;
     const single_threaded_suffix = if (test_target.single_threaded == true) "-single" else "";
     const backend_suffix = if (test_target.use_llvm == true)
         "-llvm"
