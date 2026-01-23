@@ -656,7 +656,7 @@ pub const VTable = struct {
 
     fileMemoryMapCreate: *const fn (?*anyopaque, File, File.MemoryMap.CreateOptions) File.MemoryMap.CreateError!File.MemoryMap,
     fileMemoryMapDestroy: *const fn (?*anyopaque, *File.MemoryMap) void,
-    fileMemoryMapSetLength: *const fn (?*anyopaque, *File.MemoryMap, File.MemoryMap.CreateOptions) File.MemoryMap.SetLengthError!void,
+    fileMemoryMapSetLength: *const fn (?*anyopaque, *File.MemoryMap, usize) File.MemoryMap.SetLengthError!void,
     fileMemoryMapRead: *const fn (?*anyopaque, *File.MemoryMap) File.ReadPositionalError!void,
     fileMemoryMapWrite: *const fn (?*anyopaque, *File.MemoryMap) File.WritePositionalError!void,
 
