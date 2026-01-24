@@ -26,6 +26,7 @@ comptime {
     _ = @import("c/wchar.zig");
 
     _ = @import("c/sys.zig");
+    _ = @import("c/unistd.zig");
 
     if (builtin.target.isMuslLibC() or builtin.target.isWasiLibC()) {
         // Files specific to musl and wasi-libc.
