@@ -1010,7 +1010,14 @@ pub fn DebugAllocator(comptime config: Config) type {
             size_class_index: usize,
         ) bool {
             const new_size_class_index: usize = @max(@bitSizeOf(usize) - @clz(new_len - 1), @intFromEnum(alignment));
-            if (!config.safety) return new_size_class_index == size_class_index;
+            if (!config.safety) {
+                if (new_size_class_index != size_class_index) return false;
+                // Still account for total even if safety is off
+                if (config.enable_memory_limit)
+                    self.total_requested_bytes = self.total_requested_bytes - memory.len + new_len;
+                return true;
+            }
+
             const slot_count = slot_counts[size_class_index];
             const memory_addr = @intFromPtr(memory.ptr);
             const page_addr = memory_addr & ~(page_size - 1);
