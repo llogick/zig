@@ -6026,6 +6026,7 @@ pub const IPPROTO = switch (native_os) {
         pub const UDP = 17;
         pub const IP = 0;
         pub const IPV6 = 41;
+        pub const RAW = 255;
     },
     .freebsd => struct {
         /// dummy for IP
