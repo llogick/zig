@@ -596,8 +596,8 @@ fn waitForOtherThreadToFinishPanicking() void {
         if (builtin.single_threaded) unreachable;
 
         // Sleep forever without hammering the CPU
-        var futex = std.atomic.Value(u32).init(0);
-        while (true) std.Thread.Futex.wait(&futex, 0);
+        var futex: u32 = 0;
+        while (true) std.Options.debug_io.futexWaitUncancelable(u32, &futex, 0);
         unreachable;
     }
 }
