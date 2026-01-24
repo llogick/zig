@@ -1192,8 +1192,6 @@ pub fn peekStructPointer(r: *Reader, comptime T: type) Error!*align(1) T {
     return @ptrCast(try r.peekArray(@sizeOf(T)));
 }
 
-/// Asserts the buffer was initialized with a capacity at least `@sizeOf(T)`.
-///
 /// This function is inline to avoid referencing `std.mem.byteSwapAllFields`
 /// when `endian` is comptime-known and matches the host endianness.
 ///
@@ -1205,7 +1203,8 @@ pub inline fn takeStruct(r: *Reader, comptime T: type, endian: std.builtin.Endia
         .@"struct" => |info| switch (info.layout) {
             .auto => @compileError("ill-defined memory layout"),
             .@"extern" => {
-                var res = (try r.takeStructPointer(T)).*;
+                var res: T = undefined;
+                try r.readSliceAll(std.mem.asBytes(&res));
                 if (native_endian != endian) std.mem.byteSwapAllFields(T, &res);
                 return res;
             },
