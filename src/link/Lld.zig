@@ -1707,9 +1707,17 @@ fn spawnLld(comp: *Compilation, arena: Allocator, argv: []const []const u8) !voi
             diags.lockAndParseLldStderr(argv[1], stderr);
             return error.LinkFailure;
         },
-        else => {
+        .signal => |sig| {
             if (comp.clang_passthrough_mode) std.process.abort();
-            return diags.fail("{s} terminated with stderr:\n{s}", .{ argv[0], stderr });
+            return diags.fail("{s} terminated with signal {t} and stderr:\n{s}", .{ argv[0], sig, stderr });
+        },
+        .stopped => |sig| {
+            if (comp.clang_passthrough_mode) std.process.abort();
+            return diags.fail("{s} stopped with signal {d} and stderr:\n{s}", .{ argv[0], sig, stderr });
+        },
+        .unknown => |code| {
+            if (comp.clang_passthrough_mode) std.process.abort();
+            return diags.fail("{s} terminated for unknown reason with code {d} and stderr:\n{s}", .{ argv[0], code, stderr });
         },
     }
 
