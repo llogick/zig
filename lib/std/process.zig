@@ -558,14 +558,17 @@ pub fn totalSystemMemory() TotalSystemMemoryError!u64 {
             // Promote to u64 to avoid overflow on systems where info.totalram is a 32-bit usize
             return @as(u64, info.totalram) * info.mem_unit;
         },
-        .freebsd => {
+        .dragonfly, .freebsd, .netbsd => {
+            const name = if (native_os == .netbsd) "hw.physmem64" else "hw.physmem";
             var physmem: c_ulong = undefined;
             var len: usize = @sizeOf(c_ulong);
-            posix.sysctlbynameZ("hw.physmem", &physmem, &len, null, 0) catch |err| switch (err) {
+            posix.sysctlbynameZ(name, &physmem, &len, null, 0) catch |err| switch (err) {
+                error.PermissionDenied => unreachable, // only when setting values,
+                error.SystemResources => unreachable, // memory already on the stack
                 error.UnknownName => unreachable,
                 else => return error.UnknownTotalSystemMemory,
             };
-            return @as(u64, @intCast(physmem));
+            return @intCast(physmem);
         },
         // whole Darwin family
         .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => {
