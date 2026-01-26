@@ -1,5 +1,5 @@
-/* Define SHMLBA.  LoongArch version.
-   Copyright (C) 2023-2025 Free Software Foundation, Inc.
+/* Define once_flag and ONCE_FLAG_INIT.
+   Copyright (C) 2018-2026 Free Software Foundation, Inc.
    This file is part of the GNU C Library.
 
    The GNU C Library is free software; you can redistribute it and/or
@@ -16,9 +16,12 @@
    License along with the GNU C Library; if not, see
    <https://www.gnu.org/licenses/>.  */
 
-#ifndef _SYS_SHM_H
-# error "Never use <bits/shmlba.h> directly; include <sys/shm.h> instead."
-#endif
+#ifndef __once_flag_defined
+#define __once_flag_defined 1
 
-/* Segment low boundary address multiple.  */
-#define SHMLBA		0x10000
+#include <bits/thread-shared-types.h>
+
+typedef __once_flag once_flag;
+#define ONCE_FLAG_INIT __ONCE_FLAG_INIT
+
+#endif
