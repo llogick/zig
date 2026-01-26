@@ -260,7 +260,14 @@ test "memory mapping fallback" {
 
         try testing.expectEqualStrings("this9is9my", mm.memory);
 
-        try mm.setLength(io, .{ .len = "this9is9my data123".len });
+        const new_len = "this9is9my data123".len;
+        mm.setLength(io, new_len) catch |err| switch (err) {
+            error.OperationUnsupported => {
+                mm.destroy(io);
+                mm = try file.createMemoryMap(io, .{ .len = new_len });
+            },
+            else => |e| return e,
+        };
         try mm.read(io);
 
         try testing.expectEqualStrings("this9is9my data123", mm.memory);

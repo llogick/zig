@@ -16597,27 +16597,21 @@ fn fileMemoryMapDestroy(userdata: ?*anyopaque, mm: *File.MemoryMap) void {
 fn fileMemoryMapSetLength(
     userdata: ?*anyopaque,
     mm: *File.MemoryMap,
-    options: File.MemoryMap.CreateOptions,
+    new_len: usize,
 ) File.MemoryMap.SetLengthError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const page_size = std.heap.pageSize();
     const alignment: Alignment = .fromByteUnits(page_size);
     const page_align = std.heap.page_size_min;
     const old_memory = mm.memory;
-    const new_len = options.len;
 
     if (mm.section) |section| {
+        _ = section;
         if (alignment.forward(new_len) == alignment.forward(old_memory.len)) {
             mm.memory.len = new_len;
             return;
         }
         switch (native_os) {
-            .windows => {
-                _ = windows.ntdll.NtUnmapViewOfSection(windows.current_process, old_memory.ptr);
-                windows.CloseHandle(section);
-                mm.section = windows.INVALID_HANDLE_VALUE;
-                mm.memory = &.{};
-            },
             .wasi => unreachable,
             .linux => {
                 const flags: posix.MREMAP = .{ .MAYMOVE = true };
@@ -16647,31 +16641,7 @@ fn fileMemoryMapSetLength(
                 mm.memory = new_memory;
                 return;
             },
-            else => {
-                switch (posix.errno(posix.system.munmap(old_memory.ptr, old_memory.len))) {
-                    .SUCCESS => {},
-                    else => |e| {
-                        if (builtin.mode == .Debug) std.log.err("failed to unmap {d} bytes at {*}: {t}", .{
-                            old_memory.len, old_memory.ptr, e,
-                        });
-                        // munmap must be infallible, or we cannot design reliable software.
-                        return error.Unexpected;
-                    },
-                }
-                mm.memory = &.{};
-            },
-        }
-        if (createFileMap(mm.file, options.protection, mm.offset, options.populate, new_len)) |result| {
-            mm.* = result;
-            return;
-        } else |err| switch (err) {
-            error.OperationUnsupported,
-            error.Unseekable,
-            error.SectionOversize,
-            error.MappingAlreadyExists,
-            error.FileLockConflict,
-            => return error.Unexpected, // It worked before on the same open file.
-            else => |e| return e,
+            else => return error.OperationUnsupported,
         }
     } else {
         const gpa = t.allocator;

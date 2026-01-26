@@ -651,10 +651,10 @@ pub const File = struct {
                     &coff.mf
                 else
                     unreachable;
-                mf.file = try base.emit.root_dir.handle.openFile(io, base.emit.sub_path, .{
+                mf.memory_map.file = try base.emit.root_dir.handle.openFile(io, base.emit.sub_path, .{
                     .mode = .read_write,
                 });
-                base.file = mf.file;
+                base.file = mf.memory_map.file;
                 try mf.ensureTotalCapacity(@intCast(mf.nodes.items[0].location().resolve(mf)[1]));
             },
             .c, .spirv => dev.checkAny(&.{ .c_linker, .spirv_linker }),
@@ -729,9 +729,9 @@ pub const File = struct {
                 else
                     unreachable;
                 mf.unmap();
-                assert(mf.file.handle == f.handle);
-                mf.file.close(io);
-                mf.file = undefined;
+                assert(mf.memory_map.file.handle == f.handle);
+                mf.memory_map.file.close(io);
+                mf.memory_map.file = undefined;
                 base.file = null;
             },
             .c, .spirv => dev.checkAny(&.{ .c_linker, .spirv_linker }),

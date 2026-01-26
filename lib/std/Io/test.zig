@@ -643,9 +643,14 @@ test "memory mapping" {
         try expectEqualStrings("this9is9my", mm.memory);
 
         // Cross a page boundary to require an actual remap.
-        try mm.setLength(io, .{
-            .len = std.heap.pageSize() * 2,
-        });
+        const new_len = std.heap.pageSize() * 2;
+        mm.setLength(io, new_len) catch |err| switch (err) {
+            error.OperationUnsupported => {
+                mm.destroy(io);
+                mm = try file.createMemoryMap(io, .{ .len = new_len });
+            },
+            else => |e| return e,
+        };
         try mm.read(io);
 
         try expectEqualStrings("this9is9my data123\x00\x00", mm.memory[0.."this9is9my data123\x00\x00".len]);

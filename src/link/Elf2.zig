@@ -1691,10 +1691,10 @@ fn computeNodeVAddr(elf: *Elf, ni: MappedFile.Node.Index) u64 {
 }
 
 pub fn identClass(elf: *const Elf) std.elf.CLASS {
-    return @enumFromInt(elf.mf.contents[std.elf.EI.CLASS]);
+    return @enumFromInt(elf.mf.memory_map.memory[std.elf.EI.CLASS]);
 }
 pub fn identData(elf: *const Elf) std.elf.DATA {
-    return @enumFromInt(elf.mf.contents[std.elf.EI.DATA]);
+    return @enumFromInt(elf.mf.memory_map.memory[std.elf.EI.DATA]);
 }
 
 pub fn targetEndian(elf: *const Elf) std.builtin.Endian {
@@ -2102,7 +2102,7 @@ fn loadObject(
     log.debug("loadObject({f}{f})", .{ path.fmtEscapeString(), fmtMemberString(member) });
     const ident = try r.peek(std.elf.EI.OSABI);
     if (!std.mem.eql(u8, ident[0..std.elf.MAGIC.len], std.elf.MAGIC)) return error.BadMagic;
-    if (!std.mem.eql(u8, ident[std.elf.MAGIC.len..], elf.mf.contents[std.elf.MAGIC.len..ident.len]))
+    if (!std.mem.eql(u8, ident[std.elf.MAGIC.len..], elf.mf.memory_map.memory[std.elf.MAGIC.len..ident.len]))
         return diags.failParse(path, "bad ident", .{});
     try elf.symtab.ensureUnusedCapacity(gpa, 1);
     try elf.inputs.ensureUnusedCapacity(gpa, 1);
@@ -2341,7 +2341,7 @@ fn loadDso(elf: *Elf, path: std.Build.Cache.Path, fr: *Io.File.Reader) !void {
     log.debug("loadDso({f})", .{path.fmtEscapeString()});
     const ident = try r.peek(std.elf.EI.NIDENT);
     if (!std.mem.eql(u8, ident[0..std.elf.MAGIC.len], std.elf.MAGIC)) return error.BadMagic;
-    if (!std.mem.eql(u8, ident[std.elf.MAGIC.len..], elf.mf.contents[std.elf.MAGIC.len..ident.len]))
+    if (!std.mem.eql(u8, ident[std.elf.MAGIC.len..], elf.mf.memory_map.memory[std.elf.MAGIC.len..ident.len]))
         return diags.failParse(path, "bad ident", .{});
     const target_endian = elf.targetEndian();
     switch (elf.identClass()) {
@@ -3090,9 +3090,14 @@ pub fn flush(
     tid: Zcu.PerThread.Id,
     prog_node: std.Progress.Node,
 ) !void {
+    const comp = elf.base.comp;
     _ = arena;
     _ = prog_node;
     while (try elf.idle(tid)) {}
+    elf.mf.flush() catch |err| switch (err) {
+        error.Canceled => |e| return e,
+        else => |e| return comp.link_diags.fail("flush write failed: {t}", .{e}),
+    };
 }
 
 pub fn idle(elf: *Elf, tid: Zcu.PerThread.Id) !bool {
@@ -3839,7 +3844,7 @@ pub fn printNode(
     const line_len = 0x10;
     var line_it = std.mem.window(
         u8,
-        elf.mf.contents[@intCast(file_loc.offset)..][0..@intCast(file_loc.size)],
+        elf.mf.memory_map.memory[@intCast(file_loc.offset)..][0..@intCast(file_loc.size)],
         line_len,
         line_len,
     );
