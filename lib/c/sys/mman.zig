@@ -7,6 +7,8 @@ comptime {
         @export(&madviseLinux, .{ .name = "madvise", .linkage = common.linkage, .visibility = common.visibility });
         @export(&madviseLinux, .{ .name = "__madvise", .linkage = common.linkage, .visibility = common.visibility });
 
+        @export(&mincoreLinux, .{ .name = "mincore", .linkage = common.linkage, .visibility = common.visibility });
+
         @export(&mlockLinux, .{ .name = "mlock", .linkage = common.linkage, .visibility = common.visibility });
         @export(&mlockallLinux, .{ .name = "mlockall", .linkage = common.linkage, .visibility = common.visibility });
 
