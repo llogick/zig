@@ -388,7 +388,9 @@ fn serveWebSocket(ws: *WebServer, sock: *http.Server.WebSocket) !noreturn {
                 .clock = .awake,
                 .raw = .fromMilliseconds(default_update_interval_ms),
             } },
-        ) catch |err| switch (err) { error.Canceled => unreachable };
+        ) catch |err| switch (err) {
+            error.Canceled => unreachable,
+        };
     }
 }
 fn recvWebSocketMessages(ws: *WebServer, sock: *http.Server.WebSocket) void {
