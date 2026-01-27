@@ -533,10 +533,16 @@ pub fn run(gpa: Allocator, io: Io, options: RunOptions) RunError!RunResult {
 
     try child.collectOutput(gpa, &stdout, &stderr, options.max_output_bytes);
 
+    const term = try child.wait(io);
+
+    const owned_stdout = try stdout.toOwnedSlice(gpa);
+    errdefer gpa.free(owned_stdout);
+    const owned_stderr = try stderr.toOwnedSlice(gpa);
+
     return .{
-        .stdout = try stdout.toOwnedSlice(gpa),
-        .stderr = try stderr.toOwnedSlice(gpa),
-        .term = try child.wait(io),
+        .stdout = owned_stdout,
+        .stderr = owned_stderr,
+        .term = term,
     };
 }
 
