@@ -1391,6 +1391,10 @@ pub fn faccessat(dirfd: i32, path: [*:0]const u8, mode: u32, flags: u32) usize {
     return syscall4(.faccessat2, @as(usize, @bitCast(@as(isize, dirfd))), @intFromPtr(path), mode, flags);
 }
 
+pub fn acct(path: [*:0]const u8) usize {
+    return syscall1(.acct, @intFromPtr(path));
+}
+
 pub fn pipe(fd: *[2]i32) usize {
     if (comptime (native_arch.isMIPS() or native_arch.isSPARC())) {
         return syscall_pipe(fd);
@@ -1601,11 +1605,27 @@ pub fn fchown(fd: i32, owner: uid_t, group: gid_t) usize {
     }
 }
 
+pub fn fchownat(fd: i32, path: [*:0]const u8, owner: uid_t, group: gid_t, flags: u32) usize {
+    return syscall5(.fchownat, @as(usize, @bitCast(@as(isize, fd))), @intFromPtr(path), owner, group, flags);
+}
+
 pub fn chown(path: [*:0]const u8, owner: uid_t, group: gid_t) usize {
     if (@hasField(SYS, "chown32")) {
         return syscall3(.chown32, @intFromPtr(path), owner, group);
-    } else {
+    } else if (@hasField(SYS, "chown")) {
         return syscall3(.chown, @intFromPtr(path), owner, group);
+    } else {
+        return fchownat(AT.FDCWD, path, owner, group, 0);
+    }
+}
+
+pub fn lchown(path: [*:0]const u8, owner: uid_t, group: gid_t) usize {
+    if (@hasField(SYS, "lchown32")) {
+        return syscall3(.lchown32, @intFromPtr(path), owner, group);
+    } else if (@hasField(SYS, "lchown")) {
+        return syscall3(.lchown, @intFromPtr(path), owner, group);
+    } else {
+        return fchownat(AT.FDCWD, path, owner, group, AT.SYMLINK_NOFOLLOW);
     }
 }
 
@@ -2064,7 +2084,11 @@ pub fn setpgid(pid: pid_t, pgid: pid_t) usize {
     return syscall2(.setpgid, @intCast(pid), @intCast(pgid));
 }
 
-pub fn getgroups(size: usize, list: ?*gid_t) usize {
+pub fn getpgid(pid: pid_t) usize {
+    return syscall1(.getpgid, @intCast(pid));
+}
+
+pub fn getgroups(size: usize, list: ?[*]gid_t) usize {
     if (@hasField(SYS, "getgroups32")) {
         return syscall2(.getgroups32, size, @intFromPtr(list));
     } else {
@@ -2082,6 +2106,10 @@ pub fn setgroups(size: usize, list: [*]const gid_t) usize {
 
 pub fn setsid() usize {
     return syscall0(.setsid);
+}
+
+pub fn getsid(pid: pid_t) usize {
+    return syscall1(.getsid, @intCast(pid));
 }
 
 pub fn getpid() pid_t {
