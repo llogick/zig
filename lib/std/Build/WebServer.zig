@@ -24,7 +24,7 @@ time_report_update_times: []i64,
 
 build_status: std.atomic.Value(abi.BuildStatus),
 /// When an event occurs which means WebSocket clients should be sent updates, call `notifyUpdate`
-/// to increment this value. Each client thread waits for this increment with `std.Thread.Futex`, so
+/// to increment this value. Each client thread waits for this increment with `Io.futexWaitTimeout`, so
 /// `notifyUpdate` will wake those threads. Updates are sent on a short interval regardless, so it
 /// is recommended to only use `notifyUpdate` for changes which the user should see immediately. For
 /// instance, we do not call `notifyUpdate` when the number of "unique runs" in the fuzzer changes,
@@ -46,7 +46,7 @@ pub const base_clock: Io.Clock = .awake;
 /// Thread-safe. Triggers updates to be sent to connected WebSocket clients; see `update_id`.
 pub fn notifyUpdate(ws: *WebServer) void {
     _ = ws.update_id.rmw(.Add, 1, .release);
-    std.Thread.Futex.wake(&ws.update_id, 16);
+    ws.graph.io.futexWake(u32, &ws.update_id.raw, 16);
 }
 
 pub const Options = struct {
@@ -377,7 +377,18 @@ fn serveWebSocket(ws: *WebServer, sock: *http.Server.WebSocket) !noreturn {
         }
 
         prev_time = start_time;
-        std.Thread.Futex.timedWait(&ws.update_id, start_update_id, std.time.ns_per_ms * default_update_interval_ms) catch {};
+
+        const old_cp = io.swapCancelProtection(.blocked);
+        defer _ = io.swapCancelProtection(old_cp);
+        io.futexWaitTimeout(
+            u32,
+            &ws.update_id.raw,
+            start_update_id,
+            .{ .duration = .{
+                .clock = .awake,
+                .raw = .fromMilliseconds(default_update_interval_ms),
+            } },
+        ) catch |err| switch (err) { error.Canceled => unreachable };
     }
 }
 fn recvWebSocketMessages(ws: *WebServer, sock: *http.Server.WebSocket) void {
