@@ -504,7 +504,6 @@ pub fn resolveTargetQuery(io: Io, query: Target.Query) DetectError!Target {
     if (builtin.os.tag == .linux and result.isBionicLibC() and query.os_tag == null and query.android_api_level == null) {
         result.os.version_range.linux.android = detectAndroidApiLevel(io) catch |err| return switch (err) {
             error.InvalidWtf8,
-            error.CurrentWorkingDirectoryUnlinked,
             error.InvalidBatchScriptArg,
             => unreachable, // Windows-only
             error.ApiLevelQueryFailed => |e| e,

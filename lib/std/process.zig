@@ -73,7 +73,10 @@ pub fn getCwd(out_buffer: []u8) GetCwdError![]u8 {
 }
 
 // Same as GetCwdError, minus error.NameTooLong + Allocator.Error
-pub const GetCwdAllocError = Allocator.Error || error{CurrentWorkingDirectoryUnlinked} || posix.UnexpectedError;
+pub const GetCwdAllocError = Allocator.Error || error{
+    /// Not possible on Windows.
+    CurrentWorkingDirectoryUnlinked,
+} || posix.UnexpectedError;
 
 /// Caller must free the returned memory.
 /// On Windows, the result is encoded as [WTF-8](https://wtf-8.codeberg.page/).
@@ -342,8 +345,6 @@ pub const SpawnError = error{
     /// Windows-only. `cwd` or `argv` was provided and it was invalid WTF-8.
     /// https://wtf-8.codeberg.page/
     InvalidWtf8,
-    /// Windows-only. `cwd` was provided, but the path did not exist when spawning the child process.
-    CurrentWorkingDirectoryUnlinked,
     /// Windows-only. NUL (U+0000), LF (U+000A), CR (U+000D) are not allowed
     /// within arguments when executing a `.bat`/`.cmd` script.
     /// - NUL/LF signifiies end of arguments, so anything afterwards

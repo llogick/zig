@@ -1851,7 +1851,6 @@ fn addModuleTableToCacheHash(
 ) error{
     OutOfMemory,
     Unexpected,
-    CurrentWorkingDirectoryUnlinked,
 }!void {
     assert(zcu.module_roots.count() != 0); // module_roots is populated
 
@@ -1919,7 +1918,6 @@ pub const CreateError = error{
     OutOfMemory,
     Canceled,
     Unexpected,
-    CurrentWorkingDirectoryUnlinked,
     /// An error has been stored to `diag`.
     CreateFail,
 };
@@ -2906,7 +2904,6 @@ pub const UpdateError = error{
     OutOfMemory,
     Canceled,
     Unexpected,
-    CurrentWorkingDirectoryUnlinked,
 };
 
 /// Detect changes to source files, perform semantic analysis, and update the output files.

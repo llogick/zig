@@ -521,6 +521,7 @@ pub fn getppid() pid_t {
 
 pub const GetCwdError = error{
     NameTooLong,
+    /// Not possible on Windows.
     CurrentWorkingDirectoryUnlinked,
 } || UnexpectedError;
 

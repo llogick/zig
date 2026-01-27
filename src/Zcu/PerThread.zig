@@ -2388,7 +2388,6 @@ pub fn embedFile(
     OutOfMemory,
     Canceled,
     ImportOutsideModulePath,
-    CurrentWorkingDirectoryUnlinked,
 }!Zcu.EmbedFile.Index {
     const zcu = pt.zcu;
     const gpa = zcu.gpa;

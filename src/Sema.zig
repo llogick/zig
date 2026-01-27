@@ -13604,10 +13604,6 @@ fn zirEmbedFile(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileError!A
         error.ImportOutsideModulePath => {
             return sema.fail(block, operand_src, "embed of file outside package path: '{s}'", .{name});
         },
-        error.CurrentWorkingDirectoryUnlinked => {
-            // TODO: this should be some kind of retryable failure, in case the cwd is put back
-            return sema.fail(block, operand_src, "unable to resolve '{s}': working directory has been unlinked", .{name});
-        },
         error.OutOfMemory => |e| return e,
         error.Canceled => |e| return e,
     };
