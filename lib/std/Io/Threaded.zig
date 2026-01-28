@@ -10083,10 +10083,12 @@ fn sleepPosix(timeout: Io.Timeout) Io.SleepError!void {
     var timespec: posix.timespec = timestampToPosix(deadline_nanoseconds);
     const syscall: Syscall = try .start();
     while (true) {
-        switch (posix.errno(posix.system.clock_nanosleep(clock_id, .{ .ABSTIME = switch (timeout) {
+        const rc = posix.system.clock_nanosleep(clock_id, .{ .ABSTIME = switch (timeout) {
             .none, .duration => false,
             .deadline => true,
-        } }, &timespec, &timespec))) {
+        } }, &timespec, &timespec);
+        // POSIX-standard libc clock_nanosleep() returns *positive* errno values directly
+        switch (if (builtin.link_libc) @as(posix.E, @enumFromInt(rc)) else posix.errno(rc)) {
             .SUCCESS => {
                 syscall.finish();
                 return;
