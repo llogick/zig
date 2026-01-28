@@ -6353,8 +6353,7 @@ fn dirSymLinkWindows(
 
     // Target path does not use sliceToPrefixedFileW because certain paths
     // are handled differently when creating a symlink than they would be
-    // when converting to an NT namespaced path. CreateSymbolicLink in
-    // symLinkW will handle the necessary conversion.
+    // when converting to an NT namespaced path.
     var target_path_w: w.PathSpace = undefined;
     target_path_w.len = try w.wtf8ToWtf16Le(&target_path_w.data, target_path);
     target_path_w.data[target_path_w.len] = 0;
