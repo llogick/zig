@@ -1,18 +1,14 @@
 const builtin = @import("builtin");
 const std = @import("std");
 
-pub const linkage: std.builtin.GlobalLinkage = if (builtin.is_test)
-    .internal
-else
-    .strong;
+/// It is incorrect to make this conditional on `builtin.is_test`, because it is possible that
+/// libzigc is being linked into a different test compilation, as opposed to being tested itself.
+pub const linkage: std.builtin.GlobalLinkage = .strong;
 
 /// Determines the symbol's visibility to other objects.
 /// For WebAssembly this allows the symbol to be resolved to other modules, but will not
 /// export it to the host runtime.
-pub const visibility: std.builtin.SymbolVisibility = if (linkage != .internal)
-    .hidden
-else
-    .default;
+pub const visibility: std.builtin.SymbolVisibility = .hidden;
 
 /// Given a low-level syscall return value, sets errno and returns `-1`, or on
 /// success returns the result.
