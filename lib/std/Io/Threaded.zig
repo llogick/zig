@@ -12607,7 +12607,7 @@ fn processCurrentDir(userdata: ?*anyopaque, buffer: []u8) process.CurrentDirErro
     _ = t;
     if (is_windows) {
         var wtf16le_buf: [windows.PATH_MAX_WIDE:0]u16 = undefined;
-        const n = windows.ntdll.RtlGetCurrentDirectory_U(wtf16le_buf.len + 1, &wtf16le_buf);
+        const n = windows.ntdll.RtlGetCurrentDirectory_U(wtf16le_buf.len * 2 + 2, &wtf16le_buf) / 2;
         if (n == 0) return error.Unexpected;
         assert(n <= wtf16le_buf.len);
         const wtf16le_slice = wtf16le_buf[0..n];

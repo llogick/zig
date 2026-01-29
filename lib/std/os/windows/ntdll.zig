@@ -497,7 +497,7 @@ pub extern "ntdll" fn RtlGetFullPathName_U(
 ) callconv(.winapi) ULONG;
 
 pub extern "ntdll" fn RtlGetCurrentDirectory_U(
-    BufferLength: ULONG,
+    BufferByteLength: ULONG,
     Buffer: [*]u16,
 ) callconv(.winapi) ULONG;
 
