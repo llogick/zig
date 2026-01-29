@@ -704,7 +704,6 @@ pub const ExecutablePathBaseError = error{
     FileSystem,
     BadPathName,
     DeviceBusy,
-    SharingViolation,
     PipeBusy,
     NotLink,
     PathAlreadyExists,

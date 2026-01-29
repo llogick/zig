@@ -335,7 +335,6 @@ const Module = struct {
                 error.NoSpaceLeft,
                 error.DeviceBusy,
                 error.NoDevice,
-                error.SharingViolation,
                 error.PathAlreadyExists,
                 error.PipeBusy,
                 error.NetworkNotFound,

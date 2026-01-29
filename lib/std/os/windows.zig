@@ -1135,19 +1135,7 @@ pub const CTL_CODE = packed struct(ULONG) {
 
         _,
     };
-};
 
-pub const IOCTL = struct {
-    pub const KSEC = struct {
-        pub const GEN_RANDOM: CTL_CODE = .{ .DeviceType = .KSEC, .Function = 2, .Method = .BUFFERED, .Access = .ANY };
-    };
-    pub const MOUNTMGR = struct {
-        pub const QUERY_POINTS: CTL_CODE = .{ .DeviceType = .MOUNTMGRCONTROLTYPE, .Function = 2, .Method = .BUFFERED, .Access = .ANY };
-        pub const QUERY_DOS_VOLUME_PATH: CTL_CODE = .{ .DeviceType = .MOUNTMGRCONTROLTYPE, .Function = 12, .Method = .BUFFERED, .Access = .ANY };
-    };
-};
-
-pub const FSCTL = struct {
     pub const SET_REPARSE_POINT: CTL_CODE = .{ .DeviceType = .FILE_SYSTEM, .Function = 41, .Method = .BUFFERED, .Access = .SPECIAL };
     pub const GET_REPARSE_POINT: CTL_CODE = .{ .DeviceType = .FILE_SYSTEM, .Function = 42, .Method = .BUFFERED, .Access = .ANY };
 
@@ -1174,6 +1162,16 @@ pub const FSCTL = struct {
         pub const INTERNAL_WRITE: CTL_CODE = .{ .DeviceType = .NAMED_PIPE, .Function = 2046, .Method = .BUFFERED, .Access = .{ .WRITE = true } };
         pub const INTERNAL_TRANSCEIVE: CTL_CODE = .{ .DeviceType = .NAMED_PIPE, .Function = 2047, .Method = .NEITHER, .Access = .{ .READ = true, .WRITE = true } };
         pub const INTERNAL_READ_OVFLOW: CTL_CODE = .{ .DeviceType = .NAMED_PIPE, .Function = 2048, .Method = .BUFFERED, .Access = .{ .READ = true } };
+    };
+};
+
+pub const IOCTL = struct {
+    pub const KSEC = struct {
+        pub const GEN_RANDOM: CTL_CODE = .{ .DeviceType = .KSEC, .Function = 2, .Method = .BUFFERED, .Access = .ANY };
+    };
+    pub const MOUNTMGR = struct {
+        pub const QUERY_POINTS: CTL_CODE = .{ .DeviceType = .MOUNTMGRCONTROLTYPE, .Function = 2, .Method = .BUFFERED, .Access = .ANY };
+        pub const QUERY_DOS_VOLUME_PATH: CTL_CODE = .{ .DeviceType = .MOUNTMGRCONTROLTYPE, .Function = 12, .Method = .BUFFERED, .Access = .ANY };
     };
 };
 
@@ -2906,205 +2904,6 @@ pub fn GetCurrentDirectory(buffer: []u8) GetCurrentDirectoryError![]u8 {
         end_index += std.unicode.wtf8Encode(codepoint, buffer[end_index..]) catch unreachable;
     }
     return buffer[0..end_index];
-}
-
-pub const CreateSymbolicLinkError = error{
-    AccessDenied,
-    PathAlreadyExists,
-    FileNotFound,
-    NameTooLong,
-    NoDevice,
-    NetworkNotFound,
-    BadPathName,
-    Unexpected,
-};
-
-/// Needs either:
-/// - `SeCreateSymbolicLinkPrivilege` privilege
-/// or
-/// - Developer mode on Windows 10
-/// otherwise fails with `error.AccessDenied`. In which case `sym_link_path` may still
-/// be created on the file system but will lack reparse processing data applied to it.
-pub fn CreateSymbolicLink(
-    dir: ?HANDLE,
-    sym_link_path: []const u16,
-    target_path: [:0]const u16,
-    is_directory: bool,
-) CreateSymbolicLinkError!void {
-    const SYMLINK_DATA = extern struct {
-        ReparseTag: IO_REPARSE_TAG,
-        ReparseDataLength: USHORT,
-        Reserved: USHORT,
-        SubstituteNameOffset: USHORT,
-        SubstituteNameLength: USHORT,
-        PrintNameOffset: USHORT,
-        PrintNameLength: USHORT,
-        Flags: ULONG,
-    };
-
-    const symlink_handle = OpenFile(sym_link_path, .{
-        .access_mask = .{
-            .STANDARD = .{ .SYNCHRONIZE = true },
-            .GENERIC = .{ .WRITE = true, .READ = true },
-        },
-        .dir = dir,
-        .creation = .CREATE,
-        .filter = if (is_directory) .dir_only else .non_directory_only,
-    }) catch |err| switch (err) {
-        error.IsDir => return error.PathAlreadyExists,
-        error.NotDir => return error.Unexpected,
-        error.WouldBlock => return error.Unexpected,
-        error.PipeBusy => return error.Unexpected,
-        error.NoDevice => return error.Unexpected,
-        error.AntivirusInterference => return error.Unexpected,
-        else => |e| return e,
-    };
-    defer CloseHandle(symlink_handle);
-
-    // Relevant portions of the documentation:
-    // > Relative links are specified using the following conventions:
-    // > - Root relative—for example, "\Windows\System32" resolves to "current drive:\Windows\System32".
-    // > - Current working directory–relative—for example, if the current working directory is
-    // >   C:\Windows\System32, "C:File.txt" resolves to "C:\Windows\System32\File.txt".
-    // > Note: If you specify a current working directory–relative link, it is created as an absolute
-    // > link, due to the way the current working directory is processed based on the user and the thread.
-    // https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-createsymboliclinkw
-    var is_target_absolute = false;
-    const final_target_path = target_path: {
-        if (hasCommonNtPrefix(u16, target_path)) {
-            // Already an NT path, no need to do anything to it
-            break :target_path target_path;
-        } else {
-            switch (std.fs.path.getWin32PathType(u16, target_path)) {
-                // Rooted paths need to avoid getting put through wToPrefixedFileW
-                // (and they are treated as relative in this context)
-                // Note: It seems that rooted paths in symbolic links are relative to
-                //       the drive that the symbolic exists on, not to the CWD's drive.
-                //       So, if the symlink is on C:\ and the CWD is on D:\,
-                //       it will still resolve the path relative to the root of
-                //       the C:\ drive.
-                .rooted => break :target_path target_path,
-                // Keep relative paths relative, but anything else needs to get NT-prefixed.
-                else => if (!std.fs.path.isAbsoluteWindowsWtf16(target_path))
-                    break :target_path target_path,
-            }
-        }
-        var prefixed_target_path = try wToPrefixedFileW(dir, target_path);
-        // We do this after prefixing to ensure that drive-relative paths are treated as absolute
-        is_target_absolute = std.fs.path.isAbsoluteWindowsWtf16(prefixed_target_path.span());
-        break :target_path prefixed_target_path.span();
-    };
-
-    // prepare reparse data buffer
-    var buffer: [MAXIMUM_REPARSE_DATA_BUFFER_SIZE]u8 = undefined;
-    const buf_len = @sizeOf(SYMLINK_DATA) + final_target_path.len * 4;
-    const header_len = @sizeOf(ULONG) + @sizeOf(USHORT) * 2;
-    const target_is_absolute = std.fs.path.isAbsoluteWindowsWtf16(final_target_path);
-    const symlink_data: SYMLINK_DATA = .{
-        .ReparseTag = .SYMLINK,
-        .ReparseDataLength = @intCast(buf_len - header_len),
-        .Reserved = 0,
-        .SubstituteNameOffset = @intCast(final_target_path.len * 2),
-        .SubstituteNameLength = @intCast(final_target_path.len * 2),
-        .PrintNameOffset = 0,
-        .PrintNameLength = @intCast(final_target_path.len * 2),
-        .Flags = if (!target_is_absolute) SYMLINK_FLAG_RELATIVE else 0,
-    };
-
-    @memcpy(buffer[0..@sizeOf(SYMLINK_DATA)], std.mem.asBytes(&symlink_data));
-    @memcpy(buffer[@sizeOf(SYMLINK_DATA)..][0 .. final_target_path.len * 2], @as([*]const u8, @ptrCast(final_target_path)));
-    const paths_start = @sizeOf(SYMLINK_DATA) + final_target_path.len * 2;
-    @memcpy(buffer[paths_start..][0 .. final_target_path.len * 2], @as([*]const u8, @ptrCast(final_target_path)));
-    const rc = DeviceIoControl(symlink_handle, FSCTL.SET_REPARSE_POINT, .{ .in = buffer[0..buf_len] });
-    switch (rc) {
-        .SUCCESS => {},
-        .PRIVILEGE_NOT_HELD => return error.AccessDenied,
-        .ACCESS_DENIED => return error.AccessDenied,
-        .INVALID_DEVICE_REQUEST => return error.AccessDenied, // Not supported by the underlying filesystem
-        else => return unexpectedStatus(rc),
-    }
-}
-
-pub const ReadLinkError = error{
-    FileNotFound,
-    NetworkNotFound,
-    AccessDenied,
-    Unexpected,
-    NameTooLong,
-    BadPathName,
-    AntivirusInterference,
-    UnsupportedReparsePointType,
-    NotLink,
-    OperationCanceled,
-};
-
-/// `sub_path_w` will never be accessed after `out_buffer` has been written to, so it
-/// is safe to reuse a single buffer for both.
-pub fn ReadLink(dir: ?HANDLE, sub_path_w: []const u16, out_buffer: []u16) ReadLinkError![]u16 {
-    const result_handle = OpenFile(sub_path_w, .{
-        .access_mask = .{
-            .SPECIFIC = .{ .FILE = .{
-                .READ_ATTRIBUTES = true,
-            } },
-            .STANDARD = .{ .SYNCHRONIZE = true },
-        },
-        .dir = dir,
-        .creation = .OPEN,
-        .follow_symlinks = false,
-        .filter = .any,
-    }) catch |err| switch (err) {
-        error.IsDir, error.NotDir => return error.Unexpected, // filter = .any
-        error.PathAlreadyExists => return error.Unexpected, // FILE_OPEN
-        error.WouldBlock => return error.Unexpected,
-        error.NoDevice => return error.FileNotFound,
-        error.PipeBusy => return error.AccessDenied,
-        else => |e| return e,
-    };
-    defer CloseHandle(result_handle);
-
-    var reparse_buf: [MAXIMUM_REPARSE_DATA_BUFFER_SIZE]u8 align(@alignOf(REPARSE_DATA_BUFFER)) = undefined;
-    const rc = DeviceIoControl(result_handle, FSCTL.GET_REPARSE_POINT, .{ .out = reparse_buf[0..] });
-    switch (rc) {
-        .SUCCESS => {},
-        .CANCELLED => return error.OperationCanceled,
-        .NOT_A_REPARSE_POINT => return error.NotLink,
-        else => return unexpectedStatus(rc),
-    }
-
-    const reparse_struct: *const REPARSE_DATA_BUFFER = @ptrCast(@alignCast(&reparse_buf[0]));
-    const IoReparseTagInt = @typeInfo(IO_REPARSE_TAG).@"struct".backing_integer.?;
-    switch (@as(IoReparseTagInt, @bitCast(reparse_struct.ReparseTag))) {
-        @as(IoReparseTagInt, @bitCast(IO_REPARSE_TAG.SYMLINK)) => {
-            const buf: *const SYMBOLIC_LINK_REPARSE_BUFFER = @ptrCast(@alignCast(&reparse_struct.DataBuffer[0]));
-            const offset = buf.SubstituteNameOffset >> 1;
-            const len = buf.SubstituteNameLength >> 1;
-            const path_buf = @as([*]const u16, &buf.PathBuffer);
-            const is_relative = buf.Flags & SYMLINK_FLAG_RELATIVE != 0;
-            return parseReadLinkPath(path_buf[offset..][0..len], is_relative, out_buffer);
-        },
-        @as(IoReparseTagInt, @bitCast(IO_REPARSE_TAG.MOUNT_POINT)) => {
-            const buf: *const MOUNT_POINT_REPARSE_BUFFER = @ptrCast(@alignCast(&reparse_struct.DataBuffer[0]));
-            const offset = buf.SubstituteNameOffset >> 1;
-            const len = buf.SubstituteNameLength >> 1;
-            const path_buf = @as([*]const u16, &buf.PathBuffer);
-            return parseReadLinkPath(path_buf[offset..][0..len], false, out_buffer);
-        },
-        else => return error.UnsupportedReparsePointType,
-    }
-}
-
-fn parseReadLinkPath(path: []const u16, is_relative: bool, out_buffer: []u16) error{NameTooLong}![]u16 {
-    path: {
-        if (is_relative) break :path;
-        return ntToWin32Namespace(path, out_buffer) catch |err| switch (err) {
-            error.NameTooLong => |e| return e,
-            error.NotNtPath => break :path,
-        };
-    }
-    if (out_buffer.len < path.len) return error.NameTooLong;
-    const dest = out_buffer[0..path.len];
-    @memcpy(dest, path);
-    return dest;
 }
 
 pub const DeleteFileError = error{
