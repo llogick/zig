@@ -1033,8 +1033,8 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
     if (any_output) {
         const o_sub_path = "o" ++ Dir.path.sep_str ++ &digest;
 
-        b.cache_root.handle.rename(tmp_dir_path, b.cache_root.handle, o_sub_path, io) catch |err| {
-            if (err == error.PathAlreadyExists) {
+        b.cache_root.handle.rename(tmp_dir_path, b.cache_root.handle, o_sub_path, io) catch |err| switch (err) {
+            Dir.RenameError.DirNotEmpty => {
                 b.cache_root.handle.deleteTree(io, o_sub_path) catch |del_err| {
                     return step.fail("unable to remove dir '{f}'{s}: {t}", .{
                         b.cache_root, tmp_dir_path, del_err,
@@ -1045,11 +1045,10 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
                         b.cache_root, tmp_dir_path, b.cache_root, o_sub_path, retry_err,
                     });
                 };
-            } else {
-                return step.fail("unable to rename dir '{f}{s}' to '{f}{s}': {t}", .{
-                    b.cache_root, tmp_dir_path, b.cache_root, o_sub_path, err,
-                });
-            }
+            },
+            else => return step.fail("unable to rename dir '{f}{s}' to '{f}{s}': {t}", .{
+                b.cache_root, tmp_dir_path, b.cache_root, o_sub_path, err,
+            }),
         };
     }
 
