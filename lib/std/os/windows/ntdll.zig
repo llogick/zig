@@ -496,6 +496,11 @@ pub extern "ntdll" fn RtlGetFullPathName_U(
     ShortName: ?*[*:0]const u16,
 ) callconv(.winapi) ULONG;
 
+pub extern "ntdll" fn RtlGetCurrentDirectory_U(
+    BufferLength: ULONG,
+    Buffer: [*]u16,
+) callconv(.winapi) ULONG;
+
 pub extern "ntdll" fn RtlGetSystemTimePrecise() callconv(.winapi) LARGE_INTEGER;
 
 pub extern "ntdll" fn RtlInitializeCriticalSection(

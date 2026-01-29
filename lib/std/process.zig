@@ -63,53 +63,40 @@ pub const Init = struct {
     };
 };
 
-pub const GetCwdError = posix.GetCwdError;
-
-/// The result is a slice of `out_buffer`, from index `0`.
-/// On Windows, the result is encoded as [WTF-8](https://wtf-8.codeberg.page/).
-/// On other platforms, the result is an opaque sequence of bytes with no particular encoding.
-pub fn getCwd(out_buffer: []u8) GetCwdError![]u8 {
-    return posix.getcwd(out_buffer);
-}
-
-// Same as GetCwdError, minus error.NameTooLong + Allocator.Error
-pub const GetCwdAllocError = Allocator.Error || error{
-    /// Not possible on Windows.
+pub const CurrentDirError = error{
+    NameTooLong,
+    /// Not possible on Windows. Always returned on WASI.
     CurrentWorkingDirectoryUnlinked,
-} || posix.UnexpectedError;
+} || Io.UnexpectedError;
 
-/// Caller must free the returned memory.
 /// On Windows, the result is encoded as [WTF-8](https://wtf-8.codeberg.page/).
-/// On other platforms, the result is an opaque sequence of bytes with no particular encoding.
-pub fn getCwdAlloc(allocator: Allocator) GetCwdAllocError![]u8 {
-    // The use of max_path_bytes here is just a heuristic: most paths will fit
-    // in stack_buf, avoiding an extra allocation in the common case.
-    var stack_buf: [max_path_bytes]u8 = undefined;
-    var heap_buf: ?[]u8 = null;
-    defer if (heap_buf) |buf| allocator.free(buf);
-
-    var current_buf: []u8 = &stack_buf;
-    while (true) {
-        if (posix.getcwd(current_buf)) |slice| {
-            return allocator.dupe(u8, slice);
-        } else |err| switch (err) {
-            error.NameTooLong => {
-                // The path is too long to fit in stack_buf. Allocate geometrically
-                // increasing buffers until we find one that works
-                const new_capacity = current_buf.len * 2;
-                if (heap_buf) |buf| allocator.free(buf);
-                current_buf = try allocator.alloc(u8, new_capacity);
-                heap_buf = current_buf;
-            },
-            else => |e| return e,
-        }
-    }
+/// On other platforms, the result is an opaque sequence of bytes with no
+/// particular encoding.
+pub fn currentDir(io: Io, buffer: []u8) CurrentDirError!usize {
+    return io.vtable.processCurrentDir(io.userdata, buffer);
 }
 
-test getCwdAlloc {
-    if (native_os == .wasi) return error.SkipZigTest;
+pub const CurrentDirAllocError = Allocator.Error || error{
+    /// Not possible on Windows. Always returned on WASI.
+    CurrentWorkingDirectoryUnlinked,
+} || Io.UnexpectedError;
 
-    const cwd = try getCwdAlloc(testing.allocator);
+/// On Windows, the result is encoded as [WTF-8](https://wtf-8.codeberg.page/).
+/// On other platforms, the result is an opaque sequence of bytes with no
+/// particular encoding.
+///
+/// Caller owns returned memory.
+pub fn currentDirAlloc(io: Io, allocator: Allocator) CurrentDirAllocError![:0]u8 {
+    var buffer: [max_path_bytes]u8 = undefined;
+    const n = currentDir(io, &buffer) catch |err| switch (err) {
+        error.NameTooLong => unreachable,
+        else => |e| return e,
+    };
+    return allocator.dupeZ(u8, buffer[0..n]);
+}
+
+test currentDirAlloc {
+    const cwd = try currentDirAlloc(testing.io, testing.allocator);
     testing.allocator.free(cwd);
 }
 
@@ -466,7 +453,7 @@ pub fn spawnPath(io: Io, dir: Io.Dir, options: SpawnOptions) SpawnError!Child {
     return io.vtable.processSpawnPath(io.userdata, dir, options);
 }
 
-pub const RunError = posix.GetCwdError || posix.ReadError || SpawnError || posix.PollError || error{
+pub const RunError = CurrentDirError || posix.ReadError || SpawnError || posix.PollError || error{
     StdoutStreamTooLong,
     StderrStreamTooLong,
 };

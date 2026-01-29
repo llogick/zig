@@ -519,40 +519,6 @@ pub fn getppid() pid_t {
     return system.getppid();
 }
 
-pub const GetCwdError = error{
-    NameTooLong,
-    /// Not possible on Windows.
-    CurrentWorkingDirectoryUnlinked,
-} || UnexpectedError;
-
-/// The result is a slice of out_buffer, indexed from 0.
-pub fn getcwd(out_buffer: []u8) GetCwdError![]u8 {
-    if (native_os == .windows) {
-        return windows.GetCurrentDirectory(out_buffer);
-    } else if (native_os == .wasi and !builtin.link_libc) {
-        const path = ".";
-        if (out_buffer.len < path.len) return error.NameTooLong;
-        const result = out_buffer[0..path.len];
-        @memcpy(result, path);
-        return result;
-    }
-
-    const err: E = if (builtin.link_libc) err: {
-        const c_err = if (std.c.getcwd(out_buffer.ptr, out_buffer.len)) |_| 0 else std.c._errno().*;
-        break :err @enumFromInt(c_err);
-    } else err: {
-        break :err errno(system.getcwd(out_buffer.ptr, out_buffer.len));
-    };
-    switch (err) {
-        .SUCCESS => return mem.sliceTo(out_buffer, 0),
-        .FAULT => unreachable,
-        .INVAL => unreachable,
-        .NOENT => return error.CurrentWorkingDirectoryUnlinked,
-        .RANGE => return error.NameTooLong,
-        else => return unexpectedErrno(err),
-    }
-}
-
 pub const SocketError = error{
     /// Permission to create a socket of the specified type and/or
     /// pro‐tocol is denied.

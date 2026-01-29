@@ -1643,6 +1643,7 @@ pub fn io(t: *Threaded) Io {
             .lockStderr = lockStderr,
             .tryLockStderr = tryLockStderr,
             .unlockStderr = unlockStderr,
+            .processCurrentDir = processCurrentDir,
             .processSetCurrentDir = processSetCurrentDir,
             .processReplace = processReplace,
             .processReplacePath = processReplacePath,
@@ -1801,6 +1802,7 @@ pub fn ioBasic(t: *Threaded) Io {
             .lockStderr = lockStderr,
             .tryLockStderr = tryLockStderr,
             .unlockStderr = unlockStderr,
+            .processCurrentDir = processCurrentDir,
             .processSetCurrentDir = processSetCurrentDir,
             .processReplace = processReplace,
             .processReplacePath = processReplacePath,
@@ -12598,6 +12600,46 @@ fn unlockStderr(userdata: ?*anyopaque) void {
     t.stderr_writer.interface.end = 0;
     t.stderr_writer.interface.buffer = &.{};
     process.stderr_thread_mutex.unlock();
+}
+
+fn processCurrentDir(userdata: ?*anyopaque, buffer: []u8) process.CurrentDirError!usize {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    _ = t;
+    if (is_windows) {
+        var wtf16le_buf: [windows.PATH_MAX_WIDE:0]u16 = undefined;
+        const n = windows.ntdll.RtlGetCurrentDirectory_U(wtf16le_buf.len + 1, &wtf16le_buf);
+        if (n == 0) return error.Unexpected;
+        assert(n <= wtf16le_buf.len);
+        const wtf16le_slice = wtf16le_buf[0..n];
+        var end_index: usize = 0;
+        var it = std.unicode.Wtf16LeIterator.init(wtf16le_slice);
+        while (it.nextCodepoint()) |codepoint| {
+            const seq_len = std.unicode.utf8CodepointSequenceLength(codepoint) catch unreachable;
+            if (end_index + seq_len >= buffer.len)
+                return error.NameTooLong;
+            end_index += std.unicode.wtf8Encode(codepoint, buffer[end_index..]) catch unreachable;
+        }
+        return end_index;
+    } else if (native_os == .wasi and !builtin.link_libc) {
+        if (buffer.len == 0) return error.NameTooLong;
+        buffer[0] = '.';
+        return 1;
+    }
+
+    const err: posix.E = if (builtin.link_libc) err: {
+        const c_err = if (std.c.getcwd(buffer.ptr, buffer.len)) |_| 0 else std.c._errno().*;
+        break :err @enumFromInt(c_err);
+    } else err: {
+        break :err posix.errno(posix.system.getcwd(buffer.ptr, buffer.len));
+    };
+    switch (err) {
+        .SUCCESS => return std.mem.findScalar(u8, buffer, 0).?,
+        .NOENT => return error.CurrentWorkingDirectoryUnlinked,
+        .RANGE => return error.NameTooLong,
+        .FAULT => |e| return errnoBug(e),
+        .INVAL => |e| return errnoBug(e),
+        else => return posix.unexpectedErrno(err),
+    }
 }
 
 fn processSetCurrentDir(userdata: ?*anyopaque, dir: Dir) process.SetCurrentDirError!void {

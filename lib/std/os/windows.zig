@@ -2878,34 +2878,6 @@ pub fn CloseHandle(hObject: HANDLE) void {
     assert(ntdll.NtClose(hObject) == .SUCCESS);
 }
 
-pub const GetCurrentDirectoryError = error{
-    NameTooLong,
-    Unexpected,
-};
-
-/// The result is a slice of `buffer`, indexed from 0.
-/// The result is encoded as [WTF-8](https://wtf-8.codeberg.page/).
-pub fn GetCurrentDirectory(buffer: []u8) GetCurrentDirectoryError![]u8 {
-    var wtf16le_buf: [PATH_MAX_WIDE:0]u16 = undefined;
-    const result = kernel32.GetCurrentDirectoryW(wtf16le_buf.len + 1, &wtf16le_buf);
-    if (result == 0) {
-        switch (GetLastError()) {
-            else => |err| return unexpectedError(err),
-        }
-    }
-    assert(result <= wtf16le_buf.len);
-    const wtf16le_slice = wtf16le_buf[0..result];
-    var end_index: usize = 0;
-    var it = std.unicode.Wtf16LeIterator.init(wtf16le_slice);
-    while (it.nextCodepoint()) |codepoint| {
-        const seq_len = std.unicode.utf8CodepointSequenceLength(codepoint) catch unreachable;
-        if (end_index + seq_len >= buffer.len)
-            return error.NameTooLong;
-        end_index += std.unicode.wtf8Encode(codepoint, buffer[end_index..]) catch unreachable;
-    }
-    return buffer[0..end_index];
-}
-
 pub const GetStdHandleError = error{
     NoStandardHandleAttached,
     Unexpected,

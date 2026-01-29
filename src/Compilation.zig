@@ -767,7 +767,7 @@ pub const Directories = struct {
     ) Directories {
         const wasi = builtin.target.os.tag == .wasi;
 
-        const cwd = introspect.getResolvedCwd(arena) catch |err| {
+        const cwd = introspect.getResolvedCwd(io, arena) catch |err| {
             fatal("unable to get cwd: {t}", .{err});
         };
 

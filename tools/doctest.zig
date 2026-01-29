@@ -33,7 +33,7 @@ pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const io = init.io;
     const environ_map = init.environ_map;
-    const cwd_path = try std.process.getCwdAlloc(arena);
+    const cwd_path = try std.process.currentDirAlloc(io, arena);
 
     try environ_map.put("CLICOLOR_FORCE", "1");
 

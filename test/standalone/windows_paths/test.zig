@@ -10,7 +10,7 @@ pub fn main(init: std.process.Init) !void {
 
     const exe_path = args[1];
 
-    const cwd_path = try std.process.getCwdAlloc(arena);
+    const cwd_path = try std.process.currentDirAlloc(io, arena);
     const parsed_cwd_path = std.fs.path.parsePathWindows(u8, cwd_path);
 
     if (parsed_cwd_path.kind == .drive_absolute and !std.ascii.isAlphabetic(cwd_path[0])) {

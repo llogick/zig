@@ -4775,7 +4775,7 @@ fn cmdInit(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) !
         }
     }
 
-    const cwd_path = try introspect.getResolvedCwd(arena);
+    const cwd_path = try introspect.getResolvedCwd(io, arena);
     const cwd_basename = fs.path.basename(cwd_path);
     const sanitized_root_name = try sanitizeExampleName(arena, cwd_basename);
 
@@ -5141,7 +5141,7 @@ fn cmdBuild(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8, 
 
     process.raiseFileDescriptorLimit();
 
-    const cwd_path = try introspect.getResolvedCwd(arena);
+    const cwd_path = try introspect.getResolvedCwd(io, arena);
     const build_root = try findBuildRoot(arena, io, .{
         .cwd_path = cwd_path,
         .build_file = build_file,
@@ -7077,7 +7077,7 @@ fn cmdFetch(
         },
     };
 
-    const cwd_path = try introspect.getResolvedCwd(arena);
+    const cwd_path = try introspect.getResolvedCwd(io, arena);
 
     var build_root = try findBuildRoot(arena, io, .{
         .cwd_path = cwd_path,
@@ -7288,7 +7288,7 @@ const FindBuildRootOptions = struct {
 };
 
 fn findBuildRoot(arena: Allocator, io: Io, options: FindBuildRootOptions) !BuildRoot {
-    const cwd_path = options.cwd_path orelse try introspect.getResolvedCwd(arena);
+    const cwd_path = options.cwd_path orelse try introspect.getResolvedCwd(io, arena);
     const build_zig_basename = if (options.build_file) |bf|
         fs.path.basename(bf)
     else
@@ -7490,7 +7490,7 @@ fn writeSimpleTemplateFile(io: Io, file_name: []const u8, comptime fmt: []const 
 }
 
 fn findTemplates(gpa: Allocator, arena: Allocator, io: Io) Templates {
-    const cwd_path = introspect.getResolvedCwd(arena) catch |err| {
+    const cwd_path = introspect.getResolvedCwd(io, arena) catch |err| {
         fatal("unable to get cwd: {t}", .{err});
     };
     const self_exe_path = process.executablePathAlloc(io, arena) catch |err| {
