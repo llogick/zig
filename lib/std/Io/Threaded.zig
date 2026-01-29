@@ -2730,6 +2730,7 @@ fn dirCreateDirPathOpenWindows(
             // This can happen if the directory has 'List folder contents' permission set to 'Deny'
             // and the directory is trying to be opened for iteration.
             .ACCESS_DENIED => return syscall.fail(error.AccessDenied),
+            .DISK_FULL => return syscall.fail(error.NoSpaceLeft),
             .INVALID_PARAMETER => |s| return syscall.ntstatusBug(s),
             else => |s| return syscall.unexpectedNtstatus(s),
         };
@@ -3670,6 +3671,7 @@ fn dirCreateFileWindows(
         .NOT_A_DIRECTORY => return syscall.fail(error.NotDir),
         .USER_MAPPED_FILE => return syscall.fail(error.AccessDenied),
         .VIRUS_INFECTED, .VIRUS_DELETED => return syscall.fail(error.AntivirusInterference),
+        .DISK_FULL => return syscall.fail(error.NoSpaceLeft),
         .INVALID_PARAMETER => |status| return syscall.ntstatusBug(status),
         .OBJECT_PATH_SYNTAX_BAD => |status| return syscall.ntstatusBug(status),
         .INVALID_HANDLE => |status| return syscall.ntstatusBug(status),
@@ -9215,6 +9217,7 @@ fn writeFilePositionalWindows(
             .LOCK_VIOLATION => return syscall.fail(error.LockViolation),
             .ACCESS_DENIED => return syscall.fail(error.AccessDenied),
             .WORKING_SET_QUOTA => return syscall.fail(error.SystemResources),
+            .DISK_FULL => return syscall.fail(error.NoSpaceLeft),
             else => |err| {
                 syscall.finish();
                 return windows.unexpectedError(err);
@@ -9375,6 +9378,7 @@ fn writeFileStreamingWindows(
             .LOCK_VIOLATION => return syscall.fail(error.LockViolation),
             .ACCESS_DENIED => return syscall.fail(error.AccessDenied),
             .WORKING_SET_QUOTA => return syscall.fail(error.SystemResources),
+            .DISK_FULL => return syscall.fail(error.NoSpaceLeft),
             else => |err| {
                 syscall.finish();
                 return windows.unexpectedError(err);
