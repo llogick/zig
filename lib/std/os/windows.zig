@@ -1135,19 +1135,7 @@ pub const CTL_CODE = packed struct(ULONG) {
 
         _,
     };
-};
 
-pub const IOCTL = struct {
-    pub const KSEC = struct {
-        pub const GEN_RANDOM: CTL_CODE = .{ .DeviceType = .KSEC, .Function = 2, .Method = .BUFFERED, .Access = .ANY };
-    };
-    pub const MOUNTMGR = struct {
-        pub const QUERY_POINTS: CTL_CODE = .{ .DeviceType = .MOUNTMGRCONTROLTYPE, .Function = 2, .Method = .BUFFERED, .Access = .ANY };
-        pub const QUERY_DOS_VOLUME_PATH: CTL_CODE = .{ .DeviceType = .MOUNTMGRCONTROLTYPE, .Function = 12, .Method = .BUFFERED, .Access = .ANY };
-    };
-};
-
-pub const FSCTL = struct {
     pub const SET_REPARSE_POINT: CTL_CODE = .{ .DeviceType = .FILE_SYSTEM, .Function = 41, .Method = .BUFFERED, .Access = .SPECIAL };
     pub const GET_REPARSE_POINT: CTL_CODE = .{ .DeviceType = .FILE_SYSTEM, .Function = 42, .Method = .BUFFERED, .Access = .ANY };
 
@@ -1174,6 +1162,16 @@ pub const FSCTL = struct {
         pub const INTERNAL_WRITE: CTL_CODE = .{ .DeviceType = .NAMED_PIPE, .Function = 2046, .Method = .BUFFERED, .Access = .{ .WRITE = true } };
         pub const INTERNAL_TRANSCEIVE: CTL_CODE = .{ .DeviceType = .NAMED_PIPE, .Function = 2047, .Method = .NEITHER, .Access = .{ .READ = true, .WRITE = true } };
         pub const INTERNAL_READ_OVFLOW: CTL_CODE = .{ .DeviceType = .NAMED_PIPE, .Function = 2048, .Method = .BUFFERED, .Access = .{ .READ = true } };
+    };
+};
+
+pub const IOCTL = struct {
+    pub const KSEC = struct {
+        pub const GEN_RANDOM: CTL_CODE = .{ .DeviceType = .KSEC, .Function = 2, .Method = .BUFFERED, .Access = .ANY };
+    };
+    pub const MOUNTMGR = struct {
+        pub const QUERY_POINTS: CTL_CODE = .{ .DeviceType = .MOUNTMGRCONTROLTYPE, .Function = 2, .Method = .BUFFERED, .Access = .ANY };
+        pub const QUERY_DOS_VOLUME_PATH: CTL_CODE = .{ .DeviceType = .MOUNTMGRCONTROLTYPE, .Function = 12, .Method = .BUFFERED, .Access = .ANY };
     };
 };
 
@@ -2906,88 +2904,6 @@ pub fn GetCurrentDirectory(buffer: []u8) GetCurrentDirectoryError![]u8 {
         end_index += std.unicode.wtf8Encode(codepoint, buffer[end_index..]) catch unreachable;
     }
     return buffer[0..end_index];
-}
-
-pub const ReadLinkError = error{
-    FileNotFound,
-    NetworkNotFound,
-    AccessDenied,
-    Unexpected,
-    NameTooLong,
-    BadPathName,
-    AntivirusInterference,
-    UnsupportedReparsePointType,
-    NotLink,
-    OperationCanceled,
-};
-
-/// `sub_path_w` will never be accessed after `out_buffer` has been written to, so it
-/// is safe to reuse a single buffer for both.
-pub fn ReadLink(dir: ?HANDLE, sub_path_w: []const u16, out_buffer: []u16) ReadLinkError![]u16 {
-    const result_handle = OpenFile(sub_path_w, .{
-        .access_mask = .{
-            .SPECIFIC = .{ .FILE = .{
-                .READ_ATTRIBUTES = true,
-            } },
-            .STANDARD = .{ .SYNCHRONIZE = true },
-        },
-        .dir = dir,
-        .creation = .OPEN,
-        .follow_symlinks = false,
-        .filter = .any,
-    }) catch |err| switch (err) {
-        error.IsDir, error.NotDir => return error.Unexpected, // filter = .any
-        error.PathAlreadyExists => return error.Unexpected, // FILE_OPEN
-        error.WouldBlock => return error.Unexpected,
-        error.NoDevice => return error.FileNotFound,
-        error.PipeBusy => return error.AccessDenied,
-        else => |e| return e,
-    };
-    defer CloseHandle(result_handle);
-
-    var reparse_buf: [MAXIMUM_REPARSE_DATA_BUFFER_SIZE]u8 align(@alignOf(REPARSE_DATA_BUFFER)) = undefined;
-    const rc = DeviceIoControl(result_handle, FSCTL.GET_REPARSE_POINT, .{ .out = reparse_buf[0..] });
-    switch (rc) {
-        .SUCCESS => {},
-        .CANCELLED => return error.OperationCanceled,
-        .NOT_A_REPARSE_POINT => return error.NotLink,
-        else => return unexpectedStatus(rc),
-    }
-
-    const reparse_struct: *const REPARSE_DATA_BUFFER = @ptrCast(@alignCast(&reparse_buf[0]));
-    const IoReparseTagInt = @typeInfo(IO_REPARSE_TAG).@"struct".backing_integer.?;
-    switch (@as(IoReparseTagInt, @bitCast(reparse_struct.ReparseTag))) {
-        @as(IoReparseTagInt, @bitCast(IO_REPARSE_TAG.SYMLINK)) => {
-            const buf: *const SYMBOLIC_LINK_REPARSE_BUFFER = @ptrCast(@alignCast(&reparse_struct.DataBuffer[0]));
-            const offset = buf.SubstituteNameOffset >> 1;
-            const len = buf.SubstituteNameLength >> 1;
-            const path_buf = @as([*]const u16, &buf.PathBuffer);
-            const is_relative = buf.Flags & SYMLINK_FLAG_RELATIVE != 0;
-            return parseReadLinkPath(path_buf[offset..][0..len], is_relative, out_buffer);
-        },
-        @as(IoReparseTagInt, @bitCast(IO_REPARSE_TAG.MOUNT_POINT)) => {
-            const buf: *const MOUNT_POINT_REPARSE_BUFFER = @ptrCast(@alignCast(&reparse_struct.DataBuffer[0]));
-            const offset = buf.SubstituteNameOffset >> 1;
-            const len = buf.SubstituteNameLength >> 1;
-            const path_buf = @as([*]const u16, &buf.PathBuffer);
-            return parseReadLinkPath(path_buf[offset..][0..len], false, out_buffer);
-        },
-        else => return error.UnsupportedReparsePointType,
-    }
-}
-
-fn parseReadLinkPath(path: []const u16, is_relative: bool, out_buffer: []u16) error{NameTooLong}![]u16 {
-    path: {
-        if (is_relative) break :path;
-        return ntToWin32Namespace(path, out_buffer) catch |err| switch (err) {
-            error.NameTooLong => |e| return e,
-            error.NotNtPath => break :path,
-        };
-    }
-    if (out_buffer.len < path.len) return error.NameTooLong;
-    const dest = out_buffer[0..path.len];
-    @memcpy(dest, path);
-    return dest;
 }
 
 pub const DeleteFileError = error{

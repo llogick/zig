@@ -249,7 +249,6 @@ pub const CreateFlags = struct {
 };
 
 pub const OpenError = error{
-    SharingViolation,
     PipeBusy,
     NoDevice,
     /// On Windows, `\\server` or `\\server\share` was not found.
@@ -757,7 +756,7 @@ pub const RealPathError = error{
     NoSpaceLeft,
     FileSystem,
     DeviceBusy,
-    SharingViolation,
+    FileBusy,
     PipeBusy,
     /// On Windows, `\\server` or `\\server\share` was not found.
     NetworkNotFound,

@@ -3635,7 +3635,7 @@ fn dirCreateFileWindows(
             // after an executable file is closed. Here we work around the
             // kernel bug with retry attempts.
             syscall.finish();
-            if (max_attempts - attempt == 0) return error.SharingViolation;
+            if (max_attempts - attempt == 0) return error.FileBusy;
             try parking_sleep.windowsRetrySleep((@as(u32, 1) << attempt) >> 1);
             attempt += 1;
             syscall = try .start();
@@ -3648,7 +3648,7 @@ fn dirCreateFileWindows(
             // call has failed. Here, we simulate the kernel bug being
             // fixed by sleeping and retrying until the error goes away.
             syscall.finish();
-            if (max_attempts - attempt == 0) return error.SharingViolation;
+            if (max_attempts - attempt == 0) return error.FileBusy;
             try parking_sleep.windowsRetrySleep((@as(u32, 1) << attempt) >> 1);
             attempt += 1;
             syscall = try .start();
@@ -3668,10 +3668,10 @@ fn dirCreateFileWindows(
         .NOT_A_DIRECTORY => return syscall.fail(error.NotDir),
         .USER_MAPPED_FILE => return syscall.fail(error.AccessDenied),
         .VIRUS_INFECTED, .VIRUS_DELETED => return syscall.fail(error.AntivirusInterference),
-        .INVALID_PARAMETER => |err| return syscall.ntstatusBug(err),
-        .OBJECT_PATH_SYNTAX_BAD => |err| return syscall.ntstatusBug(err),
-        .INVALID_HANDLE => |err| return syscall.ntstatusBug(err),
-        else => |err| return syscall.unexpectedNtstatus(err),
+        .INVALID_PARAMETER => |status| return syscall.ntstatusBug(status),
+        .OBJECT_PATH_SYNTAX_BAD => |status| return syscall.ntstatusBug(status),
+        .INVALID_HANDLE => |status| return syscall.ntstatusBug(status),
+        else => |status| return syscall.unexpectedNtstatus(status),
     };
     errdefer windows.CloseHandle(handle);
 
@@ -3819,7 +3819,6 @@ fn dirCreateFileAtomic(
                 error.DiskQuota,
                 error.PathAlreadyExists,
                 error.LinkQuotaExceeded,
-                error.SharingViolation,
                 error.PipeBusy,
                 error.FileTooBig,
                 error.DeviceBusy,
@@ -3889,11 +3888,9 @@ fn dirCreateFileAtomic(
                 error.DiskQuota,
                 error.PathAlreadyExists,
                 error.LinkQuotaExceeded,
-                error.SharingViolation,
                 error.PipeBusy,
                 error.FileTooBig,
                 error.FileLocksUnsupported,
-                error.FileBusy,
                 error.DeviceBusy,
                 => return error.Unexpected,
 
@@ -3926,7 +3923,6 @@ fn atomicFileInit(
             error.PathAlreadyExists => continue,
             error.DeviceBusy => continue,
             error.FileBusy => continue,
-            error.SharingViolation => continue,
 
             error.IsDir => return error.Unexpected, // No path components.
             error.FileTooBig => return error.Unexpected, // Creating, not opening.
@@ -4236,7 +4232,7 @@ pub fn dirOpenFileWtf16(
                 // after an executable file is closed. Here we work around the
                 // kernel bug with retry attempts.
                 syscall.finish();
-                if (max_attempts - attempt == 0) return error.SharingViolation;
+                if (max_attempts - attempt == 0) return error.FileBusy;
                 try parking_sleep.windowsRetrySleep((@as(u32, 1) << attempt) >> 1);
                 attempt += 1;
                 syscall = try .start();
@@ -4258,7 +4254,7 @@ pub fn dirOpenFileWtf16(
                 // call has failed. Here, we simulate the kernel bug being
                 // fixed by sleeping and retrying until the error goes away.
                 syscall.finish();
-                if (max_attempts - attempt == 0) return error.SharingViolation;
+                if (max_attempts - attempt == 0) return error.FileBusy;
                 try parking_sleep.windowsRetrySleep((@as(u32, 1) << attempt) >> 1);
                 attempt += 1;
                 syscall = try .start();
@@ -6464,7 +6460,7 @@ fn dirSymLinkWindows(
     @memcpy(buffer[@sizeOf(SYMLINK_DATA)..][0 .. final_target_path.len * 2], @as([*]const u8, @ptrCast(final_target_path)));
     const paths_start = @sizeOf(SYMLINK_DATA) + final_target_path.len * 2;
     @memcpy(buffer[paths_start..][0 .. final_target_path.len * 2], @as([*]const u8, @ptrCast(final_target_path)));
-    const rc = w.DeviceIoControl(symlink_handle, w.FSCTL.SET_REPARSE_POINT, .{ .in = buffer[0..buf_len] });
+    const rc = w.DeviceIoControl(symlink_handle, .SET_REPARSE_POINT, .{ .in = buffer[0..buf_len] });
     switch (rc) {
         .SUCCESS => {},
         .PRIVILEGE_NOT_HELD => return error.PermissionDenied,
@@ -6571,44 +6567,189 @@ fn dirSymLinkPosix(
     }
 }
 
-const dirReadLink = switch (native_os) {
-    .windows => dirReadLinkWindows,
-    .wasi => dirReadLinkWasi,
-    else => dirReadLinkPosix,
-};
-
-fn dirReadLinkWindows(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, buffer: []u8) Dir.ReadLinkError!usize {
+fn dirReadLink(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, buffer: []u8) Dir.ReadLinkError!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     _ = t;
-    const w = windows;
+    switch (native_os) {
+        .windows => return dirReadLinkWindows(dir, sub_path, buffer),
+        .wasi => return dirReadLinkWasi(dir, sub_path, buffer),
+        else => return dirReadLinkPosix(dir, sub_path, buffer),
+    }
+}
 
+fn dirReadLinkWindows(dir: Dir, sub_path: []const u8, buffer: []u8) Dir.ReadLinkError!usize {
+    // This gets used once for `sub_path` and then reused again temporarily
+    // before converting back to `buffer`.
     var sub_path_w_buf = try windows.sliceToPrefixedFileW(dir.handle, sub_path);
+    const sub_path_w = sub_path_w_buf.span();
+    const path_len_bytes = std.math.cast(u16, sub_path_w.len * 2) orelse return error.NameTooLong;
+    var nt_name: windows.UNICODE_STRING = .{
+        .Length = path_len_bytes,
+        .MaximumLength = path_len_bytes,
+        .Buffer = @constCast(sub_path_w.ptr),
+    };
+    const attr: windows.OBJECT_ATTRIBUTES = .{
+        .Length = @sizeOf(windows.OBJECT_ATTRIBUTES),
+        .RootDirectory = if (Dir.path.isAbsoluteWindowsWtf16(sub_path_w)) null else dir.handle,
+        .Attributes = .{
+            .INHERIT = false,
+        },
+        .ObjectName = &nt_name,
+        .SecurityDescriptor = null,
+        .SecurityQualityOfService = null,
+    };
+    var io_status_block: windows.IO_STATUS_BLOCK = undefined;
+    var result_handle: windows.HANDLE = undefined;
 
-    const syscall: Syscall = try .start();
-    const result_w = while (true) {
-        if (w.ReadLink(dir.handle, sub_path_w_buf.span(), &sub_path_w_buf.data)) |res| {
+    // There are multiple kernel bugs being worked around with retries.
+    const max_attempts = 13;
+    var attempt: u5 = 0;
+
+    var syscall: Syscall = try .start();
+    while (true) switch (windows.ntdll.NtCreateFile(
+        &result_handle,
+        .{
+            .SPECIFIC = .{ .FILE = .{
+                .READ_ATTRIBUTES = true,
+            } },
+            .STANDARD = .{ .SYNCHRONIZE = true },
+        },
+        &attr,
+        &io_status_block,
+        null,
+        .{ .NORMAL = true },
+        .VALID_FLAGS,
+        .OPEN,
+        .{
+            .DIRECTORY_FILE = false,
+            .NON_DIRECTORY_FILE = false,
+            .IO = .ASYNCHRONOUS,
+            .OPEN_REPARSE_POINT = true,
+        },
+        null,
+        0,
+    )) {
+        .SUCCESS => {
             syscall.finish();
-            break res;
-        } else |err| switch (err) {
-            error.OperationCanceled => {
-                try syscall.checkCancel();
-                continue;
-            },
-            else => |e| return syscall.fail(e),
-        }
+            break;
+        },
+        .CANCELLED => {
+            try syscall.checkCancel();
+            continue;
+        },
+        .SHARING_VIOLATION => {
+            // This occurs if the file attempting to be opened is a running
+            // executable. However, there's a kernel bug: the error may be
+            // incorrectly returned for an indeterminate amount of time
+            // after an executable file is closed. Here we work around the
+            // kernel bug with retry attempts.
+            syscall.finish();
+            if (max_attempts - attempt == 0) return error.FileBusy;
+            try parking_sleep.windowsRetrySleep((@as(u32, 1) << attempt) >> 1);
+            attempt += 1;
+            syscall = try .start();
+            continue;
+        },
+        .DELETE_PENDING => {
+            // This error means that there *was* a file in this location on
+            // the file system, but it was deleted. However, the OS is not
+            // finished with the deletion operation, and so this CreateFile
+            // call has failed. Here, we simulate the kernel bug being
+            // fixed by sleeping and retrying until the error goes away.
+            syscall.finish();
+            if (max_attempts - attempt == 0) return error.FileBusy;
+            try parking_sleep.windowsRetrySleep((@as(u32, 1) << attempt) >> 1);
+            attempt += 1;
+            syscall = try .start();
+            continue;
+        },
+        .OBJECT_NAME_INVALID => return syscall.fail(error.BadPathName),
+        .OBJECT_NAME_NOT_FOUND => return syscall.fail(error.FileNotFound),
+        .OBJECT_PATH_NOT_FOUND => return syscall.fail(error.FileNotFound),
+        .BAD_NETWORK_PATH => return syscall.fail(error.NetworkNotFound), // \\server was not found
+        .BAD_NETWORK_NAME => return syscall.fail(error.NetworkNotFound), // \\server was found but \\server\share wasn't
+        .NO_MEDIA_IN_DEVICE => return syscall.fail(error.FileNotFound),
+        .ACCESS_DENIED => return syscall.fail(error.AccessDenied),
+        .PIPE_BUSY => return syscall.fail(error.AccessDenied),
+        .PIPE_NOT_AVAILABLE => return syscall.fail(error.FileNotFound),
+        .USER_MAPPED_FILE => return syscall.fail(error.AccessDenied),
+        .VIRUS_INFECTED, .VIRUS_DELETED => return syscall.fail(error.AntivirusInterference),
+        .INVALID_PARAMETER => |status| return syscall.ntstatusBug(status),
+        .OBJECT_PATH_SYNTAX_BAD => |status| return syscall.ntstatusBug(status),
+        .INVALID_HANDLE => |status| return syscall.ntstatusBug(status),
+        else => |status| return syscall.unexpectedNtstatus(status),
+    };
+    defer windows.CloseHandle(result_handle);
+
+    var reparse_buf: [windows.MAXIMUM_REPARSE_DATA_BUFFER_SIZE]u8 align(@alignOf(windows.REPARSE_DATA_BUFFER)) = undefined;
+
+    syscall = try .start();
+    while (true) switch (windows.ntdll.NtFsControlFile(
+        result_handle,
+        null, // event
+        null, // APC routine
+        null, // APC context
+        &io_status_block,
+        .GET_REPARSE_POINT,
+        null, // input buffer
+        0, // input buffer length
+        &reparse_buf,
+        reparse_buf.len,
+    )) {
+        .SUCCESS => {
+            syscall.finish();
+            break;
+        },
+        .CANCELLED => {
+            try syscall.checkCancel();
+            continue;
+        },
+        .NOT_A_REPARSE_POINT => return syscall.fail(error.NotLink),
+        else => |status| return syscall.unexpectedNtstatus(status),
     };
 
+    const reparse_struct: *const windows.REPARSE_DATA_BUFFER = @ptrCast(@alignCast(&reparse_buf));
+    const IoReparseTagInt = @typeInfo(windows.IO_REPARSE_TAG).@"struct".backing_integer.?;
+    const result_w = switch (@as(IoReparseTagInt, @bitCast(reparse_struct.ReparseTag))) {
+        @as(IoReparseTagInt, @bitCast(windows.IO_REPARSE_TAG.SYMLINK)) => r: {
+            const buf: *const windows.SYMBOLIC_LINK_REPARSE_BUFFER = @ptrCast(@alignCast(&reparse_struct.DataBuffer[0]));
+            const offset = buf.SubstituteNameOffset >> 1;
+            const len = buf.SubstituteNameLength >> 1;
+            const path_buf = @as([*]const u16, &buf.PathBuffer);
+            const is_relative = buf.Flags & windows.SYMLINK_FLAG_RELATIVE != 0;
+            break :r try parseReadLinkPath(path_buf[offset..][0..len], is_relative, &sub_path_w_buf.data);
+        },
+        @as(IoReparseTagInt, @bitCast(windows.IO_REPARSE_TAG.MOUNT_POINT)) => r: {
+            const buf: *const windows.MOUNT_POINT_REPARSE_BUFFER = @ptrCast(@alignCast(&reparse_struct.DataBuffer[0]));
+            const offset = buf.SubstituteNameOffset >> 1;
+            const len = buf.SubstituteNameLength >> 1;
+            const path_buf = @as([*]const u16, &buf.PathBuffer);
+            break :r try parseReadLinkPath(path_buf[offset..][0..len], false, &sub_path_w_buf.data);
+        },
+        else => return error.UnsupportedReparsePointType,
+    };
     const len = std.unicode.calcWtf8Len(result_w);
     if (len > buffer.len) return error.NameTooLong;
 
     return std.unicode.wtf16LeToWtf8(buffer, result_w);
 }
 
-fn dirReadLinkWasi(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, buffer: []u8) Dir.ReadLinkError!usize {
-    if (builtin.link_libc) return dirReadLinkPosix(userdata, dir, sub_path, buffer);
+fn parseReadLinkPath(path: []const u16, is_relative: bool, out_buffer: []u16) error{NameTooLong}![]u16 {
+    path: {
+        if (is_relative) break :path;
+        return windows.ntToWin32Namespace(path, out_buffer) catch |err| switch (err) {
+            error.NameTooLong => |e| return e,
+            error.NotNtPath => break :path,
+        };
+    }
+    if (out_buffer.len < path.len) return error.NameTooLong;
+    const dest = out_buffer[0..path.len];
+    @memcpy(dest, path);
+    return dest;
+}
 
-    const t: *Threaded = @ptrCast(@alignCast(userdata));
-    _ = t;
+fn dirReadLinkWasi(dir: Dir, sub_path: []const u8, buffer: []u8) Dir.ReadLinkError!usize {
+    if (builtin.link_libc) return dirReadLinkPosix(dir, sub_path, buffer);
 
     var n: usize = undefined;
     const syscall: Syscall = try .start();
@@ -6643,10 +6784,7 @@ fn dirReadLinkWasi(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, buffer
     }
 }
 
-fn dirReadLinkPosix(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, buffer: []u8) Dir.ReadLinkError!usize {
-    const t: *Threaded = @ptrCast(@alignCast(userdata));
-    _ = t;
-
+fn dirReadLinkPosix(dir: Dir, sub_path: []const u8, buffer: []u8) Dir.ReadLinkError!usize {
     var sub_path_buffer: [posix.PATH_MAX]u8 = undefined;
     const sub_path_posix = try pathToPosix(sub_path, &sub_path_buffer);
 
@@ -8708,45 +8846,41 @@ fn processExecutablePath(userdata: ?*anyopaque, out_buffer: []u8) process.Execut
             const symlink_path = std.mem.sliceTo(&symlink_path_buf, 0);
             return Io.Dir.realPathFileAbsolute(ioBasic(t), symlink_path, out_buffer) catch |err| switch (err) {
                 error.NetworkNotFound => unreachable, // Windows-only
+                error.FileBusy => unreachable, // Windows-only
                 else => |e| return e,
             };
         },
         .linux, .serenity => return Io.Dir.readLinkAbsolute(ioBasic(t), "/proc/self/exe", out_buffer) catch |err| switch (err) {
             error.UnsupportedReparsePointType => unreachable, // Windows-only
             error.NetworkNotFound => unreachable, // Windows-only
+            error.FileBusy => unreachable, // Windows-only
             else => |e| return e,
         },
         .illumos => return Io.Dir.readLinkAbsolute(ioBasic(t), "/proc/self/path/a.out", out_buffer) catch |err| switch (err) {
             error.UnsupportedReparsePointType => unreachable, // Windows-only
             error.NetworkNotFound => unreachable, // Windows-only
+            error.FileBusy => unreachable, // Windows-only
             else => |e| return e,
         },
         .freebsd, .dragonfly => {
             var mib: [4]c_int = .{ posix.CTL.KERN, posix.KERN.PROC, posix.KERN.PROC_PATHNAME, -1 };
             var out_len: usize = out_buffer.len;
             const syscall: Syscall = try .start();
-            while (true) {
-                switch (posix.errno(posix.system.sysctl(&mib, mib.len, out_buffer.ptr, &out_len, null, 0))) {
-                    .SUCCESS => {
-                        syscall.finish();
-                        return out_len - 1; // discard terminating NUL
-                    },
-                    .INTR => {
-                        try syscall.checkCancel();
-                        continue;
-                    },
-                    else => |e| {
-                        syscall.finish();
-                        switch (e) {
-                            .FAULT => |err| return errnoBug(err),
-                            .PERM => return error.PermissionDenied,
-                            .NOMEM => return error.SystemResources,
-                            .NOENT => |err| return errnoBug(err),
-                            else => |err| return posix.unexpectedErrno(err),
-                        }
-                    },
-                }
-            }
+            while (true) switch (posix.errno(posix.system.sysctl(&mib, mib.len, out_buffer.ptr, &out_len, null, 0))) {
+                .SUCCESS => {
+                    syscall.finish();
+                    return out_len - 1; // discard terminating NUL
+                },
+                .INTR => {
+                    try syscall.checkCancel();
+                    continue;
+                },
+                .PERM => return syscall.fail(error.PermissionDenied),
+                .NOMEM => return syscall.fail(error.SystemResources),
+                .FAULT => |err| return syscall.errnoBug(err),
+                .NOENT => |err| return syscall.errnoBug(err),
+                else => |err| return syscall.unexpectedErrno(err),
+            };
         },
         .netbsd => {
             var mib = [4]c_int{ posix.CTL.KERN, posix.KERN.PROC_ARGS, -1, posix.KERN.PROC_PATHNAME };
@@ -8762,16 +8896,11 @@ fn processExecutablePath(userdata: ?*anyopaque, out_buffer: []u8) process.Execut
                         try syscall.checkCancel();
                         continue;
                     },
-                    else => |e| {
-                        syscall.finish();
-                        switch (e) {
-                            .FAULT => |err| return errnoBug(err),
-                            .PERM => return error.PermissionDenied,
-                            .NOMEM => return error.SystemResources,
-                            .NOENT => |err| return errnoBug(err),
-                            else => |err| return posix.unexpectedErrno(err),
-                        }
-                    },
+                    .PERM => return syscall.fail(error.PermissionDenied),
+                    .NOMEM => return syscall.fail(error.SystemResources),
+                    .FAULT => |err| return syscall.errnoBug(err),
+                    .NOENT => |err| return syscall.errnoBug(err),
+                    else => |err| return syscall.unexpectedErrno(err),
                 }
             }
         },
