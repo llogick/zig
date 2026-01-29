@@ -129,7 +129,7 @@ fn spawnVerify(verify_path: [:0]const u16, cmd_line: [:0]const u16) !windows.DWO
         };
         var proc_info: windows.PROCESS_INFORMATION = undefined;
 
-        try windows.CreateProcessW(
+        if (windows.kernel32.CreateProcessW(
             @constCast(verify_path.ptr),
             @constCast(cmd_line.ptr),
             null,
@@ -140,7 +140,10 @@ fn spawnVerify(verify_path: [:0]const u16, cmd_line: [:0]const u16) !windows.DWO
             null,
             &startup_info,
             &proc_info,
-        );
+        ) == 0) {
+            std.process.fatal("kernel32 CreateProcessW failed with {t}", .{windows.kernel32.GetLastError()});
+        }
+
         windows.CloseHandle(proc_info.hThread);
 
         break :spawn proc_info.hProcess;

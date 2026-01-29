@@ -2906,275 +2906,6 @@ pub fn GetCurrentDirectory(buffer: []u8) GetCurrentDirectoryError![]u8 {
     return buffer[0..end_index];
 }
 
-pub const DeleteFileError = error{
-    FileNotFound,
-    AccessDenied,
-    NameTooLong,
-    /// Also known as sharing violation.
-    FileBusy,
-    Unexpected,
-    NotDir,
-    IsDir,
-    DirNotEmpty,
-    NetworkNotFound,
-};
-
-pub const DeleteFileOptions = struct {
-    dir: ?HANDLE,
-    remove_dir: bool = false,
-};
-
-pub fn DeleteFile(sub_path_w: []const u16, options: DeleteFileOptions) DeleteFileError!void {
-    const path_len_bytes = @as(u16, @intCast(sub_path_w.len * 2));
-    var nt_name: UNICODE_STRING = .{
-        .Length = path_len_bytes,
-        .MaximumLength = path_len_bytes,
-        // The Windows API makes this mutable, but it will not mutate here.
-        .Buffer = @constCast(sub_path_w.ptr),
-    };
-
-    if (sub_path_w[0] == '.' and sub_path_w[1] == 0) {
-        // Windows does not recognize this, but it does work with empty string.
-        nt_name.Length = 0;
-    }
-    if (sub_path_w[0] == '.' and sub_path_w[1] == '.' and sub_path_w[2] == 0) {
-        // Can't remove the parent directory with an open handle.
-        return error.FileBusy;
-    }
-
-    var io: IO_STATUS_BLOCK = undefined;
-    var tmp_handle: HANDLE = undefined;
-    var rc = ntdll.NtCreateFile(
-        &tmp_handle,
-        .{ .STANDARD = .{
-            .RIGHTS = .{ .DELETE = true },
-            .SYNCHRONIZE = true,
-        } },
-        &.{
-            .Length = @sizeOf(OBJECT_ATTRIBUTES),
-            .RootDirectory = if (std.fs.path.isAbsoluteWindowsWtf16(sub_path_w)) null else options.dir,
-            .Attributes = .{},
-            .ObjectName = &nt_name,
-            .SecurityDescriptor = null,
-            .SecurityQualityOfService = null,
-        },
-        &io,
-        null,
-        .{},
-        .VALID_FLAGS,
-        .OPEN,
-        .{
-            .DIRECTORY_FILE = options.remove_dir,
-            .NON_DIRECTORY_FILE = !options.remove_dir,
-            .OPEN_REPARSE_POINT = true, // would we ever want to delete the target instead?
-        },
-        null,
-        0,
-    );
-    switch (rc) {
-        .SUCCESS => {},
-        .OBJECT_NAME_INVALID => unreachable,
-        .OBJECT_NAME_NOT_FOUND => return error.FileNotFound,
-        .OBJECT_PATH_NOT_FOUND => return error.FileNotFound,
-        .BAD_NETWORK_PATH => return error.NetworkNotFound, // \\server was not found
-        .BAD_NETWORK_NAME => return error.NetworkNotFound, // \\server was found but \\server\share wasn't
-        .INVALID_PARAMETER => unreachable,
-        .FILE_IS_A_DIRECTORY => return error.IsDir,
-        .NOT_A_DIRECTORY => return error.NotDir,
-        .SHARING_VIOLATION => return error.FileBusy,
-        .ACCESS_DENIED => return error.AccessDenied,
-        .DELETE_PENDING => return,
-        else => return unexpectedStatus(rc),
-    }
-    defer CloseHandle(tmp_handle);
-
-    // FileDispositionInformationEx has varying levels of support:
-    // - FILE_DISPOSITION_INFORMATION_EX requires >= win10_rs1
-    //   (INVALID_INFO_CLASS is returned if not supported)
-    // - Requires the NTFS filesystem
-    //   (on filesystems like FAT32, INVALID_PARAMETER is returned)
-    // - FILE_DISPOSITION_POSIX_SEMANTICS requires >= win10_rs1
-    // - FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE requires >= win10_rs5
-    //   (NOT_SUPPORTED is returned if a flag is unsupported)
-    //
-    // The strategy here is just to try using FileDispositionInformationEx and fall back to
-    // FileDispositionInformation if the return value lets us know that some aspect of it is not supported.
-    const need_fallback = need_fallback: {
-        // Deletion with posix semantics if the filesystem supports it.
-        var info: FILE.DISPOSITION.INFORMATION.EX = .{ .Flags = .{
-            .DELETE = true,
-            .POSIX_SEMANTICS = true,
-            .IGNORE_READONLY_ATTRIBUTE = true,
-        } };
-        rc = ntdll.NtSetInformationFile(
-            tmp_handle,
-            &io,
-            &info,
-            @sizeOf(FILE.DISPOSITION.INFORMATION.EX),
-            .DispositionEx,
-        );
-        switch (rc) {
-            .SUCCESS => return,
-            // The filesystem does not support FileDispositionInformationEx
-            .INVALID_PARAMETER,
-            // The operating system does not support FileDispositionInformationEx
-            .INVALID_INFO_CLASS,
-            // The operating system does not support one of the flags
-            .NOT_SUPPORTED,
-            => break :need_fallback true,
-            // For all other statuses, fall down to the switch below to handle them.
-            else => break :need_fallback false,
-        }
-    };
-
-    if (need_fallback) {
-        // Deletion with file pending semantics, which requires waiting or moving
-        // files to get them removed (from here).
-        var file_dispo: FILE.DISPOSITION.INFORMATION = .{
-            .DeleteFile = TRUE,
-        };
-        rc = ntdll.NtSetInformationFile(
-            tmp_handle,
-            &io,
-            &file_dispo,
-            @sizeOf(FILE.DISPOSITION.INFORMATION),
-            .Disposition,
-        );
-    }
-    switch (rc) {
-        .SUCCESS => {},
-        .DIRECTORY_NOT_EMPTY => return error.DirNotEmpty,
-        .INVALID_PARAMETER => unreachable,
-        .CANNOT_DELETE => return error.AccessDenied,
-        .MEDIA_WRITE_PROTECTED => return error.AccessDenied,
-        .ACCESS_DENIED => return error.AccessDenied,
-        else => return unexpectedStatus(rc),
-    }
-}
-
-pub const RenameError = error{
-    IsDir,
-    NotDir,
-    FileNotFound,
-    NoDevice,
-    AccessDenied,
-    PipeBusy,
-    PathAlreadyExists,
-    Unexpected,
-    NameTooLong,
-    NetworkNotFound,
-    AntivirusInterference,
-    BadPathName,
-    CrossDevice,
-} || UnexpectedError;
-
-pub fn RenameFile(
-    /// May only be `null` if `old_path_w` is a fully-qualified absolute path.
-    old_dir_fd: ?HANDLE,
-    old_path_w: []const u16,
-    /// May only be `null` if `new_path_w` is a fully-qualified absolute path,
-    /// or if the file is not being moved to a different directory.
-    new_dir_fd: ?HANDLE,
-    new_path_w: []const u16,
-    replace_if_exists: bool,
-) RenameError!void {
-    const src_fd = OpenFile(old_path_w, .{
-        .dir = old_dir_fd,
-        .access_mask = .{
-            .STANDARD = .{
-                .RIGHTS = .{ .DELETE = true },
-                .SYNCHRONIZE = true,
-            },
-            .GENERIC = .{ .WRITE = true },
-        },
-        .creation = .OPEN,
-        .filter = .any, // This function is supposed to rename both files and directories.
-        .follow_symlinks = false,
-    }) catch |err| switch (err) {
-        error.WouldBlock => unreachable, // Not possible without `.share_access_nonblocking = true`.
-        else => |e| return e,
-    };
-    defer CloseHandle(src_fd);
-
-    var rc: NTSTATUS = undefined;
-    // FileRenameInformationEx has varying levels of support:
-    // - FILE_RENAME_INFORMATION_EX requires >= win10_rs1
-    //   (INVALID_INFO_CLASS is returned if not supported)
-    // - Requires the NTFS filesystem
-    //   (on filesystems like FAT32, INVALID_PARAMETER is returned)
-    // - FILE_RENAME_POSIX_SEMANTICS requires >= win10_rs1
-    // - FILE_RENAME_IGNORE_READONLY_ATTRIBUTE requires >= win10_rs5
-    //   (NOT_SUPPORTED is returned if a flag is unsupported)
-    //
-    // The strategy here is just to try using FileRenameInformationEx and fall back to
-    // FileRenameInformation if the return value lets us know that some aspect of it is not supported.
-    const need_fallback = need_fallback: {
-        var rename_info: FILE.RENAME_INFORMATION = .init(.{
-            .Flags = .{
-                .REPLACE_IF_EXISTS = replace_if_exists,
-                .POSIX_SEMANTICS = true,
-                .IGNORE_READONLY_ATTRIBUTE = true,
-            },
-            .RootDirectory = if (std.fs.path.isAbsoluteWindowsWtf16(new_path_w)) null else new_dir_fd,
-            .FileName = new_path_w,
-        });
-        var io_status_block: IO_STATUS_BLOCK = undefined;
-        const rename_info_buf = rename_info.toBuffer();
-        rc = ntdll.NtSetInformationFile(
-            src_fd,
-            &io_status_block,
-            rename_info_buf.ptr,
-            @intCast(rename_info_buf.len), // already checked for error.NameTooLong
-            .RenameEx,
-        );
-        switch (rc) {
-            .SUCCESS => return,
-            // The filesystem does not support FileDispositionInformationEx
-            .INVALID_PARAMETER,
-            // The operating system does not support FileDispositionInformationEx
-            .INVALID_INFO_CLASS,
-            // The operating system does not support one of the flags
-            .NOT_SUPPORTED,
-            => break :need_fallback true,
-            // For all other statuses, fall down to the switch below to handle them.
-            else => break :need_fallback false,
-        }
-    };
-
-    if (need_fallback) {
-        var rename_info: FILE.RENAME_INFORMATION = .init(.{
-            .Flags = .{ .REPLACE_IF_EXISTS = replace_if_exists },
-            .RootDirectory = if (std.fs.path.isAbsoluteWindowsWtf16(new_path_w)) null else new_dir_fd,
-            .FileName = new_path_w,
-        });
-        var io_status_block: IO_STATUS_BLOCK = undefined;
-        const rename_info_buf = rename_info.toBuffer();
-        rc = ntdll.NtSetInformationFile(
-            src_fd,
-            &io_status_block,
-            rename_info_buf.ptr,
-            @intCast(rename_info_buf.len), // already checked for error.NameTooLong
-            .Rename,
-        );
-    }
-
-    switch (rc) {
-        .SUCCESS => {},
-        .INVALID_HANDLE => unreachable,
-        .INVALID_PARAMETER => unreachable,
-        .OBJECT_PATH_SYNTAX_BAD => unreachable,
-        .ACCESS_DENIED => return error.AccessDenied,
-        .OBJECT_NAME_NOT_FOUND => return error.FileNotFound,
-        .OBJECT_PATH_NOT_FOUND => return error.FileNotFound,
-        .NOT_SAME_DEVICE => return error.CrossDevice,
-        .OBJECT_NAME_COLLISION => return error.PathAlreadyExists,
-        .DIRECTORY_NOT_EMPTY => return error.PathAlreadyExists,
-        .FILE_IS_A_DIRECTORY => return error.IsDir,
-        .NOT_A_DIRECTORY => return error.NotDir,
-        else => return unexpectedStatus(rc),
-    }
-}
-
 pub const GetStdHandleError = error{
     NoStandardHandleAttached,
     Unexpected,
@@ -3508,18 +3239,6 @@ test GetFinalPathNameByHandle {
     _ = try GetFinalPathNameByHandle(handle, .{ .volume_name = .Dos }, buffer[0..required_len_in_u16]);
 }
 
-pub const GetFileSizeError = error{Unexpected};
-
-pub fn GetFileSizeEx(hFile: HANDLE) GetFileSizeError!u64 {
-    var file_size: LARGE_INTEGER = undefined;
-    if (kernel32.GetFileSizeEx(hFile, &file_size) == 0) {
-        switch (GetLastError()) {
-            else => |err| return unexpectedError(err),
-        }
-    }
-    return @as(u64, @bitCast(file_size));
-}
-
 pub fn getpeername(s: ws2_32.SOCKET, name: *ws2_32.sockaddr, namelen: *ws2_32.socklen_t) i32 {
     return ws2_32.getpeername(s, name, @as(*i32, @ptrCast(namelen)));
 }
@@ -3714,69 +3433,6 @@ pub const CreateProcessFlags = packed struct(u32) {
     create_ignore_system_default: bool = false,
 };
 
-pub fn CreateProcessW(
-    lpApplicationName: ?LPCWSTR,
-    lpCommandLine: ?LPWSTR,
-    lpProcessAttributes: ?*SECURITY_ATTRIBUTES,
-    lpThreadAttributes: ?*SECURITY_ATTRIBUTES,
-    bInheritHandles: BOOL,
-    dwCreationFlags: CreateProcessFlags,
-    lpEnvironment: ?[*:0]u16,
-    lpCurrentDirectory: ?LPCWSTR,
-    lpStartupInfo: *STARTUPINFOW,
-    lpProcessInformation: *PROCESS_INFORMATION,
-) CreateProcessError!void {
-    if (kernel32.CreateProcessW(
-        lpApplicationName,
-        lpCommandLine,
-        lpProcessAttributes,
-        lpThreadAttributes,
-        bInheritHandles,
-        dwCreationFlags,
-        lpEnvironment,
-        lpCurrentDirectory,
-        lpStartupInfo,
-        lpProcessInformation,
-    ) == 0) {
-        switch (GetLastError()) {
-            .FILE_NOT_FOUND => return error.FileNotFound,
-            .PATH_NOT_FOUND => return error.FileNotFound,
-            .DIRECTORY => return error.FileNotFound,
-            .ACCESS_DENIED => return error.AccessDenied,
-            .INVALID_PARAMETER => unreachable,
-            .INVALID_NAME => return error.InvalidName,
-            .FILENAME_EXCED_RANGE => return error.NameTooLong,
-            .SHARING_VIOLATION => return error.FileBusy,
-            // These are all the system errors that are mapped to ENOEXEC by
-            // the undocumented _dosmaperr (old CRT) or __acrt_errno_map_os_error
-            // (newer CRT) functions. Their code can be found in crt/src/dosmap.c (old SDK)
-            // or urt/misc/errno.cpp (newer SDK) in the Windows SDK.
-            .BAD_FORMAT,
-            .INVALID_STARTING_CODESEG, // MIN_EXEC_ERROR in errno.cpp
-            .INVALID_STACKSEG,
-            .INVALID_MODULETYPE,
-            .INVALID_EXE_SIGNATURE,
-            .EXE_MARKED_INVALID,
-            .BAD_EXE_FORMAT,
-            .ITERATED_DATA_EXCEEDS_64k,
-            .INVALID_MINALLOCSIZE,
-            .DYNLINK_FROM_INVALID_RING,
-            .IOPL_NOT_ENABLED,
-            .INVALID_SEGDPL,
-            .AUTODATASEG_EXCEEDS_64k,
-            .RING2SEG_MUST_BE_MOVABLE,
-            .RELOC_CHAIN_XEEDS_SEGLIM,
-            .INFLOOP_IN_RELOC_CHAIN, // MAX_EXEC_ERROR in errno.cpp
-            // This one is not mapped to ENOEXEC but it is possible, for example
-            // when calling CreateProcessW on a plain text file with a .exe extension
-            .EXE_MACHINE_TYPE_MISMATCH,
-            => return error.InvalidExe,
-            .COMMITMENT_LIMIT => return error.SystemResources,
-            else => |err| return unexpectedError(err),
-        }
-    }
-}
-
 pub const LoadLibraryError = error{
     FileNotFound,
     Unexpected,
@@ -3841,10 +3497,6 @@ pub fn QueryPerformanceCounter() u64 {
     assert(ntdll.RtlQueryPerformanceCounter(&result) != 0);
     // The kernel treats this integer as unsigned.
     return @as(u64, @bitCast(result));
-}
-
-pub fn InitOnceExecuteOnce(InitOnce: *INIT_ONCE, InitFn: INIT_ONCE_FN, Parameter: ?*anyopaque, Context: ?*anyopaque) void {
-    assert(kernel32.InitOnceExecuteOnce(InitOnce, InitFn, Parameter, Context) != 0);
 }
 
 /// This is a workaround for the C backend until zig has the ability to put
@@ -6072,24 +5724,6 @@ pub const PROCESS_MEMORY_COUNTERS_EX = extern struct {
     PrivateUsage: SIZE_T,
 };
 
-pub const GetProcessMemoryInfoError = error{
-    AccessDenied,
-    InvalidHandle,
-    Unexpected,
-};
-
-pub fn GetProcessMemoryInfo(hProcess: HANDLE) GetProcessMemoryInfoError!VM_COUNTERS {
-    var vmc: VM_COUNTERS = undefined;
-    const rc = ntdll.NtQueryInformationProcess(hProcess, .VmCounters, &vmc, @sizeOf(VM_COUNTERS), null);
-    switch (rc) {
-        .SUCCESS => return vmc,
-        .ACCESS_DENIED => return error.AccessDenied,
-        .INVALID_HANDLE => return error.InvalidHandle,
-        .INVALID_PARAMETER => unreachable,
-        else => return unexpectedStatus(rc),
-    }
-}
-
 pub const PERFORMANCE_INFORMATION = extern struct {
     cb: DWORD,
     CommitTotal: SIZE_T,
@@ -6623,7 +6257,11 @@ pub fn WriteProcessMemory(handle: HANDLE, addr: ?LPVOID, buffer: []const u8) Wri
     }
 }
 
-pub const ProcessBaseAddressError = GetProcessMemoryInfoError || ReadMemoryError;
+pub const ProcessBaseAddressError = error{
+    AccessDenied,
+    InvalidHandle,
+    Unexpected,
+} || ReadMemoryError;
 
 /// Returns the base address of the process loaded into memory.
 pub fn ProcessBaseAddress(handle: HANDLE) ProcessBaseAddressError!HMODULE {

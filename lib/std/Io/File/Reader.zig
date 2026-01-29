@@ -48,7 +48,7 @@ pub const Error = error{
     LockViolation,
 } || Io.Cancelable || Io.UnexpectedError;
 
-pub const SizeError = std.os.windows.GetFileSizeError || File.StatError || error{
+pub const SizeError = File.StatError || error{
     /// Occurs if, for example, the file handle is a network socket and therefore does not have a size.
     Streaming,
 };

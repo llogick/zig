@@ -31,13 +31,13 @@ pub fn main(init: std.process.Init) !void {
     defer gpa.free(tmp_relative_path);
 
     // Clear PATH
-    std.debug.assert(windows.kernel32.SetEnvironmentVariableW(
+    std.debug.assert(SetEnvironmentVariableW(
         utf16Literal("PATH"),
         null,
     ) == windows.TRUE);
 
     // Set PATHEXT to something predictable
-    std.debug.assert(windows.kernel32.SetEnvironmentVariableW(
+    std.debug.assert(SetEnvironmentVariableW(
         utf16Literal("PATHEXT"),
         utf16Literal(".COM;.EXE;.BAT;.CMD;.JS"),
     ) == windows.TRUE);
@@ -48,7 +48,7 @@ pub fn main(init: std.process.Init) !void {
     // make sure we don't get error.BadPath traversing out of cwd with a relative path
     try testExecError(error.FileNotFound, gpa, io, "..\\.\\.\\.\\\\..\\more_missing");
 
-    std.debug.assert(windows.kernel32.SetEnvironmentVariableW(
+    std.debug.assert(SetEnvironmentVariableW(
         utf16Literal("PATH"),
         tmp_absolute_path_w,
     ) == windows.TRUE);
@@ -131,7 +131,7 @@ pub fn main(init: std.process.Init) !void {
     const something_subdir_abs_path = try std.mem.concatWithSentinel(gpa, u16, &.{ tmp_absolute_path_w, utf16Literal("\\something") }, 0);
     defer gpa.free(something_subdir_abs_path);
 
-    std.debug.assert(windows.kernel32.SetEnvironmentVariableW(
+    std.debug.assert(SetEnvironmentVariableW(
         utf16Literal("PATH"),
         something_subdir_abs_path,
     ) == windows.TRUE);
@@ -171,7 +171,7 @@ pub fn main(init: std.process.Init) !void {
     defer gpa.free(denormed_something_subdir_wtf8);
 
     // clear the path to ensure that the match comes from the cwd
-    std.debug.assert(windows.kernel32.SetEnvironmentVariableW(
+    std.debug.assert(SetEnvironmentVariableW(
         utf16Literal("PATH"),
         null,
     ) == windows.TRUE);
@@ -179,7 +179,7 @@ pub fn main(init: std.process.Init) !void {
     try testExecWithCwd(gpa, io, "goodbye", denormed_something_subdir_wtf8, "hello from exe\n");
 
     // normalization should also work if the non-normalized path is found in the PATH var.
-    std.debug.assert(windows.kernel32.SetEnvironmentVariableW(
+    std.debug.assert(SetEnvironmentVariableW(
         utf16Literal("PATH"),
         denormed_something_subdir_abs_path,
     ) == windows.TRUE);
@@ -193,7 +193,7 @@ pub fn main(init: std.process.Init) !void {
     try std.process.setCurrentDir(io, subdir_cwd);
 
     // clear the PATH again
-    std.debug.assert(windows.kernel32.SetEnvironmentVariableW(
+    std.debug.assert(SetEnvironmentVariableW(
         utf16Literal("PATH"),
         null,
     ) == windows.TRUE);
@@ -235,3 +235,8 @@ fn renameExe(dir: Io.Dir, io: Io, old_sub_path: []const u8, new_sub_path: []cons
         else => |e| return e,
     };
 }
+
+pub extern "kernel32" fn SetEnvironmentVariableW(
+    lpName: windows.LPCWSTR,
+    lpValue: ?windows.LPCWSTR,
+) callconv(.winapi) windows.BOOL;

@@ -13960,8 +13960,19 @@ fn childWaitWindows(child: *process.Child) process.Child.WaitError!process.Child
 fn childCleanupWindows(child: *process.Child) void {
     const handle = child.id orelse return;
 
-    if (child.request_resource_usage_statistics)
-        child.resource_usage_statistics.rusage = windows.GetProcessMemoryInfo(handle) catch null;
+    if (child.request_resource_usage_statistics) {
+        var vmc: windows.VM_COUNTERS = undefined;
+        switch (windows.ntdll.NtQueryInformationProcess(
+            handle,
+            .VmCounters,
+            &vmc,
+            @sizeOf(windows.VM_COUNTERS),
+            null,
+        )) {
+            .SUCCESS => child.resource_usage_statistics.rusage = vmc,
+            else => child.resource_usage_statistics.rusage = null,
+        }
+    }
 
     windows.CloseHandle(handle);
     child.id = null;
