@@ -260,12 +260,14 @@ pub fn resolveTargetQuery(io: Io, query: Target.Query) DetectError!Target {
                 var value: u32 = undefined;
                 var len: usize = @sizeOf(@TypeOf(value));
 
-                posix.sysctlbynameZ(key, &value, &len, null, 0) catch |err| switch (err) {
-                    error.PermissionDenied => unreachable, // only when setting values,
-                    error.SystemResources => unreachable, // memory already on the stack
-                    error.UnknownName => unreachable, // constant, known good value
-                    error.Unexpected => return error.OSVersionDetectionFail,
-                };
+                switch (posix.errno(posix.system.sysctlbyname(key, &value, &len, null, 0))) {
+                    .SUCCESS => {},
+                    .FAULT => unreachable,
+                    .PERM => unreachable, // only when setting values,
+                    .NOMEM => unreachable, // memory already on the stack
+                    .NOENT => unreachable, // constant, known good value
+                    else => return error.OSVersionDetectionFail,
+                }
 
                 switch (builtin.target.os.tag) {
                     .freebsd => {

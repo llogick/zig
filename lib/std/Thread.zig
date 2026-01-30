@@ -809,12 +809,15 @@ const PosixThreadImpl = struct {
             else => {
                 var count: c_int = undefined;
                 var count_len: usize = @sizeOf(c_int);
-                const name = if (comptime target.os.tag.isDarwin()) "hw.logicalcpu" else "hw.ncpu";
-                posix.sysctlbynameZ(name, &count, &count_len, null, 0) catch |err| switch (err) {
-                    error.UnknownName => unreachable,
-                    else => |e| return e,
-                };
-                return @as(usize, @intCast(count));
+                const name = comptime if (target.os.tag.isDarwin()) "hw.logicalcpu" else "hw.ncpu";
+                switch (posix.errno(posix.system.sysctlbyname(name, &count, &count_len, null, 0))) {
+                    .SUCCESS => return @intCast(count),
+                    .FAULT => unreachable,
+                    .PERM => return error.PermissionDenied,
+                    .NOMEM => return error.SystemResources,
+                    .NOENT => unreachable,
+                    else => |err| return posix.unexpectedErrno(err),
+                }
             },
         }
     }

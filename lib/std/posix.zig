@@ -677,89 +677,6 @@ pub fn getpeername(sock: socket_t, addr: *sockaddr, addrlen: *socklen_t) GetSock
     }
 }
 
-pub const FStatError = std.Io.File.StatError;
-
-/// Return information about a file descriptor.
-pub fn fstat(fd: fd_t) FStatError!Stat {
-    if (native_os == .wasi and !builtin.link_libc) {
-        @compileError("unsupported OS");
-    }
-
-    var stat = mem.zeroes(Stat);
-    switch (errno(system.fstat(fd, &stat))) {
-        .SUCCESS => return stat,
-        .INVAL => unreachable,
-        .BADF => unreachable, // Always a race condition.
-        .NOMEM => return error.SystemResources,
-        .ACCES => return error.AccessDenied,
-        else => |err| return unexpectedErrno(err),
-    }
-}
-
-pub const INotifyInitError = error{
-    ProcessFdQuotaExceeded,
-    SystemFdQuotaExceeded,
-    SystemResources,
-} || UnexpectedError;
-
-/// initialize an inotify instance
-pub fn inotify_init1(flags: u32) INotifyInitError!i32 {
-    const rc = system.inotify_init1(flags);
-    switch (errno(rc)) {
-        .SUCCESS => return @intCast(rc),
-        .INVAL => unreachable,
-        .MFILE => return error.ProcessFdQuotaExceeded,
-        .NFILE => return error.SystemFdQuotaExceeded,
-        .NOMEM => return error.SystemResources,
-        else => |err| return unexpectedErrno(err),
-    }
-}
-
-pub const INotifyAddWatchError = error{
-    AccessDenied,
-    NameTooLong,
-    FileNotFound,
-    SystemResources,
-    UserResourceLimitReached,
-    NotDir,
-    WatchAlreadyExists,
-} || UnexpectedError;
-
-/// add a watch to an initialized inotify instance
-pub fn inotify_add_watch(inotify_fd: i32, pathname: []const u8, mask: u32) INotifyAddWatchError!i32 {
-    const pathname_c = try toPosixPath(pathname);
-    return inotify_add_watchZ(inotify_fd, &pathname_c, mask);
-}
-
-/// Same as `inotify_add_watch` except pathname is null-terminated.
-pub fn inotify_add_watchZ(inotify_fd: i32, pathname: [*:0]const u8, mask: u32) INotifyAddWatchError!i32 {
-    const rc = system.inotify_add_watch(inotify_fd, pathname, mask);
-    switch (errno(rc)) {
-        .SUCCESS => return @intCast(rc),
-        .ACCES => return error.AccessDenied,
-        .BADF => unreachable,
-        .FAULT => unreachable,
-        .INVAL => unreachable,
-        .NAMETOOLONG => return error.NameTooLong,
-        .NOENT => return error.FileNotFound,
-        .NOMEM => return error.SystemResources,
-        .NOSPC => return error.UserResourceLimitReached,
-        .NOTDIR => return error.NotDir,
-        .EXIST => return error.WatchAlreadyExists,
-        else => |err| return unexpectedErrno(err),
-    }
-}
-
-/// remove an existing watch from an inotify instance
-pub fn inotify_rm_watch(inotify_fd: i32, wd: i32) void {
-    switch (errno(system.inotify_rm_watch(inotify_fd, wd))) {
-        .SUCCESS => return,
-        .BADF => unreachable,
-        .INVAL => unreachable,
-        else => unreachable,
-    }
-}
-
 pub const FanotifyInitError = error{
     ProcessFdQuotaExceeded,
     SystemFdQuotaExceeded,
@@ -987,36 +904,6 @@ pub fn sysctl(
 
     const name_len = cast(c_uint, name.len) orelse return error.NameTooLong;
     switch (errno(system.sysctl(name.ptr, name_len, oldp, oldlenp, newp, newlen))) {
-        .SUCCESS => return,
-        .FAULT => unreachable,
-        .PERM => return error.PermissionDenied,
-        .NOMEM => return error.SystemResources,
-        .NOENT => return error.UnknownName,
-        else => |err| return unexpectedErrno(err),
-    }
-}
-
-pub const SysCtlByNameError = error{
-    PermissionDenied,
-    SystemResources,
-    UnknownName,
-} || UnexpectedError;
-
-pub fn sysctlbynameZ(
-    name: [*:0]const u8,
-    oldp: ?*anyopaque,
-    oldlenp: ?*usize,
-    newp: ?*anyopaque,
-    newlen: usize,
-) SysCtlByNameError!void {
-    if (native_os == .wasi) {
-        @compileError("sysctl not supported on WASI");
-    }
-    if (native_os == .haiku) {
-        @compileError("sysctl not supported on Haiku");
-    }
-
-    switch (errno(system.sysctlbyname(name, oldp, oldlenp, newp, newlen))) {
         .SUCCESS => return,
         .FAULT => unreachable,
         .PERM => return error.PermissionDenied,
