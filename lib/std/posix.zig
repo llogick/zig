@@ -913,14 +913,6 @@ pub fn sysctl(
     }
 }
 
-pub fn gettimeofday(tv: ?*timeval, tz: ?*timezone) void {
-    switch (errno(system.gettimeofday(tv, tz))) {
-        .SUCCESS => return,
-        .INVAL => unreachable,
-        else => unreachable,
-    }
-}
-
 pub const FcntlError = error{
     PermissionDenied,
     FileBusy,
