@@ -1684,6 +1684,7 @@ pub fn io(t: *Threaded) Io {
                 .windows => netConnectUnixWindows,
                 else => netConnectUnixPosix,
             },
+            .netSocketCreatePair = netSocketCreatePair,
             .netClose = netClose,
             .netShutdown = switch (native_os) {
                 .windows => netShutdownWindows,
@@ -1824,6 +1825,7 @@ pub fn ioBasic(t: *Threaded) Io {
             .netAccept = netAcceptUnavailable,
             .netBindIp = netBindIpUnavailable,
             .netConnectIp = netConnectIpUnavailable,
+            .netSocketCreatePair = netSocketCreatePairUnavailable,
             .netConnectUnix = netConnectUnixUnavailable,
             .netClose = netCloseUnavailable,
             .netShutdown = netShutdownUnavailable,
@@ -10612,43 +10614,36 @@ fn posixConnect(
     addr_len: posix.socklen_t,
 ) !void {
     const syscall: Syscall = try .start();
-    while (true) {
-        switch (posix.errno(posix.system.connect(socket_fd, addr, addr_len))) {
-            .SUCCESS => {
-                syscall.finish();
-                return;
-            },
-            .INTR => {
-                try syscall.checkCancel();
-                continue;
-            },
-            else => |e| {
-                syscall.finish();
-                switch (e) {
-                    .ADDRNOTAVAIL => return error.AddressUnavailable,
-                    .AFNOSUPPORT => return error.AddressFamilyUnsupported,
-                    .AGAIN, .INPROGRESS => return error.WouldBlock,
-                    .ALREADY => return error.ConnectionPending,
-                    .BADF => |err| return errnoBug(err), // File descriptor used after closed.
-                    .CONNREFUSED => return error.ConnectionRefused,
-                    .CONNRESET => return error.ConnectionResetByPeer,
-                    .FAULT => |err| return errnoBug(err),
-                    .ISCONN => |err| return errnoBug(err),
-                    .HOSTUNREACH => return error.HostUnreachable,
-                    .NETUNREACH => return error.NetworkUnreachable,
-                    .NOTSOCK => |err| return errnoBug(err),
-                    .PROTOTYPE => |err| return errnoBug(err),
-                    .TIMEDOUT => return error.Timeout,
-                    .CONNABORTED => |err| return errnoBug(err),
-                    .ACCES => return error.AccessDenied,
-                    .PERM => |err| return errnoBug(err),
-                    .NOENT => |err| return errnoBug(err),
-                    .NETDOWN => return error.NetworkDown,
-                    else => |err| return posix.unexpectedErrno(err),
-                }
-            },
-        }
-    }
+    while (true) switch (posix.errno(posix.system.connect(socket_fd, addr, addr_len))) {
+        .SUCCESS => {
+            syscall.finish();
+            return;
+        },
+        .INTR => {
+            try syscall.checkCancel();
+            continue;
+        },
+        .ADDRNOTAVAIL => return syscall.fail(error.AddressUnavailable),
+        .AFNOSUPPORT => return syscall.fail(error.AddressFamilyUnsupported),
+        .AGAIN, .INPROGRESS => return syscall.fail(error.WouldBlock),
+        .ALREADY => return syscall.fail(error.ConnectionPending),
+        .CONNREFUSED => return syscall.fail(error.ConnectionRefused),
+        .CONNRESET => return syscall.fail(error.ConnectionResetByPeer),
+        .HOSTUNREACH => return syscall.fail(error.HostUnreachable),
+        .NETUNREACH => return syscall.fail(error.NetworkUnreachable),
+        .TIMEDOUT => return syscall.fail(error.Timeout),
+        .ACCES => return syscall.fail(error.AccessDenied),
+        .NETDOWN => return syscall.fail(error.NetworkDown),
+        .BADF => |err| return syscall.errnoBug(err), // File descriptor used after closed.
+        .CONNABORTED => |err| return syscall.errnoBug(err),
+        .FAULT => |err| return syscall.errnoBug(err),
+        .ISCONN => |err| return syscall.errnoBug(err),
+        .NOENT => |err| return syscall.errnoBug(err),
+        .NOTSOCK => |err| return syscall.errnoBug(err),
+        .PERM => |err| return syscall.errnoBug(err),
+        .PROTOTYPE => |err| return syscall.errnoBug(err),
+        else => |err| return syscall.unexpectedErrno(err),
+    };
 }
 
 fn posixConnectUnix(
@@ -11106,46 +11101,31 @@ fn openSocketPosix(
 }!posix.socket_t {
     const mode = posixSocketMode(options.mode);
     const protocol = posixProtocol(options.protocol);
+    const flags: u32 = mode | if (socket_flags_unsupported) 0 else posix.SOCK.CLOEXEC;
     const syscall: Syscall = try .start();
     const socket_fd = while (true) {
-        const flags: u32 = mode | if (socket_flags_unsupported) 0 else posix.SOCK.CLOEXEC;
-        const socket_rc = posix.system.socket(family, flags, protocol);
-        switch (posix.errno(socket_rc)) {
+        const rc = posix.system.socket(family, flags, protocol);
+        switch (posix.errno(rc)) {
             .SUCCESS => {
-                const fd: posix.fd_t = @intCast(socket_rc);
-                errdefer posix.close(fd);
-                if (socket_flags_unsupported) while (true) {
-                    try syscall.checkCancel();
-                    switch (posix.errno(posix.system.fcntl(fd, posix.F.SETFD, @as(usize, posix.FD_CLOEXEC)))) {
-                        .SUCCESS => break,
-                        .INTR => continue,
-                        else => |err| {
-                            syscall.finish();
-                            return posix.unexpectedErrno(err);
-                        },
-                    }
-                };
                 syscall.finish();
+                const fd: posix.fd_t = @intCast(rc);
+                errdefer posix.close(fd);
+                if (socket_flags_unsupported) try setCloexec(fd);
                 break fd;
             },
             .INTR => {
                 try syscall.checkCancel();
                 continue;
             },
-            else => |e| {
-                syscall.finish();
-                switch (e) {
-                    .AFNOSUPPORT => return error.AddressFamilyUnsupported,
-                    .INVAL => return error.ProtocolUnsupportedBySystem,
-                    .MFILE => return error.ProcessFdQuotaExceeded,
-                    .NFILE => return error.SystemFdQuotaExceeded,
-                    .NOBUFS => return error.SystemResources,
-                    .NOMEM => return error.SystemResources,
-                    .PROTONOSUPPORT => return error.ProtocolUnsupportedByAddressFamily,
-                    .PROTOTYPE => return error.SocketModeUnsupported,
-                    else => |err| return posix.unexpectedErrno(err),
-                }
-            },
+            .AFNOSUPPORT => return syscall.fail(error.AddressFamilyUnsupported),
+            .INVAL => return syscall.fail(error.ProtocolUnsupportedBySystem),
+            .MFILE => return syscall.fail(error.ProcessFdQuotaExceeded),
+            .NFILE => return syscall.fail(error.SystemFdQuotaExceeded),
+            .NOBUFS => return syscall.fail(error.SystemResources),
+            .NOMEM => return syscall.fail(error.SystemResources),
+            .PROTONOSUPPORT => return syscall.fail(error.ProtocolUnsupportedByAddressFamily),
+            .PROTOTYPE => return syscall.fail(error.SocketModeUnsupported),
+            else => |err| return syscall.unexpectedErrno(err),
         }
     };
     errdefer posix.close(socket_fd);
@@ -11156,6 +11136,84 @@ fn openSocketPosix(
     }
 
     return socket_fd;
+}
+
+fn setCloexec(fd: posix.fd_t) error{ Canceled, Unexpected }!void {
+    const syscall: Syscall = try .start();
+    while (true) switch (posix.errno(posix.system.fcntl(fd, posix.F.SETFD, @as(usize, posix.FD_CLOEXEC)))) {
+        .SUCCESS => return syscall.finish(),
+        .INTR => {
+            try syscall.checkCancel();
+            continue;
+        },
+        else => |err| return syscall.unexpectedErrno(err),
+    };
+}
+
+fn netSocketCreatePair(
+    userdata: ?*anyopaque,
+    options: net.Socket.CreatePairOptions,
+) net.Socket.CreatePairError![2]net.Socket {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    _ = t;
+    if (!have_networking) return error.OperationUnsupported;
+    if (@TypeOf(posix.system.socketpair) == void) return error.OperationUnsupported;
+    if (native_os == .haiku) @panic("TODO");
+
+    const family: posix.sa_family_t = switch (options.family) {
+        .ip4 => posix.AF.INET,
+        .ip6 => posix.AF.INET6,
+    };
+    const mode = posixSocketMode(options.mode);
+    const protocol = posixProtocol(options.protocol);
+    const flags: u32 = mode | if (socket_flags_unsupported) 0 else posix.SOCK.CLOEXEC;
+
+    var sockets: [2]posix.socket_t = undefined;
+    const syscall: Syscall = try .start();
+    while (true) switch (posix.errno(posix.system.socketpair(family, flags, protocol, &sockets))) {
+        .SUCCESS => {
+            syscall.finish();
+            errdefer {
+                posix.close(sockets[0]);
+                posix.close(sockets[1]);
+            }
+            if (socket_flags_unsupported) {
+                try setCloexec(sockets[0]);
+                try setCloexec(sockets[1]);
+            }
+            var storages: [2]PosixAddress = undefined;
+            var addr_lens: [2]posix.socklen_t = .{ @sizeOf(PosixAddress), @sizeOf(PosixAddress) };
+            try posixGetSockName(sockets[0], &storages[0].any, &addr_lens[0]);
+            try posixGetSockName(sockets[1], &storages[1].any, &addr_lens[1]);
+            return .{
+                .{ .handle = sockets[0], .address = addressFromPosix(&storages[0]) },
+                .{ .handle = sockets[1], .address = addressFromPosix(&storages[1]) },
+            };
+        },
+        .INTR => {
+            try syscall.checkCancel();
+            continue;
+        },
+        .ACCES => return syscall.fail(error.AccessDenied),
+        .AFNOSUPPORT => return syscall.fail(error.AddressFamilyUnsupported),
+        .INVAL => return syscall.fail(error.ProtocolUnsupportedBySystem),
+        .MFILE => return syscall.fail(error.ProcessFdQuotaExceeded),
+        .NFILE => return syscall.fail(error.SystemFdQuotaExceeded),
+        .NOBUFS => return syscall.fail(error.SystemResources),
+        .NOMEM => return syscall.fail(error.SystemResources),
+        .PROTONOSUPPORT => return syscall.fail(error.ProtocolUnsupportedByAddressFamily),
+        .PROTOTYPE => return syscall.fail(error.SocketModeUnsupported),
+        else => |err| return syscall.unexpectedErrno(err),
+    };
+}
+
+fn netSocketCreatePairUnavailable(
+    userdata: ?*anyopaque,
+    options: net.Socket.CreatePairOptions,
+) net.Socket.CreatePairError![2]net.Socket {
+    _ = userdata;
+    _ = options;
+    return error.OperationUnsupported;
 }
 
 fn openSocketWsa(
@@ -11216,20 +11274,10 @@ fn netAcceptPosix(userdata: ?*anyopaque, listen_fd: net.Socket.Handle) net.Serve
             posix.system.accept(listen_fd, &storage.any, &addr_len);
         switch (posix.errno(rc)) {
             .SUCCESS => {
+                syscall.finish();
                 const fd: posix.fd_t = @intCast(rc);
                 errdefer posix.close(fd);
-                if (!have_accept4) while (true) {
-                    try syscall.checkCancel();
-                    switch (posix.errno(posix.system.fcntl(fd, posix.F.SETFD, @as(usize, posix.FD_CLOEXEC)))) {
-                        .SUCCESS => break,
-                        .INTR => continue,
-                        else => |err| {
-                            syscall.finish();
-                            return posix.unexpectedErrno(err);
-                        },
-                    }
-                };
-                syscall.finish();
+                if (!have_accept4) try setCloexec(fd);
                 break fd;
             },
             .INTR => {

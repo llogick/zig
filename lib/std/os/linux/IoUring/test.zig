@@ -1755,7 +1755,7 @@ test "accept multishot" {
         // connect client
         const client = try socket(address.family, posix.SOCK.STREAM | posix.SOCK.CLOEXEC, 0);
         errdefer posix.close(client);
-        try posix.connect(client, addrAny(&address), @sizeOf(linux.sockaddr.in));
+        try connect(client, addrAny(&address), @sizeOf(linux.sockaddr.in));
 
         // test accept completion
         var cqe = try ring.copy_cqe();
@@ -1865,7 +1865,7 @@ test "accept_direct" {
 
             // connect
             const client = try socket(address.family, posix.SOCK.STREAM | posix.SOCK.CLOEXEC, 0);
-            try posix.connect(client, addrAny(&address), @sizeOf(linux.sockaddr.in));
+            try connect(client, addrAny(&address), @sizeOf(linux.sockaddr.in));
             defer posix.close(client);
 
             // accept completion
@@ -1899,7 +1899,7 @@ test "accept_direct" {
             try testing.expectEqual(@as(u32, 1), try ring.submit());
             // connect
             const client = try socket(address.family, posix.SOCK.STREAM | posix.SOCK.CLOEXEC, 0);
-            try posix.connect(client, addrAny(&address), @sizeOf(linux.sockaddr.in));
+            try connect(client, addrAny(&address), @sizeOf(linux.sockaddr.in));
             defer posix.close(client);
             // completion with error
             const cqe_accept = try ring.copy_cqe();
@@ -1949,7 +1949,7 @@ test "accept_multishot_direct" {
         for (registered_fds) |_| {
             // connect
             const client = try socket(address.family, posix.SOCK.STREAM | posix.SOCK.CLOEXEC, 0);
-            try posix.connect(client, addrAny(&address), @sizeOf(linux.sockaddr.in));
+            try connect(client, addrAny(&address), @sizeOf(linux.sockaddr.in));
             defer posix.close(client);
 
             // accept completion
@@ -1964,7 +1964,7 @@ test "accept_multishot_direct" {
         {
             // connect
             const client = try socket(address.family, posix.SOCK.STREAM | posix.SOCK.CLOEXEC, 0);
-            try posix.connect(client, addrAny(&address), @sizeOf(linux.sockaddr.in));
+            try connect(client, addrAny(&address), @sizeOf(linux.sockaddr.in));
             defer posix.close(client);
             // completion with error
             const cqe_accept = try ring.copy_cqe();
@@ -2732,5 +2732,12 @@ fn send(sockfd: posix.socket_t, buf: []const u8, flags: u32) !usize {
     switch (posix.errno(rc)) {
         .SUCCESS => return @intCast(rc),
         else => return error.SendFailed,
+    }
+}
+
+fn connect(sock: posix.socket_t, sock_addr: *const posix.sockaddr, len: posix.socklen_t) !void {
+    switch (posix.errno(posix.system.connect(sock, sock_addr, len))) {
+        .SUCCESS => return,
+        else => return error.ConnectFailed,
     }
 }

@@ -1187,6 +1187,35 @@ pub const Socket = struct {
     ) struct { ?ReceiveTimeoutError, usize } {
         return io.vtable.netReceive(io.userdata, s.handle, message_buffer, data_buffer, flags, timeout);
     }
+
+    pub const CreatePairError = error{
+        OperationUnsupported,
+        AccessDenied,
+        AddressFamilyUnsupported,
+        ProtocolUnsupportedBySystem,
+        /// The per-process limit on the number of open file descriptors has been reached.
+        ProcessFdQuotaExceeded,
+        /// The system-wide limit on the total number of open files has been reached.
+        SystemFdQuotaExceeded,
+        /// Insufficient memory is available. The socket cannot be created
+        /// until sufficient resources are freed.
+        SystemResources,
+        ProtocolUnsupportedByAddressFamily,
+        SocketModeUnsupported,
+    } || Io.UnexpectedError || Io.Cancelable;
+
+    pub const CreatePairOptions = struct {
+        family: IpAddress.Family = .ip4,
+        mode: Mode = .stream,
+        protocol: ?Protocol = null,
+    };
+
+    /// Create a set of two sockets that are connected to each other.
+    ///
+    /// Also known as "socketpair".
+    pub fn createPair(io: Io, options: CreatePairOptions) CreatePairError![2]Socket {
+        return io.vtable.netSocketCreatePair(io.userdata, options);
+    }
 };
 
 /// An open socket connection with a network protocol that guarantees

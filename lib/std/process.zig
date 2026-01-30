@@ -556,26 +556,28 @@ pub fn totalSystemMemory() TotalSystemMemoryError!u64 {
             const name = if (native_os == .netbsd) "hw.physmem64" else "hw.physmem";
             var physmem: c_ulong = undefined;
             var len: usize = @sizeOf(c_ulong);
-            posix.sysctlbynameZ(name, &physmem, &len, null, 0) catch |err| switch (err) {
-                error.PermissionDenied => unreachable, // only when setting values,
-                error.SystemResources => unreachable, // memory already on the stack
-                error.UnknownName => unreachable,
+            switch (posix.errno(posix.system.sysctlbyname(name, &physmem, &len, null, 0))) {
+                .SUCCESS => return @intCast(physmem),
+                .FAULT => unreachable,
+                .PERM => unreachable, // only when setting values
+                .NOMEM => unreachable, // memory already on the stack
+                .NOENT => unreachable,
                 else => return error.UnknownTotalSystemMemory,
-            };
-            return @intCast(physmem);
+            }
         },
         // whole Darwin family
         .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => {
             // "hw.memsize" returns uint64_t
             var physmem: u64 = undefined;
             var len: usize = @sizeOf(u64);
-            posix.sysctlbynameZ("hw.memsize", &physmem, &len, null, 0) catch |err| switch (err) {
-                error.PermissionDenied => unreachable, // only when setting values,
-                error.SystemResources => unreachable, // memory already on the stack
-                error.UnknownName => unreachable, // constant, known good value
+            switch (posix.errno(posix.system.sysctlbyname("hw.memsize", &physmem, &len, null, 0))) {
+                .SUCCESS => return physmem,
+                .FAULT => unreachable,
+                .PERM => unreachable, // only when setting values
+                .NOMEM => unreachable, // memory already on the stack
+                .NOENT => unreachable, // constant, known good value
                 else => return error.UnknownTotalSystemMemory,
-            };
-            return physmem;
+            }
         },
         .openbsd => {
             const mib: [2]c_int = [_]c_int{
