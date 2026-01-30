@@ -728,6 +728,14 @@ pub const Limit = enum(usize) {
         return @enumFromInt(@min(@intFromEnum(a), @intFromEnum(b)));
     }
 
+    pub fn max(a: Limit, b: Limit) Limit {
+        if (a == .unlimited or b == .unlimited) {
+            return .unlimited;
+        }
+
+        return @enumFromInt(@max(@intFromEnum(a), @intFromEnum(b)));
+    }
+
     pub fn minInt(l: Limit, n: usize) usize {
         return @min(n, @intFromEnum(l));
     }
