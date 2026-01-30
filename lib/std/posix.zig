@@ -1,27 +1,18 @@
 //! POSIX API layer.
 //!
 //! This is more cross platform than using OS-specific APIs, however, it is
-//! lower-level and less portable than other namespaces such as `std.fs` and
+//! lower-level and less portable than other namespaces such as `std.Io` and
 //! `std.process`.
 //!
 //! These APIs are generally lowered to libc function calls if and only if libc
 //! is linked. Most operating systems other than Windows, Linux, and WASI
 //! require always linking libc because they use it as the stable syscall ABI.
-//!
-//! Operating systems that are not POSIX-compliant are sometimes supported by
-//! this API layer; sometimes not. Generally, an implementation will be
-//! provided only if such implementation is straightforward on that operating
-//! system. Otherwise, programmers are expected to use OS-specific logic to
-//! deal with the exception.
-
 const builtin = @import("builtin");
 const native_os = builtin.os.tag;
 
 const std = @import("std.zig");
 const Io = std.Io;
 const mem = std.mem;
-const fs = std.fs;
-const max_path_bytes = std.fs.max_path_bytes;
 const maxInt = std.math.maxInt;
 const cast = std.math.cast;
 const assert = std.debug.assert;
@@ -122,15 +113,14 @@ pub const STDIN_FILENO = system.STDIN_FILENO;
 pub const STDOUT_FILENO = system.STDOUT_FILENO;
 pub const SYS = system.SYS;
 pub const Sigaction = system.Sigaction;
+/// Windows has no concept of `stat`.
+///
+/// On Linux, the `stat` bits/wrappers are removed due to having to maintain
+/// the different varying stat structs per target and libc, leading to runtime
+/// errors. Users targeting Linux should add a comptime check and use statx,
+/// similar to how `Io.File.stat` does.
 pub const Stat = switch (native_os) {
-    // Has no concept of `stat`.
     .windows => void,
-    // The `stat` bits/wrappers are removed due to having to maintain the
-    // different varying `struct stat`s per target and libc, leading to runtime
-    // errors.
-    //
-    // Users targeting linux should add a comptime check and use `statx`,
-    // similar to how `std.fs.File.stat` does.
     .linux => void,
     else => system.Stat,
 };
@@ -645,26 +635,6 @@ fn setSockFlags(sock: socket_t, flags: u32) !void {
     }
 }
 
-pub const EventFdError = error{
-    SystemResources,
-    ProcessFdQuotaExceeded,
-    SystemFdQuotaExceeded,
-} || UnexpectedError;
-
-pub fn eventfd(initval: u32, flags: u32) EventFdError!i32 {
-    const rc = system.eventfd(initval, flags);
-    switch (errno(rc)) {
-        .SUCCESS => return @intCast(rc),
-        else => |err| return unexpectedErrno(err),
-
-        .INVAL => unreachable, // invalid parameters
-        .MFILE => return error.ProcessFdQuotaExceeded,
-        .NFILE => return error.SystemFdQuotaExceeded,
-        .NODEV => return error.SystemResources,
-        .NOMEM => return error.SystemResources,
-    }
-}
-
 pub const GetSockNameError = error{
     /// Insufficient resources were available in the system to perform the operation.
     SystemResources,
@@ -703,40 +673,6 @@ pub fn getpeername(sock: socket_t, addr: *sockaddr, addrlen: *socklen_t) GetSock
             .INVAL => unreachable, // invalid parameters
             .NOTSOCK => return error.FileDescriptorNotASocket,
             .NOBUFS => return error.SystemResources,
-        }
-    }
-}
-
-pub const ConnectError = std.Io.net.IpAddress.ConnectError || std.Io.net.UnixAddress.ConnectError;
-
-pub fn connect(sock: socket_t, sock_addr: *const sockaddr, len: socklen_t) ConnectError!void {
-    if (native_os == .windows) {
-        @compileError("use std.Io instead");
-    }
-
-    while (true) {
-        switch (errno(system.connect(sock, sock_addr, len))) {
-            .SUCCESS => return,
-            .ACCES => return error.AccessDenied,
-            .PERM => return error.PermissionDenied,
-            .ADDRNOTAVAIL => return error.AddressUnavailable,
-            .AFNOSUPPORT => return error.AddressFamilyUnsupported,
-            .AGAIN, .INPROGRESS => return error.WouldBlock,
-            .ALREADY => return error.ConnectionPending,
-            .BADF => unreachable, // sockfd is not a valid open file descriptor.
-            .CONNREFUSED => return error.ConnectionRefused,
-            .CONNRESET => return error.ConnectionResetByPeer,
-            .FAULT => unreachable, // The socket structure address is outside the user's address space.
-            .INTR => continue,
-            .ISCONN => @panic("AlreadyConnected"), // The socket is already connected.
-            .HOSTUNREACH => return error.NetworkUnreachable,
-            .NETUNREACH => return error.NetworkUnreachable,
-            .NOTSOCK => unreachable, // The file descriptor sockfd does not refer to a socket.
-            .PROTOTYPE => unreachable, // The socket type does not support the requested communications protocol.
-            .TIMEDOUT => return error.Timeout,
-            .NOENT => return error.FileNotFound, // Returned when socket is AF.UNIX and the given path does not exist.
-            .CONNABORTED => unreachable, // Tried to reuse socket that previously received error.ConnectionRefused.
-            else => |err| return unexpectedErrno(err),
         }
     }
 }
