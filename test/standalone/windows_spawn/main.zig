@@ -8,7 +8,7 @@ const utf16Literal = std.unicode.utf8ToUtf16LeStringLiteral;
 pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
     const io = init.io;
-    const process_cwd_path = try std.process.getCwdAlloc(init.arena.allocator());
+    const process_cwd_path = try std.process.currentPathAlloc(io, init.arena.allocator());
     var initial_process_cwd = try Io.Dir.cwd().openDir(io, ".", .{});
     defer initial_process_cwd.close(io);
 

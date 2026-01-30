@@ -128,12 +128,6 @@ pub extern "kernel32" fn SetFileCompletionNotificationModes(
     Flags: UCHAR,
 ) callconv(.winapi) BOOL;
 
-// TODO: `RtlGetCurrentDirectory_U(nBufferLength * 2, lpBuffer)`
-pub extern "kernel32" fn GetCurrentDirectoryW(
-    nBufferLength: DWORD,
-    lpBuffer: ?[*]WCHAR,
-) callconv(.winapi) DWORD;
-
 pub extern "kernel32" fn ReadFile(
     hFile: HANDLE,
     lpBuffer: LPVOID,

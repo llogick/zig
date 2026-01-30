@@ -665,6 +665,7 @@ pub const VTable = struct {
     lockStderr: *const fn (?*anyopaque, ?Terminal.Mode) Cancelable!LockedStderr,
     tryLockStderr: *const fn (?*anyopaque, ?Terminal.Mode) Cancelable!?LockedStderr,
     unlockStderr: *const fn (?*anyopaque) void,
+    processCurrentPath: *const fn (?*anyopaque, buffer: []u8) std.process.CurrentPathError!usize,
     processSetCurrentDir: *const fn (?*anyopaque, Dir) std.process.SetCurrentDirError!void,
     processReplace: *const fn (?*anyopaque, std.process.ReplaceOptions) std.process.ReplaceError,
     processReplacePath: *const fn (?*anyopaque, Dir, std.process.ReplaceOptions) std.process.ReplaceError,

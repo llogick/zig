@@ -1787,7 +1787,7 @@ test "open file with exclusive nonblocking lock twice (absolute paths)" {
 
     const gpa = testing.allocator;
 
-    const cwd = try std.process.getCwdAlloc(gpa);
+    const cwd = try std.process.currentPathAlloc(io, gpa);
     defer gpa.free(cwd);
 
     const filename = try Dir.path.resolve(gpa, &.{ cwd, sub_path });
