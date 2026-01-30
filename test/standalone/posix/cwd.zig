@@ -28,13 +28,13 @@ pub fn main(init: std.process.Init) !void {
 // get current working directory and expect it to match given path
 fn expect_cwd(io: Io, expected_cwd: []const u8) !void {
     var cwd_buf: [path_max]u8 = undefined;
-    const actual_cwd = cwd_buf[0..try std.process.currentDir(io, &cwd_buf)];
+    const actual_cwd = cwd_buf[0..try std.process.currentPath(io, &cwd_buf)];
     try std.testing.expectEqualStrings(actual_cwd, expected_cwd);
 }
 
 fn test_chdir_self(io: Io) !void {
     var old_cwd_buf: [path_max]u8 = undefined;
-    const old_cwd = old_cwd_buf[0..try std.process.currentDir(io, &old_cwd_buf)];
+    const old_cwd = old_cwd_buf[0..try std.process.currentPath(io, &old_cwd_buf)];
 
     // Try changing to the current directory
     try std.Io.Threaded.chdir(old_cwd);
@@ -43,7 +43,7 @@ fn test_chdir_self(io: Io) !void {
 
 fn test_chdir_absolute(io: Io) !void {
     var old_cwd_buf: [path_max]u8 = undefined;
-    const old_cwd = old_cwd_buf[0..try std.process.currentDir(io, &old_cwd_buf)];
+    const old_cwd = old_cwd_buf[0..try std.process.currentPath(io, &old_cwd_buf)];
 
     const parent = std.fs.path.dirname(old_cwd) orelse unreachable; // old_cwd should be absolute
 
@@ -62,7 +62,7 @@ fn test_chdir_relative(gpa: Allocator, io: Io, tmp_dir: Io.Dir) !void {
 
     // Capture base working directory path, to build expected full path
     var base_cwd_buf: [path_max]u8 = undefined;
-    const base_cwd = base_cwd_buf[0..try std.process.currentDir(io, &base_cwd_buf)];
+    const base_cwd = base_cwd_buf[0..try std.process.currentPath(io, &base_cwd_buf)];
 
     const expected_path = try std.fs.path.resolve(gpa, &.{ base_cwd, subdir_path });
     defer gpa.free(expected_path);
@@ -71,7 +71,7 @@ fn test_chdir_relative(gpa: Allocator, io: Io, tmp_dir: Io.Dir) !void {
     try std.Io.Threaded.chdir(subdir_path);
 
     var new_cwd_buf: [path_max]u8 = undefined;
-    const new_cwd = new_cwd_buf[0..try std.process.currentDir(io, &new_cwd_buf)];
+    const new_cwd = new_cwd_buf[0..try std.process.currentPath(io, &new_cwd_buf)];
 
     // On Windows, fs.path.resolve returns an uppercase drive letter, but the drive letter returned by getcwd may be lowercase
     const resolved_cwd = try std.fs.path.resolve(gpa, &.{new_cwd});

@@ -51,23 +51,23 @@ pub fn findZigLibDir(gpa: Allocator, io: Io) !Cache.Directory {
     return findZigLibDirFromSelfExe(gpa, io, cwd_path, self_exe_path);
 }
 
-/// Like `std.process.currentDirAlloc`, but also resolves the path with `Dir.path.resolve`. This
+/// Like `std.process.currentPathAlloc`, but also resolves the path with `Dir.path.resolve`. This
 /// means the path has no repeated separators, no "." or ".." components, and no trailing separator.
 /// On WASI, "" is returned instead of ".".
 pub fn getResolvedCwd(io: Io, gpa: Allocator) error{
     OutOfMemory,
-    CurrentWorkingDirectoryUnlinked,
+    CurrentDirUnlinked,
     Unexpected,
 }![]u8 {
     if (builtin.target.os.tag == .wasi) {
         if (std.debug.runtime_safety) {
-            const cwd = try std.process.currentDirAlloc(io, gpa);
+            const cwd = try std.process.currentPathAlloc(io, gpa);
             defer gpa.free(cwd);
             assert(mem.eql(u8, cwd, "."));
         }
         return "";
     }
-    const cwd = try std.process.currentDirAlloc(io, gpa);
+    const cwd = try std.process.currentPathAlloc(io, gpa);
     defer gpa.free(cwd);
     const resolved = try Dir.path.resolve(gpa, &.{cwd});
     assert(Dir.path.isAbsolute(resolved));

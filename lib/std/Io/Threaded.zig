@@ -1643,7 +1643,7 @@ pub fn io(t: *Threaded) Io {
             .lockStderr = lockStderr,
             .tryLockStderr = tryLockStderr,
             .unlockStderr = unlockStderr,
-            .processCurrentDir = processCurrentDir,
+            .processCurrentPath = processCurrentPath,
             .processSetCurrentDir = processSetCurrentDir,
             .processReplace = processReplace,
             .processReplacePath = processReplacePath,
@@ -1802,7 +1802,7 @@ pub fn ioBasic(t: *Threaded) Io {
             .lockStderr = lockStderr,
             .tryLockStderr = tryLockStderr,
             .unlockStderr = unlockStderr,
-            .processCurrentDir = processCurrentDir,
+            .processCurrentPath = processCurrentPath,
             .processSetCurrentDir = processSetCurrentDir,
             .processReplace = processReplace,
             .processReplacePath = processReplacePath,
@@ -12606,7 +12606,7 @@ fn unlockStderr(userdata: ?*anyopaque) void {
     process.stderr_thread_mutex.unlock();
 }
 
-fn processCurrentDir(userdata: ?*anyopaque, buffer: []u8) process.CurrentDirError!usize {
+fn processCurrentPath(userdata: ?*anyopaque, buffer: []u8) process.CurrentPathError!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     _ = t;
     if (is_windows) {
@@ -12638,7 +12638,7 @@ fn processCurrentDir(userdata: ?*anyopaque, buffer: []u8) process.CurrentDirErro
     };
     switch (err) {
         .SUCCESS => return std.mem.findScalar(u8, buffer, 0).?,
-        .NOENT => return error.CurrentWorkingDirectoryUnlinked,
+        .NOENT => return error.CurrentDirUnlinked,
         .RANGE => return error.NameTooLong,
         .FAULT => |e| return errnoBug(e),
         .INVAL => |e| return errnoBug(e),

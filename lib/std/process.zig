@@ -63,22 +63,22 @@ pub const Init = struct {
     };
 };
 
-pub const CurrentDirError = error{
+pub const CurrentPathError = error{
     NameTooLong,
     /// Not possible on Windows. Always returned on WASI.
-    CurrentWorkingDirectoryUnlinked,
+    CurrentDirUnlinked,
 } || Io.UnexpectedError;
 
 /// On Windows, the result is encoded as [WTF-8](https://wtf-8.codeberg.page/).
 /// On other platforms, the result is an opaque sequence of bytes with no
 /// particular encoding.
-pub fn currentDir(io: Io, buffer: []u8) CurrentDirError!usize {
-    return io.vtable.processCurrentDir(io.userdata, buffer);
+pub fn currentPath(io: Io, buffer: []u8) CurrentPathError!usize {
+    return io.vtable.processCurrentPath(io.userdata, buffer);
 }
 
-pub const CurrentDirAllocError = Allocator.Error || error{
+pub const CurrentPathAllocError = Allocator.Error || error{
     /// Not possible on Windows. Always returned on WASI.
-    CurrentWorkingDirectoryUnlinked,
+    CurrentDirUnlinked,
 } || Io.UnexpectedError;
 
 /// On Windows, the result is encoded as [WTF-8](https://wtf-8.codeberg.page/).
@@ -86,17 +86,17 @@ pub const CurrentDirAllocError = Allocator.Error || error{
 /// particular encoding.
 ///
 /// Caller owns returned memory.
-pub fn currentDirAlloc(io: Io, allocator: Allocator) CurrentDirAllocError![:0]u8 {
+pub fn currentPathAlloc(io: Io, allocator: Allocator) CurrentPathAllocError![:0]u8 {
     var buffer: [max_path_bytes]u8 = undefined;
-    const n = currentDir(io, &buffer) catch |err| switch (err) {
+    const n = currentPath(io, &buffer) catch |err| switch (err) {
         error.NameTooLong => unreachable,
         else => |e| return e,
     };
     return allocator.dupeZ(u8, buffer[0..n]);
 }
 
-test currentDirAlloc {
-    const cwd = try currentDirAlloc(testing.io, testing.allocator);
+test currentPathAlloc {
+    const cwd = try currentPathAlloc(testing.io, testing.allocator);
     testing.allocator.free(cwd);
 }
 
@@ -453,7 +453,7 @@ pub fn spawnPath(io: Io, dir: Io.Dir, options: SpawnOptions) SpawnError!Child {
     return io.vtable.processSpawnPath(io.userdata, dir, options);
 }
 
-pub const RunError = CurrentDirError || posix.ReadError || SpawnError || posix.PollError || error{
+pub const RunError = CurrentPathError || posix.ReadError || SpawnError || posix.PollError || error{
     StdoutStreamTooLong,
     StderrStreamTooLong,
 };

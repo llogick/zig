@@ -16,7 +16,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     defer threaded.deinit();
     const io = threaded.io();
 
-    const process_cwd_path = try std.process.currentDirAlloc(io, gpa);
+    const process_cwd_path = try std.process.currentPathAlloc(io, gpa);
     defer gpa.free(process_cwd_path);
 
     var environ_map = try init.environ.createMap(gpa);
