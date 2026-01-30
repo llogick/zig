@@ -273,17 +273,17 @@ test "fcntl" {
 
     // Note: The test assumes createFile opens the file with CLOEXEC
     {
-        const flags = try posix.fcntl(file.handle, posix.F.GETFD, 0);
+        const flags = posix.system.fcntl(file.handle, posix.F.GETFD, @as(usize, 0));
         try expect((flags & posix.FD_CLOEXEC) != 0);
     }
     {
-        _ = try posix.fcntl(file.handle, posix.F.SETFD, 0);
-        const flags = try posix.fcntl(file.handle, posix.F.GETFD, 0);
+        _ = posix.system.fcntl(file.handle, posix.F.SETFD, @as(usize, 0));
+        const flags = posix.system.fcntl(file.handle, posix.F.GETFD, @as(usize, 0));
         try expect((flags & posix.FD_CLOEXEC) == 0);
     }
     {
-        _ = try posix.fcntl(file.handle, posix.F.SETFD, posix.FD_CLOEXEC);
-        const flags = try posix.fcntl(file.handle, posix.F.GETFD, 0);
+        _ = posix.system.fcntl(file.handle, posix.F.SETFD, @as(usize, posix.FD_CLOEXEC));
+        const flags = posix.system.fcntl(file.handle, posix.F.GETFD, @as(usize, 0));
         try expect((flags & posix.FD_CLOEXEC) != 0);
     }
 }
